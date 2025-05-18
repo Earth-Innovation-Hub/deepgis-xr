@@ -25,66 +25,181 @@
         }
         .controls-overlay {
             position: absolute;
-            top: 20px;
-            right: 20px;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 15px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            top: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(40, 40, 40, 0.85);
+            padding: 20px 15px;
+            box-shadow: -2px 0 15px rgba(0,0,0,0.2);
             font-family: Arial, sans-serif;
-            max-width: 220px;
+            width: 250px;
             z-index: 100;
+            color: white;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
         }
         .controls-overlay button {
             display: block;
-            margin: 5px 0;
-            padding: 8px 15px;
+            margin: 8px 0;
+            padding: 10px 15px;
             background: #4CAF50;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
-            transition: background 0.3s;
-            font-size: 24px;
+            transition: all 0.2s ease;
+            font-size: 16px;
+            border-left: 4px solid transparent;
+            text-align: center;
+            font-weight: 500;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
         .controls-overlay button:hover {
             background: #45a049;
+            transform: translateY(-1px);
+            box-shadow: 0 3px 6px rgba(0,0,0,0.15);
         }
         .controls-overlay button.active {
-            background: #ff4444;
+            background: #e53935;
+            border-left: 4px solid #ffeb3b;
         }
         .button-group {
-            margin-bottom: 15px;
-            border-bottom: 1px solid #ddd;
-            padding-bottom: 10px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.15);
+            padding-bottom: 15px;
         }
         .button-group:last-child {
             border-bottom: none;
             margin-bottom: 0;
         }
         .button-group h3 {
-            margin: 0 0 8px 0;
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            color: #fff;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-align: center;
+            position: relative;
+            padding-bottom: 8px;
+        }
+        
+        .button-group h3:after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 50px;
+            height: 2px;
+            background: #4CAF50;
+        }
+        
+        /* Measurement subgroups styling */
+        .measurement-subgroup {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px dashed rgba(255,255,255,0.15);
+        }
+        
+        .measurement-subgroup:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+        
+        .measurement-subgroup h4 {
+            margin: 0 0 10px 0;
             font-size: 14px;
-            color: #333;
+            color: #fff;
+            font-weight: 600;
+            text-align: center;
+            background: rgba(0,0,0,0.2);
+            padding: 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .measurement-btn, .utility-btn {
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            margin: 8px 0;
+            padding: 12px;
+            text-align: left;
+            font-size: 14px;
+            border-radius: 6px;
+        }
+        
+        .measurement-icon {
+            margin-right: 10px;
+            font-size: 18px;
+        }
+        
+        .btn-text {
+            text-align: left;
+            flex-grow: 1;
+        }
+        
+        /* Color-coding measurement buttons */
+        .measurement-btn {
+            background: #43a047;
+            border-left: 4px solid #1b5e20;
+        }
+        
+        .utility-btn {
+            background: #5c6bc0;
+            border-left: 4px solid #3949ab;
+        }
+        
+        /* Enhanced active state */
+        .measurement-btn.active {
+            background: #e53935;
+            box-shadow: 0 0 8px rgba(0,0,0,0.4);
+            position: relative;
+            border-left: 4px solid #ffeb3b;
+            transform: translateY(-1px);
+        }
+        
+        .measurement-btn.active::after {
+            content: "● ACTIVE";
+            position: absolute;
+            top: -8px;
+            right: 8px;
+            font-size: 10px;
+            background: #e53935;
+            color: white;
+            padding: 3px 6px;
+            border-radius: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            font-weight: bold;
         }
         .view-buttons {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 10px;
             margin-top: 10px;
-            margin-bottom: 10px;
+            margin-bottom: 15px;
         }
         .view-buttons button {
-            flex: 0 0 calc(33% - 6px);
             margin: 0;
-            padding: 10px 5px;
-            font-size: 24px;
+            padding: 12px 5px;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 42px;
         }
         .view-buttons button.camera-mode {
-            flex: 0 0 100%;
-            margin-top: 8px;
+            grid-column: 1 / span 3;
+            margin-top: 10px;
             font-weight: bold;
             padding: 12px 5px;
+            background: #3949ab;
+        }
+        .view-buttons button.camera-mode:hover {
+            background: #303f9f;
         }
         .control-mode-label {
             display: block;
@@ -94,17 +209,24 @@
             font-size: 12px;
         }
         .model-info {
-            margin-top: 15px;
+            margin-top: auto;
             padding-top: 15px;
-            border-top: 1px solid #ddd;
+            border-top: 1px solid rgba(255,255,255,0.15);
+            background: rgba(0,0,0,0.2);
+            margin-left: -15px;
+            margin-right: -15px;
+            margin-bottom: -20px;
+            padding: 15px;
         }
         .model-info h3 {
             margin: 0 0 10px 0;
             font-size: 16px;
         }
         .model-info p {
-            margin: 5px 0;
+            margin: 8px 0;
             font-size: 14px;
+            color: rgba(255,255,255,0.9);
+            font-weight: 300;
         }
         .keyboard-shortcuts {
             position: absolute;
@@ -226,22 +348,49 @@
             border: 2px solid white;
         }
         
+        /* Sidebar toggle button */
+        .sidebar-toggle {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 40px;
+            height: 40px;
+            background: rgba(40, 40, 40, 0.8);
+            border: none;
+            border-radius: 5px;
+            color: white;
+            font-size: 20px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 101;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
         /* Mobile optimizations */
         @media (max-width: 768px) {
-            .controls-overlay {
-                top: 70px;
-                left: 10px;
-                right: auto;
-                bottom: auto;
-                max-width: 55px;
-                padding: 8px;
-                max-height: calc(100vh - 140px);
-                overflow-y: auto;
+            .sidebar-toggle {
                 display: flex;
-                flex-direction: column;
-                align-items: center;
-                background: rgba(40, 40, 40, 0.8);
-                border-radius: 10px;
+            }
+            
+            .controls-overlay {
+                transform: translateX(100%);
+                transition: transform 0.3s ease;
+                top: 0;
+                right: 0;
+                bottom: 0;
+                width: 80%;
+                max-width: 300px;
+                padding: 20px 15px;
+                background: rgba(40, 40, 40, 0.95);
+                overflow-y: auto;
+                z-index: 100;
+                border-left: 1px solid rgba(255,255,255,0.1);
+            }
+            
+            .controls-overlay.visible {
+                transform: translateX(0);
             }
             
             .button-group {
@@ -446,9 +595,58 @@
                 font-size: 24px;
             }
 
-            /* Hide the entire measurements button group on mobile */
+            /* Mobile-specific measurement styles */
             .button-group.measurements-group {
-                display: none;
+                background: rgba(40, 40, 40, 0.9);
+                position: fixed;
+                bottom: 80px;
+                left: 10px;
+                right: 10px;
+                border-radius: 10px;
+                padding: 15px;
+                z-index: 900;
+                max-height: 0;
+                overflow: hidden;
+                transition: max-height 0.3s ease-in-out;
+                display: flex;
+                flex-direction: column;
+            }
+            
+            .measurements-group.mobile-active {
+                max-height: 300px;
+                border: 1px solid rgba(255,255,255,0.2);
+            }
+            
+            .measurement-subgroup {
+                border-bottom: 1px solid rgba(255,255,255,0.1);
+                padding-bottom: 15px;
+                margin-bottom: 15px;
+            }
+            
+            .measurement-subgroup h4 {
+                color: white;
+                font-size: 14px;
+                margin-bottom: 10px;
+                text-align: center;
+            }
+            
+            .button-group.measurements-group h3 {
+                color: white;
+                font-size: 16px;
+                text-align: center;
+                margin-bottom: 12px;
+            }
+            
+            .measurement-btn, .utility-btn {
+                padding: 10px;
+                margin: 5px 0;
+                width: 100%;
+                justify-content: center;
+            }
+            
+            .btn-text {
+                color: white;
+                font-weight: bold;
             }
 
             /* Floating action buttons for mobile path measure */
@@ -500,6 +698,10 @@
     <canvas id="viewer"></canvas>
     <div id="loading">Loading 3D model...</div>
     
+    <button class="sidebar-toggle" id="sidebarToggle">
+        ☰
+    </button>
+    
     <div style="position: absolute; top: 10px; left: 10px; background-color: #ff4444; color: white; padding: 5px 10px; border-radius: 5px; font-weight: bold; font-family: Arial, sans-serif; z-index: 1000;" class="dev-indicator">
         DEV VERSION
     </div>
@@ -536,10 +738,36 @@
         
         <div class="button-group measurements-group">
             <h3>Measurement</h3>
-            <button id="measureMode" class="btn-icon"><span class="tooltip-text">Measure</span></button>
-            <button id="clearMeasurements" class="btn-icon"><span class="tooltip-text">Clear</span></button>
-            <button id="pathMeasureMode" class="btn-icon"><span class="tooltip-text">Path</span></button>
-            <button id="completePath" class="btn-icon"><span class="tooltip-text">Complete</span></button>
+            
+            <!-- Point Measurement Group -->
+            <div class="measurement-subgroup">
+                <h4>Point-to-Point</h4>
+                <button id="measureMode" class="btn-icon measurement-btn">
+                    <span class="measurement-icon">📏</span>
+                    <span class="btn-text">Point Measure</span>
+                    <span class="tooltip-text">Measure distance between two points</span>
+                </button>
+                <button id="clearMeasurements" class="btn-icon utility-btn">
+                    <span class="measurement-icon">🗑️</span>
+                    <span class="btn-text">Clear All</span>
+                    <span class="tooltip-text">Clear all measurements</span>
+                </button>
+            </div>
+            
+            <!-- Path Measurement Group -->
+            <div class="measurement-subgroup">
+                <h4>Multi-Point Path</h4>
+                <button id="pathMeasureMode" class="btn-icon measurement-btn">
+                    <span class="measurement-icon">📍</span>
+                    <span class="btn-text">Path Measure</span>
+                    <span class="tooltip-text">Measure along a path with multiple connected points</span>
+                </button>
+                <button id="completePath" class="btn-icon utility-btn">
+                    <span class="measurement-icon">✓</span>
+                    <span class="btn-text">Complete Path</span>
+                    <span class="tooltip-text">Complete current path and start a new one</span>
+                </button>
+            </div>
         </div>
         
         <!-- Info button for mobile -->
@@ -562,10 +790,15 @@
             <li>V - Toggle View Mode</li>
             <li>A - Toggle Path Measure Mode</li>
             <li>F - Complete Current Path</li>
+            <li>2 - View Back</li>
+            <li>3 - View Left</li>
+            <li>4 - View Right</li>
+            <li>5 - View Top</li>
+            <li>6 - View Bottom</li>
             <li>Space - Hold to rotate without adding points</li>
             <li>Escape - Cancel Current Measurement</li>
             <li>Left-drag - Rotate</li>
-            <li>Middle-drag - Pan</li>
+            <li>Right-drag - Pan</li>
             <li>Scroll - Zoom</li>
             <li>Click - Place measurement point</li>
         </ul>
@@ -1056,11 +1289,19 @@
             }
         }
         
+        // Store both the foreground and background preview lines for proper cleanup
+        let previewBackgroundLine = null;
+        
         function updatePreviewLine(point1, point2) {
-            // Remove existing preview if any
+            // Remove existing preview lines if any
             if (previewLine) {
                 measurementGroup.remove(previewLine);
                 previewLine = null;
+            }
+            
+            if (previewBackgroundLine) {
+                measurementGroup.remove(previewBackgroundLine);
+                previewBackgroundLine = null;
             }
             
             if (previewLabel) {
@@ -1091,11 +1332,11 @@
                 gapSize: 0.15  // Longer gaps
             });
             const bgGeometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
-            const backgroundLine = new THREE.Line(bgGeometry, backgroundMaterial);
-            backgroundLine.computeLineDistances(); // Required for dashed lines
+            previewBackgroundLine = new THREE.Line(bgGeometry, backgroundMaterial);
+            previewBackgroundLine.computeLineDistances(); // Required for dashed lines
             
             // Add the green background line first
-            measurementGroup.add(backgroundLine);
+            measurementGroup.add(previewBackgroundLine);
             
             // Add the white dashed line on top
             measurementGroup.add(previewLine);
@@ -1229,6 +1470,11 @@
                 if (previewLine) {
                     measurementGroup.remove(previewLine);
                     previewLine = null;
+                }
+                
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
                 }
                 
                 if (previewLabel) {
@@ -1404,6 +1650,7 @@
             
             // Clear preview variables
             previewLine = null;
+            previewBackgroundLine = null;
             previewLabel = null;
             
             // Reset path measurement mode if active
@@ -1438,10 +1685,15 @@
                     measurementGroup.remove(measurementGroup.children[markerIndex]);
                 }
                 
-                // Clear any preview
+                // Clear any preview elements
                 if (previewLine) {
                     measurementGroup.remove(previewLine);
                     previewLine = null;
+                }
+                
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
                 }
                 
                 if (previewLabel) {
@@ -1623,9 +1875,138 @@
             }
         }, 30000);
 
-        // Load STL model
-        const loader = new STLLoader();
-        loader.load("{% static 'models/stl/navagunjara-reborn-gometric-analysis.stl' %}", function (geometry) {
+        // STL model caching using IndexedDB
+        const DB_NAME = 'stl_model_cache';
+        const STORE_NAME = 'models';
+        const MODEL_KEY = 'navagunjara-reborn-gometric-analysis';
+        const MODEL_URL = "{% static 'models/stl/navagunjara-reborn-gometric-analysis.stl' %}";
+        
+        // Function to load model from IndexedDB or network
+        async function loadModelWithCache() {
+            document.getElementById('loading').textContent = 'Checking cache...';
+            
+            try {
+                // Try to load from cache first
+                const cachedModel = await getModelFromCache();
+                
+                if (cachedModel) {
+                    document.getElementById('loading').textContent = 'Loading from cache...';
+                    console.log('Loading model from cache');
+                    processSTLData(cachedModel);
+                    return;
+                }
+                
+                // If not in cache, load from network
+                document.getElementById('loading').textContent = 'Downloading model...';
+                console.log('Model not in cache, downloading...');
+                
+                const response = await fetch(MODEL_URL);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
+                }
+                
+                const modelData = await response.arrayBuffer();
+                
+                // Store in cache for future use
+                await storeModelInCache(modelData);
+                
+                // Process the downloaded model
+                processSTLData(modelData);
+                
+            } catch (error) {
+                console.error('Error loading model:', error);
+                clearTimeout(loadingTimeout);
+                document.getElementById('loading').textContent = 'Error loading model. Please try refreshing the page.';
+            }
+        }
+        
+        // Open/initialize the IndexedDB database
+        function openDatabase() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, 1);
+                
+                request.onerror = (event) => {
+                    console.error('IndexedDB error:', event.target.error);
+                    reject(event.target.error);
+                };
+                
+                request.onsuccess = (event) => {
+                    resolve(event.target.result);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(STORE_NAME)) {
+                        db.createObjectStore(STORE_NAME);
+                    }
+                };
+            });
+        }
+        
+        // Get model from cache
+        async function getModelFromCache() {
+            try {
+                const db = await openDatabase();
+                return new Promise((resolve, reject) => {
+                    const transaction = db.transaction(STORE_NAME, 'readonly');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.get(MODEL_KEY);
+                    
+                    request.onerror = (event) => {
+                        console.error('Error reading from cache:', event.target.error);
+                        resolve(null); // Resolve with null to try network fetch
+                    };
+                    
+                    request.onsuccess = (event) => {
+                        resolve(request.result);
+                    };
+                });
+            } catch (error) {
+                console.error('Error accessing cache:', error);
+                return null;
+            }
+        }
+        
+        // Store model in cache
+        async function storeModelInCache(modelData) {
+            try {
+                const db = await openDatabase();
+                return new Promise((resolve, reject) => {
+                    const transaction = db.transaction(STORE_NAME, 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.put(modelData, MODEL_KEY);
+                    
+                    request.onerror = (event) => {
+                        console.error('Error writing to cache:', event.target.error);
+                        resolve(false);
+                    };
+                    
+                    request.onsuccess = () => {
+                        console.log('Model cached successfully');
+                        resolve(true);
+                    };
+                });
+            } catch (error) {
+                console.error('Error storing in cache:', error);
+                return false;
+            }
+        }
+        
+        // Process STL data with the STLLoader
+        function processSTLData(buffer) {
+            const loader = new STLLoader();
+            try {
+                const geometry = loader.parse(buffer);
+                onModelLoaded(geometry);
+            } catch (error) {
+                console.error('Error parsing STL:', error);
+                clearTimeout(loadingTimeout);
+                document.getElementById('loading').textContent = 'Error parsing 3D model. Please try refreshing the page.';
+            }
+        }
+        
+        // Handler for when model is loaded - contains the same logic as the original loader callback
+        function onModelLoaded(geometry) {
             clearTimeout(loadingTimeout);
             document.getElementById('loading').style.display = 'none';
             
@@ -1795,19 +2176,10 @@
             setTimeout(() => {
                 setViewLeft();
             }, 100); // Small delay to ensure everything is initialized
-            
-        }, 
-        function(xhr) {
-            if (xhr.lengthComputable) {
-                const percent = Math.round((xhr.loaded / xhr.total) * 100);
-                document.getElementById('loading').textContent = `Loading 3D model: ${percent}%`;
-            }
-        }, 
-        function (error) {
-            clearTimeout(loadingTimeout);
-            document.getElementById('loading').textContent = 'Error loading model. Please try refreshing the page.';
-            console.error('An error occurred loading the STL file:', error);
-        });
+        }
+
+        // Initialize model loading with caching
+        loadModelWithCache();
 
         function animate() {
             requestAnimationFrame(animate);
@@ -2011,6 +2383,20 @@
         document.getElementById('viewBottom').addEventListener('click', setViewBottom);
         document.getElementById('toggleCameraMode').addEventListener('click', toggleCameraMode);
 
+        // Sidebar toggle functionality
+        document.getElementById('sidebarToggle').addEventListener('click', function() {
+            const sidebar = document.querySelector('.controls-overlay');
+            sidebar.classList.toggle('visible');
+            
+            // Update toggle button text
+            const toggleButton = document.getElementById('sidebarToggle');
+            if (sidebar.classList.contains('visible')) {
+                toggleButton.textContent = '×';
+            } else {
+                toggleButton.textContent = '☰';
+            }
+        });
+        
         // Mobile-specific event handlers
         if (isMobile) {
             document.getElementById('mobileMeasure').addEventListener('click', toggleMeasureMode);
@@ -2024,6 +2410,18 @@
             // Show the path measure button on mobile
             const mobilePathMeasureBtn = document.getElementById('mobilePathMeasure');
             mobilePathMeasureBtn.style.display = 'flex';
+            
+            // Add functionality to toggle measurement panel
+            mobileMeasureBtn.addEventListener('click', function() {
+                // Single tap - toggle measurement panel visibility
+                const measurementPanel = document.querySelector('.button-group.measurements-group');
+                measurementPanel.classList.toggle('mobile-active');
+                
+                // If opening the panel, make sure annotations are visible too
+                if (measurementPanel.classList.contains('mobile-active')) {
+                    document.getElementById('annotations').style.display = 'block';
+                }
+            });
             
             // Add a double-tap functionality to the measure FAB for clearing measurements
             let lastTapTime = 0;
