@@ -307,6 +307,8 @@
             /* Measurement icons */
             #measureMode::before { content: "📏"; }
             #clearMeasurements::before { content: "🗑️"; }
+            #pathMeasureMode::before { content: "📍"; }
+            #completePath::before { content: "✔️"; }
             
             /* Tooltip for mobile buttons */
             .tooltip-text {
@@ -472,6 +474,25 @@
             .path-measure-mobile-active .mobile-path-fab {
                 background: #FF4500;
             }
+
+            /* Mobile path measurement styles */
+            .mobile-path-complete-fab {
+                position: fixed;
+                bottom: 20px;
+                right: 90px;
+                width: 60px;
+                height: 60px;
+                border-radius: 50%;
+                background: #4CAF50;
+                color: white;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 24px;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+                z-index: 200;
+                display: none; /* Hidden by default */
+            }
         }
     </style>
 </head>
@@ -491,6 +512,11 @@
     <!-- Mobile floating action button for path measure (only shows on mobile) -->
     <div class="mobile-path-fab" id="mobilePathMeasure" style="display: none;">
         <span>📍</span>
+    </div>
+    
+    <!-- Mobile floating action button for completing path (only shows on mobile) -->
+    <div class="mobile-path-complete-fab" id="mobileCompletePath" style="display: none; right: 90px; bottom: 20px;">
+        <span>✔️</span>
     </div>
     
     <div class="controls-overlay">
@@ -513,6 +539,7 @@
             <button id="measureMode" class="btn-icon"><span class="tooltip-text">Measure</span></button>
             <button id="clearMeasurements" class="btn-icon"><span class="tooltip-text">Clear</span></button>
             <button id="pathMeasureMode" class="btn-icon"><span class="tooltip-text">Path</span></button>
+            <button id="completePath" class="btn-icon"><span class="tooltip-text">Complete</span></button>
         </div>
         
         <!-- Info button for mobile -->
@@ -534,6 +561,7 @@
             <li>P - Toggle Camera Mode</li>
             <li>V - Toggle View Mode</li>
             <li>A - Toggle Path Measure Mode</li>
+            <li>F - Complete Current Path</li>
             <li>Space - Hold to rotate without adding points</li>
             <li>Escape - Cancel Current Measurement</li>
             <li>Left-drag - Rotate</li>
@@ -618,6 +646,10 @@
         let pathTotalLabel = null;
         let isRotationKeyPressed = false; // Flag to track if rotation key is pressed
         let pathPreviewMarker = null; // Preview marker for potential intersection point
+        
+        // Add multi-path storage
+        let completedPaths = []; // Array to store multiple completed paths
+        let currentPathId = 0; // ID for the current path
         
         // Set up both cameras: perspective and orthographic
         const perspectiveCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -751,6 +783,7 @@
         document.getElementById('clearMeasurements').addEventListener('click', clearMeasurements);
         document.getElementById('toggleViewMode').addEventListener('click', toggleViewMode);
         document.getElementById('pathMeasureMode').addEventListener('click', togglePathMeasureMode);
+        document.getElementById('completePath').addEventListener('click', completeCurrentPath);
 
         // Enhanced keyboard controls
         document.addEventListener('keydown', (event) => {
@@ -769,6 +802,9 @@
                     break;
                 case 'a':
                     togglePathMeasureMode();
+                    break;
+                case 'f':
+                    completeCurrentPath();
                     break;
                 case '2':
                     setViewBack();
@@ -1306,11 +1342,30 @@
                 list.appendChild(listItem);
             });
             
-            // Add path measurement total if active
+            // Add completed path measurements
+            completedPaths.forEach((path, pathIndex) => {
+                const listItem = document.createElement('li');
+                listItem.className = 'path-measurement';
+                listItem.textContent = `Path ${pathIndex + 1}: ${getMeasurementText(path.totalDistance)}`;
+                list.appendChild(listItem);
+                
+                // Add segment measurements for completed paths if needed
+                if (path.showSegments) {
+                    for (let i = 1; i < path.points.length; i++) {
+                        const segmentDistance = path.points[i-1].distanceTo(path.points[i]);
+                        const segmentItem = document.createElement('li');
+                        segmentItem.className = 'path-segment';
+                        segmentItem.textContent = `Segment ${i}: ${getMeasurementText(segmentDistance)}`;
+                        list.appendChild(segmentItem);
+                    }
+                }
+            });
+            
+            // Add current active path measurement
             if (pathMeasurementPoints.length > 1) {
                 const listItem = document.createElement('li');
                 listItem.className = 'path-measurement';
-                listItem.textContent = `Path Total: ${getMeasurementText(pathTotalDistance)}`;
+                listItem.textContent = `Current Path: ${getMeasurementText(pathTotalDistance)}`;
                 list.appendChild(listItem);
                 
                 // Add segment measurements
@@ -1342,6 +1397,10 @@
             pathMeasurementLabels = [];
             pathTotalDistance = 0;
             pathTotalLabel = null;
+            
+            // Clear completed paths
+            completedPaths = [];
+            currentPathId = 0;
             
             // Clear preview variables
             previewLine = null;
@@ -1444,7 +1503,8 @@
                 measureButton.textContent = `Exit`;
             } else {
                 controls.enableRotate = true;
-                measureButton.textContent = '';
+                // Fix: Set proper text instead of empty string
+                measureButton.textContent = `Measure`;
                 
                 // Clean up any in-progress measurements
                 measurementPoints = [];
@@ -1955,6 +2015,7 @@
         if (isMobile) {
             document.getElementById('mobileMeasure').addEventListener('click', toggleMeasureMode);
             document.getElementById('mobilePathMeasure').addEventListener('click', togglePathMeasureMode);
+            document.getElementById('mobileCompletePath').addEventListener('click', completeCurrentPath);
             
             // Use the floating action button as the primary measure button on mobile
             const mobileMeasureBtn = document.getElementById('mobileMeasure');
@@ -2041,6 +2102,9 @@
                 document.body.classList.toggle('path-measure-mobile-active', isPathMeasureMode);
                 // Always show annotations in path measure mode on mobile
                 document.getElementById('annotations').style.display = isPathMeasureMode ? 'block' : 'none';
+                
+                // Show/hide the complete path button based on path mode
+                document.getElementById('mobileCompletePath').style.display = isPathMeasureMode ? 'flex' : 'none';
             }
             
             if (isPathMeasureMode) {
@@ -2061,8 +2125,8 @@
                 notification.style.fontFamily = 'Arial, sans-serif';
                 notification.style.fontSize = '16px';
                 notification.textContent = isMobile ? 
-                    'Path Measure: Tap to add points, rotate to view, double-tap to clear' : 
-                    'Path Measure Mode: Click to place points. Hold Space to rotate without adding points.';
+                    'Path Measure: Tap to add points, complete path with button, double-tap to clear' : 
+                    'Path Measure Mode: Click to place points. Press F to complete current path. Hold Space to rotate.';
                 document.body.appendChild(notification);
                 
                 // Remove the notification after 3 seconds
@@ -2072,10 +2136,12 @@
                     }
                 }, 3000);
             } else {
-                pathMeasureButton.textContent = '';
+                pathMeasureButton.textContent = 'Path';
                 
-                // Path measurements remain visible when exiting path measure mode
-                // No cleanup is performed here
+                // When exiting path mode, auto-complete the current path if it has points
+                if (pathMeasurementPoints.length >= 2) {
+                    completeCurrentPath();
+                }
             }
         }
 
@@ -2363,6 +2429,63 @@
                     rayVisualization = null;
                 }
             }, 1000);
+        }
+
+        // Function to complete the current path and start a new one
+        function completeCurrentPath() {
+            // Only do something if we're in path measure mode and have at least 2 points
+            if (pathMeasurementPoints.length >= 2) {
+                // Create a complete path object
+                const completedPath = {
+                    id: currentPathId,
+                    points: [...pathMeasurementPoints], // Clone the points array
+                    totalDistance: pathTotalDistance,
+                    showSegments: false, // Default to not showing segments
+                    // Store references to visual elements for potential cleanup later
+                    lines: [...pathMeasurementLines],
+                    labels: [...pathMeasurementLabels],
+                    totalLabel: pathTotalLabel
+                };
+                
+                // Add to completed paths
+                completedPaths.push(completedPath);
+                
+                // Increment the path ID
+                currentPathId++;
+                
+                // Prepare for a new path
+                pathMeasurementPoints = [];
+                pathMeasurementLines = [];
+                pathMeasurementLabels = [];
+                pathTotalDistance = 0;
+                pathTotalLabel = null;
+                
+                // Update the UI with a notification
+                const notification = document.createElement('div');
+                notification.style.position = 'fixed';
+                notification.style.top = '50%';
+                notification.style.left = '50%';
+                notification.style.transform = 'translate(-50%, -50%)';
+                notification.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+                notification.style.color = 'white';
+                notification.style.padding = '10px 15px';
+                notification.style.borderRadius = '5px';
+                notification.style.zIndex = '1000';
+                notification.style.fontFamily = 'Arial, sans-serif';
+                notification.style.fontSize = '16px';
+                notification.textContent = `Path completed! Ready for new path.`;
+                document.body.appendChild(notification);
+                
+                // Remove notification after 2 seconds
+                setTimeout(() => {
+                    if (notification.parentNode) {
+                        document.body.removeChild(notification);
+                    }
+                }, 2000);
+                
+                // Update the measurements list
+                updateMeasurementsList();
+            }
         }
     </script>
 </body>

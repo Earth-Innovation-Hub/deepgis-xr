@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% load static %}
 
+{% block extra_head %}
+<!-- Mobile viewport meta tag -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+{% endblock %}
+
 {% block content %}
 
 <style>
@@ -16,6 +21,7 @@
 		display: flex;
 		flex: 1;
 		overflow: hidden;
+		position: relative; /* For absolute positioning of sidebar toggle */
 	}
 
 	.control-sidebar {
@@ -26,6 +32,35 @@
 		overflow-y: auto;
 		display: flex;
 		flex-direction: column;
+		transition: transform 0.3s ease;
+		z-index: 100;
+	}
+	
+	/* Mobile sidebar styles */
+	@media (max-width: 768px) {
+		.control-sidebar {
+			position: absolute;
+			top: 0;
+			right: 0;
+			bottom: 0;
+			width: 85%;
+			max-width: 320px;
+			transform: translateX(100%);
+			box-shadow: -2px 0 10px rgba(0, 0, 0, 0.2);
+		}
+		
+		.control-sidebar.expanded {
+			transform: translateX(0);
+		}
+		
+		.tool-buttons button {
+			padding: 10px; /* Larger touch targets */
+			margin-bottom: 8px;
+		}
+		
+		#categories_coll li {
+			padding: 12px 10px; /* Larger touch targets for categories */
+		}
 	}
 
 	#canvasContainer {
@@ -56,6 +91,70 @@
 		align-items: center;
 		height: 60px;
 	}
+	
+	/* Mobile Bottom Toolbar */
+	.mobile-toolbar {
+		display: none;
+		position: fixed;
+		bottom: 60px;
+		left: 0;
+		right: 0;
+		background-color: rgba(33, 37, 41, 0.9);
+		padding: 10px;
+		justify-content: space-around;
+		z-index: 1000;
+		box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.2);
+	}
+	
+	.mobile-toolbar button {
+		background-color: transparent;
+		border: none;
+		color: white;
+		font-size: 24px;
+		width: 50px;
+		height: 50px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+	
+	.mobile-toolbar button.active {
+		background-color: rgba(255, 255, 255, 0.2);
+	}
+	
+	@media (max-width: 768px) {
+		.mobile-toolbar {
+			display: flex;
+		}
+	}
+	
+	/* Sidebar toggle button */
+	#sidebar-toggle {
+		position: absolute;
+		top: 10px;
+		right: 10px;
+		z-index: 101;
+		width: 40px;
+		height: 40px;
+		background: rgba(0,0,0,0.5);
+		color: white;
+		border: none;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 20px;
+		cursor: pointer;
+		box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+		display: none; /* Hide by default on desktop */
+	}
+	
+	@media (max-width: 768px) {
+		#sidebar-toggle {
+			display: flex; /* Show on mobile */
+		}
+	}
 
 	.tool-buttons {
 		display: flex;
@@ -67,6 +166,27 @@
 	.tool-buttons button {
 		flex: 1 0 auto;
 		min-width: 95px;
+	}
+	
+	/* Mobile-friendly responsive adjustments */
+	@media (max-width: 768px) {
+		.footer-bar {
+			height: auto;
+			padding: 5px 10px;
+			font-size: 12px;
+		}
+		
+		.coordinate-display {
+			font-size: 10px;
+		}
+		
+		#full-image-url {
+			max-width: 90vw;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+			display: inline-block;
+		}
 	}
 
 	#categories_coll {
@@ -365,6 +485,11 @@
 			</div>
 		</div>
 
+		<!-- Sidebar Toggle Button for Mobile -->
+		<button id="sidebar-toggle" aria-label="Toggle Sidebar">
+			<i>≡</i>
+		</button>
+
 		<!-- Right Sidebar -->
 		<div class="control-sidebar">
 			<h5>Image Information</h5>
@@ -411,13 +536,17 @@
 				<!-- Zoom controls -->
 				<h6 class="mt-3 mb-2">Zoom</h6>
 				<div class="d-flex align-items-center mb-2">
-					<button class="btn btn-sm btn-outline-secondary me-2" id="zoom-in" title="Zoom In">+</button>
+					<button class="btn btn-outline-secondary me-2" id="zoom-in" title="Zoom In" style="min-height:40px; width:40px; font-size:18px;">+</button>
 					<div class="flex-fill text-center" id="zoom-level">100%</div>
-					<button class="btn btn-sm btn-outline-secondary ms-2" id="zoom-out" title="Zoom Out">-</button>
+					<button class="btn btn-outline-secondary ms-2" id="zoom-out" title="Zoom Out" style="min-height:40px; width:40px; font-size:18px;">-</button>
 				</div>
 				<div class="d-flex">
-					<button class="btn btn-sm btn-outline-secondary flex-fill me-1" id="zoom-fit" title="Fit to Screen">⤢</button>
-					<button class="btn btn-sm btn-outline-secondary flex-fill" id="zoom-reset" title="Reset Zoom (100%)">⟲</button>
+					<button class="btn btn-outline-secondary flex-fill me-1" id="zoom-fit" title="Fit to Screen" style="min-height:40px; font-size:16px;">⤢</button>
+					<button class="btn btn-outline-secondary flex-fill" id="zoom-reset" title="Reset Zoom (100%)" style="min-height:40px; font-size:16px;">⟲</button>
+				</div>
+				<!-- Mobile zoom hint -->
+				<div class="d-flex mt-2 d-none d-md-block">
+					<small class="text-muted">Hint: Pinch to zoom on mobile</small>
 				</div>
 			</div>
 
@@ -439,6 +568,17 @@
 	<!-- Debug Console -->
 	<div id="debug-console"></div>
 	<button id="console-toggle">Show Debug Console</button>
+	
+	<!-- Mobile Bottom Toolbar -->
+	<div class="mobile-toolbar">
+		<button id="mobile-pen" title="Pen Tool"><i>✏️</i></button>
+		<button id="mobile-shape" title="Shape Tools"><i>◻</i></button>
+		<button id="mobile-measure" title="Measure"><i>📏</i></button>
+		<button id="mobile-zoom-in" title="Zoom In"><i>🔍+</i></button>
+		<button id="mobile-zoom-out" title="Zoom Out"><i>🔍-</i></button>
+		<button id="mobile-save" title="Save"><i>💾</i></button>
+		<button id="mobile-tools" title="More Tools"><i>⚙️</i></button>
+	</div>
 </div>
 
 <!-- Add full image URL display at the bottom -->
@@ -452,6 +592,8 @@
 <script src="https://code.jquery.com/jquery-3.6.0.min.js" integrity="sha256-/xUj+3OJU5yExlq6GSYGSHk7tPXikynS7ogEvDej/m4=" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
 <script src="https://deepgis.org/static/scripts/paperjs/dist/paper-full.min.js"></script>
+<!-- Add Hammer.js for touch gestures -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hammer.js/2.0.8/hammer.min.js"></script>
 <!-- Use multiple CDN sources for redundancy -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
@@ -2097,8 +2239,10 @@
 					hideLoadingOverlay();
 					console.log("Image loaded successfully:", imagePath);
 					
-					// Fit image to screen
-					fitImageToScreen();
+					// Load at 100% zoom instead of fitting to screen
+					globals.zoomFactor = 1;
+					paper.view.zoom = 1;
+					updateZoomDisplay();
 					
 					// Reset all tool states
 					cleanupActivePath();
@@ -2324,6 +2468,156 @@
 				// Reset cursor
 				$('#canvas').css('cursor', 'default');
 			};
+			
+			// Add mobile touch gesture support with Hammer.js
+			initializeTouchControls();
+		}
+		
+		// Initialize touch controls for mobile devices
+		function initializeTouchControls() {
+			// Check if Hammer is available
+			if (typeof Hammer === 'undefined') {
+				console.warn('Hammer.js not loaded, touch gestures will not be available');
+				logToDebugConsole('Hammer.js not loaded, touch gestures will not be available', 'warning');
+				return;
+			}
+			
+			// Log initialization
+			logToDebugConsole('Initializing touch controls for mobile', 'info');
+			
+			try {
+				// Get the canvas element
+				const canvasElement = document.getElementById('canvas');
+				const canvasManager = new Hammer.Manager(canvasElement);
+				
+				// Add recognizers
+				const pinch = new Hammer.Pinch();
+				const pan = new Hammer.Pan({ threshold: 10, direction: Hammer.DIRECTION_ALL });
+				const tap = new Hammer.Tap({ taps: 2 }); // Double tap
+				
+				// Add the recognizers with proper priority
+				canvasManager.add([pinch, pan, tap]);
+				
+				// Track initial scale factor and center for pinch gesture
+				let initialScale = 1;
+				let initialCenter = null;
+				
+				// Handle pinch (zoom) gesture
+				canvasManager.on('pinchstart', function(event) {
+					initialScale = globals.zoomFactor;
+					
+					// Get center point in paper coordinates
+					const rect = canvasElement.getBoundingClientRect();
+					const centerX = event.center.x - rect.left;
+					const centerY = event.center.y - rect.top;
+					
+					// Store center for use during pinch move
+					initialCenter = new paper.Point(centerX, centerY);
+					
+					// Prevent default touch actions
+					event.preventDefault();
+				});
+				
+				canvasManager.on('pinchmove', function(event) {
+					if (!initialCenter) return;
+					
+					// Calculate new scale
+					const newScale = initialScale * event.scale;
+					
+					// Limit zoom range (between 10% and 1000%)
+					if (newScale >= 0.1 && newScale <= 10) {
+						// Set the new zoom factor
+						globals.zoomFactor = newScale;
+						
+						// Apply the zoom
+						paper.view.zoom = newScale;
+						
+						// Center on pinch point
+						if (globals.raster && globals.imageLoaded) {
+							// Keep image centered on mobile for simplicity
+							paper.view.center = globals.raster.position;
+						}
+						
+						// Update the zoom display
+						updateZoomDisplay();
+						
+						// Update the view
+						paper.view.update();
+					}
+					
+					// Prevent default touch actions
+					event.preventDefault();
+				});
+				
+				canvasManager.on('pinchend', function(event) {
+					initialCenter = null;
+					
+					// Prevent default touch actions
+					event.preventDefault();
+				});
+				
+				// Track initial position for pan gesture
+				let initialPanPos = null;
+				
+				// Handle pan gesture
+				canvasManager.on('panstart', function(event) {
+					// Only handle pan if we're not in drawing mode
+					if (globals.currentTool === 'view' || globals.currentTool === null) {
+						// Get initial position
+						initialPanPos = paper.view.center.clone();
+						
+						// Prevent default touch actions
+						event.preventDefault();
+					}
+				});
+				
+				canvasManager.on('panmove', function(event) {
+					// Only handle pan if we're not in drawing mode and have initial position
+					if ((globals.currentTool === 'view' || globals.currentTool === null) && initialPanPos) {
+						// Calculate new position
+						const deltaX = event.deltaX;
+						const deltaY = event.deltaY;
+						
+						// Move view center with inverted delta to achieve proper panning
+						paper.view.center = new paper.Point(
+							initialPanPos.x - deltaX / paper.view.zoom,
+							initialPanPos.y - deltaY / paper.view.zoom
+						);
+						
+						// Update the view
+						paper.view.update();
+						
+						// Prevent default touch actions
+						event.preventDefault();
+					}
+				});
+				
+				canvasManager.on('panend', function(event) {
+					initialPanPos = null;
+					
+					// Prevent default touch actions
+					event.preventDefault();
+				});
+				
+				// Handle double-tap gesture for quick zoom
+				canvasManager.on('tap', function(event) {
+					// Double tap to zoom in by 50%
+					const rect = canvasElement.getBoundingClientRect();
+					const centerX = event.center.x - rect.left;
+					const centerY = event.center.y - rect.top;
+					
+					// Use centered zoom
+					zoomView(1.5);
+					
+					// Prevent default touch actions
+					event.preventDefault();
+				});
+				
+				logToDebugConsole('Touch controls initialized successfully', 'success');
+			} catch (e) {
+				console.error('Error initializing touch controls:', e);
+				logToDebugConsole('Error initializing touch controls: ' + e.message, 'error');
+			}
 		}
 		
 		// Function to zoom around a specific point
@@ -3010,7 +3304,7 @@
 		debugConsole.scrollTop = debugConsole.scrollHeight;
 	}
 	
-	// Initialize debug console
+	// Initialize debug console and mobile sidebar
 	$(document).ready(function() {
 		// Handle toggle button for console
 		$('#console-toggle').click(function() {
@@ -3024,8 +3318,121 @@
 			}
 		});
 		
+		// Initialize mobile sidebar toggle
+		$('#sidebar-toggle').click(function() {
+			const sidebar = $('.control-sidebar');
+			if (sidebar.hasClass('expanded')) {
+				sidebar.removeClass('expanded');
+				$(this).html('<i>≡</i>'); // Menu icon
+			} else {
+				sidebar.addClass('expanded');
+				$(this).html('<i>×</i>'); // Close icon
+			}
+		});
+		
+		// Handle initial mobile setup and resize events
+		function handleMobileLayout() {
+			const isMobile = window.innerWidth <= 768;
+			const sidebar = $('.control-sidebar');
+			
+			if (isMobile) {
+				sidebar.removeClass('expanded');
+				// Add overlay click handler for closing sidebar on mobile
+				$('#canvasContainer').off('click.mobileSidebar').on('click.mobileSidebar', function() {
+					if (sidebar.hasClass('expanded')) {
+						sidebar.removeClass('expanded');
+						$('#sidebar-toggle').html('<i>≡</i>');
+					}
+				});
+			} else {
+				// On desktop, sidebar is always expanded
+				sidebar.addClass('expanded');
+			}
+		}
+		
+		// Run on load and window resize
+		handleMobileLayout();
+		$(window).resize(handleMobileLayout);
+		
+		// Add viewport meta tag for mobile responsiveness if not already present
+		if (!$('meta[name="viewport"]').length) {
+			$('head').append('<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">');
+		}
+		
+		// Initialize mobile toolbar
+		$('#mobile-pen').click(function() {
+			cleanupActivePath();
+			penTool.activate();
+			updateActiveToolButton($('#pen_button')[0]);
+			globals.currentTool = 'pen';
+			updateMobileToolbarActiveState(this);
+		});
+		
+		$('#mobile-shape').click(function() {
+			// Toggle shape submenu or default to rectangle tool
+			cleanupActivePath();
+			rectangleTool.activate();
+			updateActiveToolButton($('#rectangle_button')[0]);
+			globals.currentTool = 'rectangle';
+			updateMobileToolbarActiveState(this);
+		});
+		
+		$('#mobile-measure').click(function() {
+			cleanupActivePath();
+			measureTool.activate();
+			updateActiveToolButton($('#measure_button')[0]);
+			globals.currentTool = 'measure';
+			updateMobileToolbarActiveState(this);
+		});
+		
+		$('#mobile-save').click(function() {
+			saveLabels();
+		});
+		
+		$('#mobile-tools').click(function() {
+			// Toggle the sidebar for more tools
+			$('#sidebar-toggle').click();
+		});
+		
+		// Mobile zoom buttons
+		$('#mobile-zoom-in').click(function() {
+			// Zoom in by 20%
+			zoomView(1.2);
+			
+			// Visual feedback for the zoom action
+			$(this).addClass('active');
+			setTimeout(() => $(this).removeClass('active'), 300);
+			
+			// Show zoom level in a toast message
+			const percentage = Math.round(globals.zoomFactor * 100);
+			showSuccessMessage(`Zoom: ${percentage}%`, 1000);
+		});
+		
+		$('#mobile-zoom-out').click(function() {
+			// Zoom out by 20%
+			zoomView(0.8);
+			
+			// Visual feedback for the zoom action
+			$(this).addClass('active');
+			setTimeout(() => $(this).removeClass('active'), 300);
+			
+			// Show zoom level in a toast message
+			const percentage = Math.round(globals.zoomFactor * 100);
+			showSuccessMessage(`Zoom: ${percentage}%`, 1000);
+		});
+		
+		// Function to update mobile toolbar active state
+		function updateMobileToolbarActiveState(activeButton) {
+			// Remove active class from buttons except zoom-in/out which handle their own state
+			$('.mobile-toolbar button:not(#mobile-zoom-in):not(#mobile-zoom-out)').removeClass('active');
+			if (activeButton) {
+				$(activeButton).addClass('active');
+			}
+		}
+		
 		// Log initial message
 		logToDebugConsole('Debug console initialized', 'info');
+		logToDebugConsole('Mobile responsive layout initialized', 'info');
 	});
 
 	// Function to save the canvas as a PDF for printing on 44" wide paper
