@@ -371,325 +371,250 @@
         /* Mobile optimizations */
         @media (max-width: 768px) {
             .sidebar-toggle {
-                display: flex;
-            }
-            
-            .controls-overlay {
-                transform: translateX(100%);
-                transition: transform 0.3s ease;
-                top: 0;
-                right: 0;
-                bottom: 0;
-                width: 80%;
-                max-width: 300px;
-                padding: 20px 15px;
-                background: rgba(40, 40, 40, 0.95);
-                overflow-y: auto;
-                z-index: 100;
-                border-left: 1px solid rgba(255,255,255,0.1);
-            }
-            
-            .controls-overlay.visible {
-                transform: translateX(0);
-            }
-            
-            .button-group {
-                margin-bottom: 10px;
-                padding-bottom: 10px;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-                width: 100%;
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-            }
-            
-            .button-group h3 {
                 display: none;
             }
             
-            .view-buttons {
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                width: 100%;
+            /* Hide the desktop control panel completely */
+            .controls-overlay {
+                display: none;
             }
             
-            .controls-overlay button,
-            .view-buttons button {
-                width: 50px;
-                height: 50px;
+            /* Mobile floating controls */
+            .mobile-floating-controls {
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                z-index: 100;
+                pointer-events: none; /* Let touches pass through to the 3D viewer */
+            }
+            
+            /* Main controls group (right side) */
+            .mobile-controls-group {
+                position: absolute;
+                display: flex;
+                flex-direction: column;
+                gap: 16px; /* Increased gap for better touch separation */
+                pointer-events: auto; /* Allow interacting with the buttons */
+            }
+            
+            /* Position groups */
+            .mobile-controls-right {
+                top: 50%;
+                right: 20px; /* Move further from edge for easier access */
+                transform: translateY(-50%);
+            }
+            
+            .mobile-controls-left {
+                top: 50%;
+                left: 20px; /* Move further from edge for easier access */
+                transform: translateY(-50%);
+            }
+            
+            .mobile-controls-bottom {
+                bottom: 20px; /* Move further from edge */
+                left: 50%;
+                transform: translateX(-50%);
+                flex-direction: row;
+                gap: 16px; /* Increased horizontal gap */
+            }
+            
+            .mobile-controls-top {
+                top: 70px; /* Below the DEV indicator */
+                left: 20px; /* Move further from edge */
+            }
+            
+            /* Floating button style with enhanced touch area */
+            .mobile-floating-btn {
+                width: 56px; /* Larger size for better touch target */
+                height: 56px;
                 border-radius: 50%;
-                padding: 0;
-                margin: 5px 0;
+                background: rgba(0, 0, 0, 0.7); /* Darker for better contrast */
+                border: 2px solid rgba(255, 255, 255, 0.6);
+                color: white;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-size: 0;
-                position: relative;
-            }
-
-            .view-buttons button.camera-mode {
-                width: 50px;
-                flex: 0 0 50px;
-                margin: 5px 0;
+                font-size: 24px; /* Larger icons */
+                margin: 0;
+                padding: 0;
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4); /* Enhanced shadow */
+                transition: all 0.2s ease;
+                position: relative; /* For badge positioning */
             }
             
-            /* Icons for buttons */
-            .btn-icon::before {
-                font-family: Arial, sans-serif;
-                font-size: 24px;
-                display: block;
+            /* Fallback for browsers without backdrop-filter support */
+            @supports (backdrop-filter: blur(4px)) {
+                .mobile-floating-btn {
+                    backdrop-filter: blur(4px);
+                    background: rgba(0, 0, 0, 0.5);
+                }
+                
+                .mobile-model-info, 
+                .mobile-measurements-display, 
+                .mobile-view-cube {
+                    backdrop-filter: blur(4px);
+                    background: rgba(0, 0, 0, 0.5);
+                }
             }
             
-            /* View direction icons */
-            #viewFront::before { content: "⬅️"; }
-            #viewBack::before { content: "➡️"; }
-            #viewLeft::before { content: "👁️"; }
-            #viewRight::before { content: "👁️"; }
-            #viewTop::before { content: "⬇️"; }
-            #viewBottom::before { content: "⬆️"; }
+            .mobile-floating-btn:active {
+                transform: scale(0.92);
+                background: rgba(0, 0, 0, 0.8);
+            }
             
-            /* Camera and view mode icons */
-            #toggleCameraMode::before { content: "🔍"; }
-            #toggleViewMode::before { content: "👁️"; }
+            .mobile-floating-btn.active {
+                background: rgba(229, 57, 53, 0.9);
+                border-color: rgba(255, 255, 255, 0.9);
+                box-shadow: 0 0 16px rgba(229, 57, 53, 0.5);
+            }
             
-            /* Measurement icons */
-            #measureMode::before { content: "📏"; }
-            #clearMeasurements::before { content: "🗑️"; }
-            #pathMeasureMode::before { content: "📍"; }
-            #completePath::before { content: "✔️"; }
-            
-            /* Tooltip for mobile buttons */
-            .tooltip-text {
+            /* Measurement results badge */
+            .measurement-result-badge {
                 position: absolute;
-                left: 50px;
-                background-color: rgba(0, 0, 0, 0.8);
+                top: -6px;
+                right: -6px;
+                background: #4CAF50;
                 color: white;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 12px;
-                white-space: nowrap;
-                visibility: hidden;
-                opacity: 0;
-                transition: opacity 0.3s;
-                pointer-events: none;
+                font-size: 14px; /* Larger text */
+                width: 24px; /* Larger badge */
+                height: 24px;
+                border-radius: 50%;
+                display: none;
+                justify-content: center;
+                align-items: center;
+                font-weight: bold;
+                border: 1px solid white;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+                z-index: 2; /* Ensure above button */
+                pointer-events: auto; /* Ensure clickable */
             }
             
-            .controls-overlay button:hover .tooltip-text,
-            .controls-overlay button:active .tooltip-text {
-                visibility: visible;
-                opacity: 1;
+            .measurement-result-badge.active {
+                display: flex;
             }
             
             /* Model info panel on mobile */
-            .model-info {
-                display: none;
-                position: fixed;
-                bottom: 70px;
-                left: 10px;
-                background: rgba(40, 40, 40, 0.8);
+            .mobile-model-info {
+                position: absolute;
+                bottom: 20px;
+                left: 20px;
+                background: rgba(0, 0, 0, 0.7);
                 color: white;
-                padding: 10px;
-                border-radius: 8px;
-                max-width: 200px;
-                margin: 0;
-                border-top: none;
+                padding: 10px 14px;
+                border-radius: 10px;
+                font-size: 12px; /* Slightly larger */
+                max-width: 150px;
+                pointer-events: auto;
+                border: 1px solid rgba(255, 255, 255, 0.3);
             }
             
-            .model-info p {
+            .mobile-model-info p {
+                margin: 4px 0; /* More space between lines */
                 font-size: 12px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            /* Mobile measurements display */
+            .mobile-measurements-display {
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%) scale(0.9);
+                background: rgba(0, 0, 0, 0.85);
                 color: white;
-                margin: 3px 0;
+                padding: 18px;
+                border-radius: 16px;
+                font-size: 16px;
+                max-height: 0;
+                min-width: 250px;
+                max-width: 85%;
+                overflow: hidden;
+                transition: all 0.3s ease-out;
+                z-index: 200;
+                opacity: 0;
+                pointer-events: none; /* Initially can't be interacted with */
+                border: 2px solid rgba(255, 255, 255, 0.3);
             }
             
-            #mobileInfo {
-                display: block;
-                width: 40px;
-                height: 40px;
-                border-radius: 50%;
-                background: #3498db;
-                color: white;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                margin-top: 10px;
-                font-size: 20px;
+            .mobile-measurements-display.active {
+                max-height: 70vh; /* Limit height to 70% of viewport */
+                overflow-y: auto;
+                opacity: 1;
+                transform: translate(-50%, -50%) scale(1);
+                pointer-events: auto; /* Allow interaction when shown */
+            }
+            
+            /* Add close button to measurements display */
+            .mobile-measurements-display::before {
+                content: "×";
+                position: absolute;
+                top: 8px;
+                right: 12px;
+                font-size: 24px;
+                font-weight: bold;
+                color: rgba(255, 255, 255, 0.8);
                 cursor: pointer;
             }
             
-            /* Mobile floating action buttons - only showing the main one now */
-            .mobile-fab {
-                position: fixed;
+            /* View cube for 3D navigation */
+            .mobile-view-cube {
+                position: absolute;
                 bottom: 20px;
                 right: 20px;
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: #4CAF50;
-                color: white;
+                width: 70px; /* Larger for easier tapping */
+                height: 70px;
+                background: rgba(0, 0, 0, 0.7); 
+                border-radius: 12px;
+                pointer-events: auto;
+                display: grid;
+                grid-template-columns: 1fr 1fr 1fr;
+                grid-template-rows: 1fr 1fr 1fr;
+                gap: 4px;
+                padding: 5px;
+                border: 1px solid rgba(255, 255, 255, 0.3);
+            }
+            
+            .cube-face {
+                width: auto;
+                height: auto;
+                background: rgba(255, 255, 255, 0.25);
+                border-radius: 4px;
                 display: flex;
                 align-items: center;
                 justify-content: center;
-                font-size: 30px;
-                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-                z-index: 200;
-            }
-            
-            /* Special controls for measure mode on mobile */
-            .measure-mobile-active .mobile-fab {
-                background: #ff4444;
-            }
-            
-            /* Dev indicator */
-            .dev-indicator {
-                top: 10px !important;
-                left: 10px !important;
-                padding: 6px 12px !important;
-                font-size: 14px !important;
-            }
-            
-            /* Loading indicator */
-            #loading {
-                font-size: 22px;
-                padding: 25px;
-            }
-            
-            /* Annotations panel on mobile */
-            #annotations {
-                left: 80px;
-                right: 20px;
-                max-width: calc(100% - 100px);
-                bottom: 20px;
-                transform: none;
-                max-height: 150px;
-                background: rgba(40, 40, 40, 0.8);
+                font-size: 12px;
+                font-weight: bold;
+                cursor: pointer;
                 color: white;
             }
             
-            #annotations h3 {
-                font-size: 16px;
-                color: white;
-                display: none; /* Hide the "Measurements" heading in mobile view */
+            .cube-face:active {
+                background: rgba(255, 255, 255, 0.5);
             }
             
-            #annotations li {
-                font-size: 14px;
-                margin-bottom: 8px;
-                color: white;
-            }
+            /* Grid positioning for cube faces */
+            #mobileFront { grid-area: 2 / 2 / 3 / 3; }
+            #mobileBack { grid-area: 2 / 3 / 3 / 4; }
+            #mobileLeft { grid-area: 2 / 1 / 3 / 2; }
+            #mobileRight { grid-area: 2 / 3 / 3 / 4; } /* This needs to be adjusted */
+            #mobileTop { grid-area: 1 / 2 / 2 / 3; }
+            #mobileBottom { grid-area: 3 / 2 / 4 / 3; }
+
+            /* Fix overlap issue with back/right buttons */
+            #mobileRight { grid-row: 1; grid-column: 3; }
             
-            /* Explicitly hide keyboard shortcuts on mobile */
+            /* Hide keyboard shortcuts on mobile */
             .keyboard-shortcuts {
                 display: none !important;
             }
             
-            /* Larger clear measurements button for mobile */
-            #clearMeasurements {
-                width: 48px;
-                height: 48px;
-                background: #ff4444;
-                margin: 8px 0;
-            }
-            
-            #clearMeasurements::before {
-                font-size: 24px;
-            }
-
-            /* Mobile-specific measurement styles */
-            .button-group.measurements-group {
-                background: rgba(40, 40, 40, 0.9);
-                position: fixed;
-                bottom: 80px;
-                left: 10px;
-                right: 10px;
-                border-radius: 10px;
-                padding: 15px;
-                z-index: 900;
-                max-height: 0;
-                overflow: hidden;
-                transition: max-height 0.3s ease-in-out;
-                display: flex;
-                flex-direction: column;
-            }
-            
-            .measurements-group.mobile-active {
-                max-height: 300px;
-                border: 1px solid rgba(255,255,255,0.2);
-            }
-            
-            .measurement-subgroup {
-                border-bottom: 1px solid rgba(255,255,255,0.1);
-                padding-bottom: 15px;
-                margin-bottom: 15px;
-            }
-            
-            .measurement-subgroup h4 {
-                color: white;
-                font-size: 14px;
-                margin-bottom: 10px;
-                text-align: center;
-            }
-            
-            .button-group.measurements-group h3 {
-                color: white;
-                font-size: 16px;
-                text-align: center;
-                margin-bottom: 12px;
-            }
-            
-            .measurement-btn, .utility-btn {
-                padding: 10px;
-                margin: 5px 0;
-                width: 100%;
-                justify-content: center;
-            }
-            
-            .btn-text {
-                color: white;
-                font-weight: bold;
-            }
-
-            /* Floating action buttons for mobile path measure */
-            .mobile-path-fab {
-                position: fixed;
-                bottom: 20px;
-                left: 20px;
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: #FF6600;
-                color: white;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 24px;
-                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-                z-index: 200;
-                display: none; /* Hidden by default */
-            }
-            
-            /* Special controls for path measure mode on mobile */
-            .path-measure-mobile-active .mobile-path-fab {
-                background: #FF4500;
-            }
-
-            /* Mobile path measurement styles */
-            .mobile-path-complete-fab {
-                position: fixed;
-                bottom: 20px;
-                right: 90px;
-                width: 60px;
-                height: 60px;
-                border-radius: 50%;
-                background: #4CAF50;
-                color: white;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 24px;
-                box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-                z-index: 200;
-                display: none; /* Hidden by default */
+            /* Ensure annotations are hidden */
+            #annotations {
+                display: none !important; 
             }
         }
     </style>
@@ -698,7 +623,8 @@
     <canvas id="viewer"></canvas>
     <div id="loading">Loading 3D model...</div>
     
-    <button class="sidebar-toggle" id="sidebarToggle">
+    <!-- Remove this sidebar toggle button -->
+    <button class="sidebar-toggle" id="sidebarToggle" style="display: none;">
         ☰
     </button>
     
@@ -706,22 +632,63 @@
         DEV VERSION
     </div>
     
-    <!-- Mobile floating action button (only shows on mobile) -->
+    <!-- Remove these mobile floating action buttons -->
+    <!--
     <div class="mobile-fab" id="mobileMeasure" style="display: none;">
         <span>📏</span>
     </div>
     
-    <!-- Mobile floating action button for path measure (only shows on mobile) -->
     <div class="mobile-path-fab" id="mobilePathMeasure" style="display: none;">
         <span>📍</span>
     </div>
     
-    <!-- Mobile floating action button for completing path (only shows on mobile) -->
     <div class="mobile-path-complete-fab" id="mobileCompletePath" style="display: none; right: 90px; bottom: 20px;">
         <span>✔️</span>
     </div>
+    -->
+    
+    <!-- Mobile measurements display -->
+    <div class="mobile-measurements-display" id="mobileMeasurementsDisplay">
+        <div id="mobileMeasurementsList"></div>
+    </div>
+    
+    <!-- Mobile floating controls - only visible on mobile -->
+    <div class="mobile-floating-controls" id="mobileControls" style="display: none;">
+        <!-- Right side controls - Measurement tools -->
+        <div class="mobile-controls-group mobile-controls-right">
+            <button id="mobileMeasureMode" class="mobile-floating-btn">📏
+                <span id="mobileMeasureBadge" class="measurement-result-badge">0</span>
+            </button>
+            <button id="mobilePathMeasureMode" class="mobile-floating-btn">📍</button>
+            <button id="mobileCompletePath" class="mobile-floating-btn">✓</button>
+            <button id="mobileClearMeasurements" class="mobile-floating-btn">🗑️</button>
+        </div>
+        
+        <!-- Left side controls - View modes -->
+        <div class="mobile-controls-group mobile-controls-left">
+            <button id="mobileToggleViewMode" class="mobile-floating-btn">👁️</button>
+            <button id="mobileToggleCameraMode" class="mobile-floating-btn">🔍</button>
+        </div>
+        
+        <!-- View cube for navigation -->
+        <div class="mobile-view-cube">
+            <div class="cube-face" id="mobileFront">F</div>
+            <div class="cube-face" id="mobileBack">B</div>
+            <div class="cube-face" id="mobileLeft">L</div>
+            <div class="cube-face" id="mobileRight">R</div>
+            <div class="cube-face" id="mobileTop">T</div>
+            <div class="cube-face" id="mobileBottom">B</div>
+        </div>
+        
+        <!-- Mobile model info -->
+        <div class="mobile-model-info">
+            <p id="mobileModelName">Loading...</p>
+            <p id="mobileModelDimensions">Loading...</p>
+        </div>
+    </div>
     
     <div class="controls-overlay">
+        <div class="mobile-toolbar-section views-section">
         <div class="button-group">
             <h3>View Controls</h3>
             <div class="view-buttons">
@@ -733,9 +700,11 @@
                 <button id="viewBottom" class="btn-icon"><span class="tooltip-text">Bottom</span></button>
                 <button id="toggleCameraMode" class="camera-mode btn-icon">Perspective<span class="tooltip-text">Camera</span></button>
                 <button id="toggleViewMode" class="camera-mode btn-icon">Transparent<span class="tooltip-text">View</span></button>
+                </div>
             </div>
         </div>
         
+        <div class="mobile-toolbar-section measurements-section">
         <div class="button-group measurements-group">
             <h3>Measurement</h3>
             
@@ -752,6 +721,9 @@
                     <span class="btn-text">Clear All</span>
                     <span class="tooltip-text">Clear all measurements</span>
                 </button>
+                    
+                    <!-- Measurement Results Badge -->
+                    <span id="measurementResultsBadge" class="measurement-result-badge">0</span>
             </div>
             
             <!-- Path Measurement Group -->
@@ -767,6 +739,7 @@
                     <span class="btn-text">Complete Path</span>
                     <span class="tooltip-text">Complete current path and start a new one</span>
                 </button>
+                </div>
             </div>
         </div>
         
@@ -835,10 +808,6 @@
         
         // Apply mobile-specific adjustments if needed
         if (isMobile) {
-            document.getElementById('mobileMeasure').style.display = 'flex';
-            document.getElementById('annotations').style.display = 'none'; // Hide initially on mobile
-            document.getElementById('mobileInfo').style.display = 'block'; // Show the info button
-            
             // Hide keyboard shortcuts on mobile
             const keyboardShortcuts = document.querySelector('.keyboard-shortcuts');
             if (keyboardShortcuts) {
@@ -852,15 +821,11 @@
                     'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
             }, {passive: false});
             
-            // Add info button functionality
-            document.getElementById('mobileInfo').addEventListener('click', function() {
-                const modelInfo = document.querySelector('.model-info');
-                if (modelInfo.style.display === 'block') {
-                    modelInfo.style.display = 'none';
-                } else {
-                    modelInfo.style.display = 'block';
+            // Show annotations in mobile view
+            const annotations = document.getElementById('annotations');
+            if (annotations) {
+                annotations.style.display = 'block';
                 }
-            });
         }
         
         // Unit for measurements - inches by default
@@ -1577,19 +1542,44 @@
             updateMeasurementsList();
         }
         
+        // Function to update the measurements list
         function updateMeasurementsList() {
             const list = document.getElementById('measurementsList');
-            list.innerHTML = '';
+            const mobilelist = document.getElementById('mobileMeasurementsList');
+            let measurementsCount = 0;
+            
+            // Clear existing lists
+            if (list) list.innerHTML = '';
+            if (mobilelist) mobilelist.innerHTML = '';
             
             // Add regular measurements
             measurements.forEach((measurement, index) => {
+                measurementsCount++;
+                // For regular list
+                if (list) {
                 const listItem = document.createElement('li');
                 listItem.textContent = `Measurement ${index + 1}: ${getMeasurementText(measurement.distance)}`;
                 list.appendChild(listItem);
+                }
+                
+                // For mobile list
+                if (mobilelist) {
+                    const listItem = document.createElement('div');
+                    listItem.style.margin = '8px 0';
+                    listItem.style.padding = '8px 10px'; 
+                    listItem.style.borderLeft = '3px solid #4CAF50';
+                    listItem.style.backgroundColor = 'rgba(76, 175, 80, 0.1)';
+                    listItem.style.borderRadius = '4px';
+                    listItem.textContent = `Point ${index + 1}: ${getMeasurementText(measurement.distance)}`;
+                    mobilelist.appendChild(listItem);
+                }
             });
             
             // Add completed path measurements
             completedPaths.forEach((path, pathIndex) => {
+                measurementsCount++;
+                // For regular list
+                if (list) {
                 const listItem = document.createElement('li');
                 listItem.className = 'path-measurement';
                 listItem.textContent = `Path ${pathIndex + 1}: ${getMeasurementText(path.totalDistance)}`;
@@ -1603,12 +1593,45 @@
                         segmentItem.className = 'path-segment';
                         segmentItem.textContent = `Segment ${i}: ${getMeasurementText(segmentDistance)}`;
                         list.appendChild(segmentItem);
+                        }
+                    }
+                }
+                
+                // For mobile list
+                if (mobilelist) {
+                    const listItem = document.createElement('div');
+                    listItem.style.margin = '10px 0';
+                    listItem.style.padding = '8px 10px';
+                    listItem.style.borderLeft = '3px solid #FF6600';
+                    listItem.style.backgroundColor = 'rgba(255, 102, 0, 0.1)';
+                    listItem.style.borderRadius = '4px';
+                    listItem.style.fontWeight = 'bold';
+                    listItem.textContent = `Path ${pathIndex + 1}: ${getMeasurementText(path.totalDistance)}`;
+                    mobilelist.appendChild(listItem);
+                    
+                    // Add segment measurements for completed paths if needed
+                    if (path.showSegments) {
+                        for (let i = 1; i < path.points.length; i++) {
+                            const segmentDistance = path.points[i-1].distanceTo(path.points[i]);
+                            const segmentItem = document.createElement('div');
+                            segmentItem.style.margin = '3px 0 3px 15px';
+                            segmentItem.style.padding = '4px 8px';
+                            segmentItem.style.borderLeft = '2px solid #FFA500';
+                            segmentItem.style.fontSize = '0.9em';
+                            segmentItem.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
+                            segmentItem.style.borderRadius = '3px';
+                            segmentItem.textContent = `Segment ${i}: ${getMeasurementText(segmentDistance)}`;
+                            mobilelist.appendChild(segmentItem);
+                        }
                     }
                 }
             });
             
             // Add current active path measurement
             if (pathMeasurementPoints.length > 1) {
+                measurementsCount++;
+                // For regular list
+                if (list) {
                 const listItem = document.createElement('li');
                 listItem.className = 'path-measurement';
                 listItem.textContent = `Current Path: ${getMeasurementText(pathTotalDistance)}`;
@@ -1621,6 +1644,52 @@
                     segmentItem.className = 'path-segment';
                     segmentItem.textContent = `Segment ${i}: ${getMeasurementText(segmentDistance)}`;
                     list.appendChild(segmentItem);
+                    }
+                }
+                
+                // For mobile list
+                if (mobilelist) {
+                    const listItem = document.createElement('div');
+                    listItem.style.margin = '10px 0';
+                    listItem.style.padding = '8px 10px';
+                    listItem.style.borderLeft = '3px solid #FF6600';
+                    listItem.style.backgroundColor = 'rgba(255, 102, 0, 0.1)';
+                    listItem.style.borderRadius = '4px';
+                    listItem.style.fontWeight = 'bold';
+                    listItem.textContent = `Current Path: ${getMeasurementText(pathTotalDistance)}`;
+                    mobilelist.appendChild(listItem);
+                    
+                    // Add segment measurements
+                    for (let i = 1; i < pathMeasurementPoints.length; i++) {
+                        const segmentDistance = pathMeasurementPoints[i-1].distanceTo(pathMeasurementPoints[i]);
+                        const segmentItem = document.createElement('div');
+                        segmentItem.style.margin = '3px 0 3px 15px';
+                        segmentItem.style.padding = '4px 8px';
+                        segmentItem.style.borderLeft = '2px solid #FFA500';
+                        segmentItem.style.fontSize = '0.9em';
+                        segmentItem.style.backgroundColor = 'rgba(255, 165, 0, 0.05)';
+                        segmentItem.style.borderRadius = '3px';
+                        segmentItem.textContent = `Segment ${i}: ${getMeasurementText(segmentDistance)}`;
+                        mobilelist.appendChild(segmentItem);
+                    }
+                }
+            }
+            
+            // Update the mobile measurement badge
+            if (isMobile) {
+                const badge = document.getElementById('mobileMeasureBadge');
+                
+                if (badge) {
+                    badge.textContent = measurementsCount;
+                    badge.classList.toggle('active', measurementsCount > 0);
+                }
+                
+                // Update mobile model info in case it's changed
+                updateMobileModelInfo();
+                
+                // Show measurements briefly if a new one was added
+                if (measurementsCount > 0) {
+                    showMobileMeasurements(true, true);
                 }
             }
         }
@@ -2383,101 +2452,218 @@
         document.getElementById('viewBottom').addEventListener('click', setViewBottom);
         document.getElementById('toggleCameraMode').addEventListener('click', toggleCameraMode);
 
-        // Sidebar toggle functionality
-        document.getElementById('sidebarToggle').addEventListener('click', function() {
-            const sidebar = document.querySelector('.controls-overlay');
-            sidebar.classList.toggle('visible');
-            
-            // Update toggle button text
-            const toggleButton = document.getElementById('sidebarToggle');
-            if (sidebar.classList.contains('visible')) {
-                toggleButton.textContent = '×';
-            } else {
-                toggleButton.textContent = '☰';
-            }
-        });
-        
         // Mobile-specific event handlers
         if (isMobile) {
-            document.getElementById('mobileMeasure').addEventListener('click', toggleMeasureMode);
-            document.getElementById('mobilePathMeasure').addEventListener('click', togglePathMeasureMode);
-            document.getElementById('mobileCompletePath').addEventListener('click', completeCurrentPath);
-            
-            // Use the floating action button as the primary measure button on mobile
-            const mobileMeasureBtn = document.getElementById('mobileMeasure');
-            mobileMeasureBtn.style.display = 'flex';
-            
-            // Show the path measure button on mobile
-            const mobilePathMeasureBtn = document.getElementById('mobilePathMeasure');
-            mobilePathMeasureBtn.style.display = 'flex';
-            
-            // Add functionality to toggle measurement panel
-            mobileMeasureBtn.addEventListener('click', function() {
-                // Single tap - toggle measurement panel visibility
-                const measurementPanel = document.querySelector('.button-group.measurements-group');
-                measurementPanel.classList.toggle('mobile-active');
-                
-                // If opening the panel, make sure annotations are visible too
-                if (measurementPanel.classList.contains('mobile-active')) {
-                    document.getElementById('annotations').style.display = 'block';
-                }
-            });
-            
-            // Add a double-tap functionality to the measure FAB for clearing measurements
-            let lastTapTime = 0;
-            mobileMeasureBtn.addEventListener('click', function(e) {
-                const currentTime = new Date().getTime();
-                const tapLength = currentTime - lastTapTime;
-                
-                if (tapLength < 500 && tapLength > 0) {
-                    // Double tap detected - clear measurements
-                    clearMeasurements();
-                    e.preventDefault();
-                }
-                
-                lastTapTime = currentTime;
-            });
-            
-            // Add the same double-tap functionality to the path measure FAB
-            let lastPathTapTime = 0;
-            mobilePathMeasureBtn.addEventListener('click', function(e) {
-                const currentTime = new Date().getTime();
-                const tapLength = currentTime - lastPathTapTime;
-                
-                if (tapLength < 500 && tapLength > 0) {
-                    // Double tap detected - clear path measurements
-                    clearMeasurements();
-                    e.preventDefault();
-                }
-                
-                lastPathTapTime = currentTime;
-            });
-            
-            // Show active state on the FAB when in measure mode
-            if (isMeasureMode) {
-                mobileMeasureBtn.classList.add('measure-mobile-active');
+            // Show the mobile controls
+            const mobileControls = document.getElementById('mobileControls');
+            if (mobileControls) {
+                mobileControls.style.display = 'block';
             }
             
-            // Show active state on the path FAB when in path measure mode
-            if (isPathMeasureMode) {
-                mobilePathMeasureBtn.classList.add('path-measure-mobile-active');
+            // Create a debug log function for mobile testing
+            function mobileDebug(msg) {
+                console.log('[Mobile] ' + msg);
             }
             
-            // Add tap to show/hide annotations on mobile
-            document.addEventListener('click', function(e) {
-                // If we're in measure mode, keep annotations visible
+            // Store original functions before extending them
+            const originalFunctions = {
+                toggleMeasureMode: toggleMeasureMode,
+                togglePathMeasureMode: togglePathMeasureMode,
+                toggleViewMode: toggleViewMode,
+                toggleCameraMode: toggleCameraMode,
+                completeCurrentPath: completeCurrentPath,
+                clearMeasurements: clearMeasurements
+            };
+            
+            // Set up mobile model info
+            const mobileModelName = document.getElementById('mobileModelName');
+            const mobileModelDimensions = document.getElementById('mobileModelDimensions');
+            
+            // Update mobile model info from desktop display
+            function updateMobileModelInfo() {
+                const desktopModelName = document.getElementById('modelName');
+                const desktopModelDimensions = document.getElementById('modelDimensions');
+                
+                if (desktopModelName && mobileModelName) {
+                    mobileModelName.textContent = desktopModelName.textContent;
+                }
+                
+                if (desktopModelDimensions && mobileModelDimensions) {
+                    mobileModelDimensions.textContent = desktopModelDimensions.textContent;
+            }
+            }
+        
+            // Update initial model info
+            updateMobileModelInfo();
+            
+            // Create safe wrappers for button event handlers
+            function safeAddEventListener(id, event, handler) {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.addEventListener(event, handler);
+                    return true;
+                }
+                return false;
+            }
+            
+            // Override measurement functions with extended versions
+            toggleMeasureMode = function() {
+                // Call original function
+                originalFunctions.toggleMeasureMode();
+                // Update mobile UI
+                updateMobileMeasureUI();
+                // Show measurements if in measure mode
                 if (isMeasureMode) {
-                    document.getElementById('annotations').style.display = 'block';
-                } else {
-                    // Toggle annotations based on tap position - if not tapping a control
-                    if (!e.target.closest('.controls-overlay') && 
-                        !e.target.closest('#annotations') && 
-                        !e.target.closest('.mobile-fab')) {
-                        const annotations = document.getElementById('annotations');
-                        annotations.style.display = annotations.style.display === 'none' ? 'block' : 'none';
+                    showMobileMeasurements(true);
+                }
+                mobileDebug('Measure mode toggled: ' + isMeasureMode);
+            };
+            
+            togglePathMeasureMode = function() {
+                // Call original function
+                originalFunctions.togglePathMeasureMode();
+                // Update mobile UI
+                updateMobileMeasureUI();
+                // Show measurements if in path measure mode
+                if (isPathMeasureMode) {
+                    showMobileMeasurements(true);
+                }
+                mobileDebug('Path measure mode toggled: ' + isPathMeasureMode);
+            };
+            
+            clearMeasurements = function() {
+                // Call original function
+                originalFunctions.clearMeasurements();
+                // Update mobile UI
+                updateMobileMeasureUI();
+                // Update the badge and hide measurements display
+                const badge = document.getElementById('mobileMeasureBadge');
+                const panel = document.getElementById('mobileMeasurementsDisplay');
+                if (badge) badge.classList.remove('active');
+                if (panel) panel.classList.remove('active');
+                mobileDebug('Measurements cleared');
+            };
+            
+            // Hook up mobile controls to their functions with error handling
+            safeAddEventListener('mobileMeasureMode', 'click', function(e) {
+                // Prevent handling badge clicks as button clicks
+                if (e.target.id === 'mobileMeasureBadge') return;
+                toggleMeasureMode();
+            });
+            
+            safeAddEventListener('mobilePathMeasureMode', 'click', togglePathMeasureMode);
+            safeAddEventListener('mobileCompletePath', 'click', completeCurrentPath);
+            safeAddEventListener('mobileClearMeasurements', 'click', clearMeasurements);
+            
+            // View mode toggle with visual feedback
+            safeAddEventListener('mobileToggleViewMode', 'click', function() {
+                originalFunctions.toggleViewMode();
+                // Update button appearance based on view mode
+                const viewModeBtn = document.getElementById('mobileToggleViewMode');
+                if (viewModeBtn) {
+                    // viewMode is 0: solid, 1: transparent, 2: wireframe
+                    viewModeBtn.innerHTML = [
+                        '👁️', // Solid
+                        '👓', // Transparent
+                        '🔍'  // Wireframe
+                    ][viewMode];
+                }
+            });
+            
+            // Camera mode toggle with visual feedback
+            safeAddEventListener('mobileToggleCameraMode', 'click', function() {
+                originalFunctions.toggleCameraMode();
+                // Update button appearance based on camera mode
+                const cameraModeBtn = document.getElementById('mobileToggleCameraMode');
+                if (cameraModeBtn) {
+                    cameraModeBtn.innerHTML = isOrthographic ? '📏' : '🔍';
+                    cameraModeBtn.classList.toggle('active', isOrthographic);
+                }
+            });
+                
+            // Set up the mobile view cube
+            safeAddEventListener('mobileFront', 'click', setViewFront);
+            safeAddEventListener('mobileBack', 'click', setViewBack);
+            safeAddEventListener('mobileLeft', 'click', setViewLeft);
+            safeAddEventListener('mobileRight', 'click', setViewRight);
+            safeAddEventListener('mobileTop', 'click', setViewTop);
+            safeAddEventListener('mobileBottom', 'click', setViewBottom);
+            
+            // Function to show/hide mobile measurements panel
+            function showMobileMeasurements(show, autoHide = false) {
+                const panel = document.getElementById('mobileMeasurementsDisplay');
+                if (panel) {
+                    if (show) {
+                        panel.classList.add('active');
+                        if (autoHide) {
+                            setTimeout(() => {
+                                panel.classList.remove('active');
+                            }, 3000);
+                        }
+                    } else {
+                        panel.classList.remove('active');
                     }
                 }
+            }
+            
+            // Update mobile UI when measurement modes change
+            function updateMobileMeasureUI() {
+                const measureBtn = document.getElementById('mobileMeasureMode');
+                const pathBtn = document.getElementById('mobilePathMeasureMode');
+                const completeBtn = document.getElementById('mobileCompletePath');
+                
+                // Update active states
+                if (measureBtn) measureBtn.classList.toggle('active', isMeasureMode);
+                if (pathBtn) pathBtn.classList.toggle('active', isPathMeasureMode);
+                
+                // Show/hide complete path button based on path mode
+                if (completeBtn) {
+                    completeBtn.style.display = isPathMeasureMode ? 'flex' : 'none';
+                }
+            }
+            
+            // Set initial display states
+            updateMobileMeasureUI();
+            
+            // Set up measurement badge clicks
+            const badge = document.getElementById('mobileMeasureBadge');
+            const panel = document.getElementById('mobileMeasurementsDisplay');
+            
+            if (badge && panel) {
+                badge.addEventListener('click', function(e) {
+                    e.stopPropagation(); // Stop event from reaching the parent button
+                    e.preventDefault();  // Prevent default action
+                    showMobileMeasurements(true, false);
+                    mobileDebug('Badge clicked - showing measurements');
+                });
+                
+                // Add a close behavior to the measurements panel
+                panel.addEventListener('click', function(e) {
+                    // Check if they clicked the close button (::before pseudo-element)
+                    const rect = panel.getBoundingClientRect();
+                    const isCloseButton = (
+                        e.clientX > rect.right - 40 && 
+                        e.clientX < rect.right - 10 && 
+                        e.clientY > rect.top + 10 && 
+                        e.clientY < rect.top + 40
+                    );
+                    
+                    if (isCloseButton) {
+                        showMobileMeasurements(false);
+                        e.stopPropagation();
+                        mobileDebug('Close button clicked - hiding measurements');
+            }
+                });
+            
+                // Click elsewhere to close panel
+            document.addEventListener('click', function(e) {
+                    if (!panel.contains(e.target) && 
+                        e.target.id !== 'mobileMeasureBadge' && 
+                        e.target.id !== 'mobileMeasureMode') {
+                        showMobileMeasurements(false);
+                }
             });
+            }
         }
 
         // Path measurement functions
