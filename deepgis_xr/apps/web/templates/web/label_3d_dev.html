@@ -699,7 +699,7 @@
                 <button id="viewTop" class="btn-icon"><span class="tooltip-text">Top</span></button>
                 <button id="viewBottom" class="btn-icon"><span class="tooltip-text">Bottom</span></button>
                 <button id="toggleCameraMode" class="camera-mode btn-icon">Perspective<span class="tooltip-text">Camera</span></button>
-                <button id="toggleViewMode" class="camera-mode btn-icon">Transparent<span class="tooltip-text">View</span></button>
+                <button id="toggleViewMode" class="camera-mode btn-icon">Wireframe<span class="tooltip-text">View</span></button>
                 </div>
             </div>
         </div>
@@ -796,7 +796,7 @@
 
     <script type="module">
         import * as THREE from 'three';
-        import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
         import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
@@ -806,30 +806,10 @@
         // Check if device is mobile
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
         
-        // Apply mobile-specific adjustments if needed
-        if (isMobile) {
-            // Hide keyboard shortcuts on mobile
-            const keyboardShortcuts = document.querySelector('.keyboard-shortcuts');
-            if (keyboardShortcuts) {
-                keyboardShortcuts.style.display = 'none';
-            }
-            
-            // Optimize touch controls
-            document.addEventListener('touchstart', function() {
-                // Prevent zooming on double tap
-                document.querySelector('meta[name="viewport"]').content = 
-                    'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
-            }, {passive: false});
-            
-            // Show annotations in mobile view
-            const annotations = document.getElementById('annotations');
-            if (annotations) {
-                annotations.style.display = 'block';
-                }
-        }
-        
-        // Unit for measurements - inches by default
-        let currentUnit = 0.0254; // Default unit is inches
+        // Unit for measurements - with calibration for real-world units
+let currentUnit = 1.0; // Will be adjusted after model loading
+let unitLabel = "m"; // Display label in meters
+let calibrationHeight = 4.28; // Assumed height in meters
         
         // Control states
         let isOrthographic = false;
@@ -842,14 +822,21 @@
         let pathMeasurementLabels = [];
         let pathTotalDistance = 0;
         let pathTotalLabel = null;
-        let isRotationKeyPressed = false; // Flag to track if rotation key is pressed
-        let pathPreviewMarker = null; // Preview marker for potential intersection point
+        let isRotationKeyPressed = false;
+        let pathPreviewMarker = null;
         
         // Add multi-path storage
-        let completedPaths = []; // Array to store multiple completed paths
-        let currentPathId = 0; // ID for the current path
+        let completedPaths = [];
+        let currentPathId = 0;
+
+        // Loading timeout - single declaration
+        const loadingTimeout = setTimeout(() => {
+            if (document.getElementById('loading').style.display !== 'none') {
+                document.getElementById('loading').textContent = 'Loading is taking longer than expected. Please try refreshing the page.';
+            }
+        }, 30000);
         
-        // Set up both cameras: perspective and orthographic
+        // Set up both cameras
         const perspectiveCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
         const orthographicCamera = new THREE.OrthographicCamera(
             window.innerWidth / -100, 
@@ -869,7 +856,7 @@
             alpha: true 
         });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setClearColor(0x303040); // Darker blue-gray background for better contrast
+        renderer.setClearColor(0x303040);
         renderer.setPixelRatio(window.devicePixelRatio);
         
         // Label renderer
@@ -892,15 +879,258 @@
         secondaryLight.position.set(-1, -1, -1);
         scene.add(secondaryLight);
         
-        // Add rim light to enhance edges
         const rimLight = new THREE.DirectionalLight(0xaaccff, 1.0);
         rimLight.position.set(0, 0, -1);
         scene.add(rimLight);
         
-        // Add orbit controls with improved configuration
+        // Add orbit controls
         const controls = new OrbitControls(camera, renderer.domElement);
         setupControls();
         
+        // Model bounds for orthographic sizing
+        let modelSize = new THREE.Vector3(10, 10, 10);
+        let modelCenter = new THREE.Vector3(0, 0, 0);
+
+        // Add visual helpers
+        const axesHelper = new THREE.AxesHelper(5);
+        scene.add(axesHelper);
+
+        // UI Controls
+        let currentMesh = null;
+        let isWireframe = false;
+        let isAxesVisible = true;
+        let viewMode = 2; // 0: solid, 1: transparent, 2: wireframe - default to wireframe
+        
+        // Initialize raycaster and mouse position tracking
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        
+        // Measurement variables
+        let measurementGroup = new THREE.Group();
+        scene.add(measurementGroup);
+        let measurements = [];
+        let measurementPoints = [];
+        let measurementLabels = []; // Add missing measurementLabels array
+        let previewLine = null;
+        let previewBackgroundLine = null; // Add missing previewBackgroundLine variable
+        let previewLabel = null;
+        
+        // Debug visualization
+        let rayVisualization = null;
+
+        // Function to load GLTF model
+        async function loadGLTFModel() {
+            document.getElementById('loading').textContent = 'Loading GLTF model...';
+            
+            try {
+                const loader = new GLTFLoader();
+                const gltf = await loader.loadAsync('https://deepgis.org/static/deepgis/models/gltf/navagunjara-sculpture-only.gltf');
+                
+                clearTimeout(loadingTimeout);
+                document.getElementById('loading').style.display = 'none';
+                
+                // Get the first mesh from the GLTF scene
+                const mesh = gltf.scene.children[0];
+                if (!mesh) {
+                    throw new Error('No mesh found in GLTF model');
+                }
+
+                // Ensure the mesh has proper geometry setup
+                if (mesh.geometry) {
+                    mesh.geometry.computeBoundingBox();
+                    mesh.geometry.computeVertexNormals();
+                }
+
+                // Create material with proper settings - default to wireframe for DEV version
+                const material = new THREE.MeshPhongMaterial({ 
+                    color: 0xdddddd,
+                    specular: 0x444444,
+                    shininess: 40,
+                    wireframe: true, // Default to wireframe mode in dev
+                    flatShading: false,
+                    transparent: true,
+                    opacity: 0.7, // Use opacity that matches wireframe mode
+                    side: THREE.DoubleSide
+                });
+
+                // Apply material to mesh and all its children
+                function applyInitialMaterial(obj, baseMaterial) {
+                    if (obj.isMesh && obj.material) {
+                        // Create a clone of the material for each mesh
+                        if (Array.isArray(obj.material)) {
+                            // Handle multi-material objects
+                            obj.material = obj.material.map(() => baseMaterial.clone());
+                        } else {
+                            // Handle single material objects
+                            obj.material = baseMaterial.clone();
+                        }
+                    }
+                    
+                    // Apply to children
+                    if (obj.children) {
+                        obj.children.forEach(child => {
+                            applyInitialMaterial(child, baseMaterial);
+                        });
+                    }
+                }
+                
+                // Apply material recursively to the entire model
+                applyInitialMaterial(mesh, material);
+                
+                mesh.name = "MainModel";
+                currentMesh = mesh;
+                
+                // Log the model structure for debugging
+                console.log("GLTF model structure:", mesh);
+
+                // Add edge highlighting
+                const edges = new THREE.EdgesGeometry(mesh.geometry, 30);
+                const edgeMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0x222222, 
+                    linewidth: 1 
+                });
+                const wireframe = new THREE.LineSegments(edges, edgeMaterial);
+                wireframe.name = "ModelEdges";
+                mesh.add(wireframe);
+
+                // Get original bounding box before transformation
+                const originalBoundingBox = new THREE.Box3().setFromObject(mesh);
+                const originalSize = new THREE.Vector3();
+                originalBoundingBox.getSize(originalSize);
+                const originalCenter = new THREE.Vector3();
+                originalBoundingBox.getCenter(originalCenter);
+                
+                // Store original dimensions for reference
+                console.log("Original model dimensions:", originalSize);
+                console.log("Original model center:", originalCenter);
+                
+                // Apply Three.js convention transformations:
+                // 1. Rotate the model to convert to Y-up if needed
+                // For models that use Z-up, rotate -90 degrees around X axis
+                mesh.rotation.x = -Math.PI / 2;
+                
+                // 2. Center the model on the origin
+                // Get new bounding box after rotation
+                mesh.updateMatrixWorld(true);
+                const centeredBoundingBox = new THREE.Box3().setFromObject(mesh);
+                const centeredCenter = new THREE.Vector3();
+                centeredBoundingBox.getCenter(centeredCenter);
+                
+                // Center horizontally on XZ plane and place bottom at y=0
+                mesh.position.set(
+                    -centeredCenter.x,
+                    -centeredBoundingBox.min.y,
+                    -centeredCenter.z
+                );
+                
+                // Update mesh matrix
+                mesh.updateMatrixWorld(true);
+                
+                // Get final bounding box
+                const finalBoundingBox = new THREE.Box3().setFromObject(mesh);
+                const finalSize = new THREE.Vector3();
+                finalBoundingBox.getSize(finalSize);
+                const finalCenter = new THREE.Vector3();
+                finalBoundingBox.getCenter(finalCenter);
+                
+                // Store model size and center after transformations
+                modelSize = finalSize.clone();
+                modelCenter = finalCenter.clone();
+                
+                console.log("After Three.js convention:", modelSize);
+                console.log("Model centered at:", modelCenter);
+                
+                // Calculate calibration factor based on assumed real height of 4.28m
+                currentUnit = calibrationHeight / modelSize.y;
+                console.log(`Calibration factor: ${currentUnit} (${calibrationHeight}m / ${modelSize.y} model units)`);
+                document.getElementById('modelCalibration').textContent = `Calibration: 1 model unit = ${currentUnit.toFixed(4)} meters (height: ${calibrationHeight}m)`;
+
+                // Add to scene
+                scene.add(mesh);
+
+                // Update model information with Three.js conventional dimensions
+                document.getElementById('modelName').textContent = 'Navagunjara Sculpture (Three.js Convention)';
+                
+                const originalDimensions = {
+                    x: originalSize.x.toFixed(2),
+                    y: originalSize.y.toFixed(2),
+                    z: originalSize.z.toFixed(2)
+                };
+                
+                const threejsDimensions = {
+                    x: modelSize.x.toFixed(2),
+                    y: modelSize.y.toFixed(2),
+                    z: modelSize.z.toFixed(2)
+                };
+
+                if (isMobile) {
+                    document.getElementById('modelDimensions').textContent = 
+                        `Size: ${threejsDimensions.x}×${threejsDimensions.y}×${threejsDimensions.z} ${unitLabel}`;
+                    document.getElementById('modelCalibration').textContent = 
+                        `Y-up, centered, bottom at y=0`;
+                } else {
+                    document.getElementById('modelDimensions').textContent = 
+                        `Dimensions: ${threejsDimensions.x} × ${threejsDimensions.y} × ${threejsDimensions.z} ${unitLabel}`;
+                    document.getElementById('modelCalibration').textContent = 
+                        `Three.js: Y-up, centered, bottom at y=0 | Measurements in ${unitLabel}`;
+                }
+                
+                // Add a note about coordinate system for debugging
+                console.log("Three.js coordinate system: Y-up, right-handed");
+                console.log("Model aligned to Three.js convention: Y-up, centered, bottom at y=0");
+
+                // Set up camera for Three.js conventional view
+                const maxDim = Math.max(modelSize.x, modelSize.y, modelSize.z);
+                const distance = maxDim * 1.5; // Good distance for viewing the entire model
+                
+                // Set the camera position for a 3/4 view (typical for Three.js)
+                perspectiveCamera.position.set(distance, distance, distance);
+                perspectiveCamera.up.set(0, 1, 0); // Y is up in Three.js convention
+                perspectiveCamera.lookAt(modelCenter);
+                
+                updateOrthographicCamera();
+                
+                controls.target.copy(modelCenter);
+                controls.update();
+
+                // Make sure the model is properly initialized before setting views
+                // The timeout gives the model time to properly initialize
+                setTimeout(() => {
+                    try {
+                        // Set the initial view
+                        setViewLeft();
+                        
+                        // Make sure the default view mode (wireframe) is properly applied
+                        // This ensures the view mode is consistently applied across the entire model
+                        if (viewMode === 2) { // If default is wireframe
+                            // Force an explicit call to toggleViewMode to ensure proper initialization
+                            // This helps apply the wireframe consistently to all parts of the model
+                            console.log("Applying default wireframe mode to model");
+                            toggleViewMode(); // Switch to solid
+                            toggleViewMode(); // Switch to transparent
+                            toggleViewMode(); // Switch back to wireframe
+                        }
+                    } catch (error) {
+                        console.warn("Could not set initial view:", error.message);
+                        // Fall back to a default camera position if view setting fails
+                        perspectiveCamera.position.set(distance, distance, distance);
+                        perspectiveCamera.lookAt(modelCenter);
+                        controls.update();
+                    }
+                }, 300); // Increased timeout to ensure model is properly initialized
+
+            } catch (error) {
+                console.error('Error loading GLTF model:', error);
+                clearTimeout(loadingTimeout);
+                document.getElementById('loading').textContent = 'Error loading GLTF model. Please try refreshing the page.';
+                document.getElementById('loading').style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
+                document.getElementById('loading').style.border = '1px solid rgba(255, 0, 0, 0.3)';
+            }
+        }
+
+        // Initialize model loading
+        loadGLTFModel();
+
         function setupControls() {
             // Orbit controls settings
         controls.enableDamping = true;
@@ -946,43 +1176,6 @@
             }
         }
 
-        // Model bounds for orthographic sizing
-        let modelSize = new THREE.Vector3(10, 10, 10);
-        let modelCenter = new THREE.Vector3(0, 0, 0);
-
-        // Add visual helpers
-        const axesHelper = new THREE.AxesHelper(5);
-        scene.add(axesHelper);
-
-        // UI Controls
-        let currentMesh = null;
-        let isWireframe = false;
-        let isAxesVisible = true;
-        let viewMode = 1; // 0: solid, 1: transparent, 2: wireframe - default to transparent
-        
-        // Measurement variables
-        let measurementPoints = [];
-        let measurementLine = null;
-        let measurements = [];
-        let measurementLabels = [];
-        let previewLine = null; // For showing line before second point is clicked
-        let previewLabel = null; // For showing distance before second point is clicked
-        const raycaster = new THREE.Raycaster();
-        raycaster.params.Line.threshold = 0.1; // Increase line detection threshold
-        raycaster.params.Points.threshold = 0.1; // Increase point detection threshold
-        const mouse = new THREE.Vector2();
-        const measurementGroup = new THREE.Group();
-        scene.add(measurementGroup);
-
-        // Debug visualization for raycaster
-        let rayVisualization = null;
-
-        document.getElementById('measureMode').addEventListener('click', toggleMeasureMode);
-        document.getElementById('clearMeasurements').addEventListener('click', clearMeasurements);
-        document.getElementById('toggleViewMode').addEventListener('click', toggleViewMode);
-        document.getElementById('pathMeasureMode').addEventListener('click', togglePathMeasureMode);
-        document.getElementById('completePath').addEventListener('click', completeCurrentPath);
-
         // Enhanced keyboard controls
         document.addEventListener('keydown', (event) => {
             switch(event.key.toLowerCase()) {
@@ -1019,7 +1212,6 @@
                 case '6':
                     setViewBottom();
                     break;
-
                 case ' ': // Space key
                     // Allow rotation without adding points when space is pressed
                     isRotationKeyPressed = true;
@@ -1039,7 +1231,6 @@
 
         // Add keyup listener for rotation key
         document.addEventListener('keyup', (event) => {
-
             if (event.key === ' ') { // Space key
                 isRotationKeyPressed = false;
             }
@@ -1048,6 +1239,14 @@
         // Mouse event listeners for measurements
         renderer.domElement.addEventListener('pointerdown', onPointerDown);
         renderer.domElement.addEventListener('pointermove', onPointerMove);
+        
+        // Add specific space keydown for mobile
+        document.addEventListener('keydown', function(event) {
+            if (event.key === ' ' || event.key === 'Spacebar') {
+                isRotationKeyPressed = true;
+                event.preventDefault();
+            }
+        });
         
         function onPointerDown(event) {
             if (!isMeasureMode && !isPathMeasureMode) return;
@@ -1098,6 +1297,7 @@
             
             // Existing regular measurement mode logic
             if (isMeasureMode) {
+                console.log("Processing point measurement click");
                 // In orthographic mode, always place points on the orthographic plane
                 if (isOrthographic) {
                     // Get the ray from the raycaster
@@ -1151,8 +1351,9 @@
                     }
                 }
                 
-                // Add the measurement point
+                // Add the measurement point and log the array length for debugging
                 addMeasurementPoint(intersectionPoint);
+                console.log("After adding point, measurement points:", measurementPoints.length);
             }
         }
         
@@ -1216,8 +1417,24 @@
                     }
                 }
                 
-                // Update preview line
+                // Update preview line with the first point in the array and current mouse position
                 updatePreviewLine(measurementPoints[0], intersectionPoint);
+            } else if (isMeasureMode && measurementPoints.length === 0) {
+                // If we have no points yet, clear any existing preview
+                if (previewLine) {
+                    measurementGroup.remove(previewLine);
+                    previewLine = null;
+                }
+                
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
+                }
+                
+                if (previewLabel) {
+                    measurementGroup.remove(previewLabel);
+                    previewLabel = null;
+                }
             }
             
             // For path measurement mode - show preview marker at potential intersection point
@@ -1255,7 +1472,7 @@
         }
         
         // Store both the foreground and background preview lines for proper cleanup
-        let previewBackgroundLine = null;
+        // previewBackgroundLine is already declared in the measurement variables section
         
         function updatePreviewLine(point1, point2) {
             // Remove existing preview lines if any
@@ -1429,8 +1646,12 @@
             measurementGroup.add(markerGroup);
             measurementPoints.push(point);
             
+            console.log("Point added, measurement points array now has", measurementPoints.length, "points");
+            
             // If we have two points, create a measurement and clean up preview
             if (measurementPoints.length === 2) {
+                console.log("Creating measurement with 2 points");
+                
                 // Clean up preview
                 if (previewLine) {
                     measurementGroup.remove(previewLine);
@@ -1448,7 +1669,10 @@
                 }
                 
                 createMeasurement(measurementPoints[0], measurementPoints[1]);
-                measurementPoints = []; // Reset for the next measurement
+                
+                // Reset for the next measurement - CRITICAL step to allow multiple measurements
+                measurementPoints = [];
+                console.log("Measurement created and points array reset for new measurements");
             }
         }
         
@@ -1466,6 +1690,7 @@
             const geometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
             const line = new THREE.Line(geometry, primaryMaterial);
             measurementGroup.add(line);
+            
             
             // Create secondary line (green) with slight offset and dashed pattern
             const offset = new THREE.Vector3(0.01, 0.01, 0.01);
@@ -1820,20 +2045,28 @@
             }
             
             if (isMeasureMode) {
+                // Enable measure mode
                 controls.enableRotate = false;
                 measureButton.textContent = `Exit`;
+                // Ensure the measurement points array is empty when starting new measurements
+                measurementPoints = [];
             } else {
+                // Disable measure mode
                 controls.enableRotate = true;
-                // Fix: Set proper text instead of empty string
                 measureButton.textContent = `Measure`;
                 
                 // Clean up any in-progress measurements
                 measurementPoints = [];
                 
-                // Clean up preview line if it exists
+                // Clean up preview elements
                 if (previewLine) {
                     measurementGroup.remove(previewLine);
                     previewLine = null;
+                }
+                
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
                 }
                 
                 if (previewLabel) {
@@ -1841,19 +2074,25 @@
                     previewLabel = null;
                 }
             }
+            
+            // Log the current state for debugging
+            console.log("Measure mode:", isMeasureMode ? "ON" : "OFF", "Measurement points:", measurementPoints.length);
         }
         
         function getMeasurementText(distance) {
-            // Convert to both inches and centimeters
-            const inches = (distance / 0.0254).toFixed(2);
-            const cm = (distance / 0.01).toFixed(2);
+            // Apply calibration factor to convert model units to meters
+            const calibratedDistance = distance * currentUnit;
+            const formattedDistance = calibratedDistance.toFixed(2);
+            
+            // Convert to inches as well (1 meter = 39.3701 inches)
+            const inches = (calibratedDistance * 39.3701).toFixed(2);
             
             // On mobile, make the text more concise
             if (isMobile) {
-                return `${inches}"/${cm}cm`;
+                return `${formattedDistance}${unitLabel}/${inches}"`;
             }
             
-            return `${inches} in / ${cm} cm`;
+            return `${formattedDistance} ${unitLabel} / ${inches} in`;
         }
         
         function resetCamera() {
@@ -1908,28 +2147,100 @@
             
             const modeButton = document.getElementById('toggleViewMode');
             
+            // Helper function to apply material settings to a mesh and all its children
+            function applyMaterialSettings(obj, settings) {
+                if (obj.isMesh && obj.material) {
+                    // If material is an array, apply to all materials
+                    if (Array.isArray(obj.material)) {
+                        obj.material.forEach(mat => {
+                            Object.assign(mat, settings);
+                        });
+                    } else {
+                        // Apply to single material
+                        Object.assign(obj.material, settings);
+                    }
+                }
+                
+                // Apply recursively to children
+                if (obj.children) {
+                    obj.children.forEach(child => {
+                        // Skip ModelEdges objects which are handled separately
+                        if (child.name !== "ModelEdges") {
+                            applyMaterialSettings(child, settings);
+                        }
+                    });
+                }
+            }
+            
+            // Log the current state for debugging
+            console.log(`Toggling view mode to: ${viewMode}`);
+            
             switch(viewMode) {
                 case 0: // Solid
-                    currentMesh.material.wireframe = false;
-                    currentMesh.material.transparent = true;
-                    currentMesh.material.opacity = 0.95;
+                    // Apply settings to all meshes
+                    applyMaterialSettings(currentMesh, {
+                        wireframe: false,
+                        transparent: false, // Fully opaque
+                        opacity: 1.0       // Full opacity
+                    });
+                    
+                    // Hide the edge wireframe for solid mode
+                    currentMesh.traverse(child => {
+                        if (child.name === "ModelEdges") {
+                            child.visible = false;
+                        }
+                    });
+                    
                     modeButton.textContent = "Solid";
                     break;
                     
                 case 1: // Transparent
-                    currentMesh.material.wireframe = false;
-                    currentMesh.material.transparent = true;
-                    currentMesh.material.opacity = 0.5;
+                    // Apply settings to all meshes
+                    applyMaterialSettings(currentMesh, {
+                        wireframe: false,
+                        transparent: true,
+                        opacity: 0.5
+                    });
+                    
+                    // Show the edge wireframe for transparent mode to enhance visibility
+                    currentMesh.traverse(child => {
+                        if (child.name === "ModelEdges") {
+                            child.visible = true;
+                        }
+                    });
+                    
                     modeButton.textContent = "Transparent";
                     break;
                     
                 case 2: // Wireframe
-                    currentMesh.material.wireframe = true;
-                    currentMesh.material.transparent = true;
-                    currentMesh.material.opacity = 0.7;
+                    // Apply settings to all meshes
+                    applyMaterialSettings(currentMesh, {
+                        wireframe: true,
+                        transparent: true,
+                        opacity: 0.7
+                    });
+                    
+                    // Find and ensure the edge wireframe is visible
+                    currentMesh.traverse(child => {
+                        if (child.name === "ModelEdges") {
+                            child.visible = true;
+                        }
+                    });
+                    
                     modeButton.textContent = "Wireframe";
                     break;
             }
+            
+            // Force material update
+            currentMesh.traverse(obj => {
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) {
+                        obj.material.forEach(mat => mat.needsUpdate = true);
+                    } else {
+                        obj.material.needsUpdate = true;
+                    }
+                }
+            });
         }
 
         function toggleAxes() {
@@ -1937,318 +2248,8 @@
             axesHelper.visible = isAxesVisible;
         }
 
-        // Loading timeout
-        const loadingTimeout = setTimeout(() => {
-            if (document.getElementById('loading').style.display !== 'none') {
-                document.getElementById('loading').textContent = 'Loading is taking longer than expected. Please try refreshing the page.';
-            }
-        }, 30000);
-
-        // STL model caching using IndexedDB
-        const DB_NAME = 'stl_model_cache';
-        const STORE_NAME = 'models';
-        const MODEL_KEY = 'navagunjara-reborn-gometric-analysis';
-        const MODEL_URL = "{% static 'models/stl/navagunjara-reborn-gometric-analysis.stl' %}";
-        
-        // Function to load model from IndexedDB or network
-        async function loadModelWithCache() {
-            document.getElementById('loading').textContent = 'Checking cache...';
-            
-            try {
-                // Try to load from cache first
-                const cachedModel = await getModelFromCache();
-                
-                if (cachedModel) {
-                    document.getElementById('loading').textContent = 'Loading from cache...';
-                    console.log('Loading model from cache');
-                    processSTLData(cachedModel);
-                    return;
-                }
-                
-                // If not in cache, load from network
-                document.getElementById('loading').textContent = 'Downloading model...';
-                console.log('Model not in cache, downloading...');
-                
-                const response = await fetch(MODEL_URL);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch model: ${response.status} ${response.statusText}`);
-                }
-                
-                const modelData = await response.arrayBuffer();
-                
-                // Store in cache for future use
-                await storeModelInCache(modelData);
-                
-                // Process the downloaded model
-                processSTLData(modelData);
-                
-            } catch (error) {
-                console.error('Error loading model:', error);
-                clearTimeout(loadingTimeout);
-                document.getElementById('loading').textContent = 'Error loading model. Please try refreshing the page.';
-            }
-        }
-        
-        // Open/initialize the IndexedDB database
-        function openDatabase() {
-            return new Promise((resolve, reject) => {
-                const request = indexedDB.open(DB_NAME, 1);
-                
-                request.onerror = (event) => {
-                    console.error('IndexedDB error:', event.target.error);
-                    reject(event.target.error);
-                };
-                
-                request.onsuccess = (event) => {
-                    resolve(event.target.result);
-                };
-                
-                request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    if (!db.objectStoreNames.contains(STORE_NAME)) {
-                        db.createObjectStore(STORE_NAME);
-                    }
-                };
-            });
-        }
-        
-        // Get model from cache
-        async function getModelFromCache() {
-            try {
-                const db = await openDatabase();
-                return new Promise((resolve, reject) => {
-                    const transaction = db.transaction(STORE_NAME, 'readonly');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.get(MODEL_KEY);
-                    
-                    request.onerror = (event) => {
-                        console.error('Error reading from cache:', event.target.error);
-                        resolve(null); // Resolve with null to try network fetch
-                    };
-                    
-                    request.onsuccess = (event) => {
-                        resolve(request.result);
-                    };
-                });
-            } catch (error) {
-                console.error('Error accessing cache:', error);
-                return null;
-            }
-        }
-        
-        // Store model in cache
-        async function storeModelInCache(modelData) {
-            try {
-                const db = await openDatabase();
-                return new Promise((resolve, reject) => {
-                    const transaction = db.transaction(STORE_NAME, 'readwrite');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.put(modelData, MODEL_KEY);
-                    
-                    request.onerror = (event) => {
-                        console.error('Error writing to cache:', event.target.error);
-                        resolve(false);
-                    };
-                    
-                    request.onsuccess = () => {
-                        console.log('Model cached successfully');
-                        resolve(true);
-                    };
-                });
-            } catch (error) {
-                console.error('Error storing in cache:', error);
-                return false;
-            }
-        }
-        
-        // Process STL data with the STLLoader
-        function processSTLData(buffer) {
-            const loader = new STLLoader();
-            try {
-                const geometry = loader.parse(buffer);
-                onModelLoaded(geometry);
-            } catch (error) {
-                console.error('Error parsing STL:', error);
-                clearTimeout(loadingTimeout);
-                document.getElementById('loading').textContent = 'Error parsing 3D model. Please try refreshing the page.';
-            }
-        }
-        
-        // Handler for when model is loaded - contains the same logic as the original loader callback
-        function onModelLoaded(geometry) {
-            clearTimeout(loadingTimeout);
-            document.getElementById('loading').style.display = 'none';
-            
-            // Compute vertex normals if they don't exist
-            if (!geometry.hasAttribute('normal')) {
-                geometry.computeVertexNormals();
-            }
-            
-            // Ensure we have a bounding box
-            geometry.computeBoundingBox();
-            
-            const material = new THREE.MeshPhongMaterial({ 
-                color: 0xdddddd, // Lighter color for the model
-                specular: 0x444444, // More moderate specular highlights
-                shininess: 40, // Less shiny for more diffuse appearance
-                wireframe: false, // Default to solid mode instead of wireframe
-                flatShading: false, // Enable smooth shading
-                transparent: true, // Keep transparency
-                opacity: 0.5, // Set to 50% transparent by default
-                side: THREE.DoubleSide // Render both sides of faces
-            });
-            const mesh = new THREE.Mesh(geometry, material);
-            mesh.name = "MainModel"; // Name the mesh for debugging
-            currentMesh = mesh;
-            
-            // Add edge highlighting for better visibility
-            const edges = new THREE.EdgesGeometry(geometry, 30); // 30-degree threshold
-            const edgeMaterial = new THREE.LineBasicMaterial({ 
-                color: 0x222222, 
-                linewidth: 1 
-            });
-            const wireframe = new THREE.LineSegments(edges, edgeMaterial);
-            wireframe.name = "ModelEdges"; // Name for debugging
-            mesh.add(wireframe);
-            
-            // Make sure the mesh is set up for raycasting
-            mesh.geometry.computeBoundingSphere();
-            mesh.geometry.computeVertexNormals();
-            
-            // Only compute tangents if we have all required attributes
-            if (geometry.hasAttribute('position') && 
-                geometry.hasAttribute('normal') && 
-                geometry.hasAttribute('uv') && 
-                geometry.index !== null) {
-                mesh.geometry.computeTangents();
-            }
-            
-            // Ensure matrix updates are always performed
-            mesh.matrixAutoUpdate = true;
-            mesh.updateMatrix();
-            mesh.updateMatrixWorld(true);
-            
-            // Center the model
-            geometry.computeBoundingBox();
-            const boundingBox = geometry.boundingBox;
-            
-            // In Y-up world, we need to transform the model
-            // Rotate the model 90 degrees around X-axis to convert from Z-up to Y-up
-            mesh.rotation.x = -Math.PI / 2;
-            
-            // Apply rotation to bounding box to get correct extents
-            const rotatedHeight = boundingBox.max.y - boundingBox.min.y;
-            const rotatedWidth = boundingBox.max.x - boundingBox.min.x;
-            const rotatedDepth = boundingBox.max.z - boundingBox.min.z;
-            
-            // Force the mesh to update its world matrix to apply the rotation
-            mesh.updateMatrixWorld(true);
-            
-            // Calculate the bounding box of the rotated model
-            const rotatedBox = new THREE.Box3().setFromObject(mesh);
-            
-            // Get the center of the rotated bounding box
-            const rotatedCenter = new THREE.Vector3();
-            rotatedBox.getCenter(rotatedCenter);
-            
-            // Calculate the size of the rotated bounding box
-            const rotatedSize = new THREE.Vector3();
-            rotatedBox.getSize(rotatedSize);
-            
-            // Position the model so that:
-            // 1. Its bottom is at y=0 (on the XZ plane)
-            // 2. It's centered on the X and Z axes
-            mesh.position.set(
-                -rotatedCenter.x, 
-                -rotatedBox.min.y,  // This places the bottom at y=0
-                -rotatedCenter.z
-            );
-            
-            // Force another update after repositioning
-            mesh.updateMatrixWorld(true);
-            
-            // Calculate the final bounding box for verification
-            const finalBox = new THREE.Box3().setFromObject(mesh);
-            const finalCenter = new THREE.Vector3();
-            finalBox.getCenter(finalCenter);
-            
-            // Store the model center for orbit controls
-            modelCenter = new THREE.Vector3(0, finalBox.getSize(new THREE.Vector3()).y/2, 0);
-            
-            console.log("Initial bounding box:", boundingBox);
-            console.log("Rotated bounding box:", rotatedBox);
-            console.log("Final bounding box:", finalBox);
-            console.log("Model centered at:", modelCenter);
-            
-            // Get the actual height of the model for scaling
-            const modelHeight = rotatedSize.y;
-            const targetHeight = 4.28; // Target height in meters
-            const scaleFactor = targetHeight / modelHeight;
-            
-            // Apply scaling to the model to make it the correct height
-            mesh.scale.set(scaleFactor, scaleFactor, scaleFactor);
-            
-            // Store model size for orthographic camera (Y-up world, so Y is height)
-            modelSize = new THREE.Vector3(
-                (boundingBox.max.x - boundingBox.min.x) * scaleFactor,
-                (boundingBox.max.y - boundingBox.min.y) * scaleFactor,
-                (boundingBox.max.z - boundingBox.min.z) * scaleFactor
-            );
-            
-            // Set unit to inches by default (we're calibrated to real-world meters)
-            currentUnit = 0.0254; // Default to inches
-            
-            scene.add(mesh);
-            
-            // Update model information with scaled dimensions
-            const dimensions = {
-                x: ((boundingBox.max.x - boundingBox.min.x) * scaleFactor).toFixed(2),
-                y: ((boundingBox.max.y - boundingBox.min.y) * scaleFactor).toFixed(2),
-                z: ((boundingBox.max.z - boundingBox.min.z) * scaleFactor).toFixed(2)
-            };
-            
-            document.getElementById('modelName').textContent = 'Navagunjara Reborn';
-            
-            // More concise text for mobile
-            if (isMobile) {
-                document.getElementById('modelDimensions').textContent = 
-                    `Size: ${dimensions.x}×${dimensions.y}×${dimensions.z}m`;
-                document.getElementById('modelCalibration').textContent = 
-                    `Height: 4.28m (×${scaleFactor.toFixed(2)})`;
-            } else {
-                document.getElementById('modelDimensions').textContent = 
-                    `Dimensions: ${dimensions.x} × ${dimensions.y} × ${dimensions.z} meters`;
-                document.getElementById('modelCalibration').textContent = 
-                    `Calibrated height: 4.28 meters (scale factor: ${scaleFactor.toFixed(4)})`;
-            }
-            
-            // Adjust camera to fit the model (centered and fully visible)
-            const size = new THREE.Vector3(
-                (boundingBox.max.x - boundingBox.min.x) * scaleFactor,
-                (boundingBox.max.y - boundingBox.min.y) * scaleFactor,
-                (boundingBox.max.z - boundingBox.min.z) * scaleFactor
-            );
-            const maxDim = Math.max(size.x, size.y, size.z);
-            const distance = maxDim * 0.5; // Reduced from 0.7 to 0.5 for extreme close-up
-            
-            // Camera position: standard position for Y-up world
-            perspectiveCamera.position.set(distance, distance, distance);
-            perspectiveCamera.up.set(0, 1, 0); // Standard Y-up
-            perspectiveCamera.lookAt(modelCenter);
-            
-            updateOrthographicCamera();
-            
-            controls.target.copy(modelCenter);
-            controls.update();
-            
-            // Initialize to left view (showing front of the object)
-            setTimeout(() => {
-                setViewLeft();
-            }, 100); // Small delay to ensure everything is initialized
-        }
-
-        // Initialize model loading with caching
-        loadModelWithCache();
+        // We only use GLTF models now - the STL loading code has been removed
+        // as it was causing errors in the console
 
         function animate() {
             requestAnimationFrame(animate);
@@ -2348,14 +2349,26 @@
         
         function setViewLeft() {
             // Left view shows object's front (from +Z)
-            const extents = getModelExtents();
-            const maxDim = Math.max(extents.x, extents.y);
-            const distance = maxDim * 0.6; // Reduced from 0.8 to 0.6 for extreme close-up
-            
-            const targetPosition = new THREE.Vector3(0, modelCenter.y, distance);
-            const targetUp = new THREE.Vector3(0, 1, 0);
-            
-            setCameraView(targetPosition, modelCenter, targetUp);
+            try {
+                // Use a default fallback distance if extents calculation fails
+                let distance;
+                
+                try {
+                    const extents = getModelExtents();
+                    const maxDim = Math.max(extents.x, extents.y);
+                    distance = maxDim * 0.6; // Reduced from 0.8 to 0.6 for extreme close-up
+                } catch (err) {
+                    console.warn("Could not calculate exact extents, using default distance");
+                    distance = 10; // Fallback to a reasonable distance
+                }
+                
+                const targetPosition = new THREE.Vector3(0, modelCenter.y, distance);
+                const targetUp = new THREE.Vector3(0, 1, 0);
+                
+                setCameraView(targetPosition, modelCenter, targetUp);
+            } catch (error) {
+                console.error("Error setting left view:", error);
+            }
         }
         
         function setViewRight() {
@@ -2400,7 +2413,22 @@
                 return { x: 10, y: 10, z: 10 };
             }
             
-            // Get the bounding box of the model
+            // Check if the geometry exists - GLTF models may store geometry differently
+            if (!currentMesh.geometry) {
+                console.log("Model geometry not directly accessible, using bounding box");
+                // Use a bounding box approach instead
+                const bbox = new THREE.Box3().setFromObject(currentMesh);
+                const size = new THREE.Vector3();
+                bbox.getSize(size);
+                
+                return {
+                    x: size.x,
+                    y: size.y,
+                    z: size.z
+                };
+            }
+            
+            // Get the bounding box of the model if geometry exists
             currentMesh.geometry.computeBoundingBox();
             const boundingBox = currentMesh.geometry.boundingBox;
             
@@ -2409,11 +2437,11 @@
             const sy = currentMesh.scale.y;
             const sz = currentMesh.scale.z;
             
-            // Since we rotated 90 degrees around X-axis, the dimensions are transformed
+            // Return the dimensions without any transformation assumptions
             return {
-                x: (boundingBox.max.x - boundingBox.min.x) * sx,
-                y: (boundingBox.max.y - boundingBox.min.y) * sy,
-                z: (boundingBox.max.z - boundingBox.min.z) * sz
+                x: (boundingBox.max.x - boundingBox.min.x),
+                y: (boundingBox.max.y - boundingBox.min.y),
+                z: (boundingBox.max.z - boundingBox.min.z)
             };
         }
         
@@ -2442,6 +2470,13 @@
             
             controls.update();
         }
+
+        // Add measurement button event listeners
+        document.getElementById('measureMode').addEventListener('click', toggleMeasureMode);
+        document.getElementById('clearMeasurements').addEventListener('click', clearMeasurements);
+        document.getElementById('toggleViewMode').addEventListener('click', toggleViewMode);
+        document.getElementById('pathMeasureMode').addEventListener('click', togglePathMeasureMode);
+        document.getElementById('completePath').addEventListener('click', completeCurrentPath);
 
         // Add view button event listeners
         document.getElementById('viewFront').addEventListener('click', setViewFront);
@@ -3071,6 +3106,31 @@
                 updateMeasurementsList();
             }
         }
+
+        // Function to update calibration based on known height
+        function updateCalibration(assumedHeightInMeters) {
+            // Update the calibration height
+            calibrationHeight = assumedHeightInMeters;
+            
+            // If model is loaded, recalculate the calibration factor
+            if (modelSize) {
+                currentUnit = calibrationHeight / modelSize.y;
+                console.log(`Calibration updated: ${currentUnit} (${calibrationHeight}m / ${modelSize.y} model units)`);
+                document.getElementById('modelCalibration').textContent = `Calibration: 1 model unit = ${currentUnit.toFixed(4)} meters (height: ${calibrationHeight}m)`;
+                
+                // Update all existing measurements with new calibration
+                updateMeasurementsList();
+            }
+        }
+
+        // No need to call this immediately - it will be calculated after model loading
+
+        // Add measurement button event listeners
+        document.getElementById('measureMode').addEventListener('click', toggleMeasureMode);
+        document.getElementById('clearMeasurements').addEventListener('click', clearMeasurements);
+        document.getElementById('toggleViewMode').addEventListener('click', toggleViewMode);
+        document.getElementById('pathMeasureMode').addEventListener('click', togglePathMeasureMode);
+        document.getElementById('completePath').addEventListener('click', completeCurrentPath);
     </script>
 </body>
 </html>
