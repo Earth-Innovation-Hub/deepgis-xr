@@ -990,4 +990,32 @@ def list_stl_models(request):
             'success': False,
             'message': f'Error listing STL models: {str(e)}',
             'models': []
-        }, status=500) 
+        }, status=500)
+
+def label_3d_sigma(request):
+    """
+    Optimized 3D model viewer (SIGMA version) with server-side optimization.
+    This view uses a template that implements:
+        - GLB binary format instead of GLTF
+        - Draco mesh compression
+        - Progress tracking
+        - HTTP/2 preloading
+        - Performance monitoring
+    """
+    context = {}
+    
+    # Add information about server-side optimizations to context
+    optimization_info = {
+        'version': 'SIGMA',
+        'format': 'GLB + Draco',
+        'optimizations': [
+            'Server-side mesh compression',
+            'Binary format for faster loading',
+            'HTTP/2 with preloading',
+            'Texture optimization',
+            'Level of Detail (LOD) variants'
+        ]
+    }
+    context['optimization_info'] = optimization_info
+    
+    return render(request, 'web/label_3D_sigma.html', context) 

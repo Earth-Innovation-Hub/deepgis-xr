@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from deepgis_xr.apps.web.views import label_3d_sigma
 
 urlpatterns = [
     # Main pages
@@ -31,4 +32,7 @@ urlpatterns = [
     # 3D model endpoints
     path('webclient/get-3d-model', views.get_3d_model, name='get_3d_model'),
     path('webclient/list-stl-models', views.list_stl_models, name='list_stl_models'),
+    
+    # Add this new URL pattern
+    path('label/3d/sigma/', label_3d_sigma, name='label_3d_sigma'),
 ] 
