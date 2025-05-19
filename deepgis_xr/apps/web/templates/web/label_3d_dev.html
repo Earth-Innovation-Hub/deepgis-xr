@@ -1215,6 +1215,12 @@ let calibrationHeight = 4.28; // Assumed height in meters
                 case ' ': // Space key
                     // Allow rotation without adding points when space is pressed
                     isRotationKeyPressed = true;
+                    
+                    // Enable rotation control while space is pressed
+                    if (isMeasureMode || isPathMeasureMode) {
+                        controls.enableRotate = true;
+                    }
+                    
                     // Prevent page scrolling with space
                     event.preventDefault();
                     break;
@@ -1233,6 +1239,11 @@ let calibrationHeight = 4.28; // Assumed height in meters
         document.addEventListener('keyup', (event) => {
             if (event.key === ' ') { // Space key
                 isRotationKeyPressed = false;
+                
+                // Disable rotation again in measure mode when space is released
+                if (isMeasureMode) {
+                    controls.enableRotate = false;
+                }
             }
         });
 
@@ -1251,8 +1262,8 @@ let calibrationHeight = 4.28; // Assumed height in meters
         function onPointerDown(event) {
             if (!isMeasureMode && !isPathMeasureMode) return;
             
-            // Skip point placement if rotation key is pressed
-            if (isPathMeasureMode && isRotationKeyPressed) return;
+            // Skip point placement if rotation key is pressed - for both measure modes
+            if (isRotationKeyPressed) return;
 
             // Calculate mouse position in normalized device coordinates
             mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -1360,9 +1371,27 @@ let calibrationHeight = 4.28; // Assumed height in meters
         function onPointerMove(event) {
             if (!isMeasureMode && !isPathMeasureMode) return;
             
-            // Skip preview marker if rotation key is pressed in path measure mode
-            if (isPathMeasureMode && isRotationKeyPressed) {
-                removePathPreviewMarker();
+            // Skip previews if rotation key is pressed in either measure mode
+            if (isRotationKeyPressed) {
+                // Remove path preview marker if in path mode
+                if (isPathMeasureMode) {
+                    removePathPreviewMarker();
+                }
+                // Remove line preview if in regular measure mode
+                else if (isMeasureMode && previewLine) {
+                    measurementGroup.remove(previewLine);
+                    previewLine = null;
+                    
+                    if (previewBackgroundLine) {
+                        measurementGroup.remove(previewBackgroundLine);
+                        previewBackgroundLine = null;
+                    }
+                    
+                    if (previewLabel) {
+                        measurementGroup.remove(previewLabel);
+                        previewLabel = null;
+                    }
+                }
                 return;
             }
             
@@ -2045,8 +2074,32 @@ let calibrationHeight = 4.28; // Assumed height in meters
             }
             
             if (isMeasureMode) {
-                // Enable measure mode
+                // Initially disable rotation, but it will be enabled when space is pressed
                 controls.enableRotate = false;
+                
+                // Add note about space key for rotation in the tooltip
+                const spaceTooltip = document.createElement('div');
+                spaceTooltip.className = 'space-tooltip';
+                spaceTooltip.textContent = 'Hold SPACE to rotate while measuring';
+                spaceTooltip.style.position = 'fixed';
+                spaceTooltip.style.top = '10px';
+                spaceTooltip.style.left = '50%';
+                spaceTooltip.style.transform = 'translateX(-50%)';
+                spaceTooltip.style.backgroundColor = 'rgba(0,0,0,0.7)';
+                spaceTooltip.style.color = 'white';
+                spaceTooltip.style.padding = '8px 12px';
+                spaceTooltip.style.borderRadius = '4px';
+                spaceTooltip.style.fontSize = '14px';
+                spaceTooltip.style.zIndex = '1000';
+                document.body.appendChild(spaceTooltip);
+                
+                // Remove after 4 seconds
+                setTimeout(() => {
+                    if (spaceTooltip.parentNode) {
+                        document.body.removeChild(spaceTooltip);
+                    }
+                }, 4000);
+                
                 measureButton.textContent = `Exit`;
                 // Ensure the measurement points array is empty when starting new measurements
                 measurementPoints = [];
