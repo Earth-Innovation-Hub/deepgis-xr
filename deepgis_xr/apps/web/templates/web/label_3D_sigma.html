@@ -6,10 +6,27 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>3D Model Viewer (SIGMA VERSION)</title>
-    <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin.glb" as="fetch" crossorigin>
-    <link rel="preload" href="https://unpkg.com/three@0.158.0/build/three.module.js" as="script">
-    <link rel="preload" href="https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js" as="script">
-    <link rel="preload" href="https://unpkg.com/three@0.158.0/examples/jsm/loaders/DRACOLoader.js" as="script">
+    <!-- Force high-performance GPU on dual-GPU systems -->
+    <meta http-equiv="hardware-accelerated" content="true">
+    <meta name="renderer" content="webkit">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <!-- Add GPU preference in multiple ways -->
+    <canvas id="gpu-preference" style="display:none"></canvas>
+    <script>
+        // Try to force high-performance GPU before any other code runs
+        try {
+            const canvas = document.getElementById('gpu-preference');
+            const gl = canvas.getContext('webgl', {powerPreference: 'high-performance', failIfMajorPerformanceCaveat: true});
+            console.log("Initialized preference GPU context:", gl ? "success" : "failed");
+        } catch(e) {
+            console.warn("Could not initialize preference GPU context:", e);
+        }
+    </script>
+    <!-- Fix CORS issues by adding proper crossorigin attributes -->
+    <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin.glb" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="https://unpkg.com/three@0.158.0/build/three.module.js" as="script" crossorigin="anonymous">
+    <link rel="preload" href="https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js" as="script" crossorigin="anonymous">
+    <link rel="preload" href="https://unpkg.com/three@0.158.0/examples/jsm/loaders/DRACOLoader.js" as="script" crossorigin="anonymous">
     <style>
         body { margin: 0; overflow: hidden; }
         canvas { display: block; }
@@ -59,6 +76,50 @@
         }
         /* Same CSS as in original file... */
         /* (CSS is kept identical to the original file) */
+    </style>
+    <!-- Add responsive CSS for debug console and toggle button -->
+    <style>
+        @media (max-width: 768px) {
+            #debug-console {
+                left: 0 !important;
+                right: 0 !important;
+                bottom: 0 !important;
+                top: auto !important;
+                width: 100vw !important;
+                max-width: 100vw !important;
+                max-height: 45vh !important;
+                border-radius: 12px 12px 0 0 !important;
+                font-size: 15px !important;
+                padding: 18px 10px 10px 10px !important;
+                z-index: 2000 !important;
+                box-shadow: 0 -2px 12px rgba(0,0,0,0.25);
+                overflow-y: auto !important;
+                display: none;
+                background: rgba(20,20,20,0.97) !important;
+            }
+            #debug-toggle-btn {
+                position: fixed;
+                right: 18px;
+                bottom: 18px;
+                z-index: 2100;
+                background: #673ab7;
+                color: #fff;
+                border: none;
+                border-radius: 50%;
+                width: 54px;
+                height: 54px;
+                font-size: 18px;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: background 0.2s;
+            }
+            #debug-toggle-btn.active {
+                background: #311b92;
+            }
+        }
     </style>
 </head>
 <body>
@@ -130,6 +191,10 @@
     </script>
 
     <script type="module">
+        // Configure Three.js to allow software rendering fallback
+        // This is needed for machines where hardware acceleration is not available
+        window.THREE_ALLOW_SOFTWARE_RENDERER = true;
+
         import * as THREE from 'three';
         import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
         import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
@@ -153,6 +218,25 @@
         
         // Check if device is mobile
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+        
+        // Try to detect NVIDIA GPU specifically before renderer creation
+        let hasNvidiaGPU = false;
+        try {
+            const testCanvas = document.createElement('canvas');
+            const testContext = testCanvas.getContext('webgl', {powerPreference: 'high-performance'});
+            if (testContext) {
+                const debugInfo = testContext.getExtension('WEBGL_debug_renderer_info');
+                if (debugInfo) {
+                    const renderer = testContext.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                    hasNvidiaGPU = renderer && (renderer.toLowerCase().includes('nvidia') || 
+                                               renderer.toLowerCase().includes('geforce') || 
+                                               renderer.toLowerCase().includes('quadro'));
+                    console.log("GPU detection:", renderer, hasNvidiaGPU ? "NVIDIA detected" : "NVIDIA not detected");
+                }
+            }
+        } catch (e) {
+            console.warn("Error during pre-renderer GPU detection:", e);
+        }
         
         // Unit for measurements - with calibration for real-world units
         let currentUnit = 1.0; // Will be adjusted after model loading
@@ -179,15 +263,298 @@
         // Start with perspective camera
         let camera = perspectiveCamera;
         
-        const renderer = new THREE.WebGLRenderer({ 
+        // Create renderer with strong hints for high-performance GPU
+        const rendererOptions = {
             canvas: document.getElementById('viewer'), 
             antialias: true,
             alpha: true,
-            powerPreference: 'high-performance' // Request high-performance GPU
-        });
+            powerPreference: 'high-performance',
+            failIfMajorPerformanceCaveat: false, // Allow fallback to software rendering
+            preserveDrawingBuffer: true
+        };
+        
+        // If we know we have NVIDIA, add more aggressive settings
+        if (hasNvidiaGPU) {
+            console.log("Using aggressive settings for NVIDIA GPU");
+            rendererOptions.precision = 'highp';
+        }
+        
+        let renderer;
+        
+        // Try to create WebGL2 renderer first
+        try {
+            console.log("Attempting to create WebGL2 renderer");
+            renderer = new THREE.WebGLRenderer({
+                ...rendererOptions,
+                context: document.getElementById('viewer').getContext('webgl2', { 
+                    powerPreference: 'high-performance',
+                    failIfMajorPerformanceCaveat: false,
+                })
+            });
+            console.log("Successfully created WebGL2 renderer");
+        } catch (e) {
+            console.warn("Could not create WebGL2 renderer, falling back to WebGL1:", e);
+            try {
+                // Fall back to WebGL1
+                renderer = new THREE.WebGLRenderer(rendererOptions);
+                console.log("Successfully created WebGL1 renderer");
+            } catch (e2) {
+                console.error("Failed to create any WebGL renderer:", e2);
+                // Show a friendly error message
+                const errorDiv = document.createElement('div');
+                errorDiv.style.position = 'absolute';
+                errorDiv.style.top = '50%';
+                errorDiv.style.left = '50%';
+                errorDiv.style.transform = 'translate(-50%, -50%)';
+                errorDiv.style.background = 'rgba(220,0,0,0.8)';
+                errorDiv.style.color = 'white';
+                errorDiv.style.padding = '20px';
+                errorDiv.style.borderRadius = '5px';
+                errorDiv.style.maxWidth = '400px';
+                errorDiv.style.textAlign = 'center';
+                errorDiv.style.zIndex = '2000';
+                errorDiv.innerHTML = `
+                    <h3>WebGL Not Available</h3>
+                    <p>Your browser does not support WebGL or it is disabled.</p>
+                    <p>Please try a different browser or enable WebGL in your browser settings.</p>
+                    <p>For Chrome: chrome://settings/system → Use hardware acceleration when available</p>
+                    <p>For Firefox: about:config → webgl.force-enabled = true</p>
+                `;
+                document.body.appendChild(errorDiv);
+                throw new Error("WebGL not available, stopping script execution.");
+            }
+        }
+        
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setClearColor(0x303040);
         renderer.setPixelRatio(window.devicePixelRatio);
+        
+        // Force renderer to use all available functionality
+        renderer.outputEncoding = THREE.sRGBEncoding;
+        // Reduce precision if we're in software mode for better performance
+        if (renderer.capabilities.precision === 'lowp') {
+            renderer.precision = 'lowp';
+        }
+        
+        // Check GPU and renderer info
+        const gl = renderer.getContext();
+        
+        // Create a single debug console container
+        const debugConsole = document.createElement('div');
+        debugConsole.id = 'debug-console';
+        debugConsole.style.position = 'absolute';
+        debugConsole.style.left = '10px';
+        debugConsole.style.bottom = '10px';
+        debugConsole.style.maxWidth = '350px';
+        debugConsole.style.maxHeight = '350px';
+        debugConsole.style.overflow = 'auto';
+        debugConsole.style.background = 'rgba(0,0,0,0.85)';
+        debugConsole.style.color = 'white';
+        debugConsole.style.padding = '10px';
+        debugConsole.style.fontFamily = 'monospace';
+        debugConsole.style.fontSize = '12px';
+        debugConsole.style.zIndex = '1000';
+        debugConsole.style.borderRadius = '6px';
+        document.body.appendChild(debugConsole);
+
+        // Create GPU info section
+        const gpuInfoSection = document.createElement('div');
+        gpuInfoSection.id = 'gpu-info-section';
+        debugConsole.appendChild(gpuInfoSection);
+
+        // Create hierarchy section
+        const hierarchySection = document.createElement('div');
+        hierarchySection.id = 'hierarchy-section';
+        hierarchySection.style.marginTop = '12px';
+        debugConsole.appendChild(hierarchySection);
+        
+        // Function to get GPU info (update gpuInfoSection instead of gpuInfoDisplay)
+        function getGPUInfo() {
+            let renderer, vendor, unmaskedRenderer, unmaskedVendor;
+            try {
+                renderer = gl.getParameter(gl.RENDERER);
+                vendor = gl.getParameter(gl.VENDOR);
+                const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                if (debugInfo) {
+                    unmaskedRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                    unmaskedVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                }
+                const isSoftwareRendering = 
+                    (unmaskedRenderer && (
+                        unmaskedRenderer.includes('SwiftShader') || 
+                        unmaskedRenderer.includes('llvmpipe') ||
+                        unmaskedRenderer.includes('Software') ||
+                        unmaskedRenderer.includes('Microsoft Basic Render')
+                    )) ||
+                    (renderer && (
+                        renderer.includes('SwiftShader') ||
+                        renderer.includes('llvmpipe') ||
+                        renderer.includes('Software') ||
+                        renderer.includes('Microsoft Basic Render')
+                    ));
+                const isAccelerated = !isSoftwareRendering;
+                const isWebGL2 = gl instanceof WebGL2RenderingContext;
+                const glVersion = gl.getParameter(gl.VERSION);
+                const glslVersion = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
+                const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
+                const anisotropic = gl.getExtension('EXT_texture_filter_anisotropic');
+                const maxAnisotropy = anisotropic ? 
+                    gl.getParameter(anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT) : 'Not supported';
+                const gpuInfoHTML = `
+                    <div style="color:${isAccelerated ? '#4caf50' : '#ff5252'}">
+                        <strong>${isAccelerated ? '✓ GPU ACCELERATED' : '✗ SOFTWARE RENDERING'}</strong>
+                    </div>
+                    <div>Renderer: ${unmaskedRenderer || renderer || 'Unknown'}</div>
+                    <div>Vendor: ${unmaskedVendor || vendor || 'Unknown'}</div>
+                    <div>WebGL: ${isWebGL2 ? '2.0' : '1.0'} (${glVersion})</div>
+                    <div>GLSL: ${glslVersion}</div>
+                    <div>Max Texture: ${maxTextureSize}px</div>
+                    <div>Anisotropy: ${maxAnisotropy}</div>
+                `;
+                gpuInfoSection.innerHTML = `<div style='font-weight:bold;margin-bottom:4px;'>GPU Debug Info</div>` + gpuInfoHTML;
+                
+                // Log detailed info to console for debugging
+                console.log('GPU INFO:', {
+                    renderer, vendor, unmaskedRenderer, unmaskedVendor,
+                    isAccelerated, isSoftwareRendering,
+                    webglVersion: isWebGL2 ? '2.0' : '1.0',
+                    glVersion, glslVersion,
+                    maxTextureSize,
+                    extensions: gl.getSupportedExtensions()
+                });
+                
+                // Check specifically for NVIDIA GPU
+                const hasNvidiaGPU = (unmaskedRenderer && (
+                    unmaskedRenderer.toLowerCase().includes('nvidia') ||
+                    unmaskedRenderer.toLowerCase().includes('geforce') ||
+                    unmaskedRenderer.toLowerCase().includes('quadro')
+                ));
+                
+                // Show NVIDIA-specific guidance if we have Intel but NVIDIA should be available
+                if (!hasNvidiaGPU && unmaskedRenderer && 
+                    (unmaskedRenderer.toLowerCase().includes('intel') || 
+                     unmaskedVendor && unmaskedVendor.toLowerCase().includes('intel'))) {
+                    
+                    // Create NVIDIA hint panel
+                    const nvidiaHintPanel = document.createElement('div');
+                    nvidiaHintPanel.style.position = 'absolute';
+                    nvidiaHintPanel.style.top = '90px';
+                    nvidiaHintPanel.style.left = '10px';
+                    nvidiaHintPanel.style.background = '#673ab7';
+                    nvidiaHintPanel.style.color = 'white';
+                    nvidiaHintPanel.style.padding = '10px';
+                    nvidiaHintPanel.style.borderRadius = '5px';
+                    nvidiaHintPanel.style.maxWidth = '300px';
+                    nvidiaHintPanel.style.zIndex = '1001';
+                    nvidiaHintPanel.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
+                    
+                    // Different instructions based on platform
+                    const isWindows = navigator.platform.indexOf('Win') > -1;
+                    const isLinux = navigator.platform.indexOf('Linux') > -1;
+                    
+                    if (isLinux) {
+                        // Ubuntu/Linux specific instructions
+                        nvidiaHintPanel.innerHTML = `
+                            <strong>NVIDIA GPU Not Used (Ubuntu)</strong>
+                            <div style="margin-top:5px;font-size:11px">To use NVIDIA GPU on Ubuntu:</div>
+                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
+                                <li>For one-time use: <code style="background:#444;padding:1px 3px;border-radius:2px">__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia google-chrome</code></li>
+                                <li>Or create a launcher with: <code style="background:#444;padding:1px 3px;border-radius:2px">prime-run google-chrome</code> (if prime-run installed)</li>
+                            </ul>
+                            <div style="font-size:11px;margin-top:5px">For permanent browser setup:</div>
+                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
+                                <li>Edit <code style="background:#444;padding:1px 3px;border-radius:2px">~/.local/share/applications/google-chrome.desktop</code></li>
+                                <li>Change <code>Exec=</code> lines to include: <code style="background:#444;padding:1px 3px;border-radius:2px">__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia</code></li>
+                                <li>For Firefox, edit <code style="background:#444;padding:1px 3px;border-radius:2px">firefox.desktop</code> similarly</li>
+                            </ul>
+                            <div style="font-size:11px;margin-top:5px">Check NVIDIA Offloading:</div>
+                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
+                                <li>Run: <code style="background:#444;padding:1px 3px;border-radius:2px">nvidia-settings</code></li>
+                                <li>Verify PRIME Profiles is set to NVIDIA On-Demand</li>
+                                <li>Test: <code style="background:#444;padding:1px 3px;border-radius:2px">__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia glxinfo | grep "OpenGL renderer"</code></li>
+                            </ul>
+                        `;
+                    } else if (isWindows) {
+                        // Windows specific instructions
+                        nvidiaHintPanel.innerHTML = `
+                            <strong>NVIDIA GPU Not Used</strong>
+                            <div style="margin-top:5px;font-size:11px">To use NVIDIA GPU instead of Intel:</div>
+                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
+                                <li>Right-click browser shortcut</li>
+                                <li>Select "Run with graphics processor"</li>
+                                <li>Choose "High-performance NVIDIA processor"</li>
+                            </ul>
+                            <div style="font-size:11px;margin-top:5px">Or in NVIDIA Control Panel:</div>
+                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
+                                <li>3D Settings > Program Settings</li>
+                                <li>Add your browser</li>
+                                <li>Set to "High-performance NVIDIA processor"</li>
+                            </ul>
+                        `;
+                    } else {
+                        // Generic instructions
+                        nvidiaHintPanel.innerHTML = `
+                            <strong>NVIDIA GPU Not Used</strong>
+                            <div style="margin-top:5px;font-size:11px">To use NVIDIA GPU instead of Intel:</div>
+                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
+                                <li>Check your GPU driver settings</li>
+                                <li>Select your browser</li>
+                                <li>Force it to use the high-performance GPU</li>
+                            </ul>
+                        `;
+                    }
+                    
+                    document.body.appendChild(nvidiaHintPanel);
+                }
+                
+                return {
+                    renderer: unmaskedRenderer || renderer,
+                    vendor: unmaskedVendor || vendor,
+                    isAccelerated,
+                    webglVersion: isWebGL2 ? '2.0' : '1.0',
+                    maxTextureSize,
+                    maxAnisotropy,
+                    hasNvidiaGPU
+                };
+            } catch (err) {
+                console.error('Error getting GPU info:', err);
+                gpuInfoSection.innerHTML = `<div style='color:#ff5252'>Could not detect GPU: ${err.message}</div>`;
+                return null;
+            }
+        }
+        
+        // Run GPU detection
+        const gpuInfo = getGPUInfo();
+        
+        // Show warning if software rendering is detected
+        if (gpuInfo && !gpuInfo.isAccelerated) {
+            const warningDiv = document.createElement('div');
+            warningDiv.style.position = 'absolute';
+            warningDiv.style.top = '50%';
+            warningDiv.style.left = '50%';
+            warningDiv.style.transform = 'translate(-50%, -50%)';
+            warningDiv.style.background = 'rgba(255,82,82,0.9)';
+            warningDiv.style.color = 'white';
+            warningDiv.style.padding = '20px';
+            warningDiv.style.borderRadius = '5px';
+            warningDiv.style.zIndex = '2000';
+            warningDiv.style.maxWidth = '400px';
+            warningDiv.style.textAlign = 'center';
+            warningDiv.innerHTML = `
+                <h3 style="margin-top:0">Software Rendering Detected</h3>
+                <p>Your browser is using software rendering instead of GPU acceleration.
+                This will result in poor performance when viewing 3D models.</p>
+                <p>Try updating your graphics drivers or using a different browser.</p>
+                <button id="dismissWarning" style="padding:8px 16px;background:#fff;color:#f44336;
+                border:none;border-radius:4px;cursor:pointer;font-weight:bold;margin-top:10px">
+                Dismiss</button>
+            `;
+            document.body.appendChild(warningDiv);
+            
+            document.getElementById('dismissWarning').addEventListener('click', function() {
+                warningDiv.style.display = 'none';
+            });
+        }
         
         // Label renderer
         const labelRenderer = new CSS2DRenderer();
@@ -197,21 +564,15 @@
         labelRenderer.domElement.style.pointerEvents = 'none';
         document.body.appendChild(labelRenderer.domElement);
         
-        // Enhanced lighting setup
-        const ambientLight = new THREE.AmbientLight(0x404050, 1.5);
+        // Remove all previous lighting setup
+        // Add only a single basic ambient light
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
         scene.add(ambientLight);
         
-        const mainLight = new THREE.DirectionalLight(0xffffff, 2.5);
-        mainLight.position.set(1, 1, 1);
-        scene.add(mainLight);
-        
-        const secondaryLight = new THREE.DirectionalLight(0xffffff, 1.5);
-        secondaryLight.position.set(-1, -1, -1);
-        scene.add(secondaryLight);
-        
-        const rimLight = new THREE.DirectionalLight(0xaaccff, 1.0);
-        rimLight.position.set(0, 0, -1);
-        scene.add(rimLight);
+        // Add a sun (directional light) in addition to the ambient light
+        const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        sunLight.position.set(10, 20, 10);
+        scene.add(sunLight);
         
         // Add orbit controls
         const controls = new OrbitControls(camera, renderer.domElement);
@@ -231,9 +592,81 @@
         let isAxesVisible = true;
         let viewMode = 2; // 0: solid, 1: transparent, 2: wireframe - default to wireframe
         
-        // Initialize raycaster and mouse position tracking
+        // Performance options
+        let isHighPerformanceMode = true; // Start in high performance mode
+        let showBoundingBox = false;
+        let boxHelper = null;
+        let enableDynamicLighting = false; // Disable dynamic lighting by default for performance
+        let hierarchyContainer = null; // Declare at global scope
+        
+        // Add performance control button
+        const perfModeBtn = document.createElement('button');
+        perfModeBtn.textContent = 'High Performance';
+        perfModeBtn.style.position = 'absolute';
+        perfModeBtn.style.top = '50px';
+        perfModeBtn.style.left = '10px';
+        perfModeBtn.style.padding = '5px 10px';
+        perfModeBtn.style.backgroundColor = '#4CAF50';
+        perfModeBtn.style.color = 'white';
+        perfModeBtn.style.border = 'none';
+        perfModeBtn.style.borderRadius = '3px';
+        perfModeBtn.style.cursor = 'pointer';
+        perfModeBtn.style.zIndex = '1000';
+        document.body.appendChild(perfModeBtn);
+        
+        perfModeBtn.addEventListener('click', () => {
+            isHighPerformanceMode = !isHighPerformanceMode;
+            perfModeBtn.textContent = isHighPerformanceMode ? 'High Performance' : 'High Quality';
+            perfModeBtn.style.backgroundColor = isHighPerformanceMode ? '#4CAF50' : '#ff9800';
+            
+            // Apply performance optimizations
+            applyPerformanceSettings();
+        });
+        
+        function applyPerformanceSettings() {
+            if (isHighPerformanceMode) {
+                // High performance settings
+                renderer.setPixelRatio(1); // Lower pixel ratio
+                if (boxHelper) boxHelper.visible = false;
+                if (hierarchyContainer) hierarchyContainer.style.display = 'none';
+                
+                // Simplify materials for better performance
+                if (currentMesh) {
+                    currentMesh.traverse(function(obj) {
+                        if (obj.isMesh && obj.material) {
+                            const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+                            materials.forEach(material => {
+                                // Use simpler materials for better performance
+                                material.flatShading = true;
+                                material.needsUpdate = true;
+                            });
+                        }
+                    });
+                }
+            } else {
+                // High quality settings
+                renderer.setPixelRatio(window.devicePixelRatio);
+                if (boxHelper) boxHelper.visible = showBoundingBox;
+                
+                // Restore materials
+                if (currentMesh) {
+                    currentMesh.traverse(function(obj) {
+                        if (obj.isMesh && obj.material) {
+                            const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+                            materials.forEach(material => {
+                                material.flatShading = false;
+                                material.needsUpdate = true;
+                            });
+                        }
+                    });
+                }
+            }
+        }
+        
+        // Raycaster and mouse position tracking with debounce for better performance
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
+        let raycastDebounce = null;
         
         // Measurement variables
         let measurementGroup = new THREE.Group();
@@ -331,149 +764,104 @@
                 
                 // Configure GLTF loader
                 const loader = new GLTFLoader();
+                loader.setCrossOrigin('anonymous'); // Set CORS mode explicitly
                 loader.setDRACOLoader(dracoLoader);
                 
                 document.getElementById('loadingDetails').textContent = 'Fetching optimized GLB model...';
                 document.getElementById('loadingBar').style.width = '10%';
                 
-                // Use the Django static URL to get the GLB file (converted server-side from GLTF)
-                // Server should apply gzip/brotli compression via Content-Encoding header
+                // Use the direct URL to the GLB file with explicit credentials mode
                 const modelPath = 'https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin.glb';
                 
-                // Load with progress tracking
+                // Log the URL we're trying to load
+                console.log("Attempting to load model from:", modelPath);
+                
+                // Create a simple fallback material in case textures fail
+                const fallbackMaterial = new THREE.MeshPhongMaterial({
+                    color: 0xcccccc,
+                    shininess: 30,
+                    specular: 0x111111,
+                    side: THREE.DoubleSide
+                });
+                
+                // Use fetch API for better CORS control
+                const modelResponse = await fetch(modelPath, { 
+                    credentials: 'omit',
+                    mode: 'cors' 
+                });
+                
+                if (!modelResponse.ok) {
+                    throw new Error(`Failed to fetch model: ${modelResponse.status} ${modelResponse.statusText}`);
+                }
+                
+                // Get model data as ArrayBuffer
+                const modelData = await modelResponse.arrayBuffer();
+                console.log("Model data loaded", modelData.byteLength, "bytes");
+                
+                // Load with GLTFLoader from ArrayBuffer
                 const gltf = await new Promise((resolve, reject) => {
-                    loader.load(
-                        modelPath,
+                    loader.parse(
+                        modelData,
+                        '',
                         // Success callback
-                        (gltf) => resolve(gltf),
-                        // Progress callback
-                        (progress) => {
-                            if (progress.lengthComputable) {
-                                const percentComplete = Math.round((progress.loaded / progress.total) * 90) + 10;
-                                document.getElementById('loadingBar').style.width = `${percentComplete}%`;
-                                document.getElementById('loadingDetails').textContent = 
-                                    `Loading model: ${Math.round(progress.loaded / 1024)}KB of ${Math.round(progress.total / 1024)}KB`;
-                            }
+                        (gltf) => {
+                            console.log("GLTF loaded successfully from ArrayBuffer");
+                            resolve(gltf);
                         },
                         // Error callback
-                        (error) => reject(error)
+                        (error) => {
+                            console.error("Error loading GLTF from ArrayBuffer:", error);
+                            reject(error);
+                        }
                     );
                 });
                 
                 document.getElementById('loadingDetails').textContent = 'Processing model...';
                 document.getElementById('loadingBar').style.width = '95%';
                 
+                console.log("GLTF object:", gltf);
+                
+                // Extract full scene to make sure we get everything
+                const fullScene = gltf.scene;
+                console.log("Full scene from GLTF:", fullScene);
+                
                 // Hide loading screen
                 document.getElementById('loading').style.display = 'none';
                 
-                // Get the first mesh from the GLTF scene
-                const mesh = gltf.scene.children[0];
+                // Get the entire scene
+                const mesh = fullScene;
                 if (!mesh) {
-                    throw new Error('No mesh found in GLTF model');
+                    throw new Error('No objects found in GLTF model scene');
                 }
-
-                // Ensure the mesh has proper geometry setup
-                if (mesh.geometry) {
-                    mesh.geometry.computeBoundingBox();
-                    mesh.geometry.computeVertexNormals();
-                }
-
-                // Create material with proper settings - default to wireframe for this version
-                const material = new THREE.MeshPhongMaterial({ 
-                    color: 0xdddddd,
-                    specular: 0x444444,
-                    shininess: 40,
-                    wireframe: true, // Default to wireframe mode in sigma
-                    flatShading: false,
-                    transparent: true,
-                    opacity: 0.7, // Use opacity that matches wireframe mode
-                    side: THREE.DoubleSide
-                });
-
-                // Apply material to mesh and all its children
-                function applyInitialMaterial(obj, baseMaterial) {
-                    if (obj.isMesh && obj.material) {
-                        // Create a clone of the material for each mesh
-                        if (Array.isArray(obj.material)) {
-                            // Handle multi-material objects
-                            obj.material = obj.material.map(() => baseMaterial.clone());
-                        } else {
-                            // Handle single material objects
-                            obj.material = baseMaterial.clone();
-                        }
+                
+                // Save reference to the mesh
+                currentMesh = mesh;
+                
+                // Apply fallback material if mesh has no material
+                function applyFallbackMaterialIfMissing(obj, fallbackMaterial) {
+                    if (obj.isMesh && !obj.material) {
+                        obj.material = fallbackMaterial.clone();
                     }
-                    
-                    // Apply to children
-                    if (obj.children) {
+                    if (obj.children && obj.children.length > 0) {
                         obj.children.forEach(child => {
-                            applyInitialMaterial(child, baseMaterial);
+                            applyFallbackMaterialIfMissing(child, fallbackMaterial);
                         });
                     }
                 }
+                applyFallbackMaterialIfMissing(mesh, fallbackMaterial);
                 
-                // Apply material recursively to the entire model
-                applyInitialMaterial(mesh, material);
-                
-                mesh.name = "MainModel";
+                // Add model to scene
+                scene.add(mesh);
                 currentMesh = mesh;
-                
-                console.log("GLB model structure:", mesh);
-
-                // Add edge highlighting
-                const edges = new THREE.EdgesGeometry(mesh.geometry, 30);
-                const edgeMaterial = new THREE.LineBasicMaterial({ 
-                    color: 0x222222, 
-                    linewidth: 1 
-                });
-                const wireframe = new THREE.LineSegments(edges, edgeMaterial);
-                wireframe.name = "ModelEdges";
-                mesh.add(wireframe);
-
-                // Get original bounding box before transformation
-                const originalBoundingBox = new THREE.Box3().setFromObject(mesh);
-                const originalSize = new THREE.Vector3();
-                originalBoundingBox.getSize(originalSize);
-                const originalCenter = new THREE.Vector3();
-                originalBoundingBox.getCenter(originalCenter);
-                
-                // Store original dimensions for reference
-                console.log("Original model dimensions:", originalSize);
-                console.log("Original model center:", originalCenter);
-                
-                // Apply Three.js convention transformations:
-                // 1. Rotate the model to convert to Y-up if needed
-                // For models that use Z-up, rotate -90 degrees around X axis
-                mesh.rotation.x = -Math.PI / 2;
-                
-                // 2. Center the model on the origin
-                // Get new bounding box after rotation
-                mesh.updateMatrixWorld(true);
-                const centeredBoundingBox = new THREE.Box3().setFromObject(mesh);
-                const centeredCenter = new THREE.Vector3();
-                centeredBoundingBox.getCenter(centeredCenter);
-                
-                // Center horizontally on XZ plane and place bottom at y=0
-                mesh.position.set(
-                    -centeredCenter.x,
-                    -centeredBoundingBox.min.y,
-                    -centeredCenter.z
-                );
-                
-                // Update mesh matrix
-                mesh.updateMatrixWorld(true);
-                
-                // Get final bounding box
+                // Compute bounding box and center for camera setup if needed, but do not modify mesh
                 const finalBoundingBox = new THREE.Box3().setFromObject(mesh);
                 const finalSize = new THREE.Vector3();
                 finalBoundingBox.getSize(finalSize);
                 const finalCenter = new THREE.Vector3();
                 finalBoundingBox.getCenter(finalCenter);
-                
-                // Store model size and center after transformations
                 modelSize = finalSize.clone();
                 modelCenter = finalCenter.clone();
                 
-                console.log("After Three.js convention:", modelSize);
                 console.log("Model centered at:", modelCenter);
                 
                 // Calculate calibration factor based on assumed real height of 4.28m
@@ -481,16 +869,13 @@
                 console.log(`Calibration factor: ${currentUnit} (${calibrationHeight}m / ${modelSize.y} model units)`);
                 document.getElementById('modelCalibration').textContent = `Calibration: 1 model unit = ${currentUnit.toFixed(4)} meters (height: ${calibrationHeight}m)`;
 
-                // Add to scene
-                scene.add(mesh);
-
                 // Update model information with Three.js conventional dimensions
                 document.getElementById('modelName').textContent = 'Navagunjara Sculpture (SIGMA Optimized)';
                 
                 const originalDimensions = {
-                    x: originalSize.x.toFixed(2),
-                    y: originalSize.y.toFixed(2),
-                    z: originalSize.z.toFixed(2)
+                    x: modelSize.x.toFixed(2),
+                    y: modelSize.y.toFixed(2),
+                    z: modelSize.z.toFixed(2)
                 };
                 
                 const threejsDimensions = {
@@ -498,18 +883,6 @@
                     y: modelSize.y.toFixed(2),
                     z: modelSize.z.toFixed(2)
                 };
-
-                if (isMobile) {
-                    document.getElementById('modelDimensions').textContent = 
-                        `Size: ${threejsDimensions.x}×${threejsDimensions.y}×${threejsDimensions.z} ${unitLabel}`;
-                    document.getElementById('modelCalibration').textContent = 
-                        `Y-up, centered, bottom at y=0`;
-                } else {
-                    document.getElementById('modelDimensions').textContent = 
-                        `Dimensions: ${threejsDimensions.x} × ${threejsDimensions.y} × ${threejsDimensions.z} ${unitLabel}`;
-                    document.getElementById('modelCalibration').textContent = 
-                        `Three.js: Y-up, centered, bottom at y=0 | Measurements in ${unitLabel}`;
-                }
                 
                 // Add a note about coordinate system for debugging
                 console.log("Three.js coordinate system: Y-up, right-handed");
@@ -529,6 +902,127 @@
                 controls.target.copy(modelCenter);
                 controls.update();
 
+                // Analyze and display the GLTF object hierarchy
+                console.log("Analyzing full GLTF hierarchy...");
+                hierarchyContainer = document.createElement('div'); // Use the global variable
+                hierarchyContainer.id = 'model-hierarchy';
+                hierarchyContainer.style.position = 'absolute';
+                hierarchyContainer.style.left = '10px';
+                hierarchyContainer.style.bottom = '10px';
+                hierarchyContainer.style.maxWidth = '300px';
+                hierarchyContainer.style.maxHeight = '200px';
+                hierarchyContainer.style.overflow = 'auto';
+                hierarchyContainer.style.background = 'rgba(0,0,0,0.7)';
+                hierarchyContainer.style.color = 'white';
+                hierarchyContainer.style.padding = '10px';
+                hierarchyContainer.style.fontFamily = 'monospace';
+                hierarchyContainer.style.fontSize = '11px';
+                hierarchyContainer.style.zIndex = '1000';
+                hierarchyContainer.style.borderRadius = '5px';
+                document.body.appendChild(hierarchyContainer);
+                
+                // Function to recursively analyze the model structure
+                function analyzeModelHierarchy(object, level = 0, parentPath = '') {
+                    const indent = '&nbsp;'.repeat(level * 2);
+                    const objectName = object.name || 'unnamed';
+                    const objectType = object.type;
+                    const path = parentPath ? `${parentPath}/${objectName}` : objectName;
+                    const info = {
+                        name: objectName,
+                        type: objectType,
+                        path: path,
+                        level: level,
+                        hasMesh: object.isMesh,
+                        hasGeometry: object.geometry !== undefined,
+                        hasMaterial: object.material !== undefined,
+                        childCount: object.children ? object.children.length : 0
+                    };
+                    // Add this node to the visual hierarchy section
+                    const node = document.createElement('div');
+                    node.innerHTML = `${indent}${objectName} [${objectType}]${object.isMesh ? ' (Mesh)' : ''}`;
+                    node.style.color = object.isMesh ? '#8aff8a' : 'white';
+                    hierarchySection.appendChild(node);
+                    // Recursively process all children
+                    if (object.children && object.children.length > 0) {
+                        object.children.forEach(child => {
+                            analyzeModelHierarchy(child, level + 1, path);
+                        });
+                    }
+                    return info;
+                }
+                
+                // Ensure all objects are properly processed with materials
+                function ensureRecursiveLoading(object) {
+                    // Make sure this object is visible
+                    object.visible = true;
+                    
+                    // If it's a mesh, ensure it has proper material
+                    if (object.isMesh) {
+                        // Check if it has a material, if not assign the default
+                        if (!object.material) {
+                            console.warn(`Mesh ${object.name || 'unnamed'} has no material, assigning default`);
+                            object.material = new THREE.MeshPhongMaterial({
+                                color: 0xdddddd,
+                                wireframe: (viewMode === 2),
+                                transparent: (viewMode >= 1),
+                                opacity: viewMode === 1 ? 0.5 : 0.7
+                            });
+                        }
+                        
+                        // Ensure geometry has proper attributes
+                        if (object.geometry) {
+                            if (!object.geometry.attributes.normal) {
+                                console.warn(`Computing missing normals for ${object.name || 'unnamed'}`);
+                                object.geometry.computeVertexNormals();
+                            }
+                        }
+                    }
+                    
+                    // Process all children recursively
+                    if (object.children && object.children.length > 0) {
+                        object.children.forEach(child => {
+                            ensureRecursiveLoading(child);
+                        });
+                    }
+                }
+                
+                // Analyze the model hierarchy and ensure all objects are loaded
+                const rootObject = mesh;
+                const hierarchyInfo = analyzeModelHierarchy(rootObject);
+                ensureRecursiveLoading(rootObject);
+                console.log("Model hierarchy analysis complete");
+                
+                // Add a toggle button for the hierarchy display
+                const toggleHierarchyBtn = document.createElement('button');
+                toggleHierarchyBtn.textContent = 'Toggle Hierarchy';
+                toggleHierarchyBtn.style.position = 'absolute';
+                toggleHierarchyBtn.style.left = '10px';
+                toggleHierarchyBtn.style.bottom = '370px';
+                toggleHierarchyBtn.style.padding = '5px 10px';
+                toggleHierarchyBtn.style.backgroundColor = '#555';
+                toggleHierarchyBtn.style.color = 'white';
+                toggleHierarchyBtn.style.border = 'none';
+                toggleHierarchyBtn.style.borderRadius = '3px';
+                toggleHierarchyBtn.style.cursor = 'pointer';
+                toggleHierarchyBtn.style.zIndex = '1000';
+                document.body.appendChild(toggleHierarchyBtn);
+                
+                toggleHierarchyBtn.addEventListener('click', () => {
+                    hierarchySection.style.display = hierarchySection.style.display === 'none' ? 'block' : 'none';
+                });
+
+                if (isMobile) {
+                    document.getElementById('modelDimensions').textContent = 
+                        `Size: ${threejsDimensions.x}×${threejsDimensions.y}×${threejsDimensions.z} ${unitLabel}`;
+                    document.getElementById('modelCalibration').textContent = 
+                        `Y-up, centered, bottom at y=0`;
+                } else {
+                    document.getElementById('modelDimensions').textContent = 
+                        `Dimensions: ${threejsDimensions.x} × ${threejsDimensions.y} × ${threejsDimensions.z} ${unitLabel}`;
+                    document.getElementById('modelCalibration').textContent = 
+                        `Three.js: Y-up, centered, bottom at y=0 | Measurements in ${unitLabel}`;
+                }
+                
                 // Make sure the model is properly initialized before setting views
                 // The timeout gives the model time to properly initialize
                 setTimeout(() => {
@@ -557,6 +1051,39 @@
                         controls.update();
                     }
                 }, 300); // Increased timeout to ensure model is properly initialized
+
+                // Add environment map for PBR reflections
+                const envMapLoader = new THREE.CubeTextureLoader();
+                const envMap = envMapLoader.load([
+                    'https://threejs.org/examples/textures/cube/Bridge2/posx.jpg',
+                    'https://threejs.org/examples/textures/cube/Bridge2/negx.jpg',
+                    'https://threejs.org/examples/textures/cube/Bridge2/posy.jpg',
+                    'https://threejs.org/examples/textures/cube/Bridge2/negy.jpg',
+                    'https://threejs.org/examples/textures/cube/Bridge2/posz.jpg',
+                    'https://threejs.org/examples/textures/cube/Bridge2/negz.jpg'
+                ]);
+                scene.environment = envMap;
+                scene.background = envMap; // Optional: comment out if you want a solid color background
+
+                // Upgrade all mesh materials to MeshPhysicalMaterial for PBR
+                currentMesh.traverse(obj => {
+                    if (obj.isMesh) {
+                        // If the mesh already has a standard/physical material, just set envMap
+                        if (obj.material && (obj.material.isMeshStandardMaterial || obj.material.isMeshPhysicalMaterial)) {
+                            obj.material.envMap = envMap;
+                            obj.material.needsUpdate = true;
+                        } else {
+                            // Otherwise, replace with MeshPhysicalMaterial
+                            obj.material = new THREE.MeshPhysicalMaterial({
+                                color: (obj.material && obj.material.color) ? obj.material.color : 0xffffff,
+                                roughness: 0.3,
+                                metalness: 0.7,
+                                clearcoat: 0.2,
+                                envMap: envMap
+                            });
+                        }
+                    }
+                });
 
             } catch (error) {
                 console.error('Error loading GLTF model:', error);
@@ -619,16 +1146,33 @@
             }
         }
 
-        // Rendering loop
+        // Rendering loop with performance optimization
         function animate() {
             requestAnimationFrame(animate);
-            controls.update();
             
-            // Ensure label renderer stays in sync with objects
-            renderer.render(scene, camera);
-            labelRenderer.render(scene, camera);
+            // Reduce control updates when in high performance mode
+            if (controls.enabled) {
+                controls.update();
+            }
+            
+            // Performance-optimized rendering
+            if (isHighPerformanceMode) {
+                // Render at lower frequency in high performance mode
+                renderer.render(scene, camera);
+                // Only update label renderer when needed
+                if (measurementLabels.length > 0) {
+                    labelRenderer.render(scene, camera);
+                }
+            } else {
+                // Full quality rendering
+                renderer.render(scene, camera);
+                labelRenderer.render(scene, camera);
+            }
         }
-
+        
+        // Initialize with high-performance settings
+        applyPerformanceSettings();
+        
         animate();
         
         // Handle window resize
@@ -728,9 +1272,8 @@
         // Toggle functions
         function toggleViewMode() {
             if (!currentMesh) return;
-            
             viewMode = (viewMode + 1) % 3; // Cycle through view modes: 0=solid, 1=transparent, 2=wireframe
-            
+            console.log("Toggling view mode to:", viewMode);
             // Apply view mode to mesh and its children
             currentMesh.traverse(function(object) {
                 if (object.isMesh && object.material) {
@@ -741,8 +1284,8 @@
                     }
                 }
             });
-            
             function updateMaterial(material) {
+                if (!material) return;
                 switch(viewMode) {
                     case 0: // Solid
                         material.wireframe = false;
@@ -760,6 +1303,7 @@
                         material.opacity = 0.7;
                         break;
                 }
+                material.needsUpdate = true;
             }
         }
         
@@ -822,6 +1366,42 @@
                 item.innerHTML = `#${index + 1}: ${m.distance.toFixed(3)} ${unitLabel}`;
                 container.appendChild(item);
             });
+        }
+
+        // Add floating debug toggle button for mobile
+        const debugToggleBtn = document.createElement('button');
+        debugToggleBtn.id = 'debug-toggle-btn';
+        debugToggleBtn.innerHTML = 'Debug';
+        debugToggleBtn.style.display = 'none'; // Only show on mobile
+
+        document.body.appendChild(debugToggleBtn);
+
+        // Show/hide debug console on mobile
+        function updateDebugConsoleMobileLayout() {
+            if (window.innerWidth < 768) {
+                debugConsole.style.display = 'none';
+                debugToggleBtn.style.display = 'flex';
+            } else {
+                debugConsole.style.display = 'block';
+                debugToggleBtn.style.display = 'none';
+            }
+        }
+
+        window.addEventListener('resize', updateDebugConsoleMobileLayout);
+        document.addEventListener('DOMContentLoaded', updateDebugConsoleMobileLayout);
+
+        // Toggle debug console on mobile
+        let debugConsoleVisible = false;
+        debugToggleBtn.addEventListener('click', () => {
+            debugConsoleVisible = !debugConsoleVisible;
+            debugConsole.style.display = debugConsoleVisible ? 'block' : 'none';
+            debugToggleBtn.classList.toggle('active', debugConsoleVisible);
+        });
+
+        // On mobile, hide debug console by default
+        if (window.innerWidth < 768) {
+            debugConsole.style.display = 'none';
+            debugToggleBtn.style.display = 'flex';
         }
     </script>
 </body>
