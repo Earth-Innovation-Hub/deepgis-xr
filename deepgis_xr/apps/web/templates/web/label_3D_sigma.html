@@ -23,7 +23,7 @@
         }
     </script>
     <!-- Fix CORS issues by adding proper crossorigin attributes -->
-    <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin.glb" as="fetch" crossorigin="anonymous">
+    <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v2.glb" as="fetch" crossorigin="anonymous">
     <link rel="preload" href="https://unpkg.com/three@0.158.0/build/three.module.js" as="script" crossorigin="anonymous">
     <link rel="preload" href="https://unpkg.com/three@0.158.0/examples/jsm/loaders/GLTFLoader.js" as="script" crossorigin="anonymous">
     <link rel="preload" href="https://unpkg.com/three@0.158.0/examples/jsm/loaders/DRACOLoader.js" as="script" crossorigin="anonymous">
@@ -204,7 +204,7 @@
         /**
          * SIGMA VERSION - Server-Side Optimizations
          * This version includes server-side optimizations for GLTF loading:
-         * 1. Using GLB binary format instead of GLTF text format
+         * 1. Using GLB binary format instead of GLTF
          * 2. Implementing Draco mesh compression
          * 3. Utilizing HTTP/2 for efficient loading
          * 4. Resource preloading with <link rel="preload">
@@ -247,8 +247,14 @@
         let isOrthographic = false;
         
         // Measurement control states
-        // ...same as original file...
-
+        let isMeasureMode = false;
+        let isPathMeasureMode = false;
+        let pathMeasurementPoints = [];
+        let pathMeasurementLines = [];
+        let pathMeasurementLabels = [];
+        let pathTotalDistance = 0;
+        let pathTotalLabel = null;
+        
         // Set up both cameras
         const perspectiveCamera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
         const orthographicCamera = new THREE.OrthographicCamera(
@@ -590,7 +596,7 @@
         let currentMesh = null;
         let isWireframe = false;
         let isAxesVisible = true;
-        let viewMode = 2; // 0: solid, 1: transparent, 2: wireframe - default to wireframe
+        let viewMode = 1; // 0: solid, 1: transparent, 2: wireframe - default to transparent
         
         // Performance options
         let isHighPerformanceMode = true; // Start in high performance mode
@@ -771,7 +777,7 @@
                 document.getElementById('loadingBar').style.width = '10%';
                 
                 // Use the direct URL to the GLB file with explicit credentials mode
-                const modelPath = 'https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin.glb';
+                const modelPath = 'https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v2.glb';
                 
                 // Log the URL we're trying to load
                 console.log("Attempting to load model from:", modelPath);
@@ -1052,38 +1058,8 @@
                     }
                 }, 300); // Increased timeout to ensure model is properly initialized
 
-                // Add environment map for PBR reflections
-                const envMapLoader = new THREE.CubeTextureLoader();
-                const envMap = envMapLoader.load([
-                    'https://threejs.org/examples/textures/cube/Bridge2/posx.jpg',
-                    'https://threejs.org/examples/textures/cube/Bridge2/negx.jpg',
-                    'https://threejs.org/examples/textures/cube/Bridge2/posy.jpg',
-                    'https://threejs.org/examples/textures/cube/Bridge2/negy.jpg',
-                    'https://threejs.org/examples/textures/cube/Bridge2/posz.jpg',
-                    'https://threejs.org/examples/textures/cube/Bridge2/negz.jpg'
-                ]);
-                scene.environment = envMap;
-                scene.background = envMap; // Optional: comment out if you want a solid color background
-
-                // Upgrade all mesh materials to MeshPhysicalMaterial for PBR
-                currentMesh.traverse(obj => {
-                    if (obj.isMesh) {
-                        // If the mesh already has a standard/physical material, just set envMap
-                        if (obj.material && (obj.material.isMeshStandardMaterial || obj.material.isMeshPhysicalMaterial)) {
-                            obj.material.envMap = envMap;
-                            obj.material.needsUpdate = true;
-                        } else {
-                            // Otherwise, replace with MeshPhysicalMaterial
-                            obj.material = new THREE.MeshPhysicalMaterial({
-                                color: (obj.material && obj.material.color) ? obj.material.color : 0xffffff,
-                                roughness: 0.3,
-                                metalness: 0.7,
-                                clearcoat: 0.2,
-                                envMap: envMap
-                            });
-                        }
-                    }
-                });
+                // Update calibration based on model's actual dimensions
+                updateCalibrationFromModel(mesh);
 
             } catch (error) {
                 console.error('Error loading GLTF model:', error);
@@ -1329,43 +1305,396 @@
         
         // Measurement functions
         function toggleMeasureMode() {
-            // Implementation for distance measurement
-            console.log("Toggle measurement mode");
+            const measureButton = document.getElementById('measureMode');
+            isMeasureMode = !isMeasureMode;
+            
+            // Toggle path measure mode off if it was on
+            if (isMeasureMode && isPathMeasureMode) {
+                togglePathMeasureMode();
+            }
+            
+            if (isMeasureMode) {
+                // Enable measure mode
+                controls.enableRotate = false; // Disable rotation by default
+                measureButton.textContent = 'Cancel Measure';
+                
+                // Clean up any existing preview elements
+                if (previewLine) {
+                    measurementGroup.remove(previewLine);
+                    previewLine = null;
+                }
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
+                }
+                if (previewLabel) {
+                    measurementGroup.remove(previewLabel);
+                    previewLabel = null;
+                }
+                
+                // Reset measurement points
+                measurementPoints = [];
+                
+                // Show instructions
+                showNotification('Click to place measurement points. Press ESC to cancel.');
+            } else {
+                // Disable measure mode
+                controls.enableRotate = true;
+                measureButton.textContent = 'Measure';
+                
+                // Clean up any in-progress measurements
+                measurementPoints = [];
+                
+                // Clean up preview elements
+                if (previewLine) {
+                    measurementGroup.remove(previewLine);
+                    previewLine = null;
+                }
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
+                }
+                if (previewLabel) {
+                    measurementGroup.remove(previewLabel);
+                    previewLabel = null;
+                }
+            }
+            
+            console.log("Measure mode:", isMeasureMode ? "ON" : "OFF");
         }
         
         function togglePathMeasureMode() {
-            // Implementation for path measurement
-            console.log("Toggle path measurement mode");
-        }
-        
-        function clearMeasurements() {
-            // Implementation for clearing measurements
-            console.log("Clear measurements");
-            while(measurementGroup.children.length > 0) {
-                measurementGroup.remove(measurementGroup.children[0]);
-            }
-            measurements = [];
-            measurementPoints = [];
-            measurementLabels = [];
-            updateMeasurementsList();
-        }
-        
-        function updateMeasurementsList() {
-            const container = document.getElementById('measurements-container');
-            if (!container) return;
+            const pathMeasureButton = document.getElementById('pathMeasureMode');
+            isPathMeasureMode = !isPathMeasureMode;
             
-            if (measurements.length === 0) {
-                container.innerHTML = 'No measurements yet';
-                return;
+            // Toggle regular measure mode off if it was on
+            if (isPathMeasureMode && isMeasureMode) {
+                toggleMeasureMode();
             }
             
-            container.innerHTML = '';
-            measurements.forEach((m, index) => {
-                const item = document.createElement('div');
-                item.className = 'measurement-item';
-                item.innerHTML = `#${index + 1}: ${m.distance.toFixed(3)} ${unitLabel}`;
-                container.appendChild(item);
+            if (isPathMeasureMode) {
+                // Enable path measure mode
+                controls.enableRotate = false;
+                pathMeasureButton.textContent = 'Cancel Path';
+                
+                // Initialize new path
+                pathMeasurementPoints = [];
+                pathMeasurementLines = [];
+                pathMeasurementLabels = [];
+                pathTotalDistance = 0;
+                
+                // Show instructions
+                showNotification('Click to add points to path. Press ENTER to complete path, ESC to cancel.');
+            } else {
+                // Disable path measure mode
+                controls.enableRotate = true;
+                pathMeasureButton.textContent = 'Measure Path';
+                
+                // Clean up any in-progress path
+                cancelInProgressPathMeasurement();
+            }
+            
+            console.log("Path measure mode:", isPathMeasureMode ? "ON" : "OFF");
+        }
+        
+        // Helper function to show notifications
+        function showNotification(message, duration = 3000) {
+            const notification = document.createElement('div');
+            notification.style.position = 'fixed';
+            notification.style.top = '20px';
+            notification.style.left = '50%';
+            notification.style.transform = 'translateX(-50%)';
+            notification.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+            notification.style.color = 'white';
+            notification.style.padding = '10px 20px';
+            notification.style.borderRadius = '5px';
+            notification.style.zIndex = '1000';
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    document.body.removeChild(notification);
+                }
+            }, duration);
+        }
+        
+        // Helper function to cancel in-progress path measurement
+        function cancelInProgressPathMeasurement() {
+            // Remove all temporary path elements
+            pathMeasurementLines.forEach(line => {
+                if (line) measurementGroup.remove(line);
             });
+            pathMeasurementLabels.forEach(label => {
+                if (label) measurementGroup.remove(label);
+            });
+            if (pathTotalLabel) {
+                measurementGroup.remove(pathTotalLabel);
+                pathTotalLabel = null;
+            }
+            
+            // Reset path arrays
+            pathMeasurementPoints = [];
+            pathMeasurementLines = [];
+            pathMeasurementLabels = [];
+            pathTotalDistance = 0;
+        }
+        
+        // --- Measurement Helper Functions (ported from label_3d.html) ---
+        function updatePreviewLine(point1, point2) {
+            // Remove existing preview lines if any
+            if (previewLine) {
+                measurementGroup.remove(previewLine);
+                previewLine = null;
+            }
+            if (previewBackgroundLine) {
+                measurementGroup.remove(previewBackgroundLine);
+                previewBackgroundLine = null;
+            }
+            if (previewLabel) {
+                measurementGroup.remove(previewLabel);
+                previewLabel = null;
+            }
+            // Create a more visible preview line between points
+            const material = new THREE.LineDashedMaterial({ 
+                color: 0x3498db, // Light blue for preview
+                dashSize: 0.12, 
+                gapSize: 0.06,
+                linewidth: 2
+            });
+            const geometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
+            previewLine = new THREE.Line(geometry, material);
+            previewLine.computeLineDistances(); // Required for dashed lines
+            // Create background preview line for better visibility
+            const bgMaterial = new THREE.LineDashedMaterial({
+                color: 0x4caf50, // Green background
+                dashSize: 0.06,
+                gapSize: 0.12,
+                linewidth: 3,
+                transparent: true,
+                opacity: 0.5
+            });
+            const bgGeometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
+            previewBackgroundLine = new THREE.Line(bgGeometry, bgMaterial);
+            previewBackgroundLine.computeLineDistances();
+            // Add the background line first
+            measurementGroup.add(previewBackgroundLine);
+            // Add the main preview line on top
+            measurementGroup.add(previewLine);
+            // Calculate distance for preview
+            const distance = point1.distanceTo(point2);
+            // Calculate midpoint
+            const midpoint = new THREE.Vector3().addVectors(point1, point2).multiplyScalar(0.5);
+            // Calculate the direction vector of the line
+            const direction = new THREE.Vector3().subVectors(point2, point1).normalize();
+            // Calculate a perpendicular vector in the up direction to offset the label
+            const worldUp = new THREE.Vector3(0, 1, 0);
+            const perpendicular = new THREE.Vector3().crossVectors(direction, worldUp).normalize();
+            if (perpendicular.length() < 0.1) {
+                const worldRight = new THREE.Vector3(1, 0, 0);
+                perpendicular.crossVectors(direction, worldRight).normalize();
+            }
+            const labelOffset = 0.25; // Distance above the line
+            const labelPosition = midpoint.clone().addScaledVector(perpendicular, labelOffset);
+            // Create enhanced preview label
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'annotation-label';
+            labelDiv.style.opacity = '0.9';
+            labelDiv.style.padding = '3px 6px';
+            labelDiv.style.fontSize = '13px';
+            labelDiv.style.fontWeight = 'bold';
+            labelDiv.style.backgroundColor = 'rgba(52, 152, 219, 0.7)'; // Light blue background
+            labelDiv.style.border = '1px dashed rgba(255, 0, 0, 0.7)'; // Dashed red border
+            labelDiv.textContent = getMeasurementText(distance);
+            previewLabel = new CSS2DObject(labelDiv);
+            previewLabel.position.copy(labelPosition);
+            measurementGroup.add(previewLabel);
+        }
+
+        function addMeasurementPoint(point) {
+            // Add a more prominent crosshair marker at the point
+            const markerGroup = new THREE.Group();
+            markerGroup.position.copy(point);
+            // Create larger crosshair marker (three perpendicular lines)
+            const markerSize = 0.08;
+            const primaryColor = 0x4caf50;
+            const secondaryColor = 0x3498db;
+            const primaryMaterial = new THREE.LineBasicMaterial({ color: primaryColor, linewidth: 3 });
+            // X axis line (light green)
+            const xGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(-markerSize, 0, 0),
+                new THREE.Vector3(markerSize, 0, 0)
+            ]);
+            const xLine = new THREE.Line(xGeometry, primaryMaterial);
+            markerGroup.add(xLine);
+            // Y axis line (light green)
+            const yGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, -markerSize, 0),
+                new THREE.Vector3(0, markerSize, 0)
+            ]);
+            const yLine = new THREE.Line(yGeometry, primaryMaterial);
+            markerGroup.add(yLine);
+            // Z axis line (light green)
+            const zGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(0, 0, -markerSize),
+                new THREE.Vector3(0, 0, markerSize)
+            ]);
+            const zLine = new THREE.Line(zGeometry, primaryMaterial);
+            markerGroup.add(zLine);
+            // Secondary color lines (light blue) - slightly offset for visibility
+            const secondaryMaterial = new THREE.LineBasicMaterial({ color: secondaryColor, linewidth: 1.5 });
+            const offset = 0.01;
+            // X axis line (light blue)
+            const xGeometry2 = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(-markerSize, offset, offset),
+                new THREE.Vector3(markerSize, offset, offset)
+            ]);
+            const xLine2 = new THREE.Line(xGeometry2, secondaryMaterial);
+            markerGroup.add(xLine2);
+            // Y axis line (light blue)
+            const yGeometry2 = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(offset, -markerSize, offset),
+                new THREE.Vector3(offset, markerSize, offset)
+            ]);
+            const yLine2 = new THREE.Line(yGeometry2, secondaryMaterial);
+            markerGroup.add(yLine2);
+            // Z axis line (light blue)
+            const zGeometry2 = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(offset, offset, -markerSize),
+                new THREE.Vector3(offset, offset, markerSize)
+            ]);
+            const zLine2 = new THREE.Line(zGeometry2, secondaryMaterial);
+            markerGroup.add(zLine2);
+            // Sphere at center - make it larger and two-toned
+            const sphereGeometry = new THREE.SphereGeometry(0.02);
+            const sphereMaterial = new THREE.MeshBasicMaterial({ color: primaryColor });
+            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
+            markerGroup.add(sphere);
+            // Outer sphere (light blue halo)
+            const outerSphereGeometry = new THREE.SphereGeometry(0.03);
+            const outerSphereMaterial = new THREE.MeshBasicMaterial({ 
+                color: secondaryColor,
+                transparent: true,
+                opacity: 0.5
+            });
+            const outerSphere = new THREE.Mesh(outerSphereGeometry, outerSphereMaterial);
+            markerGroup.add(outerSphere);
+            measurementGroup.add(markerGroup);
+            measurementPoints.push(point);
+            // If we have two points, create a measurement and clean up preview
+            if (measurementPoints.length === 2) {
+                if (previewLine) {
+                    measurementGroup.remove(previewLine);
+                    previewLine = null;
+                }
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
+                }
+                if (previewLabel) {
+                    measurementGroup.remove(previewLabel);
+                    previewLabel = null;
+                }
+                if (typeof createMeasurement === 'function') {
+                    createMeasurement(measurementPoints[0], measurementPoints[1]);
+                }
+                measurementPoints = [];
+            }
+        }
+
+        function addPathMeasurementPoint(point) {
+            if (!isPathMeasureMode) return;
+            const pointIndex = pathMeasurementPoints.length + 1;
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'path-marker-label';
+            labelDiv.textContent = pointIndex;
+            const markerLabel = new CSS2DObject(labelDiv);
+            markerLabel.position.copy(point);
+            markerLabel.updateMatrix();
+            markerLabel.updateMatrixWorld(true);
+            measurementGroup.add(markerLabel);
+            pathMeasurementLabels.push(markerLabel);
+            pathMeasurementPoints.push(point);
+            if (pathMeasurementPoints.length > 1) {
+                const prevPoint = pathMeasurementPoints[pathMeasurementPoints.length - 2];
+                const currentPoint = point;
+                const lineMaterial = new THREE.LineBasicMaterial({ 
+                    color: 0xFFFFFF, linewidth: 4, transparent: false 
+                });
+                const geometry = new THREE.BufferGeometry().setFromPoints([prevPoint, currentPoint]);
+                const line = new THREE.Line(geometry, lineMaterial);
+                const dottedLineMaterial = new THREE.LineDashedMaterial({ 
+                    color: 0x00CC00, linewidth: 3, transparent: true, opacity: 0.95, dashSize: 0.05, gapSize: 0.05
+                });
+                const dottedGeometry = new THREE.BufferGeometry().setFromPoints([prevPoint, currentPoint]);
+                const dottedLine = new THREE.Line(dottedGeometry, dottedLineMaterial);
+                dottedLine.computeLineDistances();
+                measurementGroup.add(dottedLine);
+                pathMeasurementLines.push(dottedLine);
+                measurementGroup.add(line);
+                pathMeasurementLines.push(line);
+                const segmentDistance = prevPoint.distanceTo(currentPoint);
+                pathTotalDistance += segmentDistance;
+                if (typeof updatePathTotalLabel === 'function') updatePathTotalLabel();
+                if (typeof updateMeasurementsList === 'function') updateMeasurementsList();
+                if (typeof labelRenderer !== 'undefined') labelRenderer.render(scene, camera);
+            }
+        }
+
+        function updatePathPreviewMarker(position, screenX, screenY) {
+            removePathPreviewMarker();
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'path-preview-marker';
+            labelDiv.textContent = '•';
+            pathPreviewMarker = new CSS2DObject(labelDiv);
+            pathPreviewMarker.position.copy(position);
+            measurementGroup.add(pathPreviewMarker);
+            if (typeof labelRenderer !== 'undefined') labelRenderer.render(scene, camera);
+        }
+
+        function removePathPreviewMarker() {
+            if (pathPreviewMarker) {
+                measurementGroup.remove(pathPreviewMarker);
+                pathPreviewMarker = null;
+            }
+        }
+
+        // Update calibration based on model's actual dimensions
+        function updateCalibrationFromModel(model) {
+            // Get the model's bounding box
+            const boundingBox = new THREE.Box3().setFromObject(model);
+            const size = new THREE.Vector3();
+            boundingBox.getSize(size);
+            
+            // Use the model's actual height for calibration
+            calibrationHeight = size.y;
+            currentUnit = 1.0; // Since the model is already in meters
+            
+            console.log(`Model dimensions: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} meters`);
+            console.log(`Calibration: Using actual model dimensions (1 unit = 1 meter)`);
+            
+            // Update the UI
+            document.getElementById('modelCalibration').textContent = 
+                `Calibration: Using actual model dimensions (1 unit = 1 meter)`;
+            document.getElementById('modelDimensions').textContent = 
+                `Dimensions: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} meters`;
+        }
+
+        // Function to get measurement text with proper calibration
+        function getMeasurementText(distance) {
+            // Apply calibration factor to convert model units to meters
+            const calibratedDistance = distance * currentUnit;
+            const formattedDistance = calibratedDistance.toFixed(2);
+            
+            // Convert to inches as well (1 meter = 39.3701 inches)
+            const inches = (calibratedDistance * 39.3701).toFixed(2);
+            
+            // On mobile, make the text more concise
+            if (isMobile) {
+                return `${formattedDistance}${unitLabel}/${inches}"`;
+            }
+            
+            return `${formattedDistance} ${unitLabel} / ${inches} in`;
         }
 
         // Add floating debug toggle button for mobile
@@ -1403,6 +1732,25 @@
             debugConsole.style.display = 'none';
             debugToggleBtn.style.display = 'flex';
         }
+
+        // After loading the mesh and adding to the scene, set all materials to transparent by default
+        currentMesh.traverse(function(object) {
+            if (object.isMesh && object.material) {
+                if (Array.isArray(object.material)) {
+                    object.material.forEach(material => {
+                        material.wireframe = false;
+                        material.transparent = true;
+                        material.opacity = 0.5;
+                        material.needsUpdate = true;
+                    });
+                } else {
+                    object.material.wireframe = false;
+                    object.material.transparent = true;
+                    object.material.opacity = 0.5;
+                    object.material.needsUpdate = true;
+                }
+            }
+        });
     </script>
 </body>
 </html> 
