@@ -73,6 +73,40 @@
             display: flex;
             flex-direction: column;
         }
+        .keyboard-shortcuts {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(40, 40, 40, 0.85);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            z-index: 100;
+            color: white;
+            max-width: 300px;
+        }
+        .keyboard-shortcuts h3 {
+            margin: 0 0 10px 0;
+            font-size: 16px;
+            color: #9c27b0;
+        }
+        .keyboard-shortcuts ul {
+            margin: 0;
+            padding-left: 20px;
+            line-height: 1.6;
+        }
+        .keyboard-shortcuts li strong {
+            display: inline-block;
+            min-width: 30px;
+            color: #4caf50;
+        }
+        @media (max-width: 768px) {
+            .keyboard-shortcuts {
+                display: none !important;
+            }
+        }
         /* Same CSS as in original file... */
         /* (CSS is kept identical to the original file) */
     </style>
@@ -135,6 +169,22 @@
         SIGMA VERSION
     </div>
     
+    <div class="keyboard-shortcuts">
+        <h3>Keyboard Shortcuts</h3>
+        <ul>
+            <li><strong>M</strong> - Toggle measure mode</li>
+            <li><strong>P</strong> - Toggle path measure mode</li>
+            <li><strong>C</strong> - Clear all measurements</li>
+            <li><strong>F</strong> - Finish path (closes if possible)</li>
+            <li><strong>Space</strong> - Enable rotation while measuring</li>
+            <li><strong>ESC</strong> - Exit measure mode</li>
+            <li><strong>O</strong> - Toggle orthographic view</li>
+            <li><strong>G</strong> - Toggle grid & axes</li>
+            <li><strong>V</strong> - Toggle view mode</li>
+            <li><strong>1-4</strong> - Standard views</li>
+        </ul>
+    </div>
+    
     <div class="controls-overlay">
         <h3>3D Model Controls (Sigma)</h3>
         <div id="modelInfo">
@@ -160,6 +210,17 @@
             <button id="measureMode" class="control-button">Measure Distance</button>
             <button id="pathMeasureMode" class="control-button">Measure Path</button>
             <button id="clearMeasurements" class="control-button">Clear Measurements</button>
+            <button id="finishPathBtn" class="control-button" style="background-color: #e91e63;">Finish Path</button>
+        </div>
+        
+        <div class="control-group">
+            <label for="unitSelector" style="display:block;margin-bottom:5px;color:#ddd;">Measurement Units:</label>
+            <select id="unitSelector" style="width:100%;padding:5px;background:#333;color:#fff;border:1px solid #555;border-radius:3px;">
+                <option value="m">Meters (m)</option>
+                <option value="cm">Centimeters (cm)</option>
+                <option value="ft">Feet (ft)</option>
+                <option value="in">Inches (in)</option>
+            </select>
         </div>
         
         <div id="measurementsList">
@@ -212,12 +273,13 @@
         debugConsole.style.fontSize = '12px';
         debugConsole.style.zIndex = '1000';
         debugConsole.style.borderRadius = '6px';
+        debugConsole.style.display = 'none'; // Hide debug console by default
         document.body.appendChild(debugConsole);
 
         const debugToggleBtn = document.createElement('button');
         debugToggleBtn.id = 'debug-toggle-btn';
         debugToggleBtn.innerHTML = 'Debug';
-        debugToggleBtn.style.display = 'none'; // Only show on mobile
+        debugToggleBtn.style.display = 'none'; // Hide debug toggle button by default
         debugToggleBtn.style.position = 'fixed';
         debugToggleBtn.style.right = '18px';
         debugToggleBtn.style.bottom = '18px';
@@ -274,6 +336,14 @@
                     this.togglePathMeasureMode();
                 }
                 this.isMeasureMode = !this.isMeasureMode;
+                
+                // Disable rotation in measure mode
+                if (this.isMeasureMode && controls) {
+                    controls.enableRotate = false;
+                } else if (controls) {
+                    controls.enableRotate = true;
+                }
+                
                 this.needsRender = true;
             }
 
@@ -282,6 +352,14 @@
                     this.toggleMeasureMode();
                 }
                 this.isPathMeasureMode = !this.isPathMeasureMode;
+                
+                // Disable rotation in path measure mode
+                if (this.isPathMeasureMode && controls) {
+                    controls.enableRotate = false;
+                } else if (controls) {
+                    controls.enableRotate = true;
+                }
+                
                 this.needsRender = true;
             }
 
@@ -638,15 +716,18 @@
         
         // Function to get GPU info (update gpuInfoSection instead of gpuInfoDisplay)
         function getGPUInfo() {
-            let renderer, vendor, unmaskedRenderer, unmaskedVendor;
+            // Simplified function that only returns basic GPU info without displaying it
             try {
-                renderer = gl.getParameter(gl.RENDERER);
-                vendor = gl.getParameter(gl.VENDOR);
+                const renderer = gl.getParameter(gl.RENDERER);
+                const vendor = gl.getParameter(gl.VENDOR);
                 const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                let unmaskedRenderer, unmaskedVendor;
+                
                 if (debugInfo) {
                     unmaskedRenderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
                     unmaskedVendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
                 }
+                
                 const isSoftwareRendering = 
                     (unmaskedRenderer && (
                         unmaskedRenderer.includes('SwiftShader') || 
@@ -660,169 +741,31 @@
                         renderer.includes('Software') ||
                         renderer.includes('Microsoft Basic Render')
                     ));
+                
                 const isAccelerated = !isSoftwareRendering;
                 const isWebGL2 = gl instanceof WebGL2RenderingContext;
-                const glVersion = gl.getParameter(gl.VERSION);
-                const glslVersion = gl.getParameter(gl.SHADING_LANGUAGE_VERSION);
-                const maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE);
-                const anisotropic = gl.getExtension('EXT_texture_filter_anisotropic');
-                const maxAnisotropy = anisotropic ? 
-                    gl.getParameter(anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT) : 'Not supported';
-                const gpuInfoHTML = `
-                    <div style="color:${isAccelerated ? '#4caf50' : '#ff5252'}">
-                        <strong>${isAccelerated ? '✓ GPU ACCELERATED' : '✗ SOFTWARE RENDERING'}</strong>
-                    </div>
-                    <div>Renderer: ${unmaskedRenderer || renderer || 'Unknown'}</div>
-                    <div>Vendor: ${unmaskedVendor || vendor || 'Unknown'}</div>
-                    <div>WebGL: ${isWebGL2 ? '2.0' : '1.0'} (${glVersion})</div>
-                    <div>GLSL: ${glslVersion}</div>
-                    <div>Max Texture: ${maxTextureSize}px</div>
-                    <div>Anisotropy: ${maxAnisotropy}</div>
-                `;
-                gpuInfoSection.innerHTML = `<div style='font-weight:bold;margin-bottom:4px;'>GPU Debug Info</div>` + gpuInfoHTML;
                 
-                // Log detailed info to console for debugging
+                // Log detailed info to console for debugging only
                 console.log('GPU INFO:', {
                     renderer, vendor, unmaskedRenderer, unmaskedVendor,
                     isAccelerated, isSoftwareRendering,
-                    webglVersion: isWebGL2 ? '2.0' : '1.0',
-                    glVersion, glslVersion,
-                    maxTextureSize,
-                    extensions: gl.getSupportedExtensions()
+                    webglVersion: isWebGL2 ? '2.0' : '1.0'
                 });
-                
-                // Check specifically for NVIDIA GPU
-                const hasNvidiaGPU = (unmaskedRenderer && (
-                    unmaskedRenderer.toLowerCase().includes('nvidia') ||
-                    unmaskedRenderer.toLowerCase().includes('geforce') ||
-                    unmaskedRenderer.toLowerCase().includes('quadro')
-                ));
-                
-                // Show NVIDIA-specific guidance if we have Intel but NVIDIA should be available
-                if (!hasNvidiaGPU && unmaskedRenderer && 
-                    (unmaskedRenderer.toLowerCase().includes('intel') || 
-                     unmaskedVendor && unmaskedVendor.toLowerCase().includes('intel'))) {
-                    
-                    // Create NVIDIA hint panel
-                    const nvidiaHintPanel = document.createElement('div');
-                    nvidiaHintPanel.style.position = 'absolute';
-                    nvidiaHintPanel.style.top = '90px';
-                    nvidiaHintPanel.style.left = '10px';
-                    nvidiaHintPanel.style.background = '#673ab7';
-                    nvidiaHintPanel.style.color = 'white';
-                    nvidiaHintPanel.style.padding = '10px';
-                    nvidiaHintPanel.style.borderRadius = '5px';
-                    nvidiaHintPanel.style.maxWidth = '300px';
-                    nvidiaHintPanel.style.zIndex = '1001';
-                    nvidiaHintPanel.style.boxShadow = '0 2px 5px rgba(0,0,0,0.2)';
-                    
-                    // Different instructions based on platform
-                    const isWindows = navigator.platform.indexOf('Win') > -1;
-                    const isLinux = navigator.platform.indexOf('Linux') > -1;
-                    
-                    if (isLinux) {
-                        // Ubuntu/Linux specific instructions
-                        nvidiaHintPanel.innerHTML = `
-                            <strong>NVIDIA GPU Not Used (Ubuntu)</strong>
-                            <div style="margin-top:5px;font-size:11px">To use NVIDIA GPU on Ubuntu:</div>
-                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
-                                <li>For one-time use: <code style="background:#444;padding:1px 3px;border-radius:2px">__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia google-chrome</code></li>
-                                <li>Or create a launcher with: <code style="background:#444;padding:1px 3px;border-radius:2px">prime-run google-chrome</code> (if prime-run installed)</li>
-                            </ul>
-                            <div style="font-size:11px;margin-top:5px">For permanent browser setup:</div>
-                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
-                                <li>Edit <code style="background:#444;padding:1px 3px;border-radius:2px">~/.local/share/applications/google-chrome.desktop</code></li>
-                                <li>Change <code>Exec=</code> lines to include: <code style="background:#444;padding:1px 3px;border-radius:2px">__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia</code></li>
-                                <li>For Firefox, edit <code style="background:#444;padding:1px 3px;border-radius:2px">firefox.desktop</code> similarly</li>
-                            </ul>
-                            <div style="font-size:11px;margin-top:5px">Check NVIDIA Offloading:</div>
-                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
-                                <li>Run: <code style="background:#444;padding:1px 3px;border-radius:2px">nvidia-settings</code></li>
-                                <li>Verify PRIME Profiles is set to NVIDIA On-Demand</li>
-                                <li>Test: <code style="background:#444;padding:1px 3px;border-radius:2px">__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia glxinfo | grep "OpenGL renderer"</code></li>
-                            </ul>
-                        `;
-                    } else if (isWindows) {
-                        // Windows specific instructions
-                        nvidiaHintPanel.innerHTML = `
-                            <strong>NVIDIA GPU Not Used</strong>
-                            <div style="margin-top:5px;font-size:11px">To use NVIDIA GPU instead of Intel:</div>
-                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
-                                <li>Right-click browser shortcut</li>
-                                <li>Select "Run with graphics processor"</li>
-                                <li>Choose "High-performance NVIDIA processor"</li>
-                            </ul>
-                            <div style="font-size:11px;margin-top:5px">Or in NVIDIA Control Panel:</div>
-                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
-                                <li>3D Settings > Program Settings</li>
-                                <li>Add your browser</li>
-                                <li>Set to "High-performance NVIDIA processor"</li>
-                            </ul>
-                        `;
-                    } else {
-                        // Generic instructions
-                        nvidiaHintPanel.innerHTML = `
-                            <strong>NVIDIA GPU Not Used</strong>
-                            <div style="margin-top:5px;font-size:11px">To use NVIDIA GPU instead of Intel:</div>
-                            <ul style="margin:5px 0 0 15px;padding:0;font-size:11px;line-height:1.3">
-                                <li>Check your GPU driver settings</li>
-                                <li>Select your browser</li>
-                                <li>Force it to use the high-performance GPU</li>
-                            </ul>
-                        `;
-                    }
-                    
-                    document.body.appendChild(nvidiaHintPanel);
-                }
                 
                 return {
                     renderer: unmaskedRenderer || renderer,
                     vendor: unmaskedVendor || vendor,
                     isAccelerated,
-                    webglVersion: isWebGL2 ? '2.0' : '1.0',
-                    maxTextureSize,
-                    maxAnisotropy,
-                    hasNvidiaGPU
+                    webglVersion: isWebGL2 ? '2.0' : '1.0'
                 };
             } catch (err) {
                 console.error('Error getting GPU info:', err);
-                gpuInfoSection.innerHTML = `<div style='color:#ff5252'>Could not detect GPU: ${err.message}</div>`;
                 return null;
             }
         }
         
-        // Run GPU detection
+        // Run GPU detection but don't display results
         const gpuInfo = getGPUInfo();
-        
-        // Show warning if software rendering is detected
-        if (gpuInfo && !gpuInfo.isAccelerated) {
-            const warningDiv = document.createElement('div');
-            warningDiv.style.position = 'absolute';
-            warningDiv.style.top = '50%';
-            warningDiv.style.left = '50%';
-            warningDiv.style.transform = 'translate(-50%, -50%)';
-            warningDiv.style.background = 'rgba(255,82,82,0.9)';
-            warningDiv.style.color = 'white';
-            warningDiv.style.padding = '20px';
-            warningDiv.style.borderRadius = '5px';
-            warningDiv.style.zIndex = '2000';
-            warningDiv.style.maxWidth = '400px';
-            warningDiv.style.textAlign = 'center';
-            warningDiv.innerHTML = `
-                <h3 style="margin-top:0">Software Rendering Detected</h3>
-                <p>Your browser is using software rendering instead of GPU acceleration.
-                This will result in poor performance when viewing 3D models.</p>
-                <p>Try updating your graphics drivers or using a different browser.</p>
-                <button id="dismissWarning" style="padding:8px 16px;background:#fff;color:#f44336;
-                border:none;border-radius:4px;cursor:pointer;font-weight:bold;margin-top:10px">
-                Dismiss</button>
-            `;
-            document.body.appendChild(warningDiv);
-            
-            document.getElementById('dismissWarning').addEventListener('click', function() {
-                warningDiv.style.display = 'none';
-            });
-        }
         
         // Label renderer
         const labelRenderer = new CSS2DRenderer();
@@ -1212,6 +1155,9 @@
                 // Update hierarchy display after model is loaded
                 updateHierarchyDisplay();
 
+                // Initialize unit selector with default value
+                document.getElementById('unitSelector').value = 'm';
+
             } catch (error) {
                 console.error('Error loading GLTF model:', error);
                 document.getElementById('loadingDetails').textContent = 'Error loading model. Please try refreshing.';
@@ -1219,6 +1165,462 @@
                 showErrorToUser('Failed to load 3D model. Please refresh the page.');
                 cleanupResources();
             }
+        }
+
+        // Unit conversion helper
+        function convertUnit(meters, targetUnit) {
+            switch (targetUnit) {
+                case 'm':
+                    return { value: meters, label: 'm' };
+                case 'cm':
+                    return { value: meters * 100, label: 'cm' };
+                case 'ft':
+                    return { value: meters * 3.28084, label: 'ft' };
+                case 'in':
+                    return { value: meters * 39.3701, label: 'in' };
+                default:
+                    return { value: meters, label: 'm' };
+            }
+        }
+
+        // Track completed paths
+        let completedPaths = [];
+        let currentPathId = 1;
+        let isRotationKeyPressed = false;
+
+        // Function to finish current path - will close it if possible, then complete it
+        function finishPath() {
+            // Only do something if we're in path measure mode and have at least 2 points
+            if (!state.isPathMeasureMode || state.pathMeasurementPoints.length < 2) {
+                if (!state.isPathMeasureMode) {
+                    showToast('Path measure mode not active');
+                } else {
+                    showToast('Need at least 2 points to finish a path');
+                }
+                return;
+            }
+            
+            // If we have 3 or more points, we can close the path by connecting last to first
+            if (state.pathMeasurementPoints.length >= 3) {
+                const firstPoint = state.pathMeasurementPoints[0];
+                const lastPoint = state.pathMeasurementPoints[state.pathMeasurementPoints.length - 1];
+                
+                // Calculate segment distance
+                const segmentDistance = lastPoint.distanceTo(firstPoint);
+                const scaledDistance = segmentDistance * state.currentUnit;
+                
+                // Create line between points
+                const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, firstPoint]);
+                const lineMaterial = new THREE.LineBasicMaterial({ color: 0xe91e63, linewidth: 2 });
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                
+                // Create background line for better visibility
+                const bgLineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 4 });
+                const bgLine = new THREE.Line(lineGeometry.clone(), bgLineMaterial);
+                
+                // Add lines to measurement group
+                measurementGroup.add(bgLine);
+                measurementGroup.add(line);
+                state.pathMeasurementLines.push({ line, bgLine });
+                
+                // Create segment label
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'distance-label';
+                labelDiv.style.padding = '2px 6px';
+                labelDiv.style.borderRadius = '2px';
+                labelDiv.style.background = 'rgba(233,30,99,0.9)';
+                labelDiv.style.color = 'white';
+                labelDiv.style.fontFamily = 'Arial, sans-serif';
+                labelDiv.style.fontSize = '10px';
+                labelDiv.textContent = `${scaledDistance.toFixed(2)} ${state.unitLabel}`;
+                labelDiv.style.whiteSpace = 'nowrap';
+                
+                const labelObj = new CSS2DObject(labelDiv);
+                
+                // Position label at midpoint
+                const midpoint = new THREE.Vector3().addVectors(lastPoint, firstPoint).multiplyScalar(0.5);
+                labelObj.position.copy(midpoint);
+                scene.add(labelObj);
+                state.pathMeasurementLabels.push(labelObj);
+                
+                // Add to global measurement labels array for tracking
+                measurementLabels.push(labelObj);
+                
+                // Update total distance
+                state.pathTotalDistance += segmentDistance;
+                
+                // Update total label
+                if (pathTotalLabel) {
+                    pathTotalLabel.element.innerHTML = `Total: ${(state.pathTotalDistance * state.currentUnit).toFixed(2)} ${state.unitLabel} (closed)`;
+                    pathTotalLabel.position.copy(firstPoint);
+                }
+                
+                showToast('Path closed and completed');
+            } else {
+                showToast('Path completed');
+            }
+            
+            // Clean up preview elements
+            cleanupPreviewElements();
+            
+            // Create a complete path object
+            const completedPath = {
+                id: currentPathId,
+                points: [...state.pathMeasurementPoints], // Clone the points array
+                totalDistance: state.pathTotalDistance,
+                lines: state.pathMeasurementLines.map(line => ({ line: line.line, bgLine: line.bgLine })),
+                labels: [...state.pathMeasurementLabels]
+            };
+            
+            // Add to completed paths
+            completedPaths.push(completedPath);
+            
+            // Increment the path ID
+            currentPathId++;
+            
+            // Prepare for a new path but keep visual elements visible
+            state.pathMeasurementPoints = [];
+            state.pathMeasurementLines = [];
+            state.pathMeasurementLabels = [];
+            state.pathTotalDistance = 0;
+            
+            // Hide the total label until we start a new path
+            if (pathTotalLabel) {
+                pathTotalLabel.visible = false;
+            }
+            
+            // Update the measurements display
+            updateMeasurementsDisplay();
+            
+            state.needsRender = true;
+        }
+
+        // Function to cancel in-progress path measurement
+        function cancelInProgressPathMeasurement() {
+            // If we haven't started a new path or only have one point, completely cancel
+            if (state.pathMeasurementPoints.length <= 1) {
+                clearAllMeasurements();
+                return;
+            }
+            
+            // If we have multiple points, just remove the last one (in-progress point)
+            if (state.pathMeasurementPoints.length > 0) {
+                // Remove the last point
+                state.pathMeasurementPoints.pop();
+                
+                // Remove the last line segment if it exists
+                if (state.pathMeasurementLines.length > 0) {
+                    const lastLine = state.pathMeasurementLines.pop();
+                    measurementGroup.remove(lastLine.line);
+                    measurementGroup.remove(lastLine.bgLine);
+                }
+                
+                // Remove the corresponding label
+                if (state.pathMeasurementLabels.length > 0) {
+                    const lastLabel = state.pathMeasurementLabels.pop();
+                    scene.remove(lastLabel);
+                    
+                    // Also remove from global tracking array
+                    const labelIndex = measurementLabels.indexOf(lastLabel);
+                    if (labelIndex !== -1) {
+                        measurementLabels.splice(labelIndex, 1);
+                    }
+                }
+                
+                // Update total distance by recalculating from remaining points
+                state.pathTotalDistance = 0;
+                for (let i = 0; i < state.pathMeasurementPoints.length - 1; i++) {
+                    state.pathTotalDistance += state.pathMeasurementPoints[i].distanceTo(state.pathMeasurementPoints[i + 1]);
+                }
+                
+                // Update the total label
+                if (pathTotalLabel && state.pathMeasurementPoints.length > 0) {
+                    const convertedTotal = state.pathTotalDistance * state.currentUnit;
+                    pathTotalLabel.element.innerHTML = `Total: ${convertedTotal.toFixed(2)} ${state.unitLabel}`;
+                    // Position at the last point
+                    pathTotalLabel.position.copy(state.pathMeasurementPoints[state.pathMeasurementPoints.length - 1]);
+                    pathTotalLabel.visible = true;
+                } else if (pathTotalLabel) {
+                    pathTotalLabel.visible = false;
+                }
+                
+                // Force a render
+                state.needsRender = true;
+                
+                showToast('Removed last point');
+            }
+        }
+
+        // Add event listener for unit selector
+        document.getElementById('unitSelector').addEventListener('change', function(event) {
+            const newUnit = event.target.value;
+            const conversionResult = convertUnit(1.0, newUnit); // 1 meter to new unit
+            state.currentUnit = conversionResult.value;
+            state.unitLabel = conversionResult.label;
+            
+            // Update existing measurement displays
+            updateAllMeasurementUnits();
+            
+            // Update UI
+            updateMeasurementsDisplay();
+            
+            showToast(`Units changed to ${conversionResult.label}`);
+        });
+
+        // Add event listener for complete path button
+        //Removed reference to completePathBtn as it's now handled by finishPathBtn
+        
+        // Function to clean up preview elements
+        function cleanupPreviewElements() {
+            if (previewLine) {
+                if (previewLine.geometry) previewLine.geometry.dispose();
+                if (previewLine.material) previewLine.material.dispose();
+                measurementGroup.remove(previewLine);
+                previewLine = null;
+            }
+            
+            if (previewBackgroundLine) {
+                if (previewBackgroundLine.geometry) previewBackgroundLine.geometry.dispose();
+                if (previewBackgroundLine.material) previewBackgroundLine.material.dispose();
+                measurementGroup.remove(previewBackgroundLine);
+                previewBackgroundLine = null;
+            }
+            
+            if (previewLabel) {
+                scene.remove(previewLabel);
+                previewLabel = null;
+            }
+            
+            state.needsRender = true;
+        }
+
+        // Enhance rotation key handling for measurements
+        let previousRotateState = true;
+        document.addEventListener('keydown', function(event) {
+            // 'M' key for measure mode
+            if (event.key === 'm' || event.key === 'M') {
+                state.toggleMeasureMode();
+                showToast(`Measure mode: ${state.isMeasureMode ? 'Enabled' : 'Disabled'}`);
+                if (state.isMeasureMode) {
+                    document.body.style.cursor = 'crosshair';
+                    previousRotateState = controls.enableRotate;
+                    controls.enableRotate = false;
+                } else {
+                    document.body.style.cursor = 'default';
+                    controls.enableRotate = previousRotateState;
+                    cleanupPreviewElements();
+                }
+            }
+            
+            // 'P' key for path measure mode
+            if (event.key === 'p' || event.key === 'P') {
+                state.togglePathMeasureMode();
+                showToast(`Path measure mode: ${state.isPathMeasureMode ? 'Enabled' : 'Disabled'}`);
+                if (state.isPathMeasureMode) {
+                    document.body.style.cursor = 'crosshair';
+                    previousRotateState = controls.enableRotate;
+                    controls.enableRotate = false;
+                    
+                    // Initialize total distance label if not exists
+                    if (!pathTotalLabel) {
+                        const totalDiv = document.createElement('div');
+                        totalDiv.className = 'distance-label';
+                        totalDiv.style.padding = '4px 8px';
+                        totalDiv.style.borderRadius = '2px';
+                        totalDiv.style.background = 'rgba(0,0,0,0.7)';
+                        totalDiv.style.color = 'white';
+                        totalDiv.style.fontFamily = 'Arial, sans-serif';
+                        totalDiv.style.fontSize = '12px';
+                        totalDiv.style.fontWeight = 'bold';
+                        totalDiv.innerHTML = 'Total: 0.00 m';
+                        totalDiv.style.whiteSpace = 'nowrap';
+                        
+                        const totalLabelObject = new CSS2DObject(totalDiv);
+                        totalLabelObject.position.set(0, 0, 0);
+                        totalLabelObject.visible = false;
+                        scene.add(totalLabelObject);
+                        
+                        pathTotalLabel = totalLabelObject;
+                    }
+                } else {
+                    document.body.style.cursor = 'default';
+                    controls.enableRotate = previousRotateState;
+                    if (pathTotalLabel) {
+                        pathTotalLabel.visible = false;
+                    }
+                    state.pathMeasurementPoints = [];
+                    state.pathTotalDistance = 0;
+                    cleanupPreviewElements();
+                }
+            }
+            
+            // 'Escape' key to exit any measurement mode
+            if (event.key === 'Escape') {
+                if (state.isPathMeasureMode && state.pathMeasurementPoints.length > 0) {
+                    // Only cancel the in-progress path measurement
+                    cancelInProgressPathMeasurement();
+                } else if (state.isMeasureMode || state.isPathMeasureMode) {
+                    state.isMeasureMode = false;
+                    state.isPathMeasureMode = false;
+                    document.body.style.cursor = 'default';
+                    controls.enableRotate = previousRotateState;
+                    showToast('Measurement mode disabled');
+                    
+                    cleanupPreviewElements();
+                    
+                    if (pathTotalLabel) {
+                        pathTotalLabel.visible = false;
+                    }
+                    
+                    state.needsRender = true;
+                }
+            }
+            
+            // 'C' key to clear measurements
+            if (event.key === 'c' || event.key === 'C') {
+                clearAllMeasurements();
+                showToast('Measurements cleared');
+            }
+            
+            // 'F' key to complete current path
+            if (event.key === 'f' || event.key === 'F') {
+                finishPath();
+            }
+            
+            // 'L' key to close current path (connect first and last points)
+            if (event.key === 'l' || event.key === 'L') {
+                finishPath();
+            }
+            
+            // 'O' key to toggle orthographic view
+            if (event.key === 'o' || event.key === 'O') {
+                if (state.toggleOrthographic()) {
+                    camera = state.isOrthographic ? orthographicCamera : perspectiveCamera;
+                    controls.object = camera;
+                    updateOrthographicCamera();
+                    showToast(`Camera mode: ${state.isOrthographic ? 'Orthographic' : 'Perspective'}`);
+                }
+            }
+            
+            // 'G' key to toggle grid & axes
+            if (event.key === 'g' || event.key === 'G') {
+                if (state.toggleGridAxes()) {
+                    showToast(`Grid & Axes: ${state.isGridAxesVisible ? 'Visible' : 'Hidden'}`);
+                }
+            }
+            
+            // 'V' key to toggle view mode
+            if (event.key === 'v' || event.key === 'V') {
+                const newMode = (state.viewMode + 1) % 3;
+                if (state.setViewMode(newMode)) {
+                    showToast(`View mode: ${['Solid', 'Transparent', 'Wireframe'][newMode]}`);
+                }
+            }
+            
+            // Number keys for standard views
+            if (event.key === '1') {
+                if (state.setPredefinedView('iso')) {
+                    showToast('Isometric view');
+                }
+            }
+            if (event.key === '2') {
+                if (state.setPredefinedView('top')) {
+                    showToast('Top view');
+                }
+            }
+            if (event.key === '3') {
+                if (state.setPredefinedView('front')) {
+                    showToast('Front view');
+                }
+            }
+            if (event.key === '4') {
+                if (state.setPredefinedView('left')) {
+                    showToast('Left view');
+                }
+            }
+            
+            // Space bar for rotation while measuring
+            if (event.key === ' ') {
+                isRotationKeyPressed = true;
+                if (state.isMeasureMode || state.isPathMeasureMode) {
+                    controls.enableRotate = true;
+                }
+                event.preventDefault(); // Prevent page scrolling
+            }
+        });
+
+        // Improved keyup listener for rotation key
+        document.addEventListener('keyup', function(event) {
+            if (event.key === ' ') { // Space key
+                isRotationKeyPressed = false;
+                if ((state.isMeasureMode || state.isPathMeasureMode) && !controls.enableRotate) {
+                    controls.enableRotate = false; // Restore to disabled state
+                }
+            }
+        });
+
+        // Function to update all measurement units with improved preview handling
+        function updateAllMeasurementUnits() {
+            // Update regular measurement labels
+            for (const measurement of state.measurements) {
+                const meterDistance = measurement.points[0].distanceTo(measurement.points[1]);
+                const convertedDistance = meterDistance * state.currentUnit;
+                measurement.distance = convertedDistance;
+                measurement.label.element.textContent = `${convertedDistance.toFixed(2)} ${state.unitLabel}`;
+            }
+            
+            // Update path measurement segment labels
+            for (let i = 0; i < state.pathMeasurementLabels.length; i++) {
+                if (i < state.pathMeasurementPoints.length - 1) {
+                    const point1 = state.pathMeasurementPoints[i];
+                    const point2 = state.pathMeasurementPoints[i + 1];
+                    const meterDistance = point1.distanceTo(point2);
+                    const convertedDistance = meterDistance * state.currentUnit;
+                    state.pathMeasurementLabels[i].element.textContent = `${convertedDistance.toFixed(2)} ${state.unitLabel}`;
+                }
+            }
+            
+            // Update total path distance label
+            if (pathTotalLabel && state.pathTotalDistance > 0) {
+                const convertedTotal = state.pathTotalDistance * state.currentUnit;
+                pathTotalLabel.element.innerHTML = `Total: ${convertedTotal.toFixed(2)} ${state.unitLabel}`;
+            }
+            
+            // Update preview label if active
+            if (previewLabel) {
+                // Try to get the points being measured
+                let distance;
+                if (state.isMeasureMode && state.measurementPoints.length === 1 && previewLine) {
+                    // Find where the preview line connects
+                    const positions = previewLine.geometry.attributes.position.array;
+                    const start = new THREE.Vector3(
+                        positions[0], positions[1], positions[2]
+                    );
+                    const end = new THREE.Vector3(
+                        positions[3], positions[4], positions[5]
+                    );
+                    distance = start.distanceTo(end) * state.currentUnit;
+                    previewLabel.element.textContent = `${distance.toFixed(2)} ${state.unitLabel}`;
+                } else if (state.isPathMeasureMode && state.pathMeasurementPoints.length > 0 && previewLine) {
+                    // Similar logic for path preview
+                    const positions = previewLine.geometry.attributes.position.array;
+                    const start = new THREE.Vector3(
+                        positions[0], positions[1], positions[2]
+                    );
+                    const end = new THREE.Vector3(
+                        positions[3], positions[4], positions[5]
+                    );
+                    const segmentDistance = start.distanceTo(end) * state.currentUnit;
+                    const totalDistance = (state.pathTotalDistance + start.distanceTo(end)) * state.currentUnit;
+                    previewLabel.element.textContent = `${segmentDistance.toFixed(2)} ${state.unitLabel}`;
+                    
+                    if (pathTotalLabel) {
+                        pathTotalLabel.element.innerHTML = `Total: ${totalDistance.toFixed(2)} ${state.unitLabel} (preview)`;
+                    }
+                }
+            }
+            
+            state.needsRender = true;
         }
 
         // Initialize the viewer
@@ -1320,10 +1722,16 @@
             try {
                 if (state.needsRender) {
                     renderer.render(scene, camera);
-                    if (measurementLabels.length > 0) {
-                        labelRenderer.render(scene, camera);
-                    }
-                    state.needsRender = false;
+                    // Always render labels if we have any type of measurements
+                    // This was checking only measurementLabels which is incorrect
+                    labelRenderer.render(scene, camera);
+                    
+                    // Debug logging - uncomment if needed to diagnose label issues
+                    // console.log('Rendering labels - Regular measurements:', state.measurements.length, 
+                    //             'Path labels:', state.pathMeasurementLabels.length,
+                    //             'Total tracked:', measurementLabels.length);
+                    
+                    state.needsRender = true; // Force continuous rendering to ensure labels stay visible
                 }
             } catch (error) {
                 console.error('Render error:', error);
@@ -1372,14 +1780,9 @@
             const isLandscape = window.innerWidth > window.innerHeight;
             state.isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
             
-            // Update UI for mobile
-            if (state.isMobile) {
-                debugConsole.style.display = 'none';
-                debugToggleBtn.style.display = 'flex';
-            } else {
-                debugConsole.style.display = 'block';
-                debugToggleBtn.style.display = 'none';
-            }
+            // Update UI for mobile - keep debug elements hidden
+            debugConsole.style.display = 'none';
+            debugToggleBtn.style.display = 'none';
             
             // Update camera and renderer
             updateOrthographicCamera();
@@ -1611,6 +2014,552 @@
             }
         });
 
+        // Add event listeners for measurement buttons
+        document.getElementById('measureMode').addEventListener('click', () => {
+            state.toggleMeasureMode();
+            showToast(`Measure mode: ${state.isMeasureMode ? 'Enabled' : 'Disabled'}`);
+            if (state.isMeasureMode) {
+                document.body.style.cursor = 'crosshair';
+            } else {
+                document.body.style.cursor = 'default';
+                if (previewLine) {
+                    measurementGroup.remove(previewLine);
+                    previewLine = null;
+                }
+                if (previewBackgroundLine) {
+                    measurementGroup.remove(previewBackgroundLine);
+                    previewBackgroundLine = null;
+                }
+                if (previewLabel) {
+                    scene.remove(previewLabel);
+                    previewLabel = null;
+                }
+            }
+        });
+
+        document.getElementById('pathMeasureMode').addEventListener('click', () => {
+            state.togglePathMeasureMode();
+            showToast(`Path measure mode: ${state.isPathMeasureMode ? 'Enabled' : 'Disabled'}`);
+            if (state.isPathMeasureMode) {
+                document.body.style.cursor = 'crosshair';
+                // Initialize total distance label
+                if (!pathTotalLabel) {
+                    const totalDiv = document.createElement('div');
+                    totalDiv.className = 'distance-label';
+                    totalDiv.style.padding = '4px 8px';
+                    totalDiv.style.borderRadius = '2px';
+                    totalDiv.style.background = 'rgba(0,0,0,0.7)';
+                    totalDiv.style.color = 'white';
+                    totalDiv.style.fontFamily = 'Arial, sans-serif';
+                    totalDiv.style.fontSize = '12px';
+                    totalDiv.style.fontWeight = 'bold';
+                    totalDiv.innerHTML = 'Total: 0.00 m';
+                    totalDiv.style.whiteSpace = 'nowrap';
+                    
+                    const totalLabelObject = new CSS2DObject(totalDiv);
+                    totalLabelObject.position.set(0, 0, 0);
+                    totalLabelObject.visible = false;
+                    scene.add(totalLabelObject);
+                    
+                    pathTotalLabel = totalLabelObject;
+                }
+            } else {
+                document.body.style.cursor = 'default';
+                if (pathTotalLabel) {
+                    pathTotalLabel.visible = false;
+                }
+                state.pathMeasurementPoints = [];
+                state.pathTotalDistance = 0;
+            }
+        });
+
+        document.getElementById('clearMeasurements').addEventListener('click', () => {
+            clearAllMeasurements();
+            showToast('Measurements cleared');
+        });
+
+        document.getElementById('finishPathBtn').addEventListener('click', () => {
+            finishPath();
+        });
+
+        // Function to create a measurement between two points with improved cleanup
+        function createMeasurement(point1, point2) {
+            if (!validatePoint(point1) || !validatePoint(point2)) {
+                return;
+            }
+            
+            // Clean up preview elements first
+            cleanupPreviewElements();
+            
+            // Calculate distance
+            const distance = point1.distanceTo(point2);
+            const scaledDistance = distance * state.currentUnit;
+            
+            // Create line between points
+            const lineGeometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
+            const lineMaterial = new THREE.LineBasicMaterial({ color: 0x4caf50, linewidth: 2 });
+            const line = new THREE.Line(lineGeometry, lineMaterial);
+            
+            // Create background line for better visibility
+            const bgLineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 4 });
+            const bgLine = new THREE.Line(lineGeometry.clone(), bgLineMaterial);
+            
+            // Add lines to measurement group
+            measurementGroup.add(bgLine);
+            measurementGroup.add(line);
+            
+            // Create label
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'distance-label';
+            labelDiv.style.padding = '2px 6px';
+            labelDiv.style.borderRadius = '2px';
+            labelDiv.style.background = 'rgba(76,175,80,0.9)';
+            labelDiv.style.color = 'white';
+            labelDiv.style.fontFamily = 'Arial, sans-serif';
+            labelDiv.style.fontSize = '12px';
+            labelDiv.style.fontWeight = 'bold';
+            labelDiv.textContent = `${scaledDistance.toFixed(2)} ${state.unitLabel}`;
+            labelDiv.style.whiteSpace = 'nowrap';
+            
+            const labelObj = new CSS2DObject(labelDiv);
+            
+            // Position label at midpoint
+            const midpoint = new THREE.Vector3().addVectors(point1, point2).multiplyScalar(0.5);
+            labelObj.position.copy(midpoint);
+            scene.add(labelObj);
+            
+            // Add to measurements list for tracking
+            state.measurements.push({
+                points: [point1.clone(), point2.clone()],
+                distance: scaledDistance,
+                line: line,
+                bgLine: bgLine,
+                label: labelObj
+            });
+            
+            // Add the label to measurement labels array for tracking
+            measurementLabels.push(labelObj);
+            
+            // Update UI display
+            updateMeasurementsDisplay();
+            
+            state.needsRender = true;
+        }
+
+        // Function to create a path measurement point
+        function addPathMeasurementPoint(point) {
+            if (!validatePoint(point)) {
+                return;
+            }
+            
+            // Add point marker
+            const markerGeometry = new THREE.SphereGeometry(0.05, 16, 16);
+            const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xe91e63 });
+            const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+            marker.position.copy(point);
+            measurementGroup.add(marker);
+            
+            state.pathMeasurementPoints.push(point);
+            
+            // If we have at least two points, create a line segment
+            if (state.pathMeasurementPoints.length >= 2) {
+                const lastPoint = state.pathMeasurementPoints[state.pathMeasurementPoints.length - 2];
+                const currentPoint = state.pathMeasurementPoints[state.pathMeasurementPoints.length - 1];
+                
+                // Calculate segment distance
+                const segmentDistance = lastPoint.distanceTo(currentPoint);
+                const scaledDistance = segmentDistance * state.currentUnit;
+                
+                // Create line between points
+                const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, currentPoint]);
+                const lineMaterial = new THREE.LineBasicMaterial({ color: 0xe91e63, linewidth: 2 });
+                const line = new THREE.Line(lineGeometry, lineMaterial);
+                
+                // Create background line for better visibility
+                const bgLineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 4 });
+                const bgLine = new THREE.Line(lineGeometry.clone(), bgLineMaterial);
+                
+                // Add lines to measurement group
+                measurementGroup.add(bgLine);
+                measurementGroup.add(line);
+                state.pathMeasurementLines.push({ line, bgLine });
+                
+                // Create segment label
+                const labelDiv = document.createElement('div');
+                labelDiv.className = 'distance-label';
+                labelDiv.style.padding = '2px 6px';
+                labelDiv.style.borderRadius = '2px';
+                labelDiv.style.background = 'rgba(233,30,99,0.9)';
+                labelDiv.style.color = 'white';
+                labelDiv.style.fontFamily = 'Arial, sans-serif';
+                labelDiv.style.fontSize = '10px';
+                labelDiv.textContent = `${scaledDistance.toFixed(2)} ${state.unitLabel}`;
+                labelDiv.style.whiteSpace = 'nowrap';
+                
+                const labelObj = new CSS2DObject(labelDiv);
+                
+                // Position label at midpoint
+                const midpoint = new THREE.Vector3().addVectors(lastPoint, currentPoint).multiplyScalar(0.5);
+                labelObj.position.copy(midpoint);
+                scene.add(labelObj);
+                state.pathMeasurementLabels.push(labelObj);
+                
+                // Add to global measurement labels array for tracking
+                measurementLabels.push(labelObj);
+                
+                // Update total distance
+                state.pathTotalDistance += segmentDistance;
+                
+                // Update total label
+                if (pathTotalLabel) {
+                    pathTotalLabel.element.innerHTML = `Total: ${(state.pathTotalDistance * state.currentUnit).toFixed(2)} ${state.unitLabel}`;
+                    pathTotalLabel.position.copy(currentPoint);
+                    pathTotalLabel.visible = true;
+                }
+            }
+            
+            state.needsRender = true;
+        }
+
+        // Enhanced function to clear all measurements with proper disposal
+        function clearAllMeasurements() {
+            // Clear regular measurements
+            for (const measurement of state.measurements) {
+                // Properly dispose geometries and materials
+                if (measurement.line) {
+                    if (measurement.line.geometry) measurement.line.geometry.dispose();
+                    if (measurement.line.material) measurement.line.material.dispose();
+                    measurementGroup.remove(measurement.line);
+                }
+                
+                if (measurement.bgLine) {
+                    if (measurement.bgLine.geometry) measurement.bgLine.geometry.dispose();
+                    if (measurement.bgLine.material) measurement.bgLine.material.dispose();
+                    measurementGroup.remove(measurement.bgLine);
+                }
+                
+                if (measurement.label) {
+                    scene.remove(measurement.label);
+                }
+            }
+            state.measurements = [];
+            state.measurementPoints = [];
+            
+            // Clear measurement labels array
+            measurementLabels = [];
+            
+            // Clear path measurements
+            for (const { line, bgLine } of state.pathMeasurementLines) {
+                if (line) {
+                    if (line.geometry) line.geometry.dispose();
+                    if (line.material) line.material.dispose();
+                    measurementGroup.remove(line);
+                }
+                
+                if (bgLine) {
+                    if (bgLine.geometry) bgLine.geometry.dispose();
+                    if (bgLine.material) bgLine.material.dispose();
+                    measurementGroup.remove(bgLine);
+                }
+            }
+            
+            for (const label of state.pathMeasurementLabels) {
+                scene.remove(label);
+            }
+            
+            // Clear preview elements
+            cleanupPreviewElements();
+            
+            if (pathTotalLabel) {
+                pathTotalLabel.visible = false;
+            }
+            
+            // Reset state
+            state.pathMeasurementPoints = [];
+            state.pathMeasurementLines = [];
+            state.pathMeasurementLabels = [];
+            state.pathTotalDistance = 0;
+            
+            // Clear measurement points from the scene
+            measurementGroup.children = measurementGroup.children.filter(child => {
+                if (child.isMesh && child.geometry.type === 'SphereGeometry') {
+                    child.geometry.dispose();
+                    child.material.dispose();
+                    return false;
+                }
+                return true;
+            });
+            
+            // Update UI
+            updateMeasurementsDisplay();
+            
+            state.needsRender = true;
+        }
+
+        // Function to update measurements display in the UI
+        function updateMeasurementsDisplay() {
+            const container = document.getElementById('measurements-container');
+            if (!container) return;
+            
+            if (state.measurements.length === 0) {
+                container.innerHTML = 'No measurements yet';
+                return;
+            }
+            
+            let html = '<ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+            state.measurements.forEach((measurement, index) => {
+                html += `<li style="margin-bottom: 5px;">
+                    <span style="display: inline-block; width: 18px; height: 18px; background-color: #4caf50; 
+                           border-radius: 50%; text-align: center; color: white; font-size: 10px; line-height: 18px; 
+                           margin-right: 5px;">${index + 1}</span>
+                    <span>${measurement.distance.toFixed(2)} ${state.unitLabel}</span>
+                    <button class="delete-measurement" data-index="${index}" style="background: none; border: none; 
+                             color: #f44336; cursor: pointer; font-size: 16px; float: right; padding: 0;">×</button>
+                </li>`;
+            });
+            html += '</ul>';
+            
+            container.innerHTML = html;
+            
+            // Add event listeners for delete buttons
+            document.querySelectorAll('.delete-measurement').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    const index = parseInt(event.target.dataset.index);
+                    if (index >= 0 && index < state.measurements.length) {
+                        const measurement = state.measurements[index];
+                        measurementGroup.remove(measurement.line);
+                        measurementGroup.remove(measurement.bgLine);
+                        scene.remove(measurement.label);
+                        state.measurements.splice(index, 1);
+                        updateMeasurementsDisplay();
+                        state.needsRender = true;
+                    }
+                });
+            });
+        }
+
+        // Mouse click handler for measurements with improved error handling
+        renderer.domElement.addEventListener('click', function(event) {
+            // Only proceed if in measure mode
+            if (!state.isMeasureMode && !state.isPathMeasureMode) return;
+            
+            // Skip point placement if rotation key is pressed
+            if (isRotationKeyPressed) return;
+            
+            event.preventDefault();
+            
+            // Calculate mouse position in normalized device coordinates
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            // Update the raycaster with the mouse position and camera
+            raycaster.setFromCamera(mouse, camera);
+            
+            // If the current mesh exists, raycast against it
+            if (state.currentMesh) {
+                // Find all intersected objects
+                const intersects = raycaster.intersectObject(state.currentMesh, true);
+                
+                // If we found an intersection
+                if (intersects.length > 0) {
+                    const intersect = intersects[0];
+                    
+                    // For regular measurements
+                    if (state.isMeasureMode) {
+                        addMeasurementPoint(intersect.point);
+                    }
+                    
+                    // For path measurements
+                    if (state.isPathMeasureMode) {
+                        addPathMeasurementPoint(intersect.point);
+                    }
+                } else {
+                    // No intersection found
+                    showToast('No valid surface found at this point');
+                }
+            } else {
+                showToast('No model loaded');
+            }
+        });
+
+        // Mouse move handler for measurement preview
+        renderer.domElement.addEventListener('mousemove', function(event) {
+            // Only proceed if in measure mode and we have at least one point
+            if ((!state.isMeasureMode || state.measurementPoints.length !== 1) && 
+                (!state.isPathMeasureMode || state.pathMeasurementPoints.length === 0)) return;
+
+            // Calculate mouse position in normalized device coordinates
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            
+            // Clear any existing raycast timeout
+            if (raycastDebounce) clearTimeout(raycastDebounce);
+            
+            // Debounce raycasting for better performance
+            raycastDebounce = setTimeout(() => {
+                // Update the raycaster with the mouse position and camera
+                raycaster.setFromCamera(mouse, camera);
+                
+                // Raycast against the current mesh
+                if (state.currentMesh) {
+                    const intersects = raycaster.intersectObject(state.currentMesh, true);
+                    
+                    if (intersects.length > 0) {
+                        const hoverPoint = intersects[0].point;
+                        
+                        // For regular measurements - update preview line
+                        if (state.isMeasureMode && state.measurementPoints.length === 1) {
+                            const startPoint = state.measurementPoints[0];
+                            
+                            // Create or update preview line
+                            if (!previewLine) {
+                                const lineGeometry = new THREE.BufferGeometry().setFromPoints([startPoint, hoverPoint]);
+                                const lineMaterial = new THREE.LineDashedMaterial({ 
+                                    color: 0x4caf50, 
+                                    dashSize: 0.2, 
+                                    gapSize: 0.1 
+                                });
+                                previewLine = new THREE.Line(lineGeometry, lineMaterial);
+                                previewLine.computeLineDistances();
+                                
+                                // Create background line for better visibility
+                                const bgLineMaterial = new THREE.LineDashedMaterial({ 
+                                    color: 0x000000, 
+                                    dashSize: 0.2, 
+                                    gapSize: 0.1,
+                                    linewidth: 3
+                                });
+                                previewBackgroundLine = new THREE.Line(lineGeometry.clone(), bgLineMaterial);
+                                previewBackgroundLine.computeLineDistances();
+                                
+                                measurementGroup.add(previewBackgroundLine);
+                                measurementGroup.add(previewLine);
+                            } else {
+                                // Update existing line geometry
+                                const positions = new Float32Array([
+                                    startPoint.x, startPoint.y, startPoint.z,
+                                    hoverPoint.x, hoverPoint.y, hoverPoint.z
+                                ]);
+                                previewLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                                previewLine.geometry.computeBoundingSphere();
+                                previewLine.computeLineDistances();
+                                
+                                previewBackgroundLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions.slice(), 3));
+                                previewBackgroundLine.geometry.computeBoundingSphere();
+                                previewBackgroundLine.computeLineDistances();
+                            }
+                            
+                            // Calculate and update distance label
+                            const distance = startPoint.distanceTo(hoverPoint) * state.currentUnit;
+                            
+                            if (!previewLabel) {
+                                const labelDiv = document.createElement('div');
+                                labelDiv.className = 'distance-label';
+                                labelDiv.style.padding = '2px 6px';
+                                labelDiv.style.borderRadius = '2px';
+                                labelDiv.style.background = 'rgba(76,175,80,0.7)';
+                                labelDiv.style.color = 'white';
+                                labelDiv.style.fontFamily = 'Arial, sans-serif';
+                                labelDiv.style.fontSize = '12px';
+                                labelDiv.style.fontWeight = 'bold';
+                                labelDiv.textContent = `${distance.toFixed(2)} ${state.unitLabel}`;
+                                labelDiv.style.whiteSpace = 'nowrap';
+                                
+                                previewLabel = new CSS2DObject(labelDiv);
+                                scene.add(previewLabel);
+                            } else {
+                                previewLabel.element.textContent = `${distance.toFixed(2)} ${state.unitLabel}`;
+                            }
+                            
+                            // Position label at midpoint
+                            const midpoint = new THREE.Vector3().addVectors(startPoint, hoverPoint).multiplyScalar(0.5);
+                            previewLabel.position.copy(midpoint);
+                        }
+                        
+                        // For path measurements - update preview line
+                        if (state.isPathMeasureMode && state.pathMeasurementPoints.length > 0) {
+                            const lastPoint = state.pathMeasurementPoints[state.pathMeasurementPoints.length - 1];
+                            
+                            // Create or update preview line
+                            if (!previewLine) {
+                                const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, hoverPoint]);
+                                const lineMaterial = new THREE.LineDashedMaterial({ 
+                                    color: 0xe91e63, 
+                                    dashSize: 0.2, 
+                                    gapSize: 0.1 
+                                });
+                                previewLine = new THREE.Line(lineGeometry, lineMaterial);
+                                previewLine.computeLineDistances();
+                                
+                                // Create background line for better visibility
+                                const bgLineMaterial = new THREE.LineDashedMaterial({ 
+                                    color: 0x000000, 
+                                    dashSize: 0.2, 
+                                    gapSize: 0.1,
+                                    linewidth: 3
+                                });
+                                previewBackgroundLine = new THREE.Line(lineGeometry.clone(), bgLineMaterial);
+                                previewBackgroundLine.computeLineDistances();
+                                
+                                measurementGroup.add(previewBackgroundLine);
+                                measurementGroup.add(previewLine);
+                            } else {
+                                // Update existing line geometry
+                                const positions = new Float32Array([
+                                    lastPoint.x, lastPoint.y, lastPoint.z,
+                                    hoverPoint.x, hoverPoint.y, hoverPoint.z
+                                ]);
+                                previewLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                                previewLine.geometry.computeBoundingSphere();
+                                previewLine.computeLineDistances();
+                                
+                                previewBackgroundLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions.slice(), 3));
+                                previewBackgroundLine.geometry.computeBoundingSphere();
+                                previewBackgroundLine.computeLineDistances();
+                            }
+                            
+                            // Calculate and update distance label
+                            const segmentDistance = lastPoint.distanceTo(hoverPoint) * state.currentUnit;
+                            const totalDistance = (state.pathTotalDistance + lastPoint.distanceTo(hoverPoint)) * state.currentUnit;
+                            
+                            if (!previewLabel) {
+                                const labelDiv = document.createElement('div');
+                                labelDiv.className = 'distance-label';
+                                labelDiv.style.padding = '2px 6px';
+                                labelDiv.style.borderRadius = '2px';
+                                labelDiv.style.background = 'rgba(233,30,99,0.7)';
+                                labelDiv.style.color = 'white';
+                                labelDiv.style.fontFamily = 'Arial, sans-serif';
+                                labelDiv.style.fontSize = '10px';
+                                labelDiv.textContent = `${segmentDistance.toFixed(2)} ${state.unitLabel}`;
+                                labelDiv.style.whiteSpace = 'nowrap';
+                                
+                                previewLabel = new CSS2DObject(labelDiv);
+                                scene.add(previewLabel);
+                            } else {
+                                previewLabel.element.textContent = `${segmentDistance.toFixed(2)} ${state.unitLabel}`;
+                            }
+                            
+                            // Position label at midpoint
+                            const midpoint = new THREE.Vector3().addVectors(lastPoint, hoverPoint).multiplyScalar(0.5);
+                            previewLabel.position.copy(midpoint);
+                            
+                            // Update total label
+                            if (pathTotalLabel) {
+                                pathTotalLabel.element.innerHTML = `Total: ${totalDistance.toFixed(2)} ${state.unitLabel} (preview)`;
+                                pathTotalLabel.position.copy(hoverPoint);
+                                pathTotalLabel.visible = true;
+                            }
+                        }
+                        
+                        state.needsRender = true;
+                    }
+                }
+            }, 16); // ~60fps target
+        });
+        
         // Add toast notification function
         function showToast(message) {
             const toast = document.createElement('div');
