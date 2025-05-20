@@ -191,6 +191,87 @@
     </script>
 
     <script type="module">
+        // Create debugConsole and debugToggleBtn at the top so they are available everywhere
+        const debugConsole = document.createElement('div');
+        debugConsole.id = 'debug-console';
+        debugConsole.style.position = 'absolute';
+        debugConsole.style.left = '10px';
+        debugConsole.style.bottom = '10px';
+        debugConsole.style.maxWidth = '350px';
+        debugConsole.style.maxHeight = '350px';
+        debugConsole.style.overflow = 'auto';
+        debugConsole.style.background = 'rgba(0,0,0,0.85)';
+        debugConsole.style.color = 'white';
+        debugConsole.style.padding = '10px';
+        debugConsole.style.fontFamily = 'monospace';
+        debugConsole.style.fontSize = '12px';
+        debugConsole.style.zIndex = '1000';
+        debugConsole.style.borderRadius = '6px';
+        document.body.appendChild(debugConsole);
+
+        const debugToggleBtn = document.createElement('button');
+        debugToggleBtn.id = 'debug-toggle-btn';
+        debugToggleBtn.innerHTML = 'Debug';
+        debugToggleBtn.style.display = 'none'; // Only show on mobile
+        debugToggleBtn.style.position = 'fixed';
+        debugToggleBtn.style.right = '18px';
+        debugToggleBtn.style.bottom = '18px';
+        debugToggleBtn.style.zIndex = '2100';
+        debugToggleBtn.style.background = '#673ab7';
+        debugToggleBtn.style.color = '#fff';
+        debugToggleBtn.style.border = 'none';
+        debugToggleBtn.style.borderRadius = '50%';
+        debugToggleBtn.style.width = '54px';
+        debugToggleBtn.style.height = '54px';
+        debugToggleBtn.style.fontSize = '18px';
+        debugToggleBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.18)';
+        debugToggleBtn.style.display = 'none';
+        debugToggleBtn.style.alignItems = 'center';
+        debugToggleBtn.style.justifyContent = 'center';
+        debugToggleBtn.style.cursor = 'pointer';
+        debugToggleBtn.style.transition = 'background 0.2s';
+        document.body.appendChild(debugToggleBtn);
+
+        // Add state management class
+        class ViewerState {
+            constructor() {
+                this.isMeasureMode = false;
+                this.isPathMeasureMode = false;
+                this.currentMesh = null;
+                this.needsRender = false;
+                this.isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
+                this.isHighPerformanceMode = true;
+                this.viewMode = 1; // 0: solid, 1: transparent, 2: wireframe
+                this.isOrthographic = false;
+                this.isAxesVisible = true;
+                this.measurementPoints = [];
+                this.pathMeasurementPoints = [];
+                this.pathMeasurementLines = [];
+                this.pathMeasurementLabels = [];
+                this.pathTotalDistance = 0;
+                this.inPredefinedView = false;
+            }
+
+            toggleMeasureMode() {
+                if (this.isPathMeasureMode) {
+                    this.togglePathMeasureMode();
+                }
+                this.isMeasureMode = !this.isMeasureMode;
+                this.needsRender = true;
+            }
+
+            togglePathMeasureMode() {
+                if (this.isMeasureMode) {
+                    this.toggleMeasureMode();
+                }
+                this.isPathMeasureMode = !this.isPathMeasureMode;
+                this.needsRender = true;
+            }
+        }
+
+        // Initialize state at the very top before any function uses it
+        const state = new ViewerState();
+
         // Configure Three.js to allow software rendering fallback
         // This is needed for machines where hardware acceleration is not available
         window.THREE_ALLOW_SOFTWARE_RENDERER = true;
@@ -345,24 +426,6 @@
         // Check GPU and renderer info
         const gl = renderer.getContext();
         
-        // Create a single debug console container
-        const debugConsole = document.createElement('div');
-        debugConsole.id = 'debug-console';
-        debugConsole.style.position = 'absolute';
-        debugConsole.style.left = '10px';
-        debugConsole.style.bottom = '10px';
-        debugConsole.style.maxWidth = '350px';
-        debugConsole.style.maxHeight = '350px';
-        debugConsole.style.overflow = 'auto';
-        debugConsole.style.background = 'rgba(0,0,0,0.85)';
-        debugConsole.style.color = 'white';
-        debugConsole.style.padding = '10px';
-        debugConsole.style.fontFamily = 'monospace';
-        debugConsole.style.fontSize = '12px';
-        debugConsole.style.zIndex = '1000';
-        debugConsole.style.borderRadius = '6px';
-        document.body.appendChild(debugConsole);
-
         // Create GPU info section
         const gpuInfoSection = document.createElement('div');
         gpuInfoSection.id = 'gpu-info-section';
@@ -759,38 +822,25 @@
          * 4. Model caching for subsequent loads
          */
         async function loadGLTFModel() {
+            try {
+                cleanupResources(); // Clean up before loading new model
+                
             document.getElementById('loadingDetails').textContent = 'Initializing loaders...';
             document.getElementById('loadingBar').style.width = '5%';
             
-            try {
-                // Set up Draco decoder - use CDN for decoder files
                 const dracoLoader = new DRACOLoader();
                 dracoLoader.setDecoderPath('https://unpkg.com/three@0.158.0/examples/jsm/libs/draco/');
-                dracoLoader.setDecoderConfig({ type: 'js' }); // Use JS decoder for compatibility
+                dracoLoader.setDecoderConfig({ type: 'js' });
                 
-                // Configure GLTF loader
                 const loader = new GLTFLoader();
-                loader.setCrossOrigin('anonymous'); // Set CORS mode explicitly
+                loader.setCrossOrigin('anonymous');
                 loader.setDRACOLoader(dracoLoader);
                 
                 document.getElementById('loadingDetails').textContent = 'Fetching optimized GLB model...';
                 document.getElementById('loadingBar').style.width = '10%';
                 
-                // Use the direct URL to the GLB file with explicit credentials mode
                 const modelPath = 'https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v2.glb';
                 
-                // Log the URL we're trying to load
-                console.log("Attempting to load model from:", modelPath);
-                
-                // Create a simple fallback material in case textures fail
-                const fallbackMaterial = new THREE.MeshPhongMaterial({
-                    color: 0xcccccc,
-                    shininess: 30,
-                    specular: 0x111111,
-                    side: THREE.DoubleSide
-                });
-                
-                // Use fetch API for better CORS control
                 const modelResponse = await fetch(modelPath, { 
                     credentials: 'omit',
                     mode: 'cors' 
@@ -800,956 +850,332 @@
                     throw new Error(`Failed to fetch model: ${modelResponse.status} ${modelResponse.statusText}`);
                 }
                 
-                // Get model data as ArrayBuffer
                 const modelData = await modelResponse.arrayBuffer();
-                console.log("Model data loaded", modelData.byteLength, "bytes");
                 
-                // Load with GLTFLoader from ArrayBuffer
                 const gltf = await new Promise((resolve, reject) => {
                     loader.parse(
                         modelData,
                         '',
-                        // Success callback
-                        (gltf) => {
-                            console.log("GLTF loaded successfully from ArrayBuffer");
-                            resolve(gltf);
-                        },
-                        // Error callback
-                        (error) => {
-                            console.error("Error loading GLTF from ArrayBuffer:", error);
-                            reject(error);
-                        }
+                        resolve,
+                        reject
                     );
                 });
                 
                 document.getElementById('loadingDetails').textContent = 'Processing model...';
                 document.getElementById('loadingBar').style.width = '95%';
                 
-                console.log("GLTF object:", gltf);
-                
-                // Extract full scene to make sure we get everything
-                const fullScene = gltf.scene;
-                console.log("Full scene from GLTF:", fullScene);
-                
-                // Hide loading screen
-                document.getElementById('loading').style.display = 'none';
-                
-                // Get the entire scene
-                const mesh = fullScene;
+                const mesh = gltf.scene;
                 if (!mesh) {
                     throw new Error('No objects found in GLTF model scene');
                 }
                 
-                // Save reference to the mesh
-                currentMesh = mesh;
-                
-                // Apply fallback material if mesh has no material
-                function applyFallbackMaterialIfMissing(obj, fallbackMaterial) {
-                    if (obj.isMesh && !obj.material) {
-                        obj.material = fallbackMaterial.clone();
-                    }
-                    if (obj.children && obj.children.length > 0) {
-                        obj.children.forEach(child => {
-                            applyFallbackMaterialIfMissing(child, fallbackMaterial);
-                        });
-                    }
-                }
-                applyFallbackMaterialIfMissing(mesh, fallbackMaterial);
-                
-                // Add model to scene
+                state.currentMesh = mesh;
                 scene.add(mesh);
-                currentMesh = mesh;
-                // Compute bounding box and center for camera setup if needed, but do not modify mesh
-                const finalBoundingBox = new THREE.Box3().setFromObject(mesh);
-                const finalSize = new THREE.Vector3();
-                finalBoundingBox.getSize(finalSize);
-                const finalCenter = new THREE.Vector3();
-                finalBoundingBox.getCenter(finalCenter);
-                modelSize = finalSize.clone();
-                modelCenter = finalCenter.clone();
                 
-                console.log("Model centered at:", modelCenter);
+                // Compute bounding box and center
+                const boundingBox = new THREE.Box3().setFromObject(mesh);
+                const size = new THREE.Vector3();
+                boundingBox.getSize(size);
+                const center = new THREE.Vector3();
+                boundingBox.getCenter(center);
                 
-                // Calculate calibration factor based on assumed real height of 4.28m
-                currentUnit = calibrationHeight / modelSize.y;
-                console.log(`Calibration factor: ${currentUnit} (${calibrationHeight}m / ${modelSize.y} model units)`);
-                document.getElementById('modelCalibration').textContent = `Calibration: 1 model unit = ${currentUnit.toFixed(4)} meters (height: ${calibrationHeight}m)`;
-
-                // Update model information with Three.js conventional dimensions
-                document.getElementById('modelName').textContent = 'Navagunjara Sculpture (SIGMA Optimized)';
+                modelSize = size.clone();
+                modelCenter = center.clone();
                 
-                const originalDimensions = {
-                    x: modelSize.x.toFixed(2),
-                    y: modelSize.y.toFixed(2),
-                    z: modelSize.z.toFixed(2)
-                };
-                
-                const threejsDimensions = {
-                    x: modelSize.x.toFixed(2),
-                    y: modelSize.y.toFixed(2),
-                    z: modelSize.z.toFixed(2)
-                };
-                
-                // Add a note about coordinate system for debugging
-                console.log("Three.js coordinate system: Y-up, right-handed");
-                console.log("Model aligned to Three.js convention: Y-up, centered, bottom at y=0");
-
-                // Set up camera for Three.js conventional view
-                const maxDim = Math.max(modelSize.x, modelSize.y, modelSize.z);
-                const distance = maxDim * 1.5; // Good distance for viewing the entire model
-                
-                // Set the camera position for a 3/4 view (typical for Three.js)
-                perspectiveCamera.position.set(distance, distance, distance);
-                perspectiveCamera.up.set(0, 1, 0); // Y is up in Three.js convention
-                perspectiveCamera.lookAt(modelCenter);
-                
+                // Update camera and controls
                 updateOrthographicCamera();
-                
                 controls.target.copy(modelCenter);
                 controls.update();
 
-                // Analyze and display the GLTF object hierarchy
-                console.log("Analyzing full GLTF hierarchy...");
-                hierarchyContainer = document.createElement('div'); // Use the global variable
-                hierarchyContainer.id = 'model-hierarchy';
-                hierarchyContainer.style.position = 'absolute';
-                hierarchyContainer.style.left = '10px';
-                hierarchyContainer.style.bottom = '10px';
-                hierarchyContainer.style.maxWidth = '300px';
-                hierarchyContainer.style.maxHeight = '200px';
-                hierarchyContainer.style.overflow = 'auto';
-                hierarchyContainer.style.background = 'rgba(0,0,0,0.7)';
-                hierarchyContainer.style.color = 'white';
-                hierarchyContainer.style.padding = '10px';
-                hierarchyContainer.style.fontFamily = 'monospace';
-                hierarchyContainer.style.fontSize = '11px';
-                hierarchyContainer.style.zIndex = '1000';
-                hierarchyContainer.style.borderRadius = '5px';
-                document.body.appendChild(hierarchyContainer);
-                
-                // Function to recursively analyze the model structure
-                function analyzeModelHierarchy(object, level = 0, parentPath = '') {
-                    const indent = '&nbsp;'.repeat(level * 2);
-                    const objectName = object.name || 'unnamed';
-                    const objectType = object.type;
-                    const path = parentPath ? `${parentPath}/${objectName}` : objectName;
-                    const info = {
-                        name: objectName,
-                        type: objectType,
-                        path: path,
-                        level: level,
-                        hasMesh: object.isMesh,
-                        hasGeometry: object.geometry !== undefined,
-                        hasMaterial: object.material !== undefined,
-                        childCount: object.children ? object.children.length : 0
-                    };
-                    // Add this node to the visual hierarchy section
-                    const node = document.createElement('div');
-                    node.innerHTML = `${indent}${objectName} [${objectType}]${object.isMesh ? ' (Mesh)' : ''}`;
-                    node.style.color = object.isMesh ? '#8aff8a' : 'white';
-                    hierarchySection.appendChild(node);
-                    // Recursively process all children
-                    if (object.children && object.children.length > 0) {
-                        object.children.forEach(child => {
-                            analyzeModelHierarchy(child, level + 1, path);
-                        });
-                    }
-                    return info;
-                }
-                
-                // Ensure all objects are properly processed with materials
-                function ensureRecursiveLoading(object) {
-                    // Make sure this object is visible
-                    object.visible = true;
-                    
-                    // If it's a mesh, ensure it has proper material
-                    if (object.isMesh) {
-                        // Check if it has a material, if not assign the default
-                        if (!object.material) {
-                            console.warn(`Mesh ${object.name || 'unnamed'} has no material, assigning default`);
-                            object.material = new THREE.MeshPhongMaterial({
-                                color: 0xdddddd,
-                                wireframe: (viewMode === 2),
-                                transparent: (viewMode >= 1),
-                                opacity: viewMode === 1 ? 0.5 : 0.7
-                            });
-                        }
-                        
-                        // Ensure geometry has proper attributes
-                        if (object.geometry) {
-                            if (!object.geometry.attributes.normal) {
-                                console.warn(`Computing missing normals for ${object.name || 'unnamed'}`);
-                                object.geometry.computeVertexNormals();
-                            }
-                        }
-                    }
-                    
-                    // Process all children recursively
-                    if (object.children && object.children.length > 0) {
-                        object.children.forEach(child => {
-                            ensureRecursiveLoading(child);
-                        });
-                    }
-                }
-                
-                // Analyze the model hierarchy and ensure all objects are loaded
-                const rootObject = mesh;
-                const hierarchyInfo = analyzeModelHierarchy(rootObject);
-                ensureRecursiveLoading(rootObject);
-                console.log("Model hierarchy analysis complete");
-                
-                // Add a toggle button for the hierarchy display
-                const toggleHierarchyBtn = document.createElement('button');
-                toggleHierarchyBtn.textContent = 'Toggle Hierarchy';
-                toggleHierarchyBtn.style.position = 'absolute';
-                toggleHierarchyBtn.style.left = '10px';
-                toggleHierarchyBtn.style.bottom = '370px';
-                toggleHierarchyBtn.style.padding = '5px 10px';
-                toggleHierarchyBtn.style.backgroundColor = '#555';
-                toggleHierarchyBtn.style.color = 'white';
-                toggleHierarchyBtn.style.border = 'none';
-                toggleHierarchyBtn.style.borderRadius = '3px';
-                toggleHierarchyBtn.style.cursor = 'pointer';
-                toggleHierarchyBtn.style.zIndex = '1000';
-                document.body.appendChild(toggleHierarchyBtn);
-                
-                toggleHierarchyBtn.addEventListener('click', () => {
-                    hierarchySection.style.display = hierarchySection.style.display === 'none' ? 'block' : 'none';
-                });
+                // Update UI to show only dimensions
+                const dimensionsText = `Dimensions: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} meters`;
+                document.getElementById('modelDimensions').textContent = dimensionsText;
+                document.getElementById('modelCalibration').textContent = '';
 
-                if (isMobile) {
-                    document.getElementById('modelDimensions').textContent = 
-                        `Size: ${threejsDimensions.x}×${threejsDimensions.y}×${threejsDimensions.z} ${unitLabel}`;
-                    document.getElementById('modelCalibration').textContent = 
-                        `Y-up, centered, bottom at y=0`;
-                } else {
-                    document.getElementById('modelDimensions').textContent = 
-                        `Dimensions: ${threejsDimensions.x} × ${threejsDimensions.y} × ${threejsDimensions.z} ${unitLabel}`;
-                    document.getElementById('modelCalibration').textContent = 
-                        `Three.js: Y-up, centered, bottom at y=0 | Measurements in ${unitLabel}`;
-                }
-                
-                // Make sure the model is properly initialized before setting views
-                // The timeout gives the model time to properly initialize
-                setTimeout(() => {
-                    try {
-                        // Set the initial view
-                        setViewLeft();
-                        
-                        // Make sure the default view mode (wireframe) is properly applied
-                        // This ensures the view mode is consistently applied across the entire model
-                        if (viewMode === 2) { // If default is wireframe
-                            // Force an explicit call to toggleViewMode to ensure proper initialization
-                            // This helps apply the wireframe consistently to all parts of the model
-                            console.log("Applying default wireframe mode to model");
-                            toggleViewMode(); // Switch to solid
-                            toggleViewMode(); // Switch to transparent
-                            toggleViewMode(); // Switch back to wireframe
-                        }
-                        
-                        // Complete loading progress
+                // For measurements, use 1:1 (no calibration)
+                currentUnit = 1.0;
+                unitLabel = 'm';
+
+                // Complete loading
                         document.getElementById('loadingBar').style.width = '100%';
-                    } catch (error) {
-                        console.warn("Could not set initial view:", error.message);
-                        // Fall back to a default camera position if view setting fails
-                        perspectiveCamera.position.set(distance, distance, distance);
-                        perspectiveCamera.lookAt(modelCenter);
-                        controls.update();
-                    }
-                }, 300); // Increased timeout to ensure model is properly initialized
-
-                // Update calibration based on model's actual dimensions
-                updateCalibrationFromModel(mesh);
+                document.getElementById('loading').style.display = 'none';
+                
+                state.needsRender = true;
 
             } catch (error) {
                 console.error('Error loading GLTF model:', error);
                 document.getElementById('loadingDetails').textContent = 'Error loading model. Please try refreshing.';
                 document.getElementById('loadingBar').style.backgroundColor = '#f44336';
+                showErrorToUser('Failed to load 3D model. Please refresh the page.');
+                cleanupResources();
             }
         }
 
-        // Initialize model loading
+        // Initialize the viewer
         loadGLTFModel();
+        animate();
 
-        /**
-         * The rest of the file's JavaScript functions remain the same as the original,
-         * including setupControls(), animate(), event handlers, etc.
-         */
-        
-        // All remaining functions kept the same as original file
-        // (setupControls, view functions, measurement functions, etc.)
-        
-        function setupControls() {
-            // Orbit controls settings
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.15;
-            controls.screenSpacePanning = true;
-            controls.minDistance = 0.5;
-            controls.maxDistance = 100;
-            controls.rotateSpeed = 0.8;
-            controls.zoomSpeed = 1.0;
-            controls.panSpeed = 0.8;
-            controls.enableTouch = true;
-                
-            // Use standard orbit control configuration for Y-up world
-            controls.minPolarAngle = 0;
-            controls.maxPolarAngle = Math.PI;
-                
-            // Set mouse buttons
-            controls.mouseButtons = {
-                LEFT: THREE.MOUSE.ROTATE,
-                MIDDLE: THREE.MOUSE.PAN,
-                RIGHT: THREE.MOUSE.PAN
-            };
-                
-            controls.touches = {
-                ONE: THREE.TOUCH.ROTATE,
-                TWO: THREE.TOUCH.DOLLY_PAN
-            };
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            cleanupResources();
+            window.removeEventListener('resize', boundResizeHandler);
+            window.removeEventListener('orientationchange', boundResizeHandler);
+        });
+
+        // Resource cleanup function
+        function cleanupResources() {
+            if (state.currentMesh) {
+                scene.remove(state.currentMesh);
+                state.currentMesh.traverse((object) => {
+                    if (object.geometry) object.geometry.dispose();
+                    if (object.material) {
+                        if (Array.isArray(object.material)) {
+                            object.material.forEach(material => material.dispose());
+                        } else {
+                            object.material.dispose();
+                        }
+                    }
+                });
+            }
             
-            // Add events to detect when user starts rotating
-            controls.addEventListener('start', handleControlsStart);
+            // Clean up measurement resources
+            if (measurementGroup) {
+                measurementGroup.traverse((object) => {
+                    if (object.geometry) object.geometry.dispose();
+                    if (object.material) {
+                    if (Array.isArray(object.material)) {
+                            object.material.forEach(material => material.dispose());
+                    } else {
+                            object.material.dispose();
+                    }
+                }
+            });
+                scene.remove(measurementGroup);
+            }
+
+            // Clean up renderer
+            if (renderer) {
+                renderer.dispose();
+            }
+
+            // Reset state
+            state.measurementPoints = [];
+            state.pathMeasurementPoints = [];
+            state.pathMeasurementLines = [];
+            state.pathMeasurementLabels = [];
+            state.pathTotalDistance = 0;
         }
-        
-        // Track if we're in a predefined view
-        let inPredefinedView = false;
-        
-        function handleControlsStart() {
-            // If in orthographic mode with aligned grid, reset when user starts manual control
-            if (isOrthographic && inPredefinedView) {
-                // No longer in a predefined view when user starts rotating manually
-                inPredefinedView = false;
+
+        // Safe render function with error handling
+        function safeRender() {
+            try {
+                if (state.needsRender) {
+                    renderer.render(scene, camera);
+                    if (measurementLabels.length > 0) {
+                        labelRenderer.render(scene, camera);
+                    }
+                    state.needsRender = false;
+                }
+            } catch (error) {
+                console.error('Render error:', error);
+                showErrorToUser('Rendering error occurred. Please refresh the page.');
             }
         }
 
-        // Rendering loop with performance optimization
+        // Improved animation loop
         function animate() {
             requestAnimationFrame(animate);
             
-            // Reduce control updates when in high performance mode
             if (controls.enabled) {
                 controls.update();
             }
             
-            // Performance-optimized rendering
-            if (isHighPerformanceMode) {
-                // Render at lower frequency in high performance mode
-                renderer.render(scene, camera);
-                // Only update label renderer when needed
-                if (measurementLabels.length > 0) {
-                    labelRenderer.render(scene, camera);
-                }
-            } else {
-                // Full quality rendering
-                renderer.render(scene, camera);
-                labelRenderer.render(scene, camera);
-            }
-        }
-        
-        // Initialize with high-performance settings
-        applyPerformanceSettings();
-        
-        animate();
-        
-        // Handle window resize
-        window.addEventListener('resize', function() {
-            const aspect = window.innerWidth / window.innerHeight;
-            
-            // Check if the device has switched between mobile and desktop view
-            const nowMobile = window.innerWidth < 768;
-            if (nowMobile !== isMobile) {
-                location.reload(); // Reload the page to apply all mobile optimizations
-                return;
-            }
-            
-            // Update perspective camera
-            perspectiveCamera.aspect = aspect;
-            perspectiveCamera.updateProjectionMatrix();
-            
-            // Update orthographic camera
-            updateOrthographicCamera();
-            
-            // Update renderers
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            labelRenderer.setSize(window.innerWidth, window.innerHeight);
-        });
-        
-        // Rest of the functions from original file...
-        
-        /**
-         * Add performance monitoring - new for Sigma version
-         */
-        const stats = {
-            fps: 0,
-            frameTime: 0,
-            frames: 0,
-            lastTime: performance.now()
-        };
-        
-        // Create performance display
-        const perfDisplay = document.createElement('div');
-        perfDisplay.style.position = 'absolute';
-        perfDisplay.style.top = '10px';
-        perfDisplay.style.right = '270px';
-        perfDisplay.style.background = 'rgba(0,0,0,0.5)';
-        perfDisplay.style.color = 'white';
-        perfDisplay.style.padding = '5px';
-        perfDisplay.style.fontFamily = 'monospace';
-        perfDisplay.style.fontSize = '12px';
-        perfDisplay.style.zIndex = '1000';
-        document.body.appendChild(perfDisplay);
-        
-        // Update performance stats
-        function updatePerformance() {
-            stats.frames++;
-            const now = performance.now();
-            const elapsed = now - stats.lastTime;
-            
-            if (elapsed >= 1000) {
-                stats.fps = Math.round((stats.frames * 1000) / elapsed);
-                stats.frameTime = elapsed / stats.frames;
-                stats.frames = 0;
-                stats.lastTime = now;
-                
-                perfDisplay.textContent = `FPS: ${stats.fps} | Frame: ${stats.frameTime.toFixed(2)}ms`;
-            }
-            
-            requestAnimationFrame(updatePerformance);
-        }
-        
-        // Start performance monitoring
-        updatePerformance();
-        
-        // Add event listeners for UI controls
-        document.addEventListener('DOMContentLoaded', function() {
-            // View buttons
-            document.getElementById('viewTop').addEventListener('click', setViewTop);
-            document.getElementById('viewFront').addEventListener('click', setViewFront);
-            document.getElementById('viewLeft').addEventListener('click', setViewLeft);
-            document.getElementById('viewIso').addEventListener('click', setViewIso);
-            
-            // Toggle buttons
-            document.getElementById('toggleViewMode').addEventListener('click', toggleViewMode);
-            document.getElementById('toggleAxes').addEventListener('click', toggleAxes);
-            document.getElementById('toggleOrtho').addEventListener('click', toggleOrthographic);
-            
-            // Measurement buttons
-            if (document.getElementById('measureMode')) {
-                document.getElementById('measureMode').addEventListener('click', toggleMeasureMode);
-            }
-            if (document.getElementById('pathMeasureMode')) {
-                document.getElementById('pathMeasureMode').addEventListener('click', togglePathMeasureMode);
-            }
-            if (document.getElementById('clearMeasurements')) {
-                document.getElementById('clearMeasurements').addEventListener('click', clearMeasurements);
-            }
-        });
-        
-        // Toggle functions
-        function toggleViewMode() {
-            if (!currentMesh) return;
-            viewMode = (viewMode + 1) % 3; // Cycle through view modes: 0=solid, 1=transparent, 2=wireframe
-            console.log("Toggling view mode to:", viewMode);
-            // Apply view mode to mesh and its children
-            currentMesh.traverse(function(object) {
-                if (object.isMesh && object.material) {
-                    if (Array.isArray(object.material)) {
-                        object.material.forEach(material => updateMaterial(material));
-                    } else {
-                        updateMaterial(object.material);
-                    }
-                }
-            });
-            function updateMaterial(material) {
-                if (!material) return;
-                switch(viewMode) {
-                    case 0: // Solid
-                        material.wireframe = false;
-                        material.transparent = false;
-                        material.opacity = 1.0;
-                        break;
-                    case 1: // Transparent
-                        material.wireframe = false;
-                        material.transparent = true;
-                        material.opacity = 0.5;
-                        break;
-                    case 2: // Wireframe
-                        material.wireframe = true;
-                        material.transparent = true;
-                        material.opacity = 0.7;
-                        break;
-                }
-                material.needsUpdate = true;
-            }
-        }
-        
-        function toggleAxes() {
-            isAxesVisible = !isAxesVisible;
-            axesHelper.visible = isAxesVisible;
-        }
-        
-        function toggleOrthographic() {
-            isOrthographic = !isOrthographic;
-            
-            if (isOrthographic) {
-                camera = orthographicCamera;
-                updateOrthographicCamera();
-            } else {
-                camera = perspectiveCamera;
-            }
-            
-            // Update controls to use the current camera
-            controls.object = camera;
-            controls.update();
-        }
-        
-        // Measurement functions
-        function toggleMeasureMode() {
-            const measureButton = document.getElementById('measureMode');
-            isMeasureMode = !isMeasureMode;
-            
-            // Toggle path measure mode off if it was on
-            if (isMeasureMode && isPathMeasureMode) {
-                togglePathMeasureMode();
-            }
-            
-            if (isMeasureMode) {
-                // Enable measure mode
-                controls.enableRotate = false; // Disable rotation by default
-                measureButton.textContent = 'Cancel Measure';
-                
-                // Clean up any existing preview elements
-                if (previewLine) {
-                    measurementGroup.remove(previewLine);
-                    previewLine = null;
-                }
-                if (previewBackgroundLine) {
-                    measurementGroup.remove(previewBackgroundLine);
-                    previewBackgroundLine = null;
-                }
-                if (previewLabel) {
-                    measurementGroup.remove(previewLabel);
-                    previewLabel = null;
-                }
-                
-                // Reset measurement points
-                measurementPoints = [];
-                
-                // Show instructions
-                showNotification('Click to place measurement points. Press ESC to cancel.');
-            } else {
-                // Disable measure mode
-                controls.enableRotate = true;
-                measureButton.textContent = 'Measure';
-                
-                // Clean up any in-progress measurements
-                measurementPoints = [];
-                
-                // Clean up preview elements
-                if (previewLine) {
-                    measurementGroup.remove(previewLine);
-                    previewLine = null;
-                }
-                if (previewBackgroundLine) {
-                    measurementGroup.remove(previewBackgroundLine);
-                    previewBackgroundLine = null;
-                }
-                if (previewLabel) {
-                    measurementGroup.remove(previewLabel);
-                    previewLabel = null;
-                }
-            }
-            
-            console.log("Measure mode:", isMeasureMode ? "ON" : "OFF");
-        }
-        
-        function togglePathMeasureMode() {
-            const pathMeasureButton = document.getElementById('pathMeasureMode');
-            isPathMeasureMode = !isPathMeasureMode;
-            
-            // Toggle regular measure mode off if it was on
-            if (isPathMeasureMode && isMeasureMode) {
-                toggleMeasureMode();
-            }
-            
-            if (isPathMeasureMode) {
-                // Enable path measure mode
-                controls.enableRotate = false;
-                pathMeasureButton.textContent = 'Cancel Path';
-                
-                // Initialize new path
-                pathMeasurementPoints = [];
-                pathMeasurementLines = [];
-                pathMeasurementLabels = [];
-                pathTotalDistance = 0;
-                
-                // Show instructions
-                showNotification('Click to add points to path. Press ENTER to complete path, ESC to cancel.');
-            } else {
-                // Disable path measure mode
-                controls.enableRotate = true;
-                pathMeasureButton.textContent = 'Measure Path';
-                
-                // Clean up any in-progress path
-                cancelInProgressPathMeasurement();
-            }
-            
-            console.log("Path measure mode:", isPathMeasureMode ? "ON" : "OFF");
-        }
-        
-        // Helper function to show notifications
-        function showNotification(message, duration = 3000) {
-            const notification = document.createElement('div');
-            notification.style.position = 'fixed';
-            notification.style.top = '20px';
-            notification.style.left = '50%';
-            notification.style.transform = 'translateX(-50%)';
-            notification.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
-            notification.style.color = 'white';
-            notification.style.padding = '10px 20px';
-            notification.style.borderRadius = '5px';
-            notification.style.zIndex = '1000';
-            notification.textContent = message;
-            document.body.appendChild(notification);
-            
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    document.body.removeChild(notification);
-                }
-            }, duration);
-        }
-        
-        // Helper function to cancel in-progress path measurement
-        function cancelInProgressPathMeasurement() {
-            // Remove all temporary path elements
-            pathMeasurementLines.forEach(line => {
-                if (line) measurementGroup.remove(line);
-            });
-            pathMeasurementLabels.forEach(label => {
-                if (label) measurementGroup.remove(label);
-            });
-            if (pathTotalLabel) {
-                measurementGroup.remove(pathTotalLabel);
-                pathTotalLabel = null;
-            }
-            
-            // Reset path arrays
-            pathMeasurementPoints = [];
-            pathMeasurementLines = [];
-            pathMeasurementLabels = [];
-            pathTotalDistance = 0;
-        }
-        
-        // --- Measurement Helper Functions (ported from label_3d.html) ---
-        function updatePreviewLine(point1, point2) {
-            // Remove existing preview lines if any
-            if (previewLine) {
-                measurementGroup.remove(previewLine);
-                previewLine = null;
-            }
-            if (previewBackgroundLine) {
-                measurementGroup.remove(previewBackgroundLine);
-                previewBackgroundLine = null;
-            }
-            if (previewLabel) {
-                measurementGroup.remove(previewLabel);
-                previewLabel = null;
-            }
-            // Create a more visible preview line between points
-            const material = new THREE.LineDashedMaterial({ 
-                color: 0x3498db, // Light blue for preview
-                dashSize: 0.12, 
-                gapSize: 0.06,
-                linewidth: 2
-            });
-            const geometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
-            previewLine = new THREE.Line(geometry, material);
-            previewLine.computeLineDistances(); // Required for dashed lines
-            // Create background preview line for better visibility
-            const bgMaterial = new THREE.LineDashedMaterial({
-                color: 0x4caf50, // Green background
-                dashSize: 0.06,
-                gapSize: 0.12,
-                linewidth: 3,
-                transparent: true,
-                opacity: 0.5
-            });
-            const bgGeometry = new THREE.BufferGeometry().setFromPoints([point1, point2]);
-            previewBackgroundLine = new THREE.Line(bgGeometry, bgMaterial);
-            previewBackgroundLine.computeLineDistances();
-            // Add the background line first
-            measurementGroup.add(previewBackgroundLine);
-            // Add the main preview line on top
-            measurementGroup.add(previewLine);
-            // Calculate distance for preview
-            const distance = point1.distanceTo(point2);
-            // Calculate midpoint
-            const midpoint = new THREE.Vector3().addVectors(point1, point2).multiplyScalar(0.5);
-            // Calculate the direction vector of the line
-            const direction = new THREE.Vector3().subVectors(point2, point1).normalize();
-            // Calculate a perpendicular vector in the up direction to offset the label
-            const worldUp = new THREE.Vector3(0, 1, 0);
-            const perpendicular = new THREE.Vector3().crossVectors(direction, worldUp).normalize();
-            if (perpendicular.length() < 0.1) {
-                const worldRight = new THREE.Vector3(1, 0, 0);
-                perpendicular.crossVectors(direction, worldRight).normalize();
-            }
-            const labelOffset = 0.25; // Distance above the line
-            const labelPosition = midpoint.clone().addScaledVector(perpendicular, labelOffset);
-            // Create enhanced preview label
-            const labelDiv = document.createElement('div');
-            labelDiv.className = 'annotation-label';
-            labelDiv.style.opacity = '0.9';
-            labelDiv.style.padding = '3px 6px';
-            labelDiv.style.fontSize = '13px';
-            labelDiv.style.fontWeight = 'bold';
-            labelDiv.style.backgroundColor = 'rgba(52, 152, 219, 0.7)'; // Light blue background
-            labelDiv.style.border = '1px dashed rgba(255, 0, 0, 0.7)'; // Dashed red border
-            labelDiv.textContent = getMeasurementText(distance);
-            previewLabel = new CSS2DObject(labelDiv);
-            previewLabel.position.copy(labelPosition);
-            measurementGroup.add(previewLabel);
+            safeRender();
         }
 
-        function addMeasurementPoint(point) {
-            // Add a more prominent crosshair marker at the point
-            const markerGroup = new THREE.Group();
-            markerGroup.position.copy(point);
-            // Create larger crosshair marker (three perpendicular lines)
-            const markerSize = 0.08;
-            const primaryColor = 0x4caf50;
-            const secondaryColor = 0x3498db;
-            const primaryMaterial = new THREE.LineBasicMaterial({ color: primaryColor, linewidth: 3 });
-            // X axis line (light green)
-            const xGeometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(-markerSize, 0, 0),
-                new THREE.Vector3(markerSize, 0, 0)
-            ]);
-            const xLine = new THREE.Line(xGeometry, primaryMaterial);
-            markerGroup.add(xLine);
-            // Y axis line (light green)
-            const yGeometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, -markerSize, 0),
-                new THREE.Vector3(0, markerSize, 0)
-            ]);
-            const yLine = new THREE.Line(yGeometry, primaryMaterial);
-            markerGroup.add(yLine);
-            // Z axis line (light green)
-            const zGeometry = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(0, 0, -markerSize),
-                new THREE.Vector3(0, 0, markerSize)
-            ]);
-            const zLine = new THREE.Line(zGeometry, primaryMaterial);
-            markerGroup.add(zLine);
-            // Secondary color lines (light blue) - slightly offset for visibility
-            const secondaryMaterial = new THREE.LineBasicMaterial({ color: secondaryColor, linewidth: 1.5 });
-            const offset = 0.01;
-            // X axis line (light blue)
-            const xGeometry2 = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(-markerSize, offset, offset),
-                new THREE.Vector3(markerSize, offset, offset)
-            ]);
-            const xLine2 = new THREE.Line(xGeometry2, secondaryMaterial);
-            markerGroup.add(xLine2);
-            // Y axis line (light blue)
-            const yGeometry2 = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(offset, -markerSize, offset),
-                new THREE.Vector3(offset, markerSize, offset)
-            ]);
-            const yLine2 = new THREE.Line(yGeometry2, secondaryMaterial);
-            markerGroup.add(yLine2);
-            // Z axis line (light blue)
-            const zGeometry2 = new THREE.BufferGeometry().setFromPoints([
-                new THREE.Vector3(offset, offset, -markerSize),
-                new THREE.Vector3(offset, offset, markerSize)
-            ]);
-            const zLine2 = new THREE.Line(zGeometry2, secondaryMaterial);
-            markerGroup.add(zLine2);
-            // Sphere at center - make it larger and two-toned
-            const sphereGeometry = new THREE.SphereGeometry(0.02);
-            const sphereMaterial = new THREE.MeshBasicMaterial({ color: primaryColor });
-            const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial);
-            markerGroup.add(sphere);
-            // Outer sphere (light blue halo)
-            const outerSphereGeometry = new THREE.SphereGeometry(0.03);
-            const outerSphereMaterial = new THREE.MeshBasicMaterial({ 
-                color: secondaryColor,
-                transparent: true,
-                opacity: 0.5
-            });
-            const outerSphere = new THREE.Mesh(outerSphereGeometry, outerSphereMaterial);
-            markerGroup.add(outerSphere);
-            measurementGroup.add(markerGroup);
-            measurementPoints.push(point);
-            // If we have two points, create a measurement and clean up preview
-            if (measurementPoints.length === 2) {
-                if (previewLine) {
-                    measurementGroup.remove(previewLine);
-                    previewLine = null;
-                }
-                if (previewBackgroundLine) {
-                    measurementGroup.remove(previewBackgroundLine);
-                    previewBackgroundLine = null;
-                }
-                if (previewLabel) {
-                    measurementGroup.remove(previewLabel);
-                    previewLabel = null;
-                }
-                if (typeof createMeasurement === 'function') {
-                    createMeasurement(measurementPoints[0], measurementPoints[1]);
-                }
-                measurementPoints = [];
-            }
-        }
-
-        function addPathMeasurementPoint(point) {
-            if (!isPathMeasureMode) return;
-            const pointIndex = pathMeasurementPoints.length + 1;
-            const labelDiv = document.createElement('div');
-            labelDiv.className = 'path-marker-label';
-            labelDiv.textContent = pointIndex;
-            const markerLabel = new CSS2DObject(labelDiv);
-            markerLabel.position.copy(point);
-            markerLabel.updateMatrix();
-            markerLabel.updateMatrixWorld(true);
-            measurementGroup.add(markerLabel);
-            pathMeasurementLabels.push(markerLabel);
-            pathMeasurementPoints.push(point);
-            if (pathMeasurementPoints.length > 1) {
-                const prevPoint = pathMeasurementPoints[pathMeasurementPoints.length - 2];
-                const currentPoint = point;
-                const lineMaterial = new THREE.LineBasicMaterial({ 
-                    color: 0xFFFFFF, linewidth: 4, transparent: false 
-                });
-                const geometry = new THREE.BufferGeometry().setFromPoints([prevPoint, currentPoint]);
-                const line = new THREE.Line(geometry, lineMaterial);
-                const dottedLineMaterial = new THREE.LineDashedMaterial({ 
-                    color: 0x00CC00, linewidth: 3, transparent: true, opacity: 0.95, dashSize: 0.05, gapSize: 0.05
-                });
-                const dottedGeometry = new THREE.BufferGeometry().setFromPoints([prevPoint, currentPoint]);
-                const dottedLine = new THREE.Line(dottedGeometry, dottedLineMaterial);
-                dottedLine.computeLineDistances();
-                measurementGroup.add(dottedLine);
-                pathMeasurementLines.push(dottedLine);
-                measurementGroup.add(line);
-                pathMeasurementLines.push(line);
-                const segmentDistance = prevPoint.distanceTo(currentPoint);
-                pathTotalDistance += segmentDistance;
-                if (typeof updatePathTotalLabel === 'function') updatePathTotalLabel();
-                if (typeof updateMeasurementsList === 'function') updateMeasurementsList();
-                if (typeof labelRenderer !== 'undefined') labelRenderer.render(scene, camera);
-            }
-        }
-
-        function updatePathPreviewMarker(position, screenX, screenY) {
-            removePathPreviewMarker();
-            const labelDiv = document.createElement('div');
-            labelDiv.className = 'path-preview-marker';
-            labelDiv.textContent = '•';
-            pathPreviewMarker = new CSS2DObject(labelDiv);
-            pathPreviewMarker.position.copy(position);
-            measurementGroup.add(pathPreviewMarker);
-            if (typeof labelRenderer !== 'undefined') labelRenderer.render(scene, camera);
-        }
-
-        function removePathPreviewMarker() {
-            if (pathPreviewMarker) {
-                measurementGroup.remove(pathPreviewMarker);
-                pathPreviewMarker = null;
-            }
-        }
-
-        // Update calibration based on model's actual dimensions
-        function updateCalibrationFromModel(model) {
-            // Get the model's bounding box
-            const boundingBox = new THREE.Box3().setFromObject(model);
-            const size = new THREE.Vector3();
-            boundingBox.getSize(size);
+        // Improved mobile support
+        function handleOrientationChange() {
+            const isLandscape = window.innerWidth > window.innerHeight;
+            state.isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) || window.innerWidth < 768;
             
-            // Use the model's actual height for calibration
-            calibrationHeight = size.y;
-            currentUnit = 1.0; // Since the model is already in meters
-            
-            console.log(`Model dimensions: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} meters`);
-            console.log(`Calibration: Using actual model dimensions (1 unit = 1 meter)`);
-            
-            // Update the UI
-            document.getElementById('modelCalibration').textContent = 
-                `Calibration: Using actual model dimensions (1 unit = 1 meter)`;
-            document.getElementById('modelDimensions').textContent = 
-                `Dimensions: ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} meters`;
-        }
-
-        // Function to get measurement text with proper calibration
-        function getMeasurementText(distance) {
-            // Apply calibration factor to convert model units to meters
-            const calibratedDistance = distance * currentUnit;
-            const formattedDistance = calibratedDistance.toFixed(2);
-            
-            // Convert to inches as well (1 meter = 39.3701 inches)
-            const inches = (calibratedDistance * 39.3701).toFixed(2);
-            
-            // On mobile, make the text more concise
-            if (isMobile) {
-                return `${formattedDistance}${unitLabel}/${inches}"`;
-            }
-            
-            return `${formattedDistance} ${unitLabel} / ${inches} in`;
-        }
-
-        // Add floating debug toggle button for mobile
-        const debugToggleBtn = document.createElement('button');
-        debugToggleBtn.id = 'debug-toggle-btn';
-        debugToggleBtn.innerHTML = 'Debug';
-        debugToggleBtn.style.display = 'none'; // Only show on mobile
-
-        document.body.appendChild(debugToggleBtn);
-
-        // Show/hide debug console on mobile
-        function updateDebugConsoleMobileLayout() {
-            if (window.innerWidth < 768) {
+            // Update UI for mobile
+            if (state.isMobile) {
                 debugConsole.style.display = 'none';
                 debugToggleBtn.style.display = 'flex';
             } else {
                 debugConsole.style.display = 'block';
                 debugToggleBtn.style.display = 'none';
             }
+            
+            // Update camera and renderer
+            updateOrthographicCamera();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            labelRenderer.setSize(window.innerWidth, window.innerHeight);
+            
+            state.needsRender = true;
         }
 
-        window.addEventListener('resize', updateDebugConsoleMobileLayout);
-        document.addEventListener('DOMContentLoaded', updateDebugConsoleMobileLayout);
+        // Add proper event listener cleanup
+        const boundResizeHandler = handleOrientationChange.bind(this);
+        window.addEventListener('resize', boundResizeHandler);
+        window.addEventListener('orientationchange', boundResizeHandler);
 
-        // Toggle debug console on mobile
-        let debugConsoleVisible = false;
-        debugToggleBtn.addEventListener('click', () => {
-            debugConsoleVisible = !debugConsoleVisible;
-            debugConsole.style.display = debugConsoleVisible ? 'block' : 'none';
-            debugToggleBtn.classList.toggle('active', debugConsoleVisible);
-        });
-
-        // On mobile, hide debug console by default
-        if (window.innerWidth < 768) {
-            debugConsole.style.display = 'none';
-            debugToggleBtn.style.display = 'flex';
-        }
-
-        // After loading the mesh and adding to the scene, set all materials to transparent by default
-        currentMesh.traverse(function(object) {
-            if (object.isMesh && object.material) {
-                if (Array.isArray(object.material)) {
-                    object.material.forEach(material => {
-                        material.wireframe = false;
-                        material.transparent = true;
-                        material.opacity = 0.5;
-                        material.needsUpdate = true;
-                    });
-                } else {
-                    object.material.wireframe = false;
-                    object.material.transparent = true;
-                    object.material.opacity = 0.5;
-                    object.material.needsUpdate = true;
-                }
+        // Improved measurement point validation
+        function validatePoint(point) {
+            if (!point || !(point instanceof THREE.Vector3)) {
+                console.error('Invalid point provided');
+                return false;
             }
+            
+            // Check if point is within reasonable bounds
+            const maxDistance = 1000; // Adjust based on your scene size
+            if (Math.abs(point.x) > maxDistance || 
+                Math.abs(point.y) > maxDistance || 
+                Math.abs(point.z) > maxDistance) {
+                console.error('Point is too far from origin');
+                return false;
+            }
+            
+            return true;
+        }
+
+        // Improved measurement point addition
+        function addMeasurementPoint(point) {
+            if (!validatePoint(point)) {
+                showErrorToUser('Invalid measurement point');
+                return;
+            }
+            
+            // Add point marker
+            const markerGroup = new THREE.Group();
+            markerGroup.position.copy(point);
+            
+            // Create marker geometry
+            const markerSize = 0.08;
+            const markerGeometry = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(-markerSize, 0, 0),
+                new THREE.Vector3(markerSize, 0, 0),
+                new THREE.Vector3(0, -markerSize, 0),
+                new THREE.Vector3(0, markerSize, 0),
+                new THREE.Vector3(0, 0, -markerSize),
+                new THREE.Vector3(0, 0, markerSize)
+            ]);
+            
+            const markerMaterial = new THREE.LineBasicMaterial({ color: 0x4caf50 });
+            const marker = new THREE.LineSegments(markerGeometry, markerMaterial);
+            markerGroup.add(marker);
+            
+            measurementGroup.add(markerGroup);
+            state.measurementPoints.push(point);
+            
+            if (state.measurementPoints.length === 2) {
+                createMeasurement(state.measurementPoints[0], state.measurementPoints[1]);
+                state.measurementPoints = [];
+            }
+            
+            state.needsRender = true;
+        }
+
+        // Error display function
+        function showErrorToUser(message) {
+            const errorDiv = document.createElement('div');
+            errorDiv.style.position = 'fixed';
+            errorDiv.style.top = '20px';
+            errorDiv.style.left = '50%';
+            errorDiv.style.transform = 'translateX(-50%)';
+            errorDiv.style.backgroundColor = 'rgba(244, 67, 54, 0.9)';
+            errorDiv.style.color = 'white';
+            errorDiv.style.padding = '10px 20px';
+            errorDiv.style.borderRadius = '5px';
+            errorDiv.style.zIndex = '2000';
+            errorDiv.textContent = message;
+            
+            document.body.appendChild(errorDiv);
+            
+            setTimeout(() => {
+                if (errorDiv.parentNode) {
+                    document.body.removeChild(errorDiv);
+                }
+            }, 5000);
+        }
+
+        // Add setupControls function
+        function setupControls() {
+            try {
+                // Orbit controls settings
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.15;
+                controls.screenSpacePanning = true;
+                controls.minDistance = 0.5;
+                controls.maxDistance = 100;
+                controls.rotateSpeed = 0.8;
+                controls.zoomSpeed = 1.0;
+                controls.panSpeed = 0.8;
+                controls.enableTouch = true;
+                
+                // Use standard orbit control configuration for Y-up world
+                controls.minPolarAngle = 0;
+                controls.maxPolarAngle = Math.PI;
+                
+                // Set mouse buttons
+                controls.mouseButtons = {
+                    LEFT: THREE.MOUSE.ROTATE,
+                    MIDDLE: THREE.MOUSE.PAN,
+                    RIGHT: THREE.MOUSE.PAN
+                };
+                
+                controls.touches = {
+                    ONE: THREE.TOUCH.ROTATE,
+                    TWO: THREE.TOUCH.DOLLY_PAN
+                };
+                
+                // Add events to detect when user starts rotating
+                controls.addEventListener('start', handleControlsStart);
+
+                // Add error handling for control updates
+                const originalUpdate = controls.update;
+                controls.update = function() {
+                    try {
+                        originalUpdate.call(this);
+                    } catch (error) {
+                        console.error('Error updating controls:', error);
+                        showErrorToUser('Error updating camera controls. Please refresh the page.');
+                    }
+                };
+
+                // Add error handling for control changes
+                controls.addEventListener('change', () => {
+                    state.needsRender = true;
+                });
+
+                console.log('Controls setup complete');
+            } catch (error) {
+                console.error('Error setting up controls:', error);
+                showErrorToUser('Error setting up camera controls. Please refresh the page.');
+            }
+        }
+
+        // Add handleControlsStart function
+        function handleControlsStart() {
+            try {
+                // If in orthographic mode with aligned grid, reset when user starts manual control
+                if (state.isOrthographic && state.inPredefinedView) {
+                    state.inPredefinedView = false;
+                }
+            } catch (error) {
+                console.error('Error handling control start:', error);
+            }
+        }
+
+        // Initialize the viewer
+        loadGLTFModel();
+        animate();
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            cleanupResources();
+            window.removeEventListener('resize', boundResizeHandler);
+            window.removeEventListener('orientationchange', boundResizeHandler);
         });
     </script>
 </body>
