@@ -7,7 +7,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>3D Model Viewer (SIGMA VERSION)</title>
     <!-- Force high-performance GPU on dual-GPU systems -->
-    <meta http-equiv="hardware-accelerated" content="true">
     <meta name="renderer" content="webkit">
     <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
     <!-- Add GPU preference in multiple ways -->
@@ -136,7 +135,6 @@
         SIGMA VERSION
     </div>
     
-    <!-- Rest of UI elements remain the same -->
     <div class="controls-overlay">
         <h3>3D Model Controls (Sigma)</h3>
         <div id="modelInfo">
@@ -250,6 +248,18 @@
                 this.pathMeasurementLabels = [];
                 this.pathTotalDistance = 0;
                 this.inPredefinedView = false;
+                this.measurements = [];
+                this.currentUnit = 1.0;
+                this.unitLabel = 'm';
+                this.modelSize = new THREE.Vector3(10, 10, 10);
+                this.modelCenter = new THREE.Vector3(0, 0, 0);
+                
+                // Add new view mode properties
+                this.currentView = 'iso'; // 'iso', 'top', 'front', 'left'
+                this.viewTransitionDuration = 1000; // ms
+                this.isTransitioning = false;
+                this.cameraPosition = new THREE.Vector3();
+                this.cameraTarget = new THREE.Vector3();
             }
 
             toggleMeasureMode() {
@@ -266,6 +276,128 @@
                 }
                 this.isPathMeasureMode = !this.isPathMeasureMode;
                 this.needsRender = true;
+            }
+
+            updateModelDimensions(size, center) {
+                this.modelSize.copy(size);
+                this.modelCenter.copy(center);
+            }
+
+            // Add view mode methods
+            setViewMode(mode) {
+                if (this.isTransitioning) return;
+                
+                const oldMode = this.viewMode;
+                this.viewMode = mode;
+                
+                if (this.currentMesh) {
+                    this.currentMesh.traverse((object) => {
+                        if (object.isMesh) {
+                            const materials = Array.isArray(object.material) ? object.material : [object.material];
+                            materials.forEach(material => {
+                                switch (mode) {
+                                    case 0: // Solid
+                                        material.transparent = false;
+                                        material.wireframe = false;
+                                        break;
+                                    case 1: // Transparent
+                                        material.transparent = true;
+                                        material.opacity = 0.7;
+                                        material.wireframe = false;
+                                        break;
+                                    case 2: // Wireframe
+                                        material.transparent = true;
+                                        material.opacity = 0.3;
+                                        material.wireframe = true;
+                                        break;
+                                }
+                                material.needsUpdate = true;
+                            });
+                        }
+                    });
+                }
+                
+                this.needsRender = true;
+                return oldMode !== mode;
+            }
+
+            toggleOrthographic() {
+                if (this.isTransitioning) return;
+                
+                this.isOrthographic = !this.isOrthographic;
+                this.needsRender = true;
+                return true;
+            }
+
+            setPredefinedView(view) {
+                if (this.isTransitioning || !this.modelSize) return;
+                
+                this.isTransitioning = true;
+                this.currentView = view;
+                
+                const distance = Math.max(this.modelSize.x, this.modelSize.y, this.modelSize.z) * 1.5;
+                const startPosition = this.cameraPosition.clone();
+                const startTarget = this.cameraTarget.clone();
+                let endPosition, endTarget;
+                
+                switch (view) {
+                    case 'top':
+                        endPosition = new THREE.Vector3(0, distance, 0);
+                        endTarget = this.modelCenter.clone();
+                        break;
+                    case 'front':
+                        endPosition = new THREE.Vector3(0, 0, distance);
+                        endTarget = this.modelCenter.clone();
+                        break;
+                    case 'left':
+                        endPosition = new THREE.Vector3(distance, 0, 0);
+                        endTarget = this.modelCenter.clone();
+                        break;
+                    case 'iso':
+                    default:
+                        endPosition = new THREE.Vector3(distance, distance, distance);
+                        endTarget = this.modelCenter.clone();
+                        break;
+                }
+                
+                const startTime = Date.now();
+                const animate = () => {
+                    const elapsed = Date.now() - startTime;
+                    const progress = Math.min(elapsed / this.viewTransitionDuration, 1);
+                    
+                    // Ease in-out function
+                    const easeProgress = progress < 0.5
+                        ? 2 * progress * progress
+                        : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                    
+                    this.cameraPosition.lerpVectors(startPosition, endPosition, easeProgress);
+                    this.cameraTarget.lerpVectors(startTarget, endTarget, easeProgress);
+                    
+                    camera.position.copy(this.cameraPosition);
+                    controls.target.copy(this.cameraTarget);
+                    controls.update();
+                    
+                    if (progress < 1) {
+                        requestAnimationFrame(animate);
+                    } else {
+                        this.isTransitioning = false;
+                        this.inPredefinedView = true;
+                    }
+                    
+                    this.needsRender = true;
+                };
+                
+                animate();
+                return true;
+            }
+
+            toggleAxes() {
+                this.isAxesVisible = !this.isAxesVisible;
+                if (axesHelper) {
+                    axesHelper.visible = this.isAxesVisible;
+                }
+                this.needsRender = true;
+                return true;
             }
         }
 
@@ -368,48 +500,35 @@
         
         let renderer;
         
-        // Try to create WebGL2 renderer first
+        // Let THREE.js handle WebGL context creation
         try {
-            console.log("Attempting to create WebGL2 renderer");
-            renderer = new THREE.WebGLRenderer({
-                ...rendererOptions,
-                context: document.getElementById('viewer').getContext('webgl2', { 
-                    powerPreference: 'high-performance',
-                    failIfMajorPerformanceCaveat: false,
-                })
-            });
-            console.log("Successfully created WebGL2 renderer");
+            console.log("Creating WebGL renderer");
+            renderer = new THREE.WebGLRenderer(rendererOptions);
+            console.log("Successfully created WebGL renderer");
         } catch (e) {
-            console.warn("Could not create WebGL2 renderer, falling back to WebGL1:", e);
-            try {
-                // Fall back to WebGL1
-                renderer = new THREE.WebGLRenderer(rendererOptions);
-                console.log("Successfully created WebGL1 renderer");
-            } catch (e2) {
-                console.error("Failed to create any WebGL renderer:", e2);
-                // Show a friendly error message
-                const errorDiv = document.createElement('div');
-                errorDiv.style.position = 'absolute';
-                errorDiv.style.top = '50%';
-                errorDiv.style.left = '50%';
-                errorDiv.style.transform = 'translate(-50%, -50%)';
-                errorDiv.style.background = 'rgba(220,0,0,0.8)';
-                errorDiv.style.color = 'white';
-                errorDiv.style.padding = '20px';
-                errorDiv.style.borderRadius = '5px';
-                errorDiv.style.maxWidth = '400px';
-                errorDiv.style.textAlign = 'center';
-                errorDiv.style.zIndex = '2000';
-                errorDiv.innerHTML = `
-                    <h3>WebGL Not Available</h3>
-                    <p>Your browser does not support WebGL or it is disabled.</p>
-                    <p>Please try a different browser or enable WebGL in your browser settings.</p>
-                    <p>For Chrome: chrome://settings/system → Use hardware acceleration when available</p>
-                    <p>For Firefox: about:config → webgl.force-enabled = true</p>
-                `;
-                document.body.appendChild(errorDiv);
-                throw new Error("WebGL not available, stopping script execution.");
-            }
+            console.error("Failed to create WebGL renderer:", e);
+            // Show a friendly error message
+            const errorDiv = document.createElement('div');
+            errorDiv.style.position = 'absolute';
+            errorDiv.style.top = '50%';
+            errorDiv.style.left = '50%';
+            errorDiv.style.transform = 'translate(-50%, -50%)';
+            errorDiv.style.background = 'rgba(220,0,0,0.8)';
+            errorDiv.style.color = 'white';
+            errorDiv.style.padding = '20px';
+            errorDiv.style.borderRadius = '5px';
+            errorDiv.style.maxWidth = '400px';
+            errorDiv.style.textAlign = 'center';
+            errorDiv.style.zIndex = '2000';
+            errorDiv.innerHTML = `
+                <h3>WebGL Not Available</h3>
+                <p>Your browser does not support WebGL or it is disabled.</p>
+                <p>Please try a different browser or enable WebGL in your browser settings.</p>
+                <p>For Chrome: chrome://settings/system → Use hardware acceleration when available</p>
+                <p>For Firefox: about:config → webgl.force-enabled = true</p>
+            `;
+            document.body.appendChild(errorDiv);
+            throw new Error("WebGL not available, stopping script execution.");
         }
         
         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -772,45 +891,105 @@
             orthographicCamera.far = maxDim * 10;
             
             orthographicCamera.updateProjectionMatrix();
+            controls.update();
         }
         
         /**
          * Function to set different standard views
          */
         function setViewTop() {
+            if (state.isTransitioning) return;
+            
             const distance = Math.max(modelSize.x, modelSize.z) * 1.5;
-            camera.position.set(0, distance, 0);
-            camera.up.set(0, 0, -1);
-            camera.lookAt(modelCenter);
-            controls.update();
-            inPredefinedView = true;
+            const startPosition = camera.position.clone();
+            const startTarget = controls.target.clone();
+            const endPosition = new THREE.Vector3(0, distance, 0);
+            const endTarget = modelCenter.clone();
+            
+            animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                camera.up.set(0, 0, -1);
+                controls.update();
+                state.inPredefinedView = true;
+            });
         }
         
         function setViewFront() {
+            if (state.isTransitioning) return;
+            
             const distance = Math.max(modelSize.x, modelSize.y) * 1.5;
-            camera.position.set(0, 0, distance);
-            camera.up.set(0, 1, 0);
-            camera.lookAt(modelCenter);
-            controls.update();
-            inPredefinedView = true;
+            const startPosition = camera.position.clone();
+            const startTarget = controls.target.clone();
+            const endPosition = new THREE.Vector3(0, 0, distance);
+            const endTarget = modelCenter.clone();
+            
+            animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                camera.up.set(0, 1, 0);
+                controls.update();
+                state.inPredefinedView = true;
+            });
         }
         
         function setViewLeft() {
+            if (state.isTransitioning) return;
+            
             const distance = Math.max(modelSize.y, modelSize.z) * 1.5;
-            camera.position.set(distance, 0, 0);
-            camera.up.set(0, 1, 0);
-            camera.lookAt(modelCenter);
-            controls.update();
-            inPredefinedView = true;
+            const startPosition = camera.position.clone();
+            const startTarget = controls.target.clone();
+            const endPosition = new THREE.Vector3(distance, 0, 0);
+            const endTarget = modelCenter.clone();
+            
+            animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                camera.up.set(0, 1, 0);
+                controls.update();
+                state.inPredefinedView = true;
+            });
         }
         
         function setViewIso() {
+            if (state.isTransitioning) return;
+            
             const distance = Math.max(modelSize.x, modelSize.y, modelSize.z) * 1.5;
-            camera.position.set(distance, distance, distance);
-            camera.up.set(0, 1, 0);
-            camera.lookAt(modelCenter);
-            controls.update();
-            inPredefinedView = true;
+            const startPosition = camera.position.clone();
+            const startTarget = controls.target.clone();
+            const endPosition = new THREE.Vector3(distance, distance, distance);
+            const endTarget = modelCenter.clone();
+            
+            animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                camera.up.set(0, 1, 0);
+                controls.update();
+                state.inPredefinedView = true;
+            });
+        }
+
+        function animateCameraTransition(startPosition, endPosition, startTarget, endTarget, onComplete) {
+            state.isTransitioning = true;
+            const startTime = Date.now();
+            const duration = 1000; // 1 second transition
+            
+            function animate() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                
+                // Ease in-out function
+                const easeProgress = progress < 0.5
+                    ? 2 * progress * progress
+                    : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                
+                camera.position.lerpVectors(startPosition, endPosition, easeProgress);
+                controls.target.lerpVectors(startTarget, endTarget, easeProgress);
+                controls.update();
+                
+                if (progress < 1) {
+                    requestAnimationFrame(animate);
+                } else {
+                    state.isTransitioning = false;
+                    if (onComplete) onComplete();
+                }
+                
+                state.needsRender = true;
+            }
+            
+            animate();
         }
 
         /**
@@ -879,12 +1058,11 @@
                 const center = new THREE.Vector3();
                 boundingBox.getCenter(center);
                 
-                modelSize = size.clone();
-                modelCenter = center.clone();
+                state.updateModelDimensions(size, center);
                 
                 // Update camera and controls
                 updateOrthographicCamera();
-                controls.target.copy(modelCenter);
+                controls.target.copy(center);
                 controls.update();
 
                 // Update UI to show only dimensions
@@ -893,8 +1071,8 @@
                 document.getElementById('modelCalibration').textContent = '';
 
                 // For measurements, use 1:1 (no calibration)
-                currentUnit = 1.0;
-                unitLabel = 'm';
+                state.currentUnit = 1.0;
+                state.unitLabel = 'm';
 
                 // Complete loading
                         document.getElementById('loadingBar').style.width = '100%';
@@ -943,13 +1121,13 @@
                 measurementGroup.traverse((object) => {
                     if (object.geometry) object.geometry.dispose();
                     if (object.material) {
-                    if (Array.isArray(object.material)) {
+                        if (Array.isArray(object.material)) {
                             object.material.forEach(material => material.dispose());
-                    } else {
+                        } else {
                             object.material.dispose();
+                        }
                     }
-                }
-            });
+                });
                 scene.remove(measurementGroup);
             }
 
@@ -964,6 +1142,11 @@
             state.pathMeasurementLines = [];
             state.pathMeasurementLabels = [];
             state.pathTotalDistance = 0;
+            state.measurements = [];
+
+            // Recreate measurement group
+            measurementGroup = new THREE.Group();
+            scene.add(measurementGroup);
         }
 
         // Safe render function with error handling
@@ -1130,13 +1313,20 @@
                 };
                 
                 // Add events to detect when user starts rotating
-                controls.addEventListener('start', handleControlsStart);
+                controls.addEventListener('start', () => {
+                    if (state.inPredefinedView) {
+                        state.inPredefinedView = false;
+                    }
+                });
 
                 // Add error handling for control updates
                 const originalUpdate = controls.update;
                 controls.update = function() {
                     try {
                         originalUpdate.call(this);
+                        // Update state with current camera position and target
+                        state.cameraPosition.copy(camera.position);
+                        state.cameraTarget.copy(controls.target);
                     } catch (error) {
                         console.error('Error updating controls:', error);
                         showErrorToUser('Error updating camera controls. Please refresh the page.');
@@ -1155,28 +1345,110 @@
             }
         }
 
-        // Add handleControlsStart function
-        function handleControlsStart() {
-            try {
-                // If in orthographic mode with aligned grid, reset when user starts manual control
-                if (state.isOrthographic && state.inPredefinedView) {
-                    state.inPredefinedView = false;
-                }
-            } catch (error) {
-                console.error('Error handling control start:', error);
+        // Update camera setup
+        function setupCameras() {
+            // Update aspect ratio for both cameras
+            const aspect = window.innerWidth / window.innerHeight;
+            perspectiveCamera.aspect = aspect;
+            perspectiveCamera.updateProjectionMatrix();
+            
+            // Update orthographic camera frustum
+            const frustumSize = Math.max(modelSize.x, modelSize.y, modelSize.z) * 1.5;
+            orthographicCamera.left = -frustumSize * aspect;
+            orthographicCamera.right = frustumSize * aspect;
+            orthographicCamera.top = frustumSize;
+            orthographicCamera.bottom = -frustumSize;
+            orthographicCamera.updateProjectionMatrix();
+            
+            // Update current camera
+            if (state.isOrthographic) {
+                camera = orthographicCamera;
+            } else {
+                camera = perspectiveCamera;
             }
+            
+            // Update controls
+            controls.object = camera;
+            controls.update();
         }
 
-        // Initialize the viewer
-        loadGLTFModel();
-        animate();
-
-        // Cleanup on page unload
-        window.addEventListener('beforeunload', () => {
-            cleanupResources();
-            window.removeEventListener('resize', boundResizeHandler);
-            window.removeEventListener('orientationchange', boundResizeHandler);
+        // Add event listeners for view mode buttons
+        document.getElementById('toggleViewMode').addEventListener('click', () => {
+            const newMode = (state.viewMode + 1) % 3;
+            if (state.setViewMode(newMode)) {
+                showToast(`View mode: ${['Solid', 'Transparent', 'Wireframe'][newMode]}`);
+            }
         });
+
+        document.getElementById('toggleOrtho').addEventListener('click', () => {
+            if (state.toggleOrthographic()) {
+                camera = state.isOrthographic ? orthographicCamera : perspectiveCamera;
+                controls.object = camera;
+                updateOrthographicCamera();
+                showToast(`Camera mode: ${state.isOrthographic ? 'Orthographic' : 'Perspective'}`);
+            }
+        });
+
+        document.getElementById('toggleAxes').addEventListener('click', () => {
+            if (state.toggleAxes()) {
+                showToast(`Axes: ${state.isAxesVisible ? 'Visible' : 'Hidden'}`);
+            }
+        });
+
+        // Add event listeners for predefined views
+        document.getElementById('viewTop').addEventListener('click', () => {
+            if (state.setPredefinedView('top')) {
+                showToast('Top view');
+            }
+        });
+
+        document.getElementById('viewFront').addEventListener('click', () => {
+            if (state.setPredefinedView('front')) {
+                showToast('Front view');
+            }
+        });
+
+        document.getElementById('viewLeft').addEventListener('click', () => {
+            if (state.setPredefinedView('left')) {
+                showToast('Left view');
+            }
+        });
+
+        document.getElementById('viewIso').addEventListener('click', () => {
+            if (state.setPredefinedView('iso')) {
+                showToast('Isometric view');
+            }
+        });
+
+        // Add toast notification function
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.style.position = 'fixed';
+            toast.style.bottom = '20px';
+            toast.style.left = '50%';
+            toast.style.transform = 'translateX(-50%)';
+            toast.style.backgroundColor = 'rgba(0, 0, 0, 0.8)';
+            toast.style.color = 'white';
+            toast.style.padding = '10px 20px';
+            toast.style.borderRadius = '5px';
+            toast.style.zIndex = '2000';
+            toast.style.transition = 'opacity 0.3s ease-in-out';
+            toast.textContent = message;
+            
+            document.body.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        document.body.removeChild(toast);
+                    }
+                }, 300);
+            }, 2000);
+        }
+
+        // Initialize cameras
+        setupCameras();
     </script>
 </body>
 </html> 
