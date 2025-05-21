@@ -6,6 +6,91 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>3D Model Viewer (SIGMA VERSION)</title>
+    <!-- Advanced GPU Detection & Optimization -->
+    <script>
+        // Force GPU hardware acceleration before any rendering starts
+        (function() {
+            // Create hardware acceleration hint element
+            const gpuCanvas = document.createElement('canvas');
+            gpuCanvas.style.position = 'absolute';
+            gpuCanvas.style.top = '-9999px';
+            gpuCanvas.style.left = '-9999px';
+            gpuCanvas.width = 1;
+            gpuCanvas.height = 1;
+            document.head.appendChild(gpuCanvas);
+
+            // Try multiple contexts with stronger hints
+            const contexts = [
+                { type: 'webgl2', options: { powerPreference: 'high-performance', antialias: true, failIfMajorPerformanceCaveat: false } },
+                { type: 'webgl', options: { powerPreference: 'high-performance', antialias: true, failIfMajorPerformanceCaveat: false } },
+                { type: 'experimental-webgl', options: { powerPreference: 'high-performance', antialias: true, failIfMajorPerformanceCaveat: false } }
+            ];
+
+            let detectedGPU = 'Unknown';
+            let isAccelerated = false;
+            let webglVersion = 'None';
+
+            // Try each context type
+            for (const ctx of contexts) {
+                try {
+                    const gl = gpuCanvas.getContext(ctx.type, ctx.options);
+                    if (gl) {
+                        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                        if (debugInfo) {
+                            const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                            detectedGPU = renderer || 'Unknown';
+                            
+                            isAccelerated = !(renderer && (
+                                renderer.includes('SwiftShader') || 
+                                renderer.includes('llvmpipe') ||
+                                renderer.includes('Software') ||
+                                renderer.includes('Microsoft Basic Render')
+                            ));
+                            
+                            webglVersion = ctx.type === 'webgl2' ? '2.0' : '1.0';
+                            
+                            // Add GPU meta tag for future reference
+                            const gpuMeta = document.createElement('meta');
+                            gpuMeta.name = 'detected-gpu';
+                            gpuMeta.content = detectedGPU;
+                            document.head.appendChild(gpuMeta);
+                            
+                            console.log('GPU EARLY DETECTION:', {
+                                renderer: detectedGPU,
+                                isAccelerated: isAccelerated,
+                                webglVersion: webglVersion
+                            });
+                            
+                            // Set renderer hint meta tag
+                            if (isAccelerated) {
+                                const rendererMeta = document.createElement('meta');
+                                rendererMeta.name = 'renderer';
+                                rendererMeta.content = 'webkit';
+                                document.head.appendChild(rendererMeta);
+                            }
+                            
+                            break;
+                        }
+                    }
+                } catch (e) {
+                    console.warn('Early GPU detection error:', e);
+                }
+            }
+
+            // Release resources
+            document.head.removeChild(gpuCanvas);
+            
+            // Store in global object for later use
+            window.GPU_DETECTION = {
+                renderer: detectedGPU,
+                isAccelerated: isAccelerated,
+                webglVersion: webglVersion,
+                isNvidia: detectedGPU.toLowerCase().includes('nvidia'),
+                isAMD: detectedGPU.toLowerCase().includes('amd') || detectedGPU.toLowerCase().includes('radeon'),
+                isIntel: detectedGPU.toLowerCase().includes('intel')
+            };
+        })();
+    </script>
     <!-- Force high-performance GPU on dual-GPU systems -->
     <meta name="renderer" content="webkit">
     <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
@@ -169,6 +254,11 @@
         SIGMA VERSION
     </div>
     
+    <!-- Add GPU Info Button -->
+    <button id="gpuInfoBtn" style="position: absolute; top: 50px; left: 10px; background-color: #673ab7; color: white; padding: 5px 10px; border-radius: 5px; font-weight: bold; font-family: Arial, sans-serif; z-index: 1000; border: none;">
+        Show GPU Info
+    </button>
+    
     <div class="keyboard-shortcuts">
         <h3>Keyboard Shortcuts</h3>
         <ul>
@@ -292,12 +382,29 @@
         debugToggleBtn.style.height = '54px';
         debugToggleBtn.style.fontSize = '18px';
         debugToggleBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.18)';
-        debugToggleBtn.style.display = 'none';
+        debugToggleBtn.style.display = 'flex';
         debugToggleBtn.style.alignItems = 'center';
         debugToggleBtn.style.justifyContent = 'center';
         debugToggleBtn.style.cursor = 'pointer';
         debugToggleBtn.style.transition = 'background 0.2s';
         document.body.appendChild(debugToggleBtn);
+
+        // Add GPU info popup
+        const gpuInfoPopup = document.createElement('div');
+        gpuInfoPopup.id = 'gpu-info-popup';
+        gpuInfoPopup.style.position = 'absolute';
+        gpuInfoPopup.style.left = '50%';
+        gpuInfoPopup.style.top = '50%';
+        gpuInfoPopup.style.transform = 'translate(-50%, -50%)';
+        gpuInfoPopup.style.background = 'rgba(0,0,0,0.9)';
+        gpuInfoPopup.style.color = 'white';
+        gpuInfoPopup.style.padding = '20px';
+        gpuInfoPopup.style.borderRadius = '10px';
+        gpuInfoPopup.style.zIndex = '2000';
+        gpuInfoPopup.style.maxWidth = '80%';
+        gpuInfoPopup.style.display = 'none';
+        gpuInfoPopup.style.boxShadow = '0 5px 15px rgba(0,0,0,0.5)';
+        document.body.appendChild(gpuInfoPopup);
 
         // Add state management class
         class ViewerState {
@@ -492,6 +599,13 @@
         // Initialize state at the very top before any function uses it
         const state = new ViewerState();
 
+        // Add GPU monitoring variables at the top to avoid temporal dead zone errors
+        let gpuStatsPanel;
+        let isMonitoringGPU = false;
+        let fpsCounter = 0;
+        let lastFpsUpdateTime = 0;
+        let currentFps = 0;
+
         // Configure Three.js to allow software rendering fallback
         // This is needed for machines where hardware acceleration is not available
         window.THREE_ALLOW_SOFTWARE_RENDERER = true;
@@ -643,10 +757,26 @@
             preserveDrawingBuffer: true
         };
         
-        // If we know we have NVIDIA, add more aggressive settings
-        if (hasNvidiaGPU) {
-            console.log("Using aggressive settings for NVIDIA GPU");
+        // Use the global GPU detection results if available
+        const gpuDetection = window.GPU_DETECTION || {};
+        
+        // Apply GPU-specific optimizations
+        if (gpuDetection.isNvidia || hasNvidiaGPU) {
+            console.log("Using optimized settings for NVIDIA GPU");
             rendererOptions.precision = 'highp';
+            rendererOptions.logarithmicDepthBuffer = true;
+        } else if (gpuDetection.isAMD) {
+            console.log("Using optimized settings for AMD GPU");
+            rendererOptions.precision = 'highp';
+            rendererOptions.stencil = false; // Reduce memory usage on AMD
+        } else if (gpuDetection.isIntel) {
+            console.log("Using optimized settings for Intel GPU");
+            rendererOptions.precision = 'mediump'; // Lower precision for better performance
+            rendererOptions.powerPreference = 'default'; // More stable on Intel GPUs
+        } else if (!gpuDetection.isAccelerated) {
+            console.log("Using software rendering fallback settings");
+            rendererOptions.precision = 'lowp';
+            rendererOptions.antialias = false; // Disable antialiasing for software rendering
         }
         
         let renderer;
@@ -1232,7 +1362,7 @@
                 labelDiv.style.color = 'white';
                 labelDiv.style.fontFamily = 'Arial, sans-serif';
                 labelDiv.style.fontSize = '10px';
-                labelDiv.textContent = `${scaledDistance.toFixed(2)} ${state.unitLabel}`;
+                labelDiv.textContent = scaledDistance.toFixed(2) + ' ' + state.unitLabel;
                 labelDiv.style.whiteSpace = 'nowrap';
                 
                 const labelObj = new CSS2DObject(labelDiv);
@@ -1251,7 +1381,7 @@
                 
                 // Update total label
                 if (pathTotalLabel) {
-                    pathTotalLabel.element.innerHTML = `Total: ${(state.pathTotalDistance * state.currentUnit).toFixed(2)} ${state.unitLabel} (closed)`;
+                    pathTotalLabel.element.innerHTML = 'Total: ' + (state.pathTotalDistance * state.currentUnit).toFixed(2) + ' ' + state.unitLabel + ' (closed)';
                     pathTotalLabel.position.copy(firstPoint);
                 }
                 
@@ -1627,6 +1757,271 @@
         loadGLTFModel();
         animate();
 
+        // Add GPU monitoring
+        
+        // Initialize GPU monitoring
+        function initGpuMonitoring() {
+            if (gpuStatsPanel) return;
+            
+            // Create GPU stats panel
+            gpuStatsPanel = document.createElement('div');
+            gpuStatsPanel.id = 'gpu-stats-panel';
+            gpuStatsPanel.style.position = 'absolute';
+            gpuStatsPanel.style.top = '10px';
+            gpuStatsPanel.style.right = '10px';
+            gpuStatsPanel.style.background = 'rgba(0,0,0,0.7)';
+            gpuStatsPanel.style.color = 'white';
+            gpuStatsPanel.style.padding = '10px';
+            gpuStatsPanel.style.borderRadius = '5px';
+            gpuStatsPanel.style.fontFamily = 'monospace';
+            gpuStatsPanel.style.fontSize = '12px';
+            gpuStatsPanel.style.zIndex = '1000';
+            gpuStatsPanel.style.display = 'none';
+            gpuStatsPanel.innerHTML = 'FPS: --<br>Draw calls: --<br>Triangles: --';
+            document.body.appendChild(gpuStatsPanel);
+        }
+        
+        function startGpuMonitoring() {
+            if (isMonitoringGPU) return;
+            isMonitoringGPU = true;
+            gpuStatsPanel.style.display = 'block';
+            
+            // Reset counters
+            fpsCounter = 0;
+            lastFpsUpdateTime = performance.now();
+            currentFps = 0;
+        }
+        
+        function stopGpuMonitoring() {
+            isMonitoringGPU = false;
+            if (gpuStatsPanel) {
+                gpuStatsPanel.style.display = 'none';
+            }
+        }
+        
+        function updateGpuStats() {
+            if (!isMonitoringGPU || !gpuStatsPanel) return;
+            
+            // Update FPS counter
+            fpsCounter++;
+            const now = performance.now();
+            const elapsed = now - lastFpsUpdateTime;
+            
+            if (elapsed >= 1000) {
+                currentFps = Math.round((fpsCounter * 1000) / elapsed);
+                fpsCounter = 0;
+                lastFpsUpdateTime = now;
+                
+                // Calculate frame time (ms)
+                const frameTime = elapsed / fpsCounter || 0;
+                
+                // Get stats from renderer
+                const renderInfo = renderer.info;
+                const triangles = renderInfo.render ? renderInfo.render.triangles : 'N/A';
+                const drawCalls = renderInfo.render ? renderInfo.render.calls : 'N/A';
+                const geometries = renderInfo.memory ? renderInfo.memory.geometries : 'N/A';
+                const textures = renderInfo.memory ? renderInfo.memory.textures : 'N/A';
+                
+                // Performance evaluation
+                let performanceIndicator = '';
+                if (currentFps > 55) performanceIndicator = '🟢 Excellent';
+                else if (currentFps > 40) performanceIndicator = '🟡 Good';
+                else if (currentFps > 25) performanceIndicator = '🟠 Fair';
+                else performanceIndicator = '🔴 Poor';
+                
+                // GPU load estimation (basic)
+                let gpuLoadEstimate = 'N/A';
+                if (currentFps > 0) {
+                    const gpuLoad = Math.min(100, Math.max(0, 100 - (currentFps / 60) * 100));
+                    gpuLoadEstimate = Math.round(gpuLoad) + '%';
+                }
+                
+                // Update panel with enhanced stats
+                gpuStatsPanel.innerHTML = 
+                    '<div style="font-weight:bold;color:#9c27b0;margin-bottom:4px;">GPU Performance ' + performanceIndicator + '</div>' +
+                    '<div>FPS: ' + currentFps + ' (' + frameTime.toFixed(2) + ' ms/frame)</div>' +
+                    '<div>GPU Load: ' + gpuLoadEstimate + '</div>' +
+                    '<div>Draw Calls: ' + drawCalls + '</div>' +
+                    '<div>Triangles: ' + triangles + '</div>' +
+                    '<div>Geometries: ' + geometries + '</div>' +
+                    '<div>Textures: ' + textures + '</div>' +
+                    '<div>Memory: ' + (performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) + '/' + 
+                      Math.round(performance.memory.jsHeapSizeLimit / 1048576) + ' MB' : 'N/A') + '</div>';
+                
+                // Add visual warning if performance is poor
+                if (currentFps < 20) {
+                    gpuStatsPanel.style.border = '2px solid #f44336';
+                } else {
+                    gpuStatsPanel.style.border = 'none';
+                }
+            }
+        }
+        
+        // Function to show GPU info popup
+        function showGpuInfo() {
+            const gpuInfo = getGPUInfo();
+            
+            if (!gpuInfo) {
+                gpuInfoPopup.innerHTML = '<h3>GPU Information</h3><p>Unable to get GPU information</p>';
+                gpuInfoPopup.style.display = 'block';
+                return;
+            }
+            
+            // Get renderer info
+            const renderInfo = renderer.info;
+            const memoryInfo = renderInfo.memory || {};
+            const renderStats = renderInfo.render || {};
+            
+            // Get additional GPU capabilities
+            const capabilities = renderer.capabilities || {};
+            const maxAnisotropy = capabilities.getMaxAnisotropy ? capabilities.getMaxAnisotropy() : 'N/A';
+            
+            // Get combined GPU information
+            const combinedGPUInfo = {
+                ...gpuInfo,
+                ...window.GPU_DETECTION
+            };
+            
+            // Detect if using integrated or discrete GPU
+            const gpuType = combinedGPUInfo.renderer ? 
+                (combinedGPUInfo.renderer.toLowerCase().includes('intel') ? 'Integrated' : 'Discrete') : 'Unknown';
+            
+            // Calculate estimated VRAM (very rough estimate based on textures)
+            const estTextureMemory = memoryInfo.textures ? memoryInfo.textures * 4 : 0; // Assume avg 4MB per texture
+            const estGeometryMemory = memoryInfo.geometries ? memoryInfo.geometries * 2 : 0; // Assume avg 2MB per geometry
+            const estTotalVRAM = (estTextureMemory + estGeometryMemory);
+            
+            gpuInfoPopup.innerHTML = 
+                '<h3 style="color:#9c27b0; margin-top:0;">GPU Information</h3>' +
+                '<div style="margin-bottom:15px;">' +
+                    '<div><strong>GPU:</strong> ' + (combinedGPUInfo.renderer || 'Unknown') + '</div>' +
+                    '<div><strong>Vendor:</strong> ' + (combinedGPUInfo.vendor || 'Unknown') + '</div>' +
+                    '<div><strong>GPU Type:</strong> ' + gpuType + '</div>' +
+                    '<div><strong>WebGL Version:</strong> ' + (combinedGPUInfo.webglVersion || 'Unknown') + '</div>' +
+                    '<div><strong>Max Anisotropy:</strong> ' + maxAnisotropy + '</div>' +
+                    '<div><strong>Hardware Acceleration:</strong> ' + (combinedGPUInfo.isAccelerated ? 
+                        '<span style="color:#4caf50">Enabled</span>' : 
+                        '<span style="color:#f44336">Disabled</span>') + '</div>' +
+                    '<div><strong>Precision:</strong> ' + renderer.capabilities.precision + '</div>' +
+                '</div>' +
+                
+                '<h3 style="color:#9c27b0; margin-bottom:10px;">Renderer Stats</h3>' +
+                '<div style="margin-bottom:15px;">' +
+                    '<div><strong>Triangles:</strong> ' + (renderStats.triangles || 0) + '</div>' +
+                    '<div><strong>Draw Calls:</strong> ' + (renderStats.calls || 0) + '</div>' +
+                    '<div><strong>Lines:</strong> ' + (renderStats.lines || 0) + '</div>' +
+                    '<div><strong>Points:</strong> ' + (renderStats.points || 0) + '</div>' +
+                    '<div><strong>Current FPS:</strong> ' + (currentFps || 'N/A') + '</div>' +
+                '</div>' +
+                
+                '<h3 style="color:#9c27b0; margin-bottom:10px;">Memory Usage</h3>' +
+                '<div style="margin-bottom:15px;">' +
+                    '<div><strong>Geometries:</strong> ' + (memoryInfo.geometries || 0) + '</div>' +
+                    '<div><strong>Textures:</strong> ' + (memoryInfo.textures || 0) + '</div>' +
+                    '<div><strong>Est. VRAM:</strong> ' + (estTotalVRAM > 0 ? '~' + estTotalVRAM + ' MB' : 'Unknown') + '</div>' +
+                    '<div><strong>JS Heap:</strong> ' + (performance.memory ? 
+                        Math.round(performance.memory.usedJSHeapSize / 1048576) + ' MB / ' + 
+                        Math.round(performance.memory.jsHeapSizeLimit / 1048576) + ' MB' 
+                        : 'N/A (Only available in Chrome)') + '</div>' +
+                '</div>' +
+                
+                '<h3 style="color:#9c27b0; margin-bottom:10px;">Performance Tuning</h3>' +
+                '<div style="margin-bottom:15px;">' +
+                    '<div id="performanceTips"></div>' +
+                '</div>' +
+                
+                '<button id="closeGpuInfo" style="margin-top:20px; padding:8px 16px; background:#673ab7; color:white; border:none; border-radius:4px; cursor:pointer;">Close</button>' +
+                '<button id="startMonitoring" style="margin-top:20px; margin-left:10px; padding:8px 16px; background:#4caf50; color:white; border:none; border-radius:4px; cursor:pointer;">' +
+                    'Start Monitoring' +
+                '</button>' +
+                
+                '</div>';
+            
+            // Add performance tuning tips after rendering the popup
+            setTimeout(() => {
+                const perfTips = document.getElementById('performanceTips');
+                if (perfTips) {
+                    const tips = [];
+                    
+                    if (!combinedGPUInfo.isAccelerated) {
+                        tips.push('⚠️ Hardware acceleration is disabled. Enable it in browser settings for better performance.');
+                    }
+                    
+                    if (gpuType === 'Integrated') {
+                        tips.push('Consider lowering quality settings for better performance on integrated graphics.');
+                    }
+                    
+                    if (currentFps && currentFps < 30) {
+                        tips.push('Low framerate detected. Try reducing model complexity or disabling shadows.');
+                    }
+                    
+                    if (tips.length > 0) {
+                        let tipsHtml = '';
+                        for (let i = 0; i < tips.length; i++) {
+                            tipsHtml += '<div style="margin-bottom:4px;">' + tips[i] + '</div>';
+                        }
+                        perfTips.innerHTML = tipsHtml;
+                    } else {
+                        perfTips.innerHTML = 'No performance issues detected.';
+                    }
+                }
+            }, 0);
+            
+            // Add event listener for close button
+            setTimeout(() => {
+                document.getElementById('closeGpuInfo').addEventListener('click', () => {
+                    gpuInfoPopup.style.display = 'none';
+                });
+                
+                const monitoringBtn = document.getElementById('startMonitoring');
+                monitoringBtn.textContent = isMonitoringGPU ? 'Stop Monitoring' : 'Start Monitoring';
+                
+                monitoringBtn.addEventListener('click', () => {
+                    if (isMonitoringGPU) {
+                        stopGpuMonitoring();
+                        monitoringBtn.textContent = 'Start Monitoring';
+                    } else {
+                        initGpuMonitoring();
+                        startGpuMonitoring();
+                        monitoringBtn.textContent = 'Stop Monitoring';
+                    }
+                    gpuInfoPopup.style.display = 'none';
+                });
+            }, 0);
+            
+            gpuInfoPopup.style.display = 'block';
+        }
+
+        // Setup GPU monitoring button
+        document.getElementById('gpuInfoBtn').addEventListener('click', showGpuInfo);
+        
+        // Setup debug toggle button
+        debugToggleBtn.addEventListener('click', function() {
+            if (debugConsole.style.display === 'none') {
+                debugConsole.style.display = 'block';
+                debugToggleBtn.classList.add('active');
+            } else {
+                debugConsole.style.display = 'none';
+                debugToggleBtn.classList.remove('active');
+            }
+        });
+
+        // Update the animate function to include GPU stats update
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            if (controls.enabled) {
+                controls.update();
+                updateLightPositions(); // Update light positions based on camera movement
+            }
+            
+            if (isMonitoringGPU) {
+                updateGpuStats();
+            }
+            
+            safeRender();
+        }
+
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
             cleanupResources();
@@ -1634,54 +2029,102 @@
             window.removeEventListener('orientationchange', boundResizeHandler);
         });
 
-        // Resource cleanup function
+        // Enhanced resource cleanup function with GPU memory optimizations
         function cleanupResources() {
+            // Track and log resources for cleanup
+            const resourceLog = {
+                geometries: 0,
+                materials: 0,
+                textures: 0
+            };
+            
             if (state.currentMesh) {
+                // Force garbage collection hints before removal
+                if (window.performance && window.performance.memory) {
+                    console.log("Memory before cleanup:", Math.round(window.performance.memory.usedJSHeapSize / 1048576) + "MB");
+                }
+                
                 scene.remove(state.currentMesh);
+                
+                // Traverse and properly dispose all resources
                 state.currentMesh.traverse((object) => {
-                    if (object.geometry) object.geometry.dispose();
+                    // Dispose geometry with buffer cleanup
+                    if (object.geometry) {
+                        // Clear any cached attributes to help garbage collection
+                        if (object.geometry.attributes) {
+                            for (const key in object.geometry.attributes) {
+                                const attribute = object.geometry.attributes[key];
+                                if (attribute.buffer && attribute.buffer.dispose) {
+                                    attribute.buffer.dispose();
+                                }
+                            }
+                        }
+                        object.geometry.dispose();
+                        resourceLog.geometries++;
+                    }
+                    
+                    // Thorough material and texture disposal
                     if (object.material) {
-                        if (Array.isArray(object.material)) {
-                            object.material.forEach(material => {
-                                // Dispose textures
-                                if (material.map) material.map.dispose();
-                                if (material.lightMap) material.lightMap.dispose();
-                                if (material.bumpMap) material.bumpMap.dispose();
-                                if (material.normalMap) material.normalMap.dispose();
-                                if (material.specularMap) material.specularMap.dispose();
-                                if (material.envMap) material.envMap.dispose();
-                                if (material.aoMap) material.aoMap.dispose();
-                                if (material.displacementMap) material.displacementMap.dispose();
-                                if (material.emissiveMap) material.emissiveMap.dispose();
-                                if (material.gradientMap) material.gradientMap.dispose();
-                                if (material.alphaMap) material.alphaMap.dispose();
-                                if (material.roughnessMap) material.roughnessMap.dispose();
-                                if (material.metalnessMap) material.metalnessMap.dispose();
-                                
-                                // Dispose material
-                                material.dispose();
+                        const materials = Array.isArray(object.material) ? object.material : [object.material];
+                        
+                        materials.forEach(material => {
+                            // Properly dispose all textures with specific cleanup
+                            const textureProps = [
+                                'map', 'lightMap', 'bumpMap', 'normalMap', 'specularMap', 
+                                'envMap', 'aoMap', 'displacementMap', 'emissiveMap', 
+                                'gradientMap', 'alphaMap', 'roughnessMap', 'metalnessMap',
+                                'matcap', 'transmissionMap'
+                            ];
+                            
+                            textureProps.forEach(prop => {
+                                if (material[prop]) {
+                                    // Force mipmaps disposal
+                                    if (material[prop].mipmaps && material[prop].mipmaps.length) {
+                                        material[prop].mipmaps.length = 0;
+                                    }
+                                    
+                                    // Release GPU resources
+                                    material[prop].dispose();
+                                    resourceLog.textures++;
+                                }
                             });
-                        } else {
-                            // Dispose textures
-                            if (object.material.map) object.material.map.dispose();
-                            if (object.material.lightMap) object.material.lightMap.dispose();
-                            if (object.material.bumpMap) object.material.bumpMap.dispose();
-                            if (object.material.normalMap) object.material.normalMap.dispose();
-                            if (object.material.specularMap) object.material.specularMap.dispose();
-                            if (object.material.envMap) object.material.envMap.dispose();
-                            if (object.material.aoMap) object.material.aoMap.dispose();
-                            if (object.material.displacementMap) object.material.displacementMap.dispose();
-                            if (object.material.emissiveMap) object.material.emissiveMap.dispose();
-                            if (object.material.gradientMap) object.material.gradientMap.dispose();
-                            if (object.material.alphaMap) object.material.alphaMap.dispose();
-                            if (object.material.roughnessMap) object.material.roughnessMap.dispose();
-                            if (object.material.metalnessMap) object.material.metalnessMap.dispose();
+                            
+                            // Release material-specific GPU resources
+                            if (material.uniforms) {
+                                for (const key in material.uniforms) {
+                                    const uniform = material.uniforms[key];
+                                    if (uniform && uniform.value && uniform.value.isTexture) {
+                                        uniform.value.dispose();
+                                        resourceLog.textures++;
+                                    }
+                                }
+                            }
                             
                             // Dispose material
-                            object.material.dispose();
-                        }
+                            material.dispose();
+                            resourceLog.materials++;
+                        });
+                    }
+                    
+                    // Clear any cached data
+                    if (object.userData) {
+                        object.userData = {};
                     }
                 });
+                
+                // Force nullification to help garbage collection
+                state.currentMesh = null;
+                
+                // Log cleanup results
+                console.log("Cleaned up resources:", resourceLog);
+                
+                // Force additional garbage collection hint
+                if (window.performance && window.performance.memory) {
+                    // Small delay to allow for cleanup
+                    setTimeout(() => {
+                        console.log("Memory after cleanup:", Math.round(window.performance.memory.usedJSHeapSize / 1048576) + "MB");
+                    }, 1000);
+                }
             }
             
             // Clean up measurement resources
@@ -1761,18 +2204,6 @@
             
             state.lights.point2.position.copy(cameraPosition);
             state.lights.point2.position.y -= 5;
-        }
-
-        // Update the animate function to include light position updates
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            if (controls.enabled) {
-                controls.update();
-                updateLightPositions(); // Update light positions based on camera movement
-            }
-            
-            safeRender();
         }
 
         // Improved mobile support
@@ -1970,7 +2401,7 @@
         document.getElementById('toggleViewMode').addEventListener('click', () => {
             const newMode = (state.viewMode + 1) % 3;
             if (state.setViewMode(newMode)) {
-                showToast(`View mode: ${['Solid', 'Transparent', 'Wireframe'][newMode]}`);
+                showToast("View mode: " + ['Solid', 'Transparent', 'Wireframe'][newMode]);
             }
         });
 
@@ -1979,13 +2410,13 @@
                 camera = state.isOrthographic ? orthographicCamera : perspectiveCamera;
                 controls.object = camera;
                 updateOrthographicCamera();
-                showToast(`Camera mode: ${state.isOrthographic ? 'Orthographic' : 'Perspective'}`);
+                showToast("Camera mode: " + (state.isOrthographic ? 'Orthographic' : 'Perspective'));
             }
         });
 
         document.getElementById('toggleGridAxes').addEventListener('click', () => {
             if (state.toggleGridAxes()) {
-                showToast(`Grid & Axes: ${state.isGridAxesVisible ? 'Visible' : 'Hidden'}`);
+                showToast("Grid & Axes: " + (state.isGridAxesVisible ? 'Visible' : 'Hidden'));
             }
         });
 
@@ -2017,7 +2448,7 @@
         // Add event listeners for measurement buttons
         document.getElementById('measureMode').addEventListener('click', () => {
             state.toggleMeasureMode();
-            showToast(`Measure mode: ${state.isMeasureMode ? 'Enabled' : 'Disabled'}`);
+            showToast("Measure mode: " + (state.isMeasureMode ? 'Enabled' : 'Disabled'));
             if (state.isMeasureMode) {
                 document.body.style.cursor = 'crosshair';
             } else {
@@ -2039,7 +2470,7 @@
 
         document.getElementById('pathMeasureMode').addEventListener('click', () => {
             state.togglePathMeasureMode();
-            showToast(`Path measure mode: ${state.isPathMeasureMode ? 'Enabled' : 'Disabled'}`);
+            showToast("Path measure mode: " + (state.isPathMeasureMode ? 'Enabled' : 'Disabled'));
             if (state.isPathMeasureMode) {
                 document.body.style.cursor = 'crosshair';
                 // Initialize total distance label
@@ -2118,7 +2549,7 @@
             labelDiv.style.fontFamily = 'Arial, sans-serif';
             labelDiv.style.fontSize = '12px';
             labelDiv.style.fontWeight = 'bold';
-            labelDiv.textContent = `${scaledDistance.toFixed(2)} ${state.unitLabel}`;
+            labelDiv.textContent = scaledDistance.toFixed(2) + ' ' + state.unitLabel;
             labelDiv.style.whiteSpace = 'nowrap';
             
             const labelObj = new CSS2DObject(labelDiv);
@@ -2193,7 +2624,7 @@
                 labelDiv.style.color = 'white';
                 labelDiv.style.fontFamily = 'Arial, sans-serif';
                 labelDiv.style.fontSize = '10px';
-                labelDiv.textContent = `${scaledDistance.toFixed(2)} ${state.unitLabel}`;
+                labelDiv.textContent = scaledDistance.toFixed(2) + ' ' + state.unitLabel;
                 labelDiv.style.whiteSpace = 'nowrap';
                 
                 const labelObj = new CSS2DObject(labelDiv);
@@ -2308,14 +2739,14 @@
             
             let html = '<ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
             state.measurements.forEach((measurement, index) => {
-                html += `<li style="margin-bottom: 5px;">
-                    <span style="display: inline-block; width: 18px; height: 18px; background-color: #4caf50; 
-                           border-radius: 50%; text-align: center; color: white; font-size: 10px; line-height: 18px; 
-                           margin-right: 5px;">${index + 1}</span>
-                    <span>${measurement.distance.toFixed(2)} ${state.unitLabel}</span>
-                    <button class="delete-measurement" data-index="${index}" style="background: none; border: none; 
-                             color: #f44336; cursor: pointer; font-size: 16px; float: right; padding: 0;">×</button>
-                </li>`;
+                html += '<li style="margin-bottom: 5px;">' +
+                    '<span style="display: inline-block; width: 18px; height: 18px; background-color: #4caf50; ' +
+                    'border-radius: 50%; text-align: center; color: white; font-size: 10px; line-height: 18px; ' +
+                    'margin-right: 5px;">' + (index + 1) + '</span>' +
+                    '<span>' + measurement.distance.toFixed(2) + ' ' + state.unitLabel + '</span>' +
+                    '<button class="delete-measurement" data-index="' + index + '" style="background: none; border: none; ' +
+                    'color: #f44336; cursor: pointer; font-size: 16px; float: right; padding: 0;">×</button>' +
+                    '</li>';
             });
             html += '</ul>';
             
@@ -2464,13 +2895,13 @@
                                 labelDiv.style.fontFamily = 'Arial, sans-serif';
                                 labelDiv.style.fontSize = '12px';
                                 labelDiv.style.fontWeight = 'bold';
-                                labelDiv.textContent = `${distance.toFixed(2)} ${state.unitLabel}`;
+                                labelDiv.textContent = distance.toFixed(2) + ' ' + state.unitLabel;
                                 labelDiv.style.whiteSpace = 'nowrap';
                                 
                                 previewLabel = new CSS2DObject(labelDiv);
                                 scene.add(previewLabel);
                             } else {
-                                previewLabel.element.textContent = `${distance.toFixed(2)} ${state.unitLabel}`;
+                                previewLabel.element.textContent = distance.toFixed(2) + ' ' + state.unitLabel;
                             }
                             
                             // Position label at midpoint
@@ -2533,13 +2964,13 @@
                                 labelDiv.style.color = 'white';
                                 labelDiv.style.fontFamily = 'Arial, sans-serif';
                                 labelDiv.style.fontSize = '10px';
-                                labelDiv.textContent = `${segmentDistance.toFixed(2)} ${state.unitLabel}`;
+                                labelDiv.textContent = segmentDistance.toFixed(2) + ' ' + state.unitLabel;
                                 labelDiv.style.whiteSpace = 'nowrap';
                                 
                                 previewLabel = new CSS2DObject(labelDiv);
                                 scene.add(previewLabel);
                             } else {
-                                previewLabel.element.textContent = `${segmentDistance.toFixed(2)} ${state.unitLabel}`;
+                                previewLabel.element.textContent = segmentDistance.toFixed(2) + ' ' + state.unitLabel;
                             }
                             
                             // Position label at midpoint
@@ -2548,7 +2979,7 @@
                             
                             // Update total label
                             if (pathTotalLabel) {
-                                pathTotalLabel.element.innerHTML = `Total: ${totalDistance.toFixed(2)} ${state.unitLabel} (preview)`;
+                                pathTotalLabel.element.innerHTML = 'Total: ' + totalDistance.toFixed(2) + ' ' + state.unitLabel + ' (preview)';
                                 pathTotalLabel.position.copy(hoverPoint);
                                 pathTotalLabel.visible = true;
                             }
@@ -2603,13 +3034,13 @@
             
             // Count children for this node
             const childCount = object.children ? object.children.length : 0;
-            const childCountText = childCount > 0 ? ` [${childCount} children]` : '';
+            const childCountText = childCount > 0 ? ' [' + childCount + ' children]' : '';
             
-            html += `<div class="hierarchy-node" style="margin-left: ${level * 10}px; padding: 2px 0;">
-                <span style="color: ${isMesh ? '#4CAF50' : isGroup ? '#2196F3' : '#FFC107'}">
-                    ${indent}${nodeName} (${nodeType})${childCountText}
-                </span>
-            </div>`;
+            html += '<div class="hierarchy-node" style="margin-left: ' + (level * 10) + 'px; padding: 2px 0;">' +
+                '<span style="color: ' + (isMesh ? '#4CAF50' : isGroup ? '#2196F3' : '#FFC107') + '">' +
+                indent + nodeName + ' (' + nodeType + ')' + childCountText +
+                '</span>' +
+                '</div>';
             
             // Recursively add children
             if (object.children && object.children.length > 0) {
@@ -2631,7 +3062,7 @@
             
             // Count total objects
             const totalObjects = countObjects(state.currentMesh);
-            objectCountElement.textContent = `(${totalObjects} objects)`;
+            objectCountElement.textContent = '(' + totalObjects + ' objects)';
             
             // Update hierarchy tree
             hierarchyContainer.innerHTML = createHierarchyTree(state.currentMesh);
@@ -2652,43 +3083,42 @@
 
         // Add styles for hierarchy viewer
         const style = document.createElement('style');
-        style.textContent = `
-            .hierarchy-node {
-                font-family: monospace;
-                font-size: 12px;
-                line-height: 1.4;
-                cursor: pointer;
-                transition: background-color 0.2s;
-            }
-            
-            .hierarchy-node:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-            }
-            
-            #hierarchy-container {
-                font-family: monospace;
-                font-size: 12px;
-                color: #fff;
-            }
-            
-            #hierarchy-container::-webkit-scrollbar {
-                width: 8px;
-            }
-            
-            #hierarchy-container::-webkit-scrollbar-track {
-                background: rgba(0, 0, 0, 0.2);
-                border-radius: 4px;
-            }
-            
-            #hierarchy-container::-webkit-scrollbar-thumb {
-                background: rgba(255, 255, 255, 0.2);
-                border-radius: 4px;
-            }
-            
-            #hierarchy-container::-webkit-scrollbar-thumb:hover {
-                background: rgba(255, 255, 255, 0.3);
-            }
-        `;
+        style.textContent = 
+            '.hierarchy-node {' +
+            '    font-family: monospace;' +
+            '    font-size: 12px;' +
+            '    line-height: 1.4;' +
+            '    cursor: pointer;' +
+            '    transition: background-color 0.2s;' +
+            '}' +
+            '' +
+            '.hierarchy-node:hover {' +
+            '    background-color: rgba(255, 255, 255, 0.1);' +
+            '}' +
+            '' +
+            '#hierarchy-container {' +
+            '    font-family: monospace;' +
+            '    font-size: 12px;' +
+            '    color: #fff;' +
+            '}' +
+            '' +
+            '#hierarchy-container::-webkit-scrollbar {' +
+            '    width: 8px;' +
+            '}' +
+            '' +
+            '#hierarchy-container::-webkit-scrollbar-track {' +
+            '    background: rgba(0, 0, 0, 0.2);' +
+            '    border-radius: 4px;' +
+            '}' +
+            '' +
+            '#hierarchy-container::-webkit-scrollbar-thumb {' +
+            '    background: rgba(255, 255, 255, 0.2);' +
+            '    border-radius: 4px;' +
+            '}' +
+            '' +
+            '#hierarchy-container::-webkit-scrollbar-thumb:hover {' +
+            '    background: rgba(255, 255, 255, 0.3);' +
+            '}';
         document.head.appendChild(style);
 
         // Add click handler for hierarchy nodes
