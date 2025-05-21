@@ -567,6 +567,22 @@
                     
                     camera.position.copy(this.cameraPosition);
                     controls.target.copy(this.cameraTarget);
+                    
+                    // Set appropriate up vector at the end of transition
+                    if (progress >= 0.99) {
+                        if (view === 'top') {
+                            camera.up.set(0, 0, -1);
+                        } else {
+                            camera.up.set(0, 1, 0);
+                        }
+                        
+                        // Ensure perfect axis alignment at the end
+                        if (progress === 1) {
+                            camera.position.copy(endPosition);
+                            camera.lookAt(endTarget);
+                        }
+                    }
+                    
                     controls.update();
                     
                     if (progress < 1) {
@@ -1050,7 +1066,12 @@
             const endTarget = modelCenter.clone();
             
             animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                // Fixed: Keep Y as up for consistency
                 camera.up.set(0, 0, -1);
+                
+                // Ensure perfect alignment to Y axis
+                camera.position.set(0, distance, 0);
+                camera.lookAt(endTarget);
                 controls.update();
                 state.inPredefinedView = true;
             });
@@ -1066,7 +1087,12 @@
             const endTarget = modelCenter.clone();
             
             animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                // Fixed: Ensure Y is up
                 camera.up.set(0, 1, 0);
+                
+                // Ensure perfect alignment to Z axis
+                camera.position.set(0, 0, distance);
+                camera.lookAt(endTarget);
                 controls.update();
                 state.inPredefinedView = true;
             });
@@ -1082,7 +1108,12 @@
             const endTarget = modelCenter.clone();
             
             animateCameraTransition(startPosition, endPosition, startTarget, endTarget, () => {
+                // Fixed: Ensure Y is up
                 camera.up.set(0, 1, 0);
+                
+                // Ensure perfect alignment to X axis
+                camera.position.set(distance, 0, 0);
+                camera.lookAt(endTarget);
                 controls.update();
                 state.inPredefinedView = true;
             });
@@ -3024,7 +3055,7 @@
         // Add function to create hierarchy tree
         function createHierarchyTree(object, level = 0) {
             let html = '';
-            const indent = '&nbsp;'.repeat(level * 4);
+            const indent = level * 16; // Use pixel value for indent
             
             // Create node with name and type
             const nodeName = object.name || 'Unnamed';
@@ -3034,20 +3065,34 @@
             
             // Count children for this node
             const childCount = object.children ? object.children.length : 0;
-            const childCountText = childCount > 0 ? ' [' + childCount + ' children]' : '';
+            const hasChildren = childCount > 0;
+            const childCountText = hasChildren ? ` [${childCount}]` : '';
             
-            html += '<div class="hierarchy-node" style="margin-left: ' + (level * 10) + 'px; padding: 2px 0;">' +
-                '<span style="color: ' + (isMesh ? '#4CAF50' : isGroup ? '#2196F3' : '#FFC107') + '">' +
-                indent + nodeName + ' (' + nodeType + ')' + childCountText +
-                '</span>' +
-                '</div>';
+            // Generate unique node ID 
+            const nodeId = 'node-' + Math.random().toString(36).substr(2, 9);
+            const childrenId = 'children-' + nodeId;
             
-            // Recursively add children
-            if (object.children && object.children.length > 0) {
+            // Create the node with expand/collapse icon
+            html += `<div class="hierarchy-node" data-node-id="${nodeId}" style="margin-bottom: 2px;">
+                <div class="node-header" style="margin-left: ${indent}px; display: flex; align-items: center;">
+                    ${hasChildren ? 
+                      `<span class="toggle-icon" data-children="${childrenId}" style="cursor: pointer; width: 14px; display: inline-block;">▶</span>` : 
+                      `<span style="width: 14px; display: inline-block;"></span>`}
+                    <span class="node-name" style="color: ${isMesh ? '#4CAF50' : isGroup ? '#2196F3' : '#FFC107'}; cursor: pointer;">
+                        ${nodeName}</span>
+                    <span style="color: #aaa; font-size: 10px; margin-left: 4px;">(${nodeType}${childCountText})</span>
+                </div>`;
+            
+            // Create container for children (initially collapsed)
+            if (hasChildren) {
+                html += `<div class="node-children" id="${childrenId}" style="display: none;">`;
                 object.children.forEach(child => {
                     html += createHierarchyTree(child, level + 1);
                 });
+                html += '</div>';
             }
+            
+            html += '</div>';
             
             return html;
         }
@@ -3062,23 +3107,104 @@
             
             // Count total objects
             const totalObjects = countObjects(state.currentMesh);
-            objectCountElement.textContent = '(' + totalObjects + ' objects)';
+            objectCountElement.textContent = `(${totalObjects} objects)`;
             
             // Update hierarchy tree
             hierarchyContainer.innerHTML = createHierarchyTree(state.currentMesh);
+            
+            // Add event listeners for toggle icons
+            hierarchyContainer.querySelectorAll('.toggle-icon').forEach(icon => {
+                icon.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const childrenId = icon.getAttribute('data-children');
+                    const childrenContainer = document.getElementById(childrenId);
+                    
+                    if (childrenContainer.style.display === 'none') {
+                        childrenContainer.style.display = 'block';
+                        icon.textContent = '▼';
+                    } else {
+                        childrenContainer.style.display = 'none';
+                        icon.textContent = '▶';
+                    }
+                });
+            });
+            
+            // Add event listeners for node names
+            hierarchyContainer.querySelectorAll('.node-name').forEach(node => {
+                node.addEventListener('click', (e) => {
+                    // Find the object in the scene by traversing up to the node div
+                    const nodeDiv = e.target.closest('.hierarchy-node');
+                    const nodeId = nodeDiv.getAttribute('data-node-id');
+                    
+                    // Temporarily highlight this node in the UI
+                    e.target.style.fontWeight = 'bold';
+                    e.target.style.textDecoration = 'underline';
+                    setTimeout(() => {
+                        e.target.style.fontWeight = 'normal';
+                        e.target.style.textDecoration = 'none';
+                    }, 1000);
+                    
+                    // Find and highlight the corresponding 3D object
+                    const nodeName = e.target.textContent.trim();
+                    highlightObjectByName(nodeName);
+                });
+            });
         }
 
-        // Add function to count objects
-        function countObjects(object) {
-            let count = 1; // Count this object
+        // Add function to highlight an object by name
+        function highlightObjectByName(name) {
+            let found = false;
+            state.currentMesh.traverse((object) => {
+                if (object.name === name) {
+                    found = true;
+                    // Highlight the object
+                    if (object.isMesh) {
+                        console.log(`Highlighting object: ${name}`);
+                        // Store original materials to restore later
+                        if (!object.userData.originalMaterial) {
+                            object.userData.originalMaterial = object.material.clone();
+                        }
+                        
+                        // Apply highlight material
+                        const highlightMaterial = new THREE.MeshBasicMaterial({
+                            color: 0xff3333,
+                            wireframe: false,
+                            transparent: true,
+                            opacity: 0.8,
+                            depthTest: true
+                        });
+                        
+                        object.material = highlightMaterial;
+                        
+                        // Restore original material after a delay
+                        setTimeout(() => {
+                            if (object && object.userData.originalMaterial) {
+                                object.material = object.userData.originalMaterial;
+                                state.needsRender = true;
+                            }
+                        }, 1500);
+                    }
+                    
+                    // If it's a group, add a temporary wireframe box to show bounds
+                    if (object.isGroup || object.isObject3D) {
+                        const box = new THREE.Box3().setFromObject(object);
+                        const boxHelper = new THREE.Box3Helper(box, 0xff3333);
+                        boxHelper.userData.isTemporary = true;
+                        scene.add(boxHelper);
+                        
+                        // Remove the box helper after a delay
+                        setTimeout(() => {
+                            scene.remove(boxHelper);
+                            state.needsRender = true;
+                        }, 1500);
+                    }
+                }
+            });
             
-            if (object.children && object.children.length > 0) {
-                object.children.forEach(child => {
-                    count += countObjects(child);
-                });
+            if (found) {
+                state.needsRender = true;
+                showToast(`Selected: ${name}`);
             }
-            
-            return count;
         }
 
         // Add styles for hierarchy viewer
@@ -3088,18 +3214,31 @@
             '    font-family: monospace;' +
             '    font-size: 12px;' +
             '    line-height: 1.4;' +
-            '    cursor: pointer;' +
+            '}' +
+            '' +
+            '.node-header {' +
+            '    padding: 2px 0;' +
+            '    border-radius: 3px;' +
             '    transition: background-color 0.2s;' +
             '}' +
             '' +
-            '.hierarchy-node:hover {' +
+            '.node-header:hover {' +
             '    background-color: rgba(255, 255, 255, 0.1);' +
+            '}' +
+            '' +
+            '.toggle-icon {' +
+            '    color: #999;' +
+            '    font-size: 10px;' +
+            '    transition: transform 0.2s;' +
+            '    margin-right: 4px;' +
             '}' +
             '' +
             '#hierarchy-container {' +
             '    font-family: monospace;' +
             '    font-size: 12px;' +
             '    color: #fff;' +
+            '    overflow-y: auto;' +
+            '    max-height: 200px;' +
             '}' +
             '' +
             '#hierarchy-container::-webkit-scrollbar {' +
@@ -3120,6 +3259,19 @@
             '    background: rgba(255, 255, 255, 0.3);' +
             '}';
         document.head.appendChild(style);
+
+        // Add function to count objects
+        function countObjects(object) {
+            let count = 1; // Count this object
+            
+            if (object.children && object.children.length > 0) {
+                object.children.forEach(child => {
+                    count += countObjects(child);
+                });
+            }
+            
+            return count;
+        }
 
         // Add click handler for hierarchy nodes
         document.addEventListener('click', (event) => {
