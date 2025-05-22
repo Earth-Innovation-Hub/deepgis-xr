@@ -265,7 +265,7 @@
             <li><strong>M</strong> - Toggle measure mode</li>
             <li><strong>P</strong> - Toggle path measure mode</li>
             <li><strong>C</strong> - Clear all measurements</li>
-            <li><strong>F</strong> - Finish path (closes if possible)</li>
+            <li><strong>F</strong> - Finish path</li>
             <li><strong>Space</strong> - Enable rotation while measuring</li>
             <li><strong>ESC</strong> - Exit measure mode</li>
             <li><strong>O</strong> - Toggle orthographic view</li>
@@ -1361,65 +1361,42 @@
                 return;
             }
             
-            // If we have 3 or more points, we can close the path by connecting last to first
-            if (state.pathMeasurementPoints.length >= 3) {
-                const firstPoint = state.pathMeasurementPoints[0];
-                const lastPoint = state.pathMeasurementPoints[state.pathMeasurementPoints.length - 1];
-                
-                // Calculate segment distance
-                const segmentDistance = lastPoint.distanceTo(firstPoint);
-                const scaledDistance = segmentDistance * state.currentUnit;
-                
-                // Create line between points
-                const lineGeometry = new THREE.BufferGeometry().setFromPoints([lastPoint, firstPoint]);
-                const lineMaterial = new THREE.LineBasicMaterial({ color: 0xe91e63, linewidth: 2 });
-                const line = new THREE.Line(lineGeometry, lineMaterial);
-                
-                // Create background line for better visibility
-                const bgLineMaterial = new THREE.LineBasicMaterial({ color: 0x000000, linewidth: 4 });
-                const bgLine = new THREE.Line(lineGeometry.clone(), bgLineMaterial);
-                
-                // Add lines to measurement group
-                measurementGroup.add(bgLine);
-                measurementGroup.add(line);
-                state.pathMeasurementLines.push({ line, bgLine });
-                
-                // Create segment label
-                const labelDiv = document.createElement('div');
-                labelDiv.className = 'distance-label';
-                labelDiv.style.padding = '2px 6px';
-                labelDiv.style.borderRadius = '2px';
-                labelDiv.style.background = 'rgba(233,30,99,0.9)';
-                labelDiv.style.color = 'white';
-                labelDiv.style.fontFamily = 'Arial, sans-serif';
-                labelDiv.style.fontSize = '10px';
-                labelDiv.textContent = scaledDistance.toFixed(2) + ' ' + state.unitLabel;
-                labelDiv.style.whiteSpace = 'nowrap';
-                
-                const labelObj = new CSS2DObject(labelDiv);
-                
-                // Position label at midpoint
-                const midpoint = new THREE.Vector3().addVectors(lastPoint, firstPoint).multiplyScalar(0.5);
-                labelObj.position.copy(midpoint);
-                scene.add(labelObj);
-                state.pathMeasurementLabels.push(labelObj);
-                
-                // Add to global measurement labels array for tracking
-                measurementLabels.push(labelObj);
-                
-                // Update total distance
-                state.pathTotalDistance += segmentDistance;
-                
-                // Update total label
-                if (pathTotalLabel) {
-                    pathTotalLabel.element.innerHTML = 'Total: ' + (state.pathTotalDistance * state.currentUnit).toFixed(2) + ' ' + state.unitLabel + ' (closed)';
-                    pathTotalLabel.position.copy(firstPoint);
-                }
-                
-                showToast('Path closed and completed');
-            } else {
-                showToast('Path completed');
+            // Calculate the total distance
+            const totalDistanceValue = (state.pathTotalDistance * state.currentUnit).toFixed(2);
+            
+            // Create a prominent permanent total distance label
+            const totalDiv = document.createElement('div');
+            totalDiv.className = 'total-distance-label';
+            totalDiv.style.padding = '6px 12px';
+            totalDiv.style.borderRadius = '4px';
+            totalDiv.style.background = 'rgba(0,0,0,0.85)';
+            totalDiv.style.color = 'white';
+            totalDiv.style.fontFamily = 'Arial, sans-serif';
+            totalDiv.style.fontSize = '14px';
+            totalDiv.style.fontWeight = 'bold';
+            totalDiv.style.border = '2px solid #e91e63';
+            totalDiv.style.boxShadow = '0 2px 5px rgba(0,0,0,0.3)';
+            totalDiv.innerHTML = 'PATH TOTAL: ' + totalDistanceValue + ' ' + state.unitLabel;
+            totalDiv.style.whiteSpace = 'nowrap';
+            
+            const totalLabelObject = new CSS2DObject(totalDiv);
+            
+            // Position at midpoint of the first and last points for visibility
+            const firstPoint = state.pathMeasurementPoints[0];
+            const lastPoint = state.pathMeasurementPoints[state.pathMeasurementPoints.length - 1];
+            const midpoint = new THREE.Vector3().addVectors(firstPoint, lastPoint).multiplyScalar(0.5);
+            midpoint.y += 0.3; // Offset slightly above the path for better visibility
+            
+            totalLabelObject.position.copy(midpoint);
+            scene.add(totalLabelObject);
+            measurementLabels.push(totalLabelObject); // Add to tracked labels
+            
+            // Hide the temporary total label
+            if (pathTotalLabel) {
+                pathTotalLabel.visible = false;
             }
+            
+            showToast('Path completed - Total: ' + totalDistanceValue + ' ' + state.unitLabel);
             
             // Clean up preview elements
             cleanupPreviewElements();
@@ -1429,8 +1406,11 @@
                 id: currentPathId,
                 points: [...state.pathMeasurementPoints], // Clone the points array
                 totalDistance: state.pathTotalDistance,
+                totalDistanceValue: totalDistanceValue,
+                totalDistanceUnit: state.unitLabel,
                 lines: state.pathMeasurementLines.map(line => ({ line: line.line, bgLine: line.bgLine })),
-                labels: [...state.pathMeasurementLabels]
+                labels: [...state.pathMeasurementLabels],
+                totalLabel: totalLabelObject
             };
             
             // Add to completed paths
@@ -1648,11 +1628,6 @@
                 finishPath();
             }
             
-            // 'L' key to close current path (connect first and last points)
-            if (event.key === 'l' || event.key === 'L') {
-                finishPath();
-            }
-            
             // 'O' key to toggle orthographic view
             if (event.key === 'o' || event.key === 'O') {
                 if (state.toggleOrthographic()) {
@@ -1745,6 +1720,18 @@
             if (pathTotalLabel && state.pathTotalDistance > 0) {
                 const convertedTotal = state.pathTotalDistance * state.currentUnit;
                 pathTotalLabel.element.innerHTML = `Total: ${convertedTotal.toFixed(2)} ${state.unitLabel}`;
+            }
+            
+            // Update completed path total labels
+            for (const path of completedPaths) {
+                const convertedTotal = path.totalDistance * state.currentUnit;
+                path.totalDistanceValue = convertedTotal.toFixed(2);
+                path.totalDistanceUnit = state.unitLabel;
+                
+                // Update the 3D label if it exists
+                if (path.totalLabel && path.totalLabel.element) {
+                    path.totalLabel.element.innerHTML = `PATH TOTAL: ${convertedTotal.toFixed(2)} ${state.unitLabel}`;
+                }
             }
             
             // Update preview label if active
@@ -2763,23 +2750,54 @@
             const container = document.getElementById('measurements-container');
             if (!container) return;
             
-            if (state.measurements.length === 0) {
+            let hasContent = false;
+            let html = '';
+            
+            // Display completed paths first with their total distances
+            if (completedPaths.length > 0) {
+                hasContent = true;
+                html += '<div style="margin-bottom: 15px;">' +
+                       '<h4 style="margin-bottom: 8px; color: #e91e63;">Completed Paths</h4>' +
+                       '<ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                
+                completedPaths.forEach((path, index) => {
+                    const totalDistanceValue = (path.totalDistance * state.currentUnit).toFixed(2);
+                    html += '<li style="margin-bottom: 8px; padding: 8px; background: rgba(233,30,99,0.1); border-radius: 4px; border-left: 3px solid #e91e63;">' +
+                        '<div style="font-weight: bold; margin-bottom: 4px;">Path ' + (index + 1) + '</div>' +
+                        '<div style="font-size: 14px; color: #333;">Total: <span style="color: #e91e63; font-weight: bold;">' + 
+                        totalDistanceValue + ' ' + state.unitLabel + '</span></div>' +
+                        '<div style="font-size: 12px; color: #666;">Points: ' + path.points.length + '</div>' +
+                        '</li>';
+                });
+                
+                html += '</ul></div>';
+            }
+            
+            // Then display individual measurements
+            if (state.measurements.length > 0) {
+                hasContent = true;
+                html += '<div>' +
+                       '<h4 style="margin-bottom: 8px; color: #4caf50;">Distance Measurements</h4>' +
+                       '<ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
+                
+                state.measurements.forEach((measurement, index) => {
+                    html += '<li style="margin-bottom: 5px;">' +
+                        '<span style="display: inline-block; width: 18px; height: 18px; background-color: #4caf50; ' +
+                        'border-radius: 50%; text-align: center; color: white; font-size: 10px; line-height: 18px; ' +
+                        'margin-right: 5px;">' + (index + 1) + '</span>' +
+                        '<span>' + measurement.distance.toFixed(2) + ' ' + state.unitLabel + '</span>' +
+                        '<button class="delete-measurement" data-index="' + index + '" style="background: none; border: none; ' +
+                        'color: #f44336; cursor: pointer; font-size: 16px; float: right; padding: 0;">×</button>' +
+                        '</li>';
+                });
+                
+                html += '</ul></div>';
+            }
+            
+            if (!hasContent) {
                 container.innerHTML = 'No measurements yet';
                 return;
             }
-            
-            let html = '<ul style="list-style-type: none; padding-left: 0; margin-top: 5px;">';
-            state.measurements.forEach((measurement, index) => {
-                html += '<li style="margin-bottom: 5px;">' +
-                    '<span style="display: inline-block; width: 18px; height: 18px; background-color: #4caf50; ' +
-                    'border-radius: 50%; text-align: center; color: white; font-size: 10px; line-height: 18px; ' +
-                    'margin-right: 5px;">' + (index + 1) + '</span>' +
-                    '<span>' + measurement.distance.toFixed(2) + ' ' + state.unitLabel + '</span>' +
-                    '<button class="delete-measurement" data-index="' + index + '" style="background: none; border: none; ' +
-                    'color: #f44336; cursor: pointer; font-size: 16px; float: right; padding: 0;">×</button>' +
-                    '</li>';
-            });
-            html += '</ul>';
             
             container.innerHTML = html;
             
