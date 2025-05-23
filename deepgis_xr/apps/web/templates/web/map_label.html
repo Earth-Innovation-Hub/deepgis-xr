@@ -139,6 +139,19 @@
             height: 200px;
             width: 100%;
         }
+
+        .circle-diameter-tooltip {
+            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            color: white;
+            font-weight: bold;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .leaflet-tooltip-center:before {
+            display: none;
+        }
     </style>
 </head>
 
@@ -589,6 +602,18 @@
                     console.log('Draw created:', e.layerType);
                     try {
                         const layer = e.layer;
+                        
+                        // Add appropriate tooltips based on shape type
+                        if (e.layerType === 'circle') {
+                            attachCircleDiameterTooltip(layer);
+                        } else if (e.layerType === 'rectangle') {
+                            attachRectangleDimensionsTooltip(layer);
+                        } else if (e.layerType === 'polygon') {
+                            attachPolygonMeasurementsTooltip(layer);
+                        } else if (e.layerType === 'polyline') {
+                            attachPolylineLengthTooltip(layer);
+                        }
+                        
                         // Add layer to the drawnItems group
                         window.globals.drawnItems.addLayer(layer);
                         // Force drawnItems to top of layer stack
@@ -600,7 +625,23 @@
                     }
                 });
                 
-                window.globals.map.on(L.Draw.Event.EDITED, debouncedUpdate);
+                // Update tooltips when shapes are edited
+                window.globals.map.on(L.Draw.Event.EDITED, (e) => {
+                    const layers = e.layers;
+                    layers.eachLayer(function(layer) {
+                        if (layer instanceof L.Circle) {
+                            attachCircleDiameterTooltip(layer);
+                        } else if (layer instanceof L.Rectangle) {
+                            attachRectangleDimensionsTooltip(layer);
+                        } else if (layer instanceof L.Polygon) {
+                            attachPolygonMeasurementsTooltip(layer);
+                        } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
+                            attachPolylineLengthTooltip(layer);
+                        }
+                    });
+                    debouncedUpdate();
+                });
+                
                 window.globals.map.on(L.Draw.Event.DELETED, debouncedUpdate);
 
                 // Update when vector layer visibility changes
@@ -685,7 +726,13 @@
                                 fillOpacity: 0.3
                             }
                         },
-                        circle: false,
+                        circle: {
+                            shapeOptions: {
+                                color: '#ff0000',
+                                fillOpacity: 0.3
+                            },
+                            showRadius: true
+                        },
                         circlemarker: false,
                         marker: true,
                         polyline: {
@@ -1047,6 +1094,168 @@
                     wrapper.classList.toggle('show-sidebar');
                     setTimeout(updateMapSize, 300); // Wait for transition to complete
                 });
+
+                // Add helper function to calculate circle diameter in meters
+                function calculateCircleDiameter(circle) {
+                    const radius = circle.getRadius();
+                    return (radius * 2).toFixed(2);
+                }
+                
+                // Add helper function to calculate circle area in square meters
+                function calculateCircleArea(circle) {
+                    const radius = circle.getRadius();
+                    const area = Math.PI * radius * radius;
+                    return area.toFixed(2);
+                }
+                
+                // Custom circle handler to display diameter and area
+                function attachCircleDiameterTooltip(circle) {
+                    const diameterValue = calculateCircleDiameter(circle);
+                    const areaValue = calculateCircleArea(circle);
+                    const tooltipContent = `Diameter: ${diameterValue} m<br>Area: ${areaValue} m²`;
+                    
+                    circle.bindTooltip(tooltipContent, {
+                        permanent: true,
+                        direction: 'bottomleft',
+                        className: 'dimension-tooltip'
+                    }).openTooltip();
+                    
+                    // Store the measurements as properties of the circle
+                    circle.diameter = diameterValue;
+                    circle.area = areaValue;
+                }
+                
+                // Helper function to calculate rectangle dimensions and area in meters
+                function calculateRectangleDimensions(rectangle) {
+                    const bounds = rectangle.getBounds();
+                    const northEast = bounds.getNorthEast();
+                    const southWest = bounds.getSouthWest();
+                    
+                    // Calculate the corners
+                    const northWest = L.latLng(northEast.lat, southWest.lng);
+                    const southEast = L.latLng(southWest.lat, northEast.lng);
+                    
+                    // Use Leaflet's built-in distance calculation method
+                    // Width: distance from northwest to northeast (horizontal)
+                    const width = northWest.distanceTo(northEast).toFixed(2);
+                    // Height: distance from northwest to southwest (vertical)  
+                    const height = northWest.distanceTo(southWest).toFixed(2);
+                    
+                    // Calculate area
+                    const area = (parseFloat(width) * parseFloat(height)).toFixed(2);
+                    
+                    return { width, height, area };
+                }
+                
+                // Custom rectangle handler to display dimensions and area
+                function attachRectangleDimensionsTooltip(rectangle) {
+                    const dimensions = calculateRectangleDimensions(rectangle);
+                    const tooltipContent = `Width: ${dimensions.width} m<br>Height: ${dimensions.height} m<br>Area: ${dimensions.area} m²`;
+                    
+                    rectangle.bindTooltip(tooltipContent, {
+                        permanent: true,
+                        direction: 'bottomleft',
+                        className: 'dimension-tooltip'
+                    }).openTooltip();
+                    
+                    // Store the dimensions as properties of the rectangle
+                    rectangle.width = dimensions.width;
+                    rectangle.height = dimensions.height;
+                    rectangle.area = dimensions.area;
+                }
+                
+                // Helper function to calculate polygon perimeter and area
+                function calculatePolygonMeasurements(polygon) {
+                    const latlngs = polygon.getLatLngs();
+                    let points = [];
+                    
+                    // Handle nested arrays for complex polygons
+                    if (Array.isArray(latlngs[0])) {
+                        points = latlngs[0]; // Use outer ring for measurements
+                    } else {
+                        points = latlngs;
+                    }
+                    
+                    if (points.length < 3) return { perimeter: 0, area: 0 };
+                    
+                    // Calculate perimeter
+                    let perimeter = 0;
+                    for (let i = 0; i < points.length; i++) {
+                        const nextIndex = (i + 1) % points.length;
+                        perimeter += points[i].distanceTo(points[nextIndex]);
+                    }
+                    
+                    // Calculate area using geodesic area calculation
+                    let area = 0;
+                    if (typeof L.GeometryUtil !== 'undefined' && L.GeometryUtil.geodesicArea) {
+                        area = Math.abs(L.GeometryUtil.geodesicArea(points));
+                    }
+                    
+                    return {
+                        perimeter: perimeter.toFixed(2),
+                        area: area.toFixed(2)
+                    };
+                }
+                
+                // Custom polygon handler to display perimeter and area
+                function attachPolygonMeasurementsTooltip(polygon) {
+                    const measurements = calculatePolygonMeasurements(polygon);
+                    const tooltipContent = `Perimeter: ${measurements.perimeter} m<br>Area: ${measurements.area} m²`;
+                    
+                    polygon.bindTooltip(tooltipContent, {
+                        permanent: true,
+                        direction: 'bottomleft',
+                        className: 'dimension-tooltip'
+                    }).openTooltip();
+                    
+                    // Store the measurements as properties of the polygon
+                    polygon.perimeter = measurements.perimeter;
+                    polygon.area = measurements.area;
+                }
+                
+                // Helper function to calculate polyline length
+                function calculatePolylineLength(polyline) {
+                    const latlngs = polyline.getLatLngs();
+                    
+                    if (latlngs.length < 2) return 0;
+                    
+                    let totalLength = 0;
+                    for (let i = 0; i < latlngs.length - 1; i++) {
+                        totalLength += latlngs[i].distanceTo(latlngs[i + 1]);
+                    }
+                    
+                    return totalLength.toFixed(2);
+                }
+                
+                // Custom polyline handler to display length
+                function attachPolylineLengthTooltip(polyline) {
+                    const length = calculatePolylineLength(polyline);
+                    const tooltipContent = `Length: ${length} m`;
+                    
+                    polyline.bindTooltip(tooltipContent, {
+                        permanent: true,
+                        direction: 'bottomleft',
+                        className: 'dimension-tooltip'
+                    }).openTooltip();
+                    
+                    // Store the length as a property of the polyline
+                    polyline.length = length;
+                }
+
+                // Add custom styles for the dimension tooltips
+                const customStyles = document.createElement('style');
+                customStyles.textContent = `
+                    .dimension-tooltip {
+                        background: rgba(0, 0, 0, 0.7);
+                        border: none;
+                        color: white;
+                        font-weight: bold;
+                        padding: 4px 8px;
+                        border-radius: 4px;
+                        font-size: 12px;
+                    }
+                `;
+                document.head.appendChild(customStyles);
             } catch (error) {
                 console.error('Error initializing document:', error);
                 showSnackBar('Error initializing document. Please try refreshing the page.');
