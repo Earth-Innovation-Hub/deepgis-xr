@@ -256,7 +256,9 @@
                 raster: null,
                 vector: null
             },
-            layersReady: false
+            layersReady: false,
+            markerCounter: 0,  // Counter for sequential marker numbering
+            markers: []        // Array to store all markers for distance calculations
         };
 
         // Helper function to show notifications
@@ -612,6 +614,8 @@
                             attachPolygonMeasurementsTooltip(layer);
                         } else if (e.layerType === 'polyline') {
                             attachPolylineLengthTooltip(layer);
+                        } else if (e.layerType === 'marker') {
+                            attachMarkerInfoTooltip(layer);
                         }
                         
                         // Add layer to the drawnItems group
@@ -637,12 +641,36 @@
                             attachPolygonMeasurementsTooltip(layer);
                         } else if (layer instanceof L.Polyline && !(layer instanceof L.Polygon)) {
                             attachPolylineLengthTooltip(layer);
+                        } else if (layer instanceof L.Marker) {
+                            // For markers, just update distances since position might have changed
+                            updateAllMarkerDistances();
                         }
                     });
                     debouncedUpdate();
                 });
                 
-                window.globals.map.on(L.Draw.Event.DELETED, debouncedUpdate);
+                // Handle marker deletion to update distances
+                window.globals.map.on(L.Draw.Event.DELETED, (e) => {
+                    const layers = e.layers;
+                    layers.eachLayer(function(layer) {
+                        if (layer instanceof L.Marker) {
+                            // Remove marker from global array
+                            const index = window.globals.markers.indexOf(layer);
+                            if (index > -1) {
+                                window.globals.markers.splice(index, 1);
+                            }
+                        }
+                    });
+                    // Update distances for remaining markers
+                    updateAllMarkerDistances();
+                    debouncedUpdate();
+                });
+
+                // Update map view events to refresh marker distances and bearings
+                window.globals.map.on('moveend zoomend', () => {
+                    updateAllMarkerDistances();
+                    debouncedUpdate();
+                });
 
                 // Update when vector layer visibility changes
                 const vectorLayerToggle = document.getElementById('vectorLayerToggle');
@@ -1108,11 +1136,335 @@
                     return area.toFixed(2);
                 }
                 
+                // Helper function to convert distance from meters to multiple units with smart formatting
+                function formatDistanceUnits(distanceInM) {
+                    const distance = parseFloat(distanceInM);
+                    
+                    // Conversion factors
+                    const toCm = distance * 100;
+                    const toInches = distance * 39.3701;
+                    const toFeet = distance * 3.28084;
+                    const toYards = distance * 1.09361;
+                    
+                    // Smart unit selection based on distance size for usability
+                    let formattedDistance = `${distance.toFixed(2)} m`;
+                    
+                    if (distance < 0.1) { // < 10 cm
+                        formattedDistance = `${toCm.toFixed(1)} cm`;
+                        if (toCm > 2.54) { // > 1 inch
+                            formattedDistance += ` (${toInches.toFixed(1)} in)`;
+                        }
+                    } else if (distance < 1) { // 10 cm to 1 m
+                        formattedDistance = `${toCm.toFixed(0)} cm`;
+                        formattedDistance += ` (${toInches.toFixed(1)} in)`;
+                        if (toFeet >= 1) {
+                            formattedDistance += ` (${toFeet.toFixed(1)} ft)`;
+                        }
+                    } else if (distance < 3) { // 1 m to 3 m
+                        formattedDistance = `${distance.toFixed(2)} m`;
+                        formattedDistance += ` (${toFeet.toFixed(1)} ft)`;
+                        if (toYards >= 1) {
+                            formattedDistance += ` (${toYards.toFixed(1)} yd)`;
+                        }
+                    } else if (distance < 100) { // 3 m to 100 m
+                        formattedDistance = `${distance.toFixed(1)} m`;
+                        formattedDistance += ` (${toFeet.toFixed(0)} ft)`;
+                        formattedDistance += ` (${toYards.toFixed(1)} yd)`;
+                    } else { // > 100 m
+                        formattedDistance = `${distance.toFixed(0)} m`;
+                        formattedDistance += ` (${toYards.toFixed(0)} yd)`;
+                    }
+                    
+                    return formattedDistance;
+                }
+                
+                // Helper function to format GPS coordinates
+                function formatGPSCoordinates(latlng) {
+                    const lat = latlng.lat.toFixed(6);
+                    const lng = latlng.lng.toFixed(6);
+                    const latDir = lat >= 0 ? 'N' : 'S';
+                    const lngDir = lng >= 0 ? 'E' : 'W';
+                    return `${Math.abs(lat)}°${latDir}, ${Math.abs(lng)}°${lngDir}`;
+                }
+                
+                // Helper function to copy text to clipboard with fallback
+                async function copyToClipboard(text) {
+                    try {
+                        // Try modern Clipboard API first
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(text);
+                            return true;
+                        } else {
+                            // Fallback for older browsers
+                            const textArea = document.createElement('textarea');
+                            textArea.value = text;
+                            textArea.style.position = 'fixed';
+                            textArea.style.left = '-999999px';
+                            textArea.style.top = '-999999px';
+                            document.body.appendChild(textArea);
+                            textArea.focus();
+                            textArea.select();
+                            const result = document.execCommand('copy');
+                            document.body.removeChild(textArea);
+                            return result;
+                        }
+                    } catch (error) {
+                        console.warn('Failed to copy to clipboard:', error);
+                        return false;
+                    }
+                }
+                
+                // Helper function to show copy feedback
+                function showCopyFeedback() {
+                    showSnackBar('Dimensions copied to clipboard!');
+                }
+                
+                // Helper function to add click-to-copy functionality to tooltips
+                function makeTooltipCopyable(layer, textContent) {
+                    // Create clean text version (remove HTML tags)
+                    const cleanText = textContent.replace(/<br>/g, '\n').replace(/<[^>]*>/g, '');
+                    
+                    // Add click event to the tooltip
+                    layer.on('tooltipopen', function(e) {
+                        const tooltip = e.tooltip.getElement();
+                        if (tooltip) {
+                            tooltip.style.cursor = 'pointer';
+                            tooltip.title = 'Click to copy dimensions';
+                            
+                            // Remove any existing click handlers
+                            tooltip.onclick = null;
+                            
+                            tooltip.onclick = async function() {
+                                const success = await copyToClipboard(cleanText);
+                                if (success) {
+                                    showCopyFeedback();
+                                } else {
+                                    showSnackBar('Failed to copy to clipboard');
+                                }
+                            };
+                        }
+                    });
+                }
+                
+                // Helper function to get timezone information (approximate)
+                function getTimezoneInfo(latlng) {
+                    // This is a simplified timezone calculation based on longitude
+                    // For production, you'd want to use a proper timezone API
+                    const utcOffset = Math.round(latlng.lng / 15);
+                    const adjustedOffset = Math.max(-12, Math.min(12, utcOffset));
+                    const offsetStr = adjustedOffset >= 0 ? `+${adjustedOffset}` : `${adjustedOffset}`;
+                    return `UTC${offsetStr}`;
+                }
+                
+                // Helper function to calculate distance between two points
+                function calculateDistanceBetweenMarkers(marker1, marker2) {
+                    return marker1.getLatLng().distanceTo(marker2.getLatLng());
+                }
+                
+                // Helper function to get nearest marker distance
+                function getNearestMarkerDistance(currentMarker) {
+                    if (window.globals.markers.length === 0) return null;
+                    
+                    let minDistance = Infinity;
+                    let nearestMarker = null;
+                    
+                    window.globals.markers.forEach(marker => {
+                        if (marker !== currentMarker) {
+                            const distance = calculateDistanceBetweenMarkers(currentMarker, marker);
+                            if (distance < minDistance) {
+                                minDistance = distance;
+                                nearestMarker = marker;
+                            }
+                        }
+                    });
+                    
+                    return nearestMarker ? minDistance : null;
+                }
+                
+                // Helper function to calculate bearing between two points
+                function calculateBearing(from, to) {
+                    const lat1 = from.lat * Math.PI / 180;
+                    const lat2 = to.lat * Math.PI / 180;
+                    const deltaLng = (to.lng - from.lng) * Math.PI / 180;
+                    
+                    const y = Math.sin(deltaLng) * Math.cos(lat2);
+                    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+                    
+                    let bearing = Math.atan2(y, x) * 180 / Math.PI;
+                    bearing = (bearing + 360) % 360;
+                    
+                    return bearing.toFixed(1);
+                }
+                
+                // Helper function to get cardinal direction from bearing
+                function getCardinalDirection(bearing) {
+                    const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+                    const index = Math.round(bearing / 22.5) % 16;
+                    return directions[index];
+                }
+                
+                // Custom marker handler to display comprehensive information
+                function attachMarkerInfoTooltip(marker) {
+                    // Increment marker counter
+                    window.globals.markerCounter++;
+                    const markerNumber = window.globals.markerCounter;
+                    
+                    // Get basic location info
+                    const latlng = marker.getLatLng();
+                    const coords = formatGPSCoordinates(latlng);
+                    const timezone = getTimezoneInfo(latlng);
+                    const timestamp = new Date().toLocaleString();
+                    
+                    // Calculate distance to map center
+                    const mapCenter = window.globals.map.getCenter();
+                    const distanceToCenter = formatDistanceUnits(latlng.distanceTo(mapCenter).toFixed(2));
+                    
+                    // Calculate distance to nearest marker
+                    const nearestDistance = getNearestMarkerDistance(marker);
+                    const nearestDistanceText = nearestDistance ? 
+                        formatDistanceUnits(nearestDistance.toFixed(2)) : 'No other markers';
+                    
+                    // Calculate bearing from map center
+                    const bearing = calculateBearing(mapCenter, latlng);
+                    const direction = getCardinalDirection(parseFloat(bearing));
+                    
+                    // Get current zoom level
+                    const zoomLevel = window.globals.map.getZoom();
+                    
+                    // Build comprehensive tooltip content
+                    let tooltipContent = `<strong>Marker #${markerNumber}</strong><br>`;
+                    tooltipContent += `Location: ${coords}<br>`;
+                    tooltipContent += `Timezone: ${timezone}<br>`;
+                    tooltipContent += `Placed: ${timestamp}<br>`;
+                    tooltipContent += `Distance to center: ${distanceToCenter}<br>`;
+                    tooltipContent += `Bearing: ${bearing}° (${direction})<br>`;
+                    tooltipContent += `Nearest marker: ${nearestDistanceText}<br>`;
+                    tooltipContent += `Zoom level: ${zoomLevel}<br>`;
+                    tooltipContent += `<em>Click to copy info</em>`;
+                    
+                    marker.bindTooltip(tooltipContent, {
+                        permanent: true,
+                        direction: 'top',
+                        className: 'marker-info-tooltip'
+                    }).openTooltip();
+                    
+                    // Add click-to-copy functionality
+                    makeTooltipCopyable(marker, tooltipContent);
+                    
+                    // Store marker properties
+                    marker.markerNumber = markerNumber;
+                    marker.placedAt = timestamp;
+                    marker.timezone = timezone;
+                    marker.bearingFromCenter = bearing;
+                    marker.direction = direction;
+                    
+                    // Add marker to global array for distance calculations
+                    window.globals.markers.push(marker);
+                    
+                    // Update all existing markers with new nearest distances
+                    updateAllMarkerDistances();
+                }
+                
+                // Function to update nearest distances for all markers
+                function updateAllMarkerDistances() {
+                    window.globals.markers.forEach(marker => {
+                        const nearestDistance = getNearestMarkerDistance(marker);
+                        const nearestDistanceText = nearestDistance ? 
+                            formatDistanceUnits(nearestDistance.toFixed(2)) : 'No other markers';
+                        
+                        // Update the tooltip content
+                        const latlng = marker.getLatLng();
+                        const coords = formatGPSCoordinates(latlng);
+                        const timezone = getTimezoneInfo(latlng);
+                        
+                        const mapCenter = window.globals.map.getCenter();
+                        const distanceToCenter = formatDistanceUnits(latlng.distanceTo(mapCenter).toFixed(2));
+                        const bearing = calculateBearing(mapCenter, latlng);
+                        const direction = getCardinalDirection(parseFloat(bearing));
+                        const zoomLevel = window.globals.map.getZoom();
+                        
+                        let tooltipContent = `<strong>Marker #${marker.markerNumber}</strong><br>`;
+                        tooltipContent += `Location: ${coords}<br>`;
+                        tooltipContent += `Timezone: ${timezone}<br>`;
+                        tooltipContent += `Placed: ${marker.placedAt}<br>`;
+                        tooltipContent += `Distance to center: ${distanceToCenter}<br>`;
+                        tooltipContent += `Bearing: ${bearing}° (${direction})<br>`;
+                        tooltipContent += `Nearest marker: ${nearestDistanceText}<br>`;
+                        tooltipContent += `Zoom level: ${zoomLevel}<br>`;
+                        tooltipContent += `<em>Click to copy info</em>`;
+                        
+                        // Update tooltip
+                        marker.setTooltipContent(tooltipContent);
+                        makeTooltipCopyable(marker, tooltipContent);
+                    });
+                }
+                
+                // Helper function to get center coordinates for different shape types
+                function getShapeCenter(layer) {
+                    if (layer instanceof L.Circle) {
+                        return layer.getLatLng();
+                    } else if (layer instanceof L.Rectangle) {
+                        return layer.getBounds().getCenter();
+                    } else if (layer instanceof L.Polygon) {
+                        // Calculate centroid of polygon
+                        const latlngs = layer.getLatLngs();
+                        let points = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+                        
+                        if (points.length === 0) return null;
+                        
+                        let latSum = 0, lngSum = 0;
+                        points.forEach(point => {
+                            latSum += point.lat;
+                            lngSum += point.lng;
+                        });
+                        
+                        return L.latLng(latSum / points.length, lngSum / points.length);
+                    } else if (layer instanceof L.Polyline) {
+                        // Calculate center point of polyline
+                        const latlngs = layer.getLatLngs();
+                        if (latlngs.length === 0) return null;
+                        
+                        const midIndex = Math.floor(latlngs.length / 2);
+                        return latlngs[midIndex];
+                    }
+                    return null;
+                }
+                
+                // Helper function to convert area from m² to multiple units
+                function formatAreaUnits(areaInM2) {
+                    const area = parseFloat(areaInM2);
+                    
+                    // Conversion factors
+                    const toKm2 = area * 0.000001;
+                    const toMi2 = area * 0.000000386102;
+                    const toHectares = area * 0.0001;
+                    const toAcres = area * 0.000247105;
+                    
+                    // Format based on area size for readability
+                    let formattedArea = `${area.toFixed(2)} m²`;
+                    
+                    if (area >= 10000) { // >= 1 hectare
+                        formattedArea += `<br>${toKm2.toFixed(6)} km²`;
+                        formattedArea += `<br>${toHectares.toFixed(4)} hectares`;
+                        formattedArea += `<br>${toAcres.toFixed(4)} acres`;
+                        formattedArea += `<br>${toMi2.toFixed(6)} mi²`;
+                    } else if (area >= 1000) { // >= 1000 m²
+                        formattedArea += `<br>${toHectares.toFixed(4)} hectares`;
+                        formattedArea += `<br>${toAcres.toFixed(4)} acres`;
+                    }
+                    
+                    return formattedArea;
+                }
+                
                 // Custom circle handler to display diameter and area
                 function attachCircleDiameterTooltip(circle) {
                     const diameterValue = calculateCircleDiameter(circle);
                     const areaValue = calculateCircleArea(circle);
-                    const tooltipContent = `Diameter: ${diameterValue} m<br>Area: ${areaValue} m²`;
+                    const formattedDiameter = formatDistanceUnits(diameterValue);
+                    const formattedArea = formatAreaUnits(areaValue);
+                    const center = getShapeCenter(circle);
+                    const centerCoords = center ? formatGPSCoordinates(center) : 'N/A';
+                    const tooltipContent = `Diameter: ${formattedDiameter}<br>Area: ${formattedArea}<br>Center: ${centerCoords}`;
                     
                     circle.bindTooltip(tooltipContent, {
                         permanent: true,
@@ -1120,9 +1472,13 @@
                         className: 'dimension-tooltip'
                     }).openTooltip();
                     
+                    // Add click-to-copy functionality
+                    makeTooltipCopyable(circle, tooltipContent);
+                    
                     // Store the measurements as properties of the circle
                     circle.diameter = diameterValue;
                     circle.area = areaValue;
+                    circle.center = centerCoords;
                 }
                 
                 // Helper function to calculate rectangle dimensions and area in meters
@@ -1150,7 +1506,12 @@
                 // Custom rectangle handler to display dimensions and area
                 function attachRectangleDimensionsTooltip(rectangle) {
                     const dimensions = calculateRectangleDimensions(rectangle);
-                    const tooltipContent = `Width: ${dimensions.width} m<br>Height: ${dimensions.height} m<br>Area: ${dimensions.area} m²`;
+                    const formattedWidth = formatDistanceUnits(dimensions.width);
+                    const formattedHeight = formatDistanceUnits(dimensions.height);
+                    const formattedArea = formatAreaUnits(dimensions.area);
+                    const center = getShapeCenter(rectangle);
+                    const centerCoords = center ? formatGPSCoordinates(center) : 'N/A';
+                    const tooltipContent = `Width: ${formattedWidth}<br>Height: ${formattedHeight}<br>Area: ${formattedArea}<br>Center: ${centerCoords}`;
                     
                     rectangle.bindTooltip(tooltipContent, {
                         permanent: true,
@@ -1158,10 +1519,14 @@
                         className: 'dimension-tooltip'
                     }).openTooltip();
                     
+                    // Add click-to-copy functionality
+                    makeTooltipCopyable(rectangle, tooltipContent);
+                    
                     // Store the dimensions as properties of the rectangle
                     rectangle.width = dimensions.width;
                     rectangle.height = dimensions.height;
                     rectangle.area = dimensions.area;
+                    rectangle.center = centerCoords;
                 }
                 
                 // Helper function to calculate polygon perimeter and area
@@ -1200,7 +1565,11 @@
                 // Custom polygon handler to display perimeter and area
                 function attachPolygonMeasurementsTooltip(polygon) {
                     const measurements = calculatePolygonMeasurements(polygon);
-                    const tooltipContent = `Perimeter: ${measurements.perimeter} m<br>Area: ${measurements.area} m²`;
+                    const formattedPerimeter = formatDistanceUnits(measurements.perimeter);
+                    const formattedArea = formatAreaUnits(measurements.area);
+                    const center = getShapeCenter(polygon);
+                    const centerCoords = center ? formatGPSCoordinates(center) : 'N/A';
+                    const tooltipContent = `Perimeter: ${formattedPerimeter}<br>Area: ${formattedArea}<br>Center: ${centerCoords}`;
                     
                     polygon.bindTooltip(tooltipContent, {
                         permanent: true,
@@ -1208,9 +1577,13 @@
                         className: 'dimension-tooltip'
                     }).openTooltip();
                     
+                    // Add click-to-copy functionality
+                    makeTooltipCopyable(polygon, tooltipContent);
+                    
                     // Store the measurements as properties of the polygon
                     polygon.perimeter = measurements.perimeter;
                     polygon.area = measurements.area;
+                    polygon.center = centerCoords;
                 }
                 
                 // Helper function to calculate polyline length
@@ -1230,7 +1603,10 @@
                 // Custom polyline handler to display length
                 function attachPolylineLengthTooltip(polyline) {
                     const length = calculatePolylineLength(polyline);
-                    const tooltipContent = `Length: ${length} m`;
+                    const formattedLength = formatDistanceUnits(length);
+                    const center = getShapeCenter(polyline);
+                    const centerCoords = center ? formatGPSCoordinates(center) : 'N/A';
+                    const tooltipContent = `Length: ${formattedLength}<br>Center: ${centerCoords}`;
                     
                     polyline.bindTooltip(tooltipContent, {
                         permanent: true,
@@ -1238,8 +1614,12 @@
                         className: 'dimension-tooltip'
                     }).openTooltip();
                     
+                    // Add click-to-copy functionality
+                    makeTooltipCopyable(polyline, tooltipContent);
+                    
                     // Store the length as a property of the polyline
                     polyline.length = length;
+                    polyline.center = centerCoords;
                 }
 
                 // Add custom styles for the dimension tooltips
@@ -1253,6 +1633,31 @@
                         padding: 4px 8px;
                         border-radius: 4px;
                         font-size: 12px;
+                        cursor: pointer;
+                        user-select: none;
+                        transition: background-color 0.2s ease;
+                    }
+                    .dimension-tooltip:hover {
+                        background: rgba(0, 0, 0, 0.9);
+                    }
+                    .marker-info-tooltip {
+                        background: rgba(0, 51, 102, 0.9);
+                        border: 2px solid #007acc;
+                        color: white;
+                        font-weight: bold;
+                        padding: 8px 12px;
+                        border-radius: 8px;
+                        font-size: 11px;
+                        cursor: pointer;
+                        user-select: none;
+                        transition: all 0.2s ease;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                        max-width: 250px;
+                        line-height: 1.3;
+                    }
+                    .marker-info-tooltip:hover {
+                        background: rgba(0, 51, 102, 1);
+                        border-color: #0099ff;
                     }
                 `;
                 document.head.appendChild(customStyles);
