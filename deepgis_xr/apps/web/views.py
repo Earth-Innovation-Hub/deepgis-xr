@@ -1018,4 +1018,102 @@ def label_3d_sigma(request):
     }
     context['optimization_info'] = optimization_info
     
-    return render(request, 'web/label_3D_sigma.html', context) 
+    return render(request, 'web/label_3D_sigma.html', context)
+
+def label_topology(request):
+    """
+    Cesium hybrid 2D/3D viewer combining the best features from both 2D and 3D applications.
+    This view provides:
+        - 2D/3D/Columbus view modes
+        - Advanced measurement tools
+        - 3D terrain and models support
+        - Temporal data layers
+        - Real-time statistics
+        - Performance monitoring
+    """
+    context = {}
+    
+    # Add viewer configuration information
+    viewer_info = {
+        'version': 'Hybrid',
+        'engine': 'Cesium.js',
+        'features': [
+            'Multiple view modes (2D/3D/Columbus)',
+            'Interactive measurement tools',
+            '3D terrain visualization', 
+            'GLTF/GLB model loading',
+            'Temporal data layer support',
+            'Real-time performance monitoring',
+            'Responsive design with mobile support'
+        ],
+        'data_sources': [
+            'Custom MBTiles layers',
+            'OpenStreetMap',
+            'Satellite imagery',
+            'World terrain data',
+            '3D models (GLTF/GLB)'
+        ]
+    }
+    context['viewer_info'] = viewer_info
+    
+    return render(request, 'web/label_topology.html', context)
+
+@csrf_exempt
+def elevation_proxy(request):
+    """Proxy for elevation data APIs to avoid CORS issues."""
+    
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        lat = float(request.GET.get('lat'))
+        lng = float(request.GET.get('lng'))
+        
+        # Validate coordinates
+        if not (-90 <= lat <= 90) or not (-180 <= lng <= 180):
+            return JsonResponse({'error': 'Invalid coordinates'}, status=400)
+        
+        # Try multiple elevation APIs
+        elevation_apis = [
+            {
+                'name': 'USGS',
+                'url': f'https://nationalmap.gov/epqs/pqs.php?x={lng}&y={lat}&units=Meters&output=json',
+                'parser': lambda data: data.get('USGS_Elevation_Point_Query_Service', {}).get('Elevation_Query', {}).get('Elevation')
+            },
+            {
+                'name': 'OpenTopoData',
+                'url': f'https://api.opentopodata.org/v1/srtm30m?locations={lat},{lng}',
+                'parser': lambda data: data.get('results', [{}])[0].get('elevation')
+            }
+        ]
+        
+        for api in elevation_apis:
+            try:
+                response = requests.get(api['url'], timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    elevation = api['parser'](data)
+                    
+                    if elevation is not None and elevation != -1000000:  # USGS uses -1000000 for no data
+                        return JsonResponse({
+                            'elevation': float(elevation),
+                            'source': api['name'],
+                            'coordinates': {'lat': lat, 'lng': lng}
+                        })
+            except Exception as e:
+                print(f"Error with {api['name']} API: {str(e)}")
+                continue
+        
+        # If all APIs fail, return no data available
+        return JsonResponse({
+            'elevation': None,
+            'source': 'none',
+            'coordinates': {'lat': lat, 'lng': lng},
+            'message': 'No elevation data available for this location'
+        })
+        
+    except ValueError:
+        return JsonResponse({'error': 'Invalid latitude or longitude values'}, status=400)
+    except Exception as e:
+        print(f'Elevation proxy error: {str(e)}')
+        return JsonResponse({'error': 'Internal server error'}, status=500) 

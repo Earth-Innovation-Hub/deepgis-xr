@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DeepGIS Topology Hybrid Viewer</title>
+    
+    <!-- CSRF Token for API requests -->
+    {% csrf_token %}
+    
+    <!-- Cesium Dependencies -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <!-- Additional Dependencies -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+    
+    <!-- Suppress Cesium Ion warnings immediately after Cesium loads -->
+    <script>
+        // Set Cesium Ion access token to enable 3D tiles and terrain
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+    </script>
+    
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+
+        #cesiumContainer {
+            position: absolute;
+            top: 0;
+            right: 350px;
+            bottom: 0;
+            left: 0;
+            width: auto;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #sidebar-wrapper {
+            width: 350px;
+            position: fixed;
+            height: 100%;
+            z-index: 1000;
+            top: 0;
+            right: 0;
+            background: #1e293b;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            overflow-y: auto;
+            transform: translateX(0);
+            transition: transform 0.3s ease;
+        }
+
+        /* Scrollbar styling */
+        #sidebar-wrapper::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-track {
+            background: #334155;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb {
+            background: #64748b;
+            border-radius: 2px;
+        }
+
+        .mobile-toggle {
+            position: fixed;
+            top: 15px;
+            right: 365px;
+            z-index: 2000;
+            background: #3b82f6;
+            border: none;
+            border-radius: 6px;
+            padding: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            display: none;
+            color: white;
+            transition: background-color 0.2s ease;
+        }
+
+        .mobile-toggle:hover {
+            background: #2563eb;
+        }
+
+        .sidebar-header {
+            background: #0f172a;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid #334155;
+        }
+
+        .sidebar-header h5 {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .sidebar-header i {
+            margin-right: 8px;
+            color: #3b82f6;
+        }
+
+        .layer-controls {
+            padding: 0;
+        }
+
+        .layer-group {
+            margin: 15px;
+            background: #334155;
+            border-radius: 8px;
+            padding: 15px;
+            border: 1px solid #475569;
+        }
+
+        .layer-group-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #f1f5f9;
+            border-bottom: 1px solid #475569;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .layer-group-title i {
+            color: #3b82f6;
+        }
+
+        .form-select {
+            background: #475569;
+            border: 1px solid #64748b;
+            color: #f1f5f9;
+            border-radius: 6px;
+            padding: 8px 10px;
+            transition: border-color 0.2s ease;
+        }
+
+        .form-select:focus {
+            background: #475569;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+        }
+
+        .form-check {
+            padding: 6px 0;
+            transition: background-color 0.2s ease;
+        }
+
+        .form-check:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 4px;
+            padding-left: 6px;
+        }
+
+        .form-check-input {
+            background: #64748b;
+            border: 1px solid #94a3b8;
+            border-radius: 3px;
+        }
+
+        .form-check-input:checked {
+            background: #3b82f6;
+            border-color: #3b82f6;
+        }
+
+        .form-check-label {
+            color: #cbd5e1;
+            font-weight: 500;
+            margin-left: 6px;
+        }
+
+        .form-check:hover .form-check-label {
+            color: #f1f5f9;
+        }
+
+        .btn {
+            border-radius: 6px;
+            font-weight: 500;
+            transition: background-color 0.2s ease;
+            margin: 2px 0;
+            width: 100%;
+        }
+
+        .btn-primary {
+            background: #3b82f6;
+            border-color: #3b82f6;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-success {
+            background: #10b981;
+            border-color: #10b981;
+        }
+
+        .btn-warning {
+            background: #f59e0b;
+            border-color: #f59e0b;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            border-color: #ef4444;
+        }
+
+        /* Statistics Section */
+        .statistics-section {
+            background: #7c3aed;
+            border: 1px solid #8b5cf6;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 15px;
+        }
+
+        .statistics-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #f1f5f9;
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 8px;
+        }
+
+        .statistics-title i {
+            color: #a78bfa;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 200px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 8px;
+        }
+
+        /* View Mode Controls */
+        .view-controls {
+            background: #059669;
+            border: 1px solid #10b981;
+        }
+
+        .view-controls .btn {
+            margin: 3px 0;
+            font-size: 0.85rem;
+        }
+
+        /* Measurement Controls */
+        .measurement-controls {
+            background: #dc2626;
+            border: 1px solid #ef4444;
+        }
+
+        .measurements-list {
+            max-height: 150px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+            padding: 8px;
+            margin-top: 8px;
+        }
+
+        .measurement-item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            padding: 6px;
+            margin: 4px 0;
+            font-size: 0.85rem;
+            color: #f1f5f9;
+        }
+
+        /* Status Indicators */
+        .status-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: #059669;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            z-index: 1000;
+        }
+
+        .performance-indicator {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            background: #7c3aed;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            z-index: 1000;
+            font-size: 0.8rem;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .mobile-toggle {
+                display: block;
+                right: 15px;
+            }
+
+            #sidebar-wrapper {
+                transform: translateX(100%);
+                width: 85%;
+                max-width: 350px;
+            }
+
+            #cesiumContainer {
+                right: 0;
+            }
+
+            #wrapper.show-sidebar #sidebar-wrapper {
+                transform: translateX(0);
+            }
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            color: white;
+            font-size: 18px;
+        }
+
+        .loading-content {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        .loading-progress {
+            width: 200px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            margin: 15px 0;
+            overflow: hidden;
+        }
+
+        .loading-bar {
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        /* Toolbar styling */
+        .cesium-viewer-toolbar {
+            background: rgba(42, 42, 42, 0.8) !important;
+        }
+
+        .cesium-button {
+            background: rgba(48, 51, 107, 0.8) !important;
+        }
+
+        .cesium-viewer-geocoderContainer {
+            background: rgba(42, 42, 42, 0.8) !important;
+        }
+    </style>
+</head>
+
+<body>
+    <button class="mobile-toggle" id="sidebarToggle">
+        <i class="fa fa-bars"></i>
+    </button>
+
+    <div id="wrapper">
+        <div id="sidebar-wrapper">
+            <div class="sidebar-content">
+                <div class="sidebar-header">
+                    <h5><i class="fas fa-globe"></i> DeepGIS Topology</h5>
+                    <small>Hybrid 2D/3D Viewer</small>
+                </div>
+                
+                <div class="layer-controls">
+                    <!-- Date Selection -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-calendar-alt"></i> Available Dates
+                        </div>
+                        <div class="form-group mb-3">
+                            <select class="form-select" id="dateSelect">
+                                <!-- Will be populated dynamically -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Layer Types -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-layer-group"></i> Layer Types
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="rasterLayerToggle" checked>
+                            <label class="form-check-label" for="rasterLayerToggle">
+                                <i class="fas fa-image me-2"></i>Raster Layer
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="vectorLayerToggle" checked>
+                            <label class="form-check-label" for="vectorLayerToggle">
+                                <i class="fas fa-vector-square me-2"></i>Vector Layer
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="terrainToggle">
+                            <label class="form-check-label" for="terrainToggle">
+                                <i class="fas fa-mountain me-2"></i>3D Terrain
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="modelsToggle">
+                            <label class="form-check-label" for="modelsToggle">
+                                <i class="fas fa-cube me-2"></i>3D Models
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- View Controls -->
+                    <div class="layer-group view-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-eye"></i> View Controls
+                        </div>
+                        <button class="btn btn-primary" id="view2D">
+                            <i class="fas fa-map me-2"></i>2D Map View
+                        </button>
+                        <button class="btn btn-primary" id="view3D">
+                            <i class="fas fa-cube me-2"></i>3D Globe View
+                        </button>
+                        <button class="btn btn-primary" id="viewColumbus">
+                            <i class="fas fa-compass me-2"></i>Columbus View
+                        </button>
+                        <button class="btn btn-success" id="homeView">
+                            <i class="fas fa-home me-2"></i>Home View
+                        </button>
+                    </div>
+
+                    <!-- Measurement Tools -->
+                    <div class="layer-group measurement-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-ruler"></i> Measurement Tools
+                        </div>
+                        <button class="btn btn-warning" id="measureDistance">
+                            <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+                        </button>
+                        <button class="btn btn-warning" id="measureArea">
+                            <i class="fas fa-draw-polygon me-2"></i>Measure Area
+                        </button>
+                        <button class="btn btn-warning" id="measureHeight">
+                            <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+                        </button>
+                        <button class="btn btn-danger" id="clearMeasurements">
+                            <i class="fas fa-trash me-2"></i>Clear All
+                        </button>
+                        
+                        <div class="measurements-list" id="measurementsList">
+                            <small>No measurements yet</small>
+                        </div>
+                    </div>
+
+                    <!-- 3D Model Controls -->
+                    <div class="layer-group" id="modelControls" style="display: none;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-cube"></i> 3D Model Controls
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label" style="color: #cbd5e1;">Model URL or Ion Asset ID:</label>
+                            <input type="text" class="form-control" id="modelUrl" 
+                                   value="75343"
+                                   placeholder="Enter Ion Asset ID (e.g., 75343) or URL"
+                                   style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                        </div>
+                        <button class="btn btn-success" id="loadModel">
+                            <i class="fas fa-download me-2"></i>Load Model
+                        </button>
+                        <button class="btn btn-danger" id="removeModel">
+                            <i class="fas fa-trash me-2"></i>Remove Model
+                        </button>
+                    </div>
+
+                    <!-- Base Map Selection -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-map"></i> Base Map
+                        </div>
+                        <div class="form-group">
+                            <select class="form-select" id="baseMapSelect">
+                                <option value="ion_satellite">Ion Satellite</option>
+                                <option value="ion_streets">Ion Streets</option>
+                                <option value="osm">OpenStreetMap</option>
+                                <option value="satellite">Bing Satellite</option>
+                                <option value="bing">Bing Streets</option>
+                                <option value="mapbox">Mapbox Streets</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics Section -->
+                <div class="statistics-section">
+                    <div class="statistics-title">
+                        <i class="fas fa-chart-bar"></i> Statistics
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="histogram"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="cesiumContainer"></div>
+
+    <!-- Status Indicators -->
+    <div class="status-indicator" id="statusIndicator">
+        Initializing Cesium...
+    </div>
+
+    <div class="performance-indicator" id="performanceIndicator">
+        FPS: --
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <i class="fas fa-globe fa-3x fa-spin" style="color: #3b82f6; margin-bottom: 20px;"></i>
+            <div>Initializing DeepGIS Topology Viewer...</div>
+            <div class="loading-progress">
+                <div class="loading-bar" id="loadingBar"></div>
+            </div>
+            <div id="loadingStatus">Setting up 3D environment...</div>
+        </div>
+    </div>
+
+    <script>
+        // Global state management
+        window.DeepGISTopology = {
+            viewer: null,
+            currentLayers: {
+                raster: null,
+                vector: null,
+                terrain: null,
+                models: []
+            },
+            measurements: [],
+            histogram_chart: null,
+            isInitialized: false,
+            MBTILES_SERVER: window.location.protocol === 'https:' ? 
+                'https://mbtiles.deepgis.org' : 
+                'http://mbtiles.deepgis.org',
+            TOPOLOGY_SERVER: window.location.protocol === 'https:' ?
+                'https://localhost:8092' :
+                'http://localhost:8092'
+        };
+
+        // Initialize Cesium viewer
+        async function initializeCesium() {
+            try {
+                updateLoadingStatus('Configuring Cesium...', 20);
+
+                updateLoadingStatus('Creating viewer...', 40);
+
+                // Create the Cesium viewer with Ion services enabled
+                const viewer = new Cesium.Viewer('cesiumContainer', {
+                    animation: false,
+                    baseLayerPicker: false,
+                    fullscreenButton: true,
+                    geocoder: true,  // Enable geocoder with Ion
+                    homeButton: true,
+                    infoBox: true,
+                    sceneModePicker: true,
+                    selectionIndicator: true,
+                    timeline: false,
+                    navigationHelpButton: true,
+                    navigationInstructionsInitiallyVisible: false,
+                    scene3DOnly: false,
+                    // Use Ion's default world terrain
+                    terrain: Cesium.Terrain.fromWorldTerrain()
+                });
+
+                window.DeepGISTopology.viewer = viewer;
+
+                updateLoadingStatus('Setting up scene...', 60);
+
+                // Configure the scene
+                viewer.scene.globe.enableLighting = true;
+                viewer.scene.fog.enabled = true;
+                viewer.scene.fog.density = 0.0001;
+
+                // Set initial view to a nice location
+                viewer.camera.setView({
+                    destination: Cesium.Cartesian3.fromDegrees(-111.26536, 33.78202, 1000),
+                    orientation: {
+                        heading: Cesium.Math.toRadians(0),
+                        pitch: Cesium.Math.toRadians(-45),
+                        roll: 0.0
+                    }
+                });
+
+                updateLoadingStatus('Setting up event handlers...', 80);
+
+                // Set up event handlers
+                setupEventHandlers(viewer);
+
+                updateLoadingStatus('Loading available data...', 90);
+
+                // Initialize available layers
+                await initializeAvailableLayers();
+
+                updateLoadingStatus('Complete!', 100);
+
+                // Hide loading overlay
+                setTimeout(() => {
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                    document.getElementById('statusIndicator').textContent = 'Ready';
+                    window.DeepGISTopology.isInitialized = true;
+                }, 500);
+
+                // Initialize histogram
+                initializeHistogram();
+
+                // Start performance monitoring
+                startPerformanceMonitoring(viewer);
+
+                return viewer;
+
+            } catch (error) {
+                console.error('Error initializing Cesium:', error);
+                document.getElementById('loadingStatus').textContent = 'Error: ' + error.message;
+                document.getElementById('statusIndicator').textContent = 'Error';
+                document.getElementById('statusIndicator').style.background = '#ef4444';
+            }
+        }
+
+        // Enhanced terrain toggle function for Ion services
+        function toggleTerrain(viewer, enabled) {
+            if (enabled) {
+                // Use Ion's world terrain
+                viewer.scene.terrainProvider = Cesium.createWorldTerrain();
+                updateStatusIndicator('Ion 3D Terrain enabled');
+            } else {
+                viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                updateStatusIndicator('3D Terrain disabled');
+            }
+        }
+
+        // Enhanced model loading with Ion 3D Tiles support
+        async function loadGLTFModel(viewer) {
+            const modelUrl = document.getElementById('modelUrl').value.trim();
+            if (!modelUrl) {
+                updateStatusIndicator('Please enter a model URL or Ion Asset ID');
+                return;
+            }
+
+            updateStatusIndicator('Loading 3D model...');
+
+            try {
+                // Check if it's an Ion Asset ID (numeric)
+                if (/^\d+$/.test(modelUrl)) {
+                    // Load from Ion using Asset ID
+                    const ionAssetId = parseInt(modelUrl);
+                    const tileset = await Cesium.Cesium3DTileset.fromIonAssetId(ionAssetId);
+                    viewer.scene.primitives.add(tileset);
+                    window.DeepGISTopology.currentLayers.models.push(tileset);
+                    
+                    // Zoom to tileset
+                    viewer.zoomTo(tileset);
+                    updateStatusIndicator(`Ion 3D Tileset ${ionAssetId} loaded successfully`);
+                    showSnackBar(`3D Tileset loaded from Cesium Ion (Asset ID: ${ionAssetId})`);
+                    
+                } else if (modelUrl.endsWith('tileset.json') || modelUrl.includes('/models/')) {
+                    // Try to load as 3D Tiles from custom server or URL
+                    let tilesetUrl = modelUrl;
+                    if (!modelUrl.startsWith('http')) {
+                        tilesetUrl = `${window.DeepGISTopology.TOPOLOGY_SERVER}/models/${modelUrl}/tileset.json`;
+                    }
+                    
+                    const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl);
+                    viewer.scene.primitives.add(tileset);
+                    window.DeepGISTopology.currentLayers.models.push(tileset);
+                    
+                    // Zoom to tileset
+                    viewer.zoomTo(tileset);
+                    updateStatusIndicator('3D Tileset loaded successfully');
+                    showSnackBar('3D Tileset loaded from URL');
+                    
+                } else {
+                    // Load as regular GLTF model
+                    // Validate URL format
+                    try {
+                        new URL(modelUrl);
+                    } catch (e) {
+                        updateStatusIndicator('Invalid URL format');
+                        return;
+                    }
+
+                    // Get current camera position for model placement
+                    const cameraPosition = viewer.camera.positionCartographic;
+                    const modelPosition = Cesium.Cartesian3.fromRadians(
+                        cameraPosition.longitude,
+                        cameraPosition.latitude,
+                        0 // Place on ground
+                    );
+
+                    // Use the correct API for Cesium 1.111+
+                    const entity = viewer.entities.add({
+                        name: 'GLTF Model',
+                        position: modelPosition,
+                        model: {
+                            uri: modelUrl,
+                            scale: 1.0,
+                            minimumPixelSize: 64,
+                            maximumScale: 10000,
+                            runAnimations: false,
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+                        }
+                    });
+
+                    window.DeepGISTopology.currentLayers.models.push(entity);
+                    updateStatusIndicator('3D model loaded successfully');
+
+                    // Zoom to model with some distance
+                    viewer.zoomTo(entity, new Cesium.HeadingPitchRange(0, -0.5, 200));
+                    showSnackBar('3D model loaded at current view location');
+                }
+
+            } catch (error) {
+                console.error('Error loading model:', error);
+                updateStatusIndicator('Error loading model: ' + error.message);
+                showSnackBar('Failed to load 3D model. Check console for details.');
+            }
+        }
+
+        // Enhanced elevation measurement using custom server
+        function startHeightMeasurement(viewer) {
+            clearActiveHandlers();
+            updateStatusIndicator('Click a point to measure height');
+            
+            const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+            
+            handler.setInputAction((click) => {
+                const position = viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+                if (!position) return;
+
+                // Get cartographic position
+                const cartographic = Cesium.Cartographic.fromCartesian(position);
+                const longitude = Cesium.Math.toDegrees(cartographic.longitude);
+                const latitude = Cesium.Math.toDegrees(cartographic.latitude);
+                
+                // Try to get elevation from custom server first
+                fetch(`${window.DeepGISTopology.TOPOLOGY_SERVER}/elevation?lon=${longitude}&lat=${latitude}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        let height = 0;
+                        if (data.elevations && Object.keys(data.elevations).length > 0) {
+                            // Use first available elevation
+                            const firstDataset = Object.keys(data.elevations)[0];
+                            height = data.elevations[firstDataset] || 0;
+                            console.log(`Using elevation from ${firstDataset}: ${height}m`);
+                        } else {
+                            // Fallback to terrain sampling
+                            return Cesium.sampleTerrain(viewer.terrainProvider, 11, [cartographic]);
+                        }
+                        
+                        return [{ height }];
+                    })
+                    .catch(() => {
+                        // Fallback to Cesium terrain sampling
+                        return Cesium.sampleTerrain(viewer.terrainProvider, 11, [cartographic]);
+                    })
+                    .then((results) => {
+                        const height = results[0].height || 0;
+                        
+                        // Add point marker
+                        const point = viewer.entities.add({
+                            position: position,
+                            point: {
+                                pixelSize: 10,
+                                color: Cesium.Color.YELLOW,
+                                outlineColor: Cesium.Color.BLACK,
+                                outlineWidth: 2
+                            }
+                        });
+
+                        // Add label
+                        const label = viewer.entities.add({
+                            position: position,
+                            label: {
+                                text: `Height: ${height.toFixed(2)} m`,
+                                font: '14pt sans-serif',
+                                fillColor: Cesium.Color.WHITE,
+                                outlineColor: Cesium.Color.BLACK,
+                                outlineWidth: 2,
+                                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                                pixelOffset: new Cesium.Cartesian2(0, -30)
+                            }
+                        });
+
+                        // Store measurement
+                        window.DeepGISTopology.measurements.push({
+                            type: 'height',
+                            value: height,
+                            entities: [point, label]
+                        });
+
+                        updateMeasurementsList();
+                        updateStatusIndicator('Height measured');
+                    })
+                    .catch(error => {
+                        console.error('Error measuring height:', error);
+                        updateStatusIndicator('Error measuring height');
+                    });
+
+                handler.destroy();
+            }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+        }
+
+        // Update loading status
+        function updateLoadingStatus(message, progress) {
+            document.getElementById('loadingStatus').textContent = message;
+            document.getElementById('loadingBar').style.width = progress + '%';
+        }
+
+        // Set up event handlers
+        function setupEventHandlers(viewer) {
+            // View mode controls
+            document.getElementById('view2D').addEventListener('click', () => {
+                viewer.scene.mode = Cesium.SceneMode.SCENE2D;
+                updateStatusIndicator('2D Map View');
+            });
+
+            document.getElementById('view3D').addEventListener('click', () => {
+                viewer.scene.mode = Cesium.SceneMode.SCENE3D;
+                updateStatusIndicator('3D Globe View');
+            });
+
+            document.getElementById('viewColumbus').addEventListener('click', () => {
+                viewer.scene.mode = Cesium.SceneMode.COLUMBUS_VIEW;
+                updateStatusIndicator('Columbus View');
+            });
+
+            document.getElementById('homeView').addEventListener('click', () => {
+                viewer.camera.setView({
+                    destination: Cesium.Cartesian3.fromDegrees(-111.26536, 33.78202, 1000),
+                    orientation: {
+                        heading: Cesium.Math.toRadians(0),
+                        pitch: Cesium.Math.toRadians(-45),
+                        roll: 0.0
+                    }
+                });
+                updateStatusIndicator('Home View');
+            });
+
+            // Measurement tools
+            let measurementHandler = null;
+
+            document.getElementById('measureDistance').addEventListener('click', () => {
+                startDistanceMeasurement(viewer);
+            });
+
+            document.getElementById('measureArea').addEventListener('click', () => {
+                startAreaMeasurement(viewer);
+            });
+
+            document.getElementById('measureHeight').addEventListener('click', () => {
+                startHeightMeasurement(viewer);
+            });
+
+            document.getElementById('clearMeasurements').addEventListener('click', () => {
+                clearAllMeasurements(viewer);
+            });
+
+            // Layer toggles
+            document.getElementById('terrainToggle').addEventListener('change', (e) => {
+                toggleTerrain(viewer, e.target.checked);
+            });
+
+            document.getElementById('modelsToggle').addEventListener('change', (e) => {
+                toggleModelControls(e.target.checked);
+            });
+
+            // Model controls
+            document.getElementById('loadModel').addEventListener('click', () => {
+                loadGLTFModel(viewer);
+            });
+
+            document.getElementById('removeModel').addEventListener('click', () => {
+                removeModels(viewer);
+            });
+
+            // Base map selection
+            document.getElementById('baseMapSelect').addEventListener('change', (e) => {
+                changeBaseMap(viewer, e.target.value);
+            });
+
+            // Date selection
+            document.getElementById('dateSelect').addEventListener('change', (e) => {
+                loadLayersForDate(viewer, e.target.value);
+            });
+
+            // Sidebar toggle
+            document.getElementById('sidebarToggle').addEventListener('click', () => {
+                const wrapper = document.getElementById('wrapper');
+                wrapper.classList.toggle('show-sidebar');
+                setTimeout(() => {
+                    viewer.resize();
+                }, 300);
+            });
+        }
+
+        // Initialize available layers
+        async function initializeAvailableLayers() {
+            try {
+                const response = await fetch(`${window.DeepGISTopology.MBTILES_SERVER}/data.json`);
+                if (!response.ok) throw new Error('Failed to fetch layers');
+                const data = await response.json();
+
+                // Group layers by date
+                const layersByDate = {};
+                Object.entries(data).forEach(([id, info]) => {
+                    if (!info || typeof info !== 'object') return;
+                    
+                    let date = 'Unknown';
+                    const dateMatch = info.name.match(/BF_(\d{2}-\d{2}-\d{4})/);
+                    const altDateMatch = info.name.match(/bf_(\w+)_(\d{4})/);
+                    
+                    if (dateMatch) {
+                        date = dateMatch[1];
+                    } else if (altDateMatch) {
+                        const month = altDateMatch[1];
+                        const year = altDateMatch[2];
+                        date = `${month}-${year}`;
+                    }
+                    
+                    if (!layersByDate[date]) {
+                        layersByDate[date] = { raster: null, vector: null };
+                    }
+
+                    const layerInfo = {
+                        id, name: info.name, format: info.format,
+                        minzoom: info.minzoom, maxzoom: info.maxzoom,
+                        bounds: info.bounds, center: info.center
+                    };
+
+                    if (info.format === 'pbf') {
+                        layersByDate[date].vector = layerInfo;
+                    } else {
+                        layersByDate[date].raster = layerInfo;
+                    }
+                });
+
+                // Populate date select
+                const dateSelect = document.getElementById('dateSelect');
+                const dates = Object.keys(layersByDate).sort((a, b) => {
+                    if (a === 'Unknown') return 1;
+                    if (b === 'Unknown') return -1;
+                    return b.localeCompare(a);
+                });
+
+                dates.forEach(date => {
+                    const option = document.createElement('option');
+                    option.value = date;
+                    option.textContent = date;
+                    dateSelect.appendChild(option);
+                });
+
+                // Store for later use
+                window.DeepGISTopology.layersByDate = layersByDate;
+
+            } catch (error) {
+                console.warn('Error loading available layers:', error);
+            }
+        }
+
+        // Load layers for selected date
+        async function loadLayersForDate(viewer, date) {
+            if (!window.DeepGISTopology.layersByDate) return;
+            
+            const layers = window.DeepGISTopology.layersByDate[date];
+            if (!layers) return;
+
+            updateStatusIndicator(`Loading layers for ${date}...`);
+
+            // Remove existing layers
+            if (window.DeepGISTopology.currentLayers.raster) {
+                viewer.imageryLayers.remove(window.DeepGISTopology.currentLayers.raster);
+                window.DeepGISTopology.currentLayers.raster = null;
+            }
+
+            // Load raster layer
+            if (layers.raster && document.getElementById('rasterLayerToggle').checked) {
+                try {
+                    const mbtilesId = getMbtilesId(layers.raster.name);
+                    const tileUrl = `${window.DeepGISTopology.MBTILES_SERVER}/data/${mbtilesId}/{z}/{x}/{y}.png`;
+                    
+                    const imageryProvider = new Cesium.UrlTemplateImageryProvider({
+                        url: tileUrl,
+                        maximumLevel: layers.raster.maxzoom || 22
+                    });
+
+                    window.DeepGISTopology.currentLayers.raster = viewer.imageryLayers.addImageryProvider(imageryProvider);
+                } catch (error) {
+                    console.warn('Error loading raster layer:', error);
+                }
+            }
+
+            updateStatusIndicator('Ready');
+        }
+
+        // Get normalized MBTiles ID
+        function getMbtilesId(layerName) {
+            let id = layerName.replace(/\.mbtiles$/, '');
+            const specialCases = {
+                'BF_12-20-2020': 'bf_dec_2020',
+                'bf_dec_2020_vector': 'bf_dec_2020',
+                'bf_dec_2020_alt': 'bf_dec_2020'
+            };
+            return specialCases[id] || id;
+        }
+
+        // Measurement functions
+        function startDistanceMeasurement(viewer) {
+            clearActiveHandlers();
+            updateStatusIndicator('Click two points to measure distance');
+            
+            let clickCount = 0;
+            let startPoint, endPoint;
+            let polyline;
+
+            const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+            
+            handler.setInputAction((click) => {
+                const position = viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+                if (!position) return;
+
+                clickCount++;
+
+                if (clickCount === 1) {
+                    startPoint = position;
+                    // Create preview line
+                    polyline = viewer.entities.add({
+                        polyline: {
+                            positions: [startPoint, startPoint],
+                            width: 3,
+                            material: Cesium.Color.YELLOW,
+                            clampToGround: true
+                        }
+                    });
+                } else if (clickCount === 2) {
+                    endPoint = position;
+                    
+                    // Update final line
+                    polyline.polyline.positions = [startPoint, endPoint];
+                    polyline.polyline.material = Cesium.Color.RED;
+
+                    // Calculate distance
+                    const distance = Cesium.Cartesian3.distance(startPoint, endPoint);
+                    const midpoint = Cesium.Cartesian3.midpoint(startPoint, endPoint, new Cesium.Cartesian3());
+
+                    // Add label
+                    const label = viewer.entities.add({
+                        position: midpoint,
+                        label: {
+                            text: `${distance.toFixed(2)} m`,
+                            font: '14pt sans-serif',
+                            fillColor: Cesium.Color.WHITE,
+                            outlineColor: Cesium.Color.BLACK,
+                            outlineWidth: 2,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            pixelOffset: new Cesium.Cartesian2(0, -20)
+                        }
+                    });
+
+                    // Store measurement
+                    window.DeepGISTopology.measurements.push({
+                        type: 'distance',
+                        value: distance,
+                        entities: [polyline, label]
+                    });
+
+                    updateMeasurementsList();
+                    updateStatusIndicator('Distance measured');
+                    handler.destroy();
+                }
+            }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+            // Mouse move for preview
+            handler.setInputAction((movement) => {
+                if (clickCount === 1 && polyline) {
+                    const position = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+                    if (position) {
+                        polyline.polyline.positions = [startPoint, position];
+                    }
+                }
+            }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+        }
+
+        function startAreaMeasurement(viewer) {
+            clearActiveHandlers();
+            updateStatusIndicator('Click points to create polygon, double-click to finish');
+            
+            let positions = [];
+            let polygon;
+
+            const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+            
+            handler.setInputAction((click) => {
+                const position = viewer.camera.pickEllipsoid(click.position, viewer.scene.globe.ellipsoid);
+                if (!position) return;
+
+                positions.push(position);
+
+                if (positions.length === 1) {
+                    // Create polygon
+                    polygon = viewer.entities.add({
+                        polygon: {
+                            hierarchy: new Cesium.CallbackProperty(() => new Cesium.PolygonHierarchy(positions), false),
+                            material: Cesium.Color.BLUE.withAlpha(0.3),
+                            outline: true,
+                            outlineColor: Cesium.Color.BLUE,
+                            height: 0
+                        }
+                    });
+                }
+            }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+
+            handler.setInputAction((doubleClick) => {
+                if (positions.length < 3) {
+                    updateStatusIndicator('Need at least 3 points for area measurement');
+                    return;
+                }
+
+                // Calculate area (simplified calculation)
+                const area = calculatePolygonArea(positions);
+                const center = Cesium.BoundingSphere.fromPoints(positions).center;
+
+                // Add label
+                const label = viewer.entities.add({
+                    position: center,
+                    label: {
+                        text: `${area.toFixed(2)} m²`,
+                        font: '14pt sans-serif',
+                        fillColor: Cesium.Color.WHITE,
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE
+                    }
+                });
+
+                // Store measurement
+                window.DeepGISTopology.measurements.push({
+                    type: 'area',
+                    value: area,
+                    entities: [polygon, label]
+                });
+
+                updateMeasurementsList();
+                updateStatusIndicator('Area measured');
+                handler.destroy();
+            }, Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+        }
+
+        function clearAllMeasurements(viewer) {
+            window.DeepGISTopology.measurements.forEach(measurement => {
+                measurement.entities.forEach(entity => {
+                    viewer.entities.remove(entity);
+                });
+            });
+            window.DeepGISTopology.measurements = [];
+            updateMeasurementsList();
+            updateStatusIndicator('Measurements cleared');
+        }
+
+        function clearActiveHandlers() {
+            // Clear any active measurement handlers
+            updateStatusIndicator('Ready');
+        }
+
+        function updateMeasurementsList() {
+            const container = document.getElementById('measurementsList');
+            if (window.DeepGISTopology.measurements.length === 0) {
+                container.innerHTML = '<small>No measurements yet</small>';
+                return;
+            }
+
+            container.innerHTML = window.DeepGISTopology.measurements.map((measurement, index) => {
+                let text = '';
+                switch (measurement.type) {
+                    case 'distance':
+                        text = `Distance: ${measurement.value.toFixed(2)} m`;
+                        break;
+                    case 'area':
+                        text = `Area: ${measurement.value.toFixed(2)} m²`;
+                        break;
+                    case 'height':
+                        text = `Height: ${measurement.value.toFixed(2)} m`;
+                        break;
+                }
+                return `<div class="measurement-item">${index + 1}. ${text}</div>`;
+            }).join('');
+        }
+
+        // Helper functions
+        function calculatePolygonArea(positions) {
+            // Simplified area calculation using Shoelace formula
+            // Convert to geographic coordinates for better accuracy
+            let area = 0;
+            const cartographics = positions.map(pos => Cesium.Cartographic.fromCartesian(pos));
+            
+            for (let i = 0; i < cartographics.length; i++) {
+                const j = (i + 1) % cartographics.length;
+                area += cartographics[i].longitude * cartographics[j].latitude;
+                area -= cartographics[j].longitude * cartographics[i].latitude;
+            }
+            
+            // Convert to square meters (approximate)
+            return Math.abs(area) * 6378137 * 6378137 / 2;
+        }
+
+        function toggleModelControls(show) {
+            document.getElementById('modelControls').style.display = show ? 'block' : 'none';
+        }
+
+        function removeModels(viewer) {
+            window.DeepGISTopology.currentLayers.models.forEach(model => {
+                viewer.entities.remove(model);
+            });
+            window.DeepGISTopology.currentLayers.models = [];
+            updateStatusIndicator('3D models removed');
+        }
+
+        function changeBaseMap(viewer, mapType) {
+            // Remove existing base layer
+            viewer.imageryLayers.removeAll();
+
+            let imageryProvider;
+            switch (mapType) {
+                case 'ion_satellite':
+                    imageryProvider = Cesium.createWorldImagery({
+                        style: Cesium.IonWorldImageryStyle.AERIAL
+                    });
+                    break;
+                case 'ion_streets':
+                    imageryProvider = Cesium.createWorldImagery({
+                        style: Cesium.IonWorldImageryStyle.ROAD
+                    });
+                    break;
+                case 'osm':
+                    imageryProvider = new Cesium.OpenStreetMapImageryProvider({
+                        url: 'https://a.tile.openstreetmap.org/'
+                    });
+                    break;
+                case 'satellite':
+                    imageryProvider = new Cesium.BingMapsImageryProvider({
+                        url: 'https://dev.virtualearth.net',
+                        key: 'YOUR_BING_MAPS_KEY', // You'll need a Bing Maps key
+                        mapStyle: Cesium.BingMapsStyle.AERIAL
+                    });
+                    break;
+                case 'bing':
+                    imageryProvider = new Cesium.BingMapsImageryProvider({
+                        url: 'https://dev.virtualearth.net',
+                        key: 'YOUR_BING_MAPS_KEY',
+                        mapStyle: Cesium.BingMapsStyle.ROAD
+                    });
+                    break;
+                case 'mapbox':
+                    imageryProvider = new Cesium.MapboxImageryProvider({
+                        accessToken: 'YOUR_MAPBOX_ACCESS_TOKEN',
+                        styleId: 'mapbox.streets'
+                    });
+                    break;
+                case 'none':
+                    updateStatusIndicator('Base map disabled');
+                    return;
+                default:
+                    imageryProvider = Cesium.createWorldImagery();
+            }
+
+            viewer.imageryLayers.addImageryProvider(imageryProvider);
+            updateStatusIndicator(`Base map: ${mapType}`);
+        }
+
+        function updateStatusIndicator(message) {
+            document.getElementById('statusIndicator').textContent = message;
+        }
+
+        function startPerformanceMonitoring(viewer) {
+            let lastTime = performance.now();
+            let frameCount = 0;
+
+            function updateFPS() {
+                frameCount++;
+                const currentTime = performance.now();
+                
+                if (currentTime - lastTime >= 1000) {
+                    const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+                    document.getElementById('performanceIndicator').textContent = `FPS: ${fps}`;
+                    frameCount = 0;
+                    lastTime = currentTime;
+                }
+                
+                requestAnimationFrame(updateFPS);
+            }
+            
+            requestAnimationFrame(updateFPS);
+        }
+
+        function initializeHistogram() {
+            const ctx = document.getElementById('histogram').getContext('2d');
+            window.DeepGISTopology.histogram_chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Feature Distribution',
+                        data: [],
+                        backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                        borderColor: 'rgba(59, 130, 246, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: 'white' }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        },
+                        x: {
+                            ticks: { color: 'white' },
+                            grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Initialize everything when page loads
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                await initializeCesium();
+            } catch (error) {
+                console.error('Failed to initialize application:', error);
+                document.getElementById('loadingStatus').textContent = 'Failed to initialize: ' + error.message;
+            }
+        });
+
+        // Show snackbar notifications
+        function showSnackBar(message) {
+            const snackbar = document.createElement('div');
+            snackbar.style.cssText = `
+                position: fixed;
+                bottom: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background-color: #333;
+                color: white;
+                padding: 12px 24px;
+                border-radius: 4px;
+                z-index: 10000;
+                min-width: 250px;
+                text-align: center;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            `;
+            snackbar.textContent = message;
+            document.body.appendChild(snackbar);
+            setTimeout(() => snackbar.remove(), 3000);
+        }
+    </script>
+</body>
+</html> 

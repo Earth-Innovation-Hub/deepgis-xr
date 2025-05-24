@@ -8,6 +8,8 @@ urlpatterns = [
     path('label/', views.label, name='label'),
     path('label/3d/', views.label_3d, name='label_3d'),
     path('label/3d/dev/', views.label_3d_dev, name='label_3d_dev'),
+    path('label/3d/sigma/', label_3d_sigma, name='label_3d_sigma'),
+    path('label/3d/topology/', views.label_topology, name='label_topology'),
     path('stl-viewer/', views.stl_viewer, name='stl_viewer'),
     path('map-label/', views.map_label, name='map_label'),
     path('view-label/', views.view_label, name='view_label'),
@@ -33,6 +35,6 @@ urlpatterns = [
     path('webclient/get-3d-model', views.get_3d_model, name='get_3d_model'),
     path('webclient/list-stl-models', views.list_stl_models, name='list_stl_models'),
     
-    # Add this new URL pattern
-    path('label/3d/sigma/', label_3d_sigma, name='label_3d_sigma'),
+    # API endpoints
+    path('api/elevation-proxy', views.elevation_proxy, name='elevation_proxy'),
 ] 

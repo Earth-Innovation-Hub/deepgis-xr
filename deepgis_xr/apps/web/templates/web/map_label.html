@@ -6,6 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>DeepGIS Map</title>
     
+    <!-- CSRF Token for API requests -->
+    {% csrf_token %}
+    
     <!-- Core Dependencies -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw-src.css" crossorigin="anonymous"/>
@@ -39,10 +42,25 @@
             z-index: 1000;
             top: 0;
             right: 0;
-            background: white;
-            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+            background: #1e293b;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
             overflow-y: auto;
             transform: translateX(0);
+            transition: transform 0.3s ease;
+        }
+
+        /* Simplified scrollbar */
+        #sidebar-wrapper::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-track {
+            background: #334155;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb {
+            background: #64748b;
+            border-radius: 2px;
         }
 
         #wrapper.show-sidebar #sidebar-wrapper {
@@ -51,70 +69,237 @@
 
         .mobile-toggle {
             position: fixed;
-            top: 10px;
-            right: 310px;
+            top: 15px;
+            right: 315px;
             z-index: 2000;
-            background: white;
+            background: #3b82f6;
             border: none;
-            border-radius: 4px;
-            padding: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            border-radius: 6px;
+            padding: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
             display: none;
+            color: white;
+            transition: background-color 0.2s ease;
         }
 
-        .layer-item {
-            display: flex;
-            align-items: center;
-            padding: 8px;
-            border-bottom: 1px solid #eee;
+        .mobile-toggle:hover {
+            background: #2563eb;
         }
 
-        .layer-item:hover {
-            background: #f8f9fa;
+        .sidebar-header {
+            background: #0f172a;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            border-bottom: 1px solid #334155;
+        }
+
+        .sidebar-header h5 {
+            margin: 0;
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .sidebar-header i {
+            margin-right: 8px;
+            color: #3b82f6;
         }
 
         .layer-controls {
-            padding: 15px;
-            border-bottom: 1px solid #dee2e6;
+            padding: 0;
         }
 
         .layer-group {
-            margin-bottom: 15px;
+            margin: 20px 15px;
+            background: #334155;
+            border-radius: 8px;
+            padding: 15px;
+            border: 1px solid #475569;
         }
 
         .layer-group-title {
-            font-weight: bold;
-            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #f1f5f9;
+            border-bottom: 1px solid #475569;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
         }
 
-        /* Vector tile specific styles */
-        .vector-layer-legend {
-            padding: 10px;
-            background: #fff;
+        .layer-group-title i {
+            color: #3b82f6;
+        }
+
+        .form-select {
+            background: #475569;
+            border: 1px solid #64748b;
+            color: #f1f5f9;
+            border-radius: 6px;
+            padding: 8px 10px;
+            transition: border-color 0.2s ease;
+        }
+
+        .form-select:focus {
+            background: #475569;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+        }
+
+        .form-select option {
+            background: #475569;
+            color: #f1f5f9;
+        }
+
+        .form-check {
+            padding: 6px 0;
+            transition: background-color 0.2s ease;
+        }
+
+        .form-check:hover {
+            background: rgba(255, 255, 255, 0.05);
             border-radius: 4px;
-            margin: 5px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+            padding-left: 6px;
         }
 
-        .vector-style-control {
-            margin-top: 10px;
+        .form-check-input {
+            background: #64748b;
+            border: 1px solid #94a3b8;
+            border-radius: 3px;
         }
 
-        /* Error handling styles */
-        .tile-error {
-            background: rgba(255, 0, 0, 0.1);
-            border: 1px solid red;
+        .form-check-input:checked {
+            background: #3b82f6;
+            border-color: #3b82f6;
         }
 
+        .form-check-input:focus {
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+
+        .form-check-label {
+            color: #cbd5e1;
+            font-weight: 500;
+            margin-left: 6px;
+        }
+
+        .form-check:hover .form-check-label {
+            color: #f1f5f9;
+        }
+
+        /* Terrain Controls */
+        .terrain-controls {
+            background: #1e40af;
+            border: 1px solid #3b82f6;
+        }
+
+        .form-label {
+            color: #cbd5e1;
+            font-weight: 500;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+        }
+
+        .form-range {
+            margin: 6px 0;
+        }
+
+        .form-range::-webkit-slider-track {
+            background: #64748b;
+            border-radius: 4px;
+            height: 4px;
+        }
+
+        .form-range::-webkit-slider-thumb {
+            background: #3b82f6;
+            border-radius: 50%;
+            height: 16px;
+            width: 16px;
+            border: none;
+        }
+
+        .form-range::-moz-range-track {
+            background: #64748b;
+            border-radius: 4px;
+            height: 4px;
+            border: none;
+        }
+
+        .form-range::-moz-range-thumb {
+            background: #3b82f6;
+            border-radius: 50%;
+            height: 16px;
+            width: 16px;
+            border: none;
+        }
+
+        .terrain-legend {
+            background: #475569;
+            border: 1px solid #64748b;
+            border-radius: 6px;
+            padding: 10px;
+            margin: 8px 0;
+            font-size: 11px;
+            color: #cbd5e1;
+        }
+
+        .terrain-gradient {
+            height: 16px;
+            background: linear-gradient(to right, 
+                #0066CC 0%, #3399FF 10%, #66B2FF 20%, #99CCFF 25%, 
+                #90EE90 35%, #FFFF99 50%, #FFB366 70%, #FF9966 85%, #FFFFFF 100%
+            );
+            border: 1px solid #64748b;
+            border-radius: 4px;
+        }
+
+        /* Statistics Section */
+        .statistics-section {
+            background: #7c3aed;
+            border: 1px solid #8b5cf6;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 15px;
+        }
+
+        .statistics-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #f1f5f9;
+            font-weight: 600;
+            font-size: 0.95rem;
+            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 8px;
+        }
+
+        .statistics-title i {
+            color: #a78bfa;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 200px;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 8px;
+        }
+
+        /* Responsive Design */
         @media (max-width: 768px) {
             .mobile-toggle {
                 display: block;
-                right: 10px;
+                right: 15px;
             }
 
             #sidebar-wrapper {
                 transform: translateX(100%);
-                width: 80%;
+                width: 85%;
                 max-width: 300px;
             }
 
@@ -127,30 +312,83 @@
             }
         }
 
+        /* Simplified UI Elements */
+        .layer-item {
+            display: flex;
+            align-items: center;
+            padding: 6px;
+            border-bottom: 1px solid #475569;
+        }
+
+        .layer-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .vector-layer-legend {
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            margin: 6px 0;
+            border: 1px solid #475569;
+        }
+
+        .tile-error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #ef4444;
+        }
+
         #histogram {
             width: 100%;
             height: 200px;
-            max-width: 800px;
-            max-height: 400px;
-        }
-
-        .chart-container {
-            position: relative;
-            height: 200px;
-            width: 100%;
         }
 
         .circle-diameter-tooltip {
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.8);
             border: none;
             color: white;
             font-weight: bold;
-            padding: 4px 8px;
+            padding: 6px 10px;
             border-radius: 4px;
             font-size: 12px;
         }
+
         .leaflet-tooltip-center:before {
             display: none;
+        }
+
+        .elevation-popup {
+            background: rgba(34, 139, 34, 0.9);
+            border: 2px solid #22c55e;
+            color: white;
+            font-weight: bold;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            user-select: none;
+            transition: background-color 0.2s ease;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            max-width: 300px;
+            line-height: 1.4;
+        }
+
+        .elevation-popup:hover {
+            background: rgba(34, 139, 34, 1);
+        }
+
+        .form-select-sm {
+            font-size: 0.875rem;
+            padding: 6px 8px;
+        }
+
+        .btn {
+            border-radius: 6px;
+            font-weight: 500;
+            transition: background-color 0.2s ease;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
         }
     </style>
 </head>
@@ -163,14 +401,14 @@
     <div id="wrapper">
         <div id="sidebar-wrapper">
             <div class="sidebar-content">
-                <div class="sidebar-header p-3 bg-light">
-                    <h5 class="m-0"><i class="fas fa-globe"></i> DeepGIS</h5>
+                <div class="sidebar-header">
+                    <h5><i class="fas fa-globe-americas"></i> DeepGIS</h5>
                 </div>
                 
                 <div class="layer-controls">
                     <div class="layer-group">
                         <div class="layer-group-title">
-                            <i class="fa fa-calendar"></i> Available Dates
+                            <i class="fas fa-calendar-alt"></i> Available Dates
                         </div>
                         <div class="form-group mb-3">
                             <select class="form-select" id="dateSelect">
@@ -181,31 +419,92 @@
 
                     <div class="layer-group">
                         <div class="layer-group-title">
-                            <i class="fa fa-layer-group"></i> Layer Types
+                            <i class="fas fa-layer-group"></i> Layer Types
                         </div>
                         <div class="form-check mb-2">
                             <input class="form-check-input" type="checkbox" id="rasterLayerToggle" checked>
-                            <label class="form-check-label" for="rasterLayerToggle">Raster Layer</label>
+                            <label class="form-check-label" for="rasterLayerToggle">
+                                <i class="fas fa-image me-2"></i>Raster Layer
+                            </label>
                         </div>
                         <div class="form-check mb-2">
-                                <input class="form-check-input" type="checkbox" id="vectorLayerToggle" checked>
-                            <label class="form-check-label" for="vectorLayerToggle">Vector Layer</label>
+                            <input class="form-check-input" type="checkbox" id="vectorLayerToggle" checked>
+                            <label class="form-check-label" for="vectorLayerToggle">
+                                <i class="fas fa-vector-square me-2"></i>Vector Layer
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="terrainLayerToggle">
+                            <label class="form-check-label" for="terrainLayerToggle">
+                                <i class="fas fa-mountain me-2"></i>Terrain/DEM
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="hillshadeLayerToggle">
+                            <label class="form-check-label" for="hillshadeLayerToggle">
+                                <i class="fas fa-chess-board me-2"></i>Hillshade
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="contourLayerToggle">
+                            <label class="form-check-label" for="contourLayerToggle">
+                                <i class="fas fa-project-diagram me-2"></i>Contour Lines
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="layer-group terrain-controls" id="terrainControls" style="display: none;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-mountain"></i> Terrain Settings
+                        </div>
+                        <div class="form-group mb-3">
+                            <label for="elevationColorScheme" class="form-label">
+                                <i class="fas fa-palette me-2"></i>Color Scheme:
+                            </label>
+                            <select class="form-select form-select-sm" id="elevationColorScheme">
+                                <option value="terrain">🏔️ Terrain</option>
+                                <option value="rainbow">🌈 Rainbow</option>
+                                <option value="grayscale">⚫ Grayscale</option>
+                                <option value="viridis">🟢 Viridis</option>
+                            </select>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label for="terrainOpacity" class="form-label">
+                                <i class="fas fa-adjust me-2"></i>Opacity: <span id="opacityValue">70%</span>
+                            </label>
+                            <input type="range" class="form-range" id="terrainOpacity" min="0" max="100" value="70">
+                        </div>
+                        
+                        <div class="terrain-legend">
+                            <div><strong><i class="fas fa-info-circle me-2"></i>Elevation Guide:</strong></div>
+                            <div class="terrain-gradient mt-2"></div>
+                            <div style="display: flex; justify-content: space-between; font-size: 10px; margin-top: 5px; color: #94a3b8;">
+                                <span>-100m</span>
+                                <span>0m</span>
+                                <span>500m</span>
+                                <span>1000m</span>
+                                <span>3000m+</span>
+                            </div>
                         </div>
                     </div>
 
                     <div class="layer-group">
                         <div class="layer-group-title">
-                            <i class="fa fa-map"></i> Base Map
+                            <i class="fas fa-map"></i> Base Map
                         </div>
                         <div class="form-check mb-2">
                             <input class="form-check-input" type="checkbox" id="baseMapToggle" checked>
-                            <label class="form-check-label" for="baseMapToggle">Hide Base Map</label>
+                            <label class="form-check-label" for="baseMapToggle">
+                                <i class="fas fa-eye-slash me-2"></i>Hide Base Map
+                            </label>
                         </div>
                     </div>
                 </div>
 
-                <div class="layer-controls">
-                    <h6><i class="fa fa-chart-bar"></i> Statistics</h6>
+                <div class="statistics-section">
+                    <div class="statistics-title">
+                        <i class="fas fa-chart-bar"></i> Statistics
+                    </div>
                     <div class="chart-container">
                         <canvas id="histogram"></canvas>
                     </div>
@@ -254,11 +553,18 @@
             map: null,  // Add map to globals for access across functions
             currentLayers: {
                 raster: null,
-                vector: null
+                vector: null,
+                terrain: null,
+                hillshade: null,
+                contour: null
             },
             layersReady: false,
             markerCounter: 0,  // Counter for sequential marker numbering
-            markers: []        // Array to store all markers for distance calculations
+            markers: [],        // Array to store all markers for distance calculations
+            terrainSettings: {
+                colorScheme: 'terrain',
+                opacity: 0.7
+            }
         };
 
         // Helper function to show notifications
@@ -558,6 +864,165 @@
             }
         }
 
+        // === ELEVATION AND TERRAIN FUNCTIONS ===
+        
+        // Create terrain layer with color scheme
+        function createTerrainLayer(colorScheme = 'terrain') {
+            try {
+                // Different terrain tile sources
+                const terrainSources = {
+                    terrain: {
+                        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+                        attribution: 'Tiles © Esri — Source: USGS, Esri, TANA, DeLorme, and NPS',
+                        maxZoom: 13
+                    },
+                    hillshade: {
+                        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',
+                        attribution: 'Tiles © Esri — Source: Esri, USGS, NOAA',
+                        maxZoom: 13
+                    },
+                    topo: {
+                        url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+                        attribution: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)',
+                        maxZoom: 17,
+                        subdomains: ['a', 'b', 'c']
+                    },
+                    rainbow: {
+                        // Use a colorized elevation raster
+                        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+                        attribution: 'Tiles © Esri — Source: USGS, Esri, TANA, DeLorme, and NPS',
+                        maxZoom: 13
+                    },
+                    grayscale: {
+                        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                        attribution: 'Tiles © Esri — Source: Esri, HERE, Garmin, (c) OpenStreetMap contributors',
+                        maxZoom: 16
+                    },
+                    viridis: {
+                        url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+                        attribution: 'Map data: © OpenStreetMap contributors, SRTM | Map style: © OpenTopoMap (CC-BY-SA)',
+                        maxZoom: 17,
+                        subdomains: ['a', 'b', 'c']
+                    }
+                };
+                
+                const source = terrainSources[colorScheme] || terrainSources.terrain;
+                
+                const layer = L.tileLayer(source.url, {
+                    attribution: source.attribution,
+                    opacity: window.globals.terrainSettings.opacity,
+                    zIndex: 2,
+                    maxZoom: source.maxZoom || 18,
+                    subdomains: source.subdomains || ['a', 'b', 'c'],
+                    errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', // Transparent pixel
+                    crossOrigin: true
+                });
+                
+                // Add error handling for tile loading
+                layer.on('tileerror', function(e) {
+                    console.warn('Terrain tile failed to load:', e.tile.src);
+                });
+                
+                return layer;
+            } catch (error) {
+                console.error('Error creating terrain layer:', error);
+                showSnackBar('Error loading terrain layer');
+                return null;
+            }
+        }
+        
+        // Create hillshade layer
+        function createHillshadeLayer() {
+            try {
+                const layer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}', {
+                    attribution: 'Hillshade © Esri — Source: Esri, USGS, NOAA',
+                    opacity: 0.5,
+                    zIndex: 1,
+                    maxZoom: 13,
+                    errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                    crossOrigin: true
+                });
+                
+                layer.on('tileerror', function(e) {
+                    console.warn('Hillshade tile failed to load:', e.tile.src);
+                });
+                
+                return layer;
+            } catch (error) {
+                console.error('Error creating hillshade layer:', error);
+                showSnackBar('Error loading hillshade layer');
+                return null;
+            }
+        }
+        
+        // Create contour layer (using OpenTopoMap which includes contours)
+        function createContourLayer() {
+            try {
+                const layer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                    attribution: 'Contours © OpenTopoMap (CC-BY-SA)',
+                    opacity: 0.6,
+                    zIndex: 3,
+                    maxZoom: 17,
+                    subdomains: ['a', 'b', 'c'],
+                    errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+                    crossOrigin: true
+                });
+                
+                layer.on('tileerror', function(e) {
+                    console.warn('Contour tile failed to load:', e.tile.src);
+                });
+                
+                return layer;
+            } catch (error) {
+                console.error('Error creating contour layer:', error);
+                showSnackBar('Error loading contour layer');
+                return null;
+            }
+        }
+        
+        // Update terrain layer opacity
+        function updateTerrainOpacity(opacity) {
+            window.globals.terrainSettings.opacity = opacity / 100;
+            if (window.globals.currentLayers.terrain) {
+                window.globals.currentLayers.terrain.setOpacity(window.globals.terrainSettings.opacity);
+            }
+        }
+        
+        // Update terrain color scheme
+        function updateTerrainColorScheme(scheme) {
+            window.globals.terrainSettings.colorScheme = scheme;
+            if (window.globals.currentLayers.terrain) {
+                window.globals.map.removeLayer(window.globals.currentLayers.terrain);
+                window.globals.currentLayers.terrain = createTerrainLayer(scheme);
+                window.globals.currentLayers.terrain.addTo(window.globals.map);
+                // Ensure proper layer ordering
+                maintainLayerOrder();
+            }
+        }
+        
+        // Maintain proper layer ordering
+        function maintainLayerOrder() {
+            // Order: base map -> hillshade -> terrain -> raster -> contour -> vector -> drawn items
+            if (window.globals.currentLayers.hillshade) {
+                window.globals.currentLayers.hillshade.bringToBack();
+            }
+            if (window.globals.currentLayers.terrain) {
+                window.globals.currentLayers.terrain.bringToFront();
+            }
+            if (window.globals.currentLayers.raster) {
+                window.globals.currentLayers.raster.bringToFront();
+            }
+            if (window.globals.currentLayers.contour) {
+                window.globals.currentLayers.contour.bringToFront();
+            }
+            if (window.globals.currentLayers.vector) {
+                window.globals.currentLayers.vector.bringToFront();
+            }
+            if (window.globals.drawnItems) {
+                window.globals.drawnItems.bringToFront();
+            }
+        }
+
         // Initialize everything when the document is ready
         document.addEventListener('DOMContentLoaded', async () => {
             try {
@@ -677,6 +1142,94 @@
                 if (vectorLayerToggle) {
                     vectorLayerToggle.addEventListener('change', debouncedUpdate);
                 }
+
+                // Terrain layer controls
+                const terrainLayerToggle = document.getElementById('terrainLayerToggle');
+                const hillshadeLayerToggle = document.getElementById('hillshadeLayerToggle');
+                const contourLayerToggle = document.getElementById('contourLayerToggle');
+                const terrainControls = document.getElementById('terrainControls');
+                const elevationColorScheme = document.getElementById('elevationColorScheme');
+                const terrainOpacity = document.getElementById('terrainOpacity');
+                const opacityValue = document.getElementById('opacityValue');
+
+                // Show/hide terrain controls
+                function updateTerrainControlsVisibility() {
+                    const anyTerrainLayerActive = terrainLayerToggle.checked || 
+                                                        hillshadeLayerToggle.checked || 
+                                                        contourLayerToggle.checked;
+                    terrainControls.style.display = anyTerrainLayerActive ? 'block' : 'none';
+                }
+
+                terrainLayerToggle.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        if (!window.globals.currentLayers.terrain) {
+                            window.globals.currentLayers.terrain = createTerrainLayer(window.globals.terrainSettings.colorScheme);
+                        }
+                        if (window.globals.currentLayers.terrain) {
+                            window.globals.currentLayers.terrain.addTo(window.globals.map);
+                        } else {
+                            e.target.checked = false; // Uncheck if layer creation failed
+                            showSnackBar('Failed to create terrain layer');
+                        }
+                    } else {
+                        if (window.globals.currentLayers.terrain) {
+                            window.globals.map.removeLayer(window.globals.currentLayers.terrain);
+                        }
+                    }
+                    updateTerrainControlsVisibility();
+                    maintainLayerOrder();
+                });
+
+                hillshadeLayerToggle.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        if (!window.globals.currentLayers.hillshade) {
+                            window.globals.currentLayers.hillshade = createHillshadeLayer();
+                        }
+                        if (window.globals.currentLayers.hillshade) {
+                            window.globals.currentLayers.hillshade.addTo(window.globals.map);
+                        } else {
+                            e.target.checked = false;
+                            showSnackBar('Failed to create hillshade layer');
+                        }
+                    } else {
+                        if (window.globals.currentLayers.hillshade) {
+                            window.globals.map.removeLayer(window.globals.currentLayers.hillshade);
+                        }
+                    }
+                    updateTerrainControlsVisibility();
+                    maintainLayerOrder();
+                });
+
+                contourLayerToggle.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        if (!window.globals.currentLayers.contour) {
+                            window.globals.currentLayers.contour = createContourLayer();
+                        }
+                        if (window.globals.currentLayers.contour) {
+                            window.globals.currentLayers.contour.addTo(window.globals.map);
+                        } else {
+                            e.target.checked = false;
+                            showSnackBar('Failed to create contour layer');
+                        }
+                    } else {
+                        if (window.globals.currentLayers.contour) {
+                            window.globals.map.removeLayer(window.globals.currentLayers.contour);
+                        }
+                    }
+                    updateTerrainControlsVisibility();
+                    maintainLayerOrder();
+                });
+
+                // Terrain settings controls
+                elevationColorScheme.addEventListener('change', (e) => {
+                    updateTerrainColorScheme(e.target.value);
+                });
+
+                terrainOpacity.addEventListener('input', (e) => {
+                    const opacity = parseInt(e.target.value);
+                    opacityValue.textContent = `${opacity}%`;
+                    updateTerrainOpacity(opacity);
+                });
 
                 // Global variables
                 const MBTILES_SERVER = window.location.protocol === 'https:' ? 
