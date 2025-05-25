@@ -564,6 +564,120 @@
     </div>
 
     <script>
+        // Compatibility stubs and future functionality
+        window.DeepGISCompatibility = {
+            // Terrain API compatibility
+            createWorldTerrain: function() {
+                if (typeof Cesium.createWorldTerrain === 'function') {
+                    return Cesium.createWorldTerrain();
+                } else if (typeof Cesium.createWorldTerrainAsync === 'function') {
+                    console.warn('Using async terrain function in sync context');
+                    return Cesium.createWorldTerrainAsync();
+                } else {
+                    // Fallback for older versions
+                    return new Cesium.CesiumTerrainProvider({
+                        url: Cesium.IonResource.fromAssetId(1)
+                    });
+                }
+            },
+            
+            // Imagery API compatibility
+            createWorldImagery: function(options = {}) {
+                if (typeof Cesium.createWorldImagery === 'function') {
+                    return Cesium.createWorldImagery(options);
+                } else if (typeof Cesium.createWorldImageryAsync === 'function') {
+                    console.warn('Using async imagery function in sync context');
+                    return Cesium.createWorldImageryAsync(options);
+                } else {
+                    // Fallback to basic Ion imagery
+                    const assetId = options.style === Cesium.IonWorldImageryStyle?.AERIAL ? 2 : 3;
+                    return new Cesium.IonImageryProvider({ assetId });
+                }
+            },
+            
+            // Future functionality stubs
+            stubs: {
+                // Enhanced 3D Tiles management
+                tilesetManager: {
+                    load: function(assetId) {
+                        console.log(`Future: Enhanced tileset loading for asset ${assetId}`);
+                        return null;
+                    },
+                    cache: function(tileset) {
+                        console.log('Future: Tileset caching not implemented');
+                    }
+                },
+                
+                // Advanced terrain analysis
+                terrainAnalysis: {
+                    getElevationProfile: function(path) {
+                        console.log('Future: Elevation profile analysis not implemented');
+                        return [];
+                    },
+                    calculateSlope: function(point) {
+                        console.log('Future: Slope calculation not implemented');
+                        return 0;
+                    }
+                },
+                
+                // Real-time collaboration
+                collaboration: {
+                    shareView: function(viewState) {
+                        console.log('Future: View sharing not implemented');
+                    },
+                    syncMeasurements: function(measurements) {
+                        console.log('Future: Measurement sync not implemented');
+                    }
+                },
+                
+                // Advanced analytics
+                analytics: {
+                    trackPerformance: function(metrics) {
+                        console.log('Future: Performance analytics not implemented');
+                    },
+                    generateReport: function() {
+                        console.log('Future: Report generation not implemented');
+                        return null;
+                    }
+                }
+            }
+        };
+
+        // Debug function to check Cesium API availability
+        function debugCesiumAPI() {
+            console.log('=== Cesium API Compatibility Check ===');
+            console.log('Cesium version:', Cesium.VERSION || 'Unknown');
+            
+            const apiChecks = [
+                'createWorldTerrain',
+                'createWorldTerrainAsync',
+                'createWorldImagery', 
+                'createWorldImageryAsync',
+                'IonWorldImageryStyle',
+                'Cesium3DTileset.fromIonAssetId'
+            ];
+            
+            apiChecks.forEach(api => {
+                const path = api.split('.');
+                let obj = Cesium;
+                let available = true;
+                
+                for (const prop of path) {
+                    if (obj && typeof obj === 'object' && prop in obj) {
+                        obj = obj[prop];
+                    } else {
+                        available = false;
+                        break;
+                    }
+                }
+                
+                console.log(`${api}: ${available ? '✓ Available' : '✗ Not Available'}`);
+            });
+            
+            console.log('Ion Access Token:', Cesium.Ion.defaultAccessToken ? 'Set' : 'Not Set');
+            console.log('=====================================');
+        }
+
         // Global state management
         window.DeepGISTopology = {
             viewer: null,
@@ -588,6 +702,9 @@
         async function initializeCesium() {
             try {
                 updateLoadingStatus('Configuring Cesium...', 20);
+                
+                // Debug Cesium API availability
+                debugCesiumAPI();
 
                 updateLoadingStatus('Creating viewer...', 40);
 
@@ -604,14 +721,34 @@
                     timeline: false,
                     navigationHelpButton: true,
                     navigationInstructionsInitiallyVisible: false,
-                    scene3DOnly: false,
-                    // Use Ion's default world terrain
-                    terrain: Cesium.Terrain.fromWorldTerrain()
+                    scene3DOnly: false
+                    // Note: terrain will be set after viewer creation
                 });
 
                 window.DeepGISTopology.viewer = viewer;
 
                 updateLoadingStatus('Setting up scene...', 60);
+
+                // Set up terrain provider with error handling
+                try {
+                    // Try different terrain loading methods based on available APIs
+                    if (typeof Cesium.createWorldTerrainAsync === 'function') {
+                        viewer.terrainProvider = await Cesium.createWorldTerrainAsync();
+                        console.log('Ion world terrain loaded successfully (async)');
+                    } else if (typeof Cesium.createWorldTerrain === 'function') {
+                        viewer.terrainProvider = Cesium.createWorldTerrain();
+                        console.log('Ion world terrain loaded successfully (sync)');
+                    } else {
+                        // Fallback to Ion resource
+                        viewer.terrainProvider = new Cesium.CesiumTerrainProvider({
+                            url: Cesium.IonResource.fromAssetId(1)
+                        });
+                        console.log('Ion terrain loaded using CesiumTerrainProvider');
+                    }
+                } catch (error) {
+                    console.warn('Failed to load Ion terrain, using basic terrain:', error);
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                }
 
                 // Configure the scene
                 viewer.scene.globe.enableLighting = true;
@@ -664,13 +801,30 @@
         }
 
         // Enhanced terrain toggle function for Ion services
-        function toggleTerrain(viewer, enabled) {
+        async function toggleTerrain(viewer, enabled) {
             if (enabled) {
-                // Use Ion's world terrain
-                viewer.scene.terrainProvider = Cesium.createWorldTerrain();
-                updateStatusIndicator('Ion 3D Terrain enabled');
+                try {
+                    // Use Ion's world terrain with async loading
+                    if (typeof Cesium.createWorldTerrainAsync === 'function') {
+                        viewer.terrainProvider = await Cesium.createWorldTerrainAsync();
+                        updateStatusIndicator('Ion 3D Terrain enabled');
+                    } else if (typeof Cesium.createWorldTerrain === 'function') {
+                        viewer.terrainProvider = Cesium.createWorldTerrain();
+                        updateStatusIndicator('Ion 3D Terrain enabled');
+                    } else {
+                        // Fallback for older Cesium versions
+                        viewer.terrainProvider = new Cesium.CesiumTerrainProvider({
+                            url: Cesium.IonResource.fromAssetId(1)
+                        });
+                        updateStatusIndicator('Ion 3D Terrain enabled (legacy)');
+                    }
+                } catch (error) {
+                    console.warn('Failed to enable Ion terrain:', error);
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                    updateStatusIndicator('3D Terrain disabled (fallback)');
+                }
             } else {
-                viewer.scene.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
                 updateStatusIndicator('3D Terrain disabled');
             }
         }
@@ -903,8 +1057,13 @@
             });
 
             // Layer toggles
-            document.getElementById('terrainToggle').addEventListener('change', (e) => {
-                toggleTerrain(viewer, e.target.checked);
+            document.getElementById('terrainToggle').addEventListener('change', async (e) => {
+                try {
+                    await toggleTerrain(viewer, e.target.checked);
+                } catch (error) {
+                    console.error('Error toggling terrain:', error);
+                    updateStatusIndicator('Error toggling terrain');
+                }
             });
 
             document.getElementById('modelsToggle').addEventListener('change', (e) => {
@@ -1269,14 +1428,62 @@
             let imageryProvider;
             switch (mapType) {
                 case 'ion_satellite':
-                    imageryProvider = Cesium.createWorldImagery({
-                        style: Cesium.IonWorldImageryStyle.AERIAL
-                    });
+                    try {
+                        if (typeof Cesium.createWorldImageryAsync === 'function') {
+                            // Use async version if available
+                            Cesium.createWorldImageryAsync({
+                                style: Cesium.IonWorldImageryStyle.AERIAL
+                            }).then(provider => {
+                                viewer.imageryLayers.addImageryProvider(provider);
+                            }).catch(error => {
+                                console.warn('Failed to load Ion satellite imagery:', error);
+                                // Fallback to OSM
+                                const fallback = new Cesium.OpenStreetMapImageryProvider();
+                                viewer.imageryLayers.addImageryProvider(fallback);
+                            });
+                            updateStatusIndicator('Loading Ion satellite imagery...');
+                            return;
+                        } else if (typeof Cesium.createWorldImagery === 'function') {
+                            imageryProvider = Cesium.createWorldImagery({
+                                style: Cesium.IonWorldImageryStyle.AERIAL
+                            });
+                        } else {
+                            // Fallback to Ion asset
+                            imageryProvider = new Cesium.IonImageryProvider({ assetId: 2 });
+                        }
+                    } catch (error) {
+                        console.warn('Ion satellite imagery failed, using OSM:', error);
+                        imageryProvider = new Cesium.OpenStreetMapImageryProvider();
+                    }
                     break;
                 case 'ion_streets':
-                    imageryProvider = Cesium.createWorldImagery({
-                        style: Cesium.IonWorldImageryStyle.ROAD
-                    });
+                    try {
+                        if (typeof Cesium.createWorldImageryAsync === 'function') {
+                            // Use async version if available
+                            Cesium.createWorldImageryAsync({
+                                style: Cesium.IonWorldImageryStyle.ROAD
+                            }).then(provider => {
+                                viewer.imageryLayers.addImageryProvider(provider);
+                            }).catch(error => {
+                                console.warn('Failed to load Ion streets imagery:', error);
+                                // Fallback to OSM
+                                const fallback = new Cesium.OpenStreetMapImageryProvider();
+                                viewer.imageryLayers.addImageryProvider(fallback);
+                            });
+                            updateStatusIndicator('Loading Ion streets imagery...');
+                            return;
+                        } else if (typeof Cesium.createWorldImagery === 'function') {
+                            imageryProvider = Cesium.createWorldImagery({
+                                style: Cesium.IonWorldImageryStyle.ROAD
+                            });
+                        } else {
+                            // Fallback to Ion asset
+                            imageryProvider = new Cesium.IonImageryProvider({ assetId: 3 });
+                        }
+                    } catch (error) {
+                        console.warn('Ion streets imagery failed, using OSM:', error);
+                        imageryProvider = new Cesium.OpenStreetMapImageryProvider();
+                    }
                     break;
                 case 'osm':
                     imageryProvider = new Cesium.OpenStreetMapImageryProvider({
@@ -1284,34 +1491,52 @@
                     });
                     break;
                 case 'satellite':
-                    imageryProvider = new Cesium.BingMapsImageryProvider({
-                        url: 'https://dev.virtualearth.net',
-                        key: 'YOUR_BING_MAPS_KEY', // You'll need a Bing Maps key
-                        mapStyle: Cesium.BingMapsStyle.AERIAL
-                    });
+                    try {
+                        imageryProvider = new Cesium.BingMapsImageryProvider({
+                            url: 'https://dev.virtualearth.net',
+                            key: 'YOUR_BING_MAPS_KEY', // You'll need a Bing Maps key
+                            mapStyle: Cesium.BingMapsStyle.AERIAL
+                        });
+                    } catch (error) {
+                        console.warn('Bing Maps failed, using OSM:', error);
+                        imageryProvider = new Cesium.OpenStreetMapImageryProvider();
+                    }
                     break;
                 case 'bing':
-                    imageryProvider = new Cesium.BingMapsImageryProvider({
-                        url: 'https://dev.virtualearth.net',
-                        key: 'YOUR_BING_MAPS_KEY',
-                        mapStyle: Cesium.BingMapsStyle.ROAD
-                    });
+                    try {
+                        imageryProvider = new Cesium.BingMapsImageryProvider({
+                            url: 'https://dev.virtualearth.net',
+                            key: 'YOUR_BING_MAPS_KEY',
+                            mapStyle: Cesium.BingMapsStyle.ROAD
+                        });
+                    } catch (error) {
+                        console.warn('Bing Maps failed, using OSM:', error);
+                        imageryProvider = new Cesium.OpenStreetMapImageryProvider();
+                    }
                     break;
                 case 'mapbox':
-                    imageryProvider = new Cesium.MapboxImageryProvider({
-                        accessToken: 'YOUR_MAPBOX_ACCESS_TOKEN',
-                        styleId: 'mapbox.streets'
-                    });
+                    try {
+                        imageryProvider = new Cesium.MapboxImageryProvider({
+                            accessToken: 'YOUR_MAPBOX_ACCESS_TOKEN',
+                            styleId: 'mapbox.streets'
+                        });
+                    } catch (error) {
+                        console.warn('Mapbox failed, using OSM:', error);
+                        imageryProvider = new Cesium.OpenStreetMapImageryProvider();
+                    }
                     break;
                 case 'none':
                     updateStatusIndicator('Base map disabled');
                     return;
                 default:
-                    imageryProvider = Cesium.createWorldImagery();
+                    // Default fallback to OSM
+                    imageryProvider = new Cesium.OpenStreetMapImageryProvider();
             }
 
-            viewer.imageryLayers.addImageryProvider(imageryProvider);
-            updateStatusIndicator(`Base map: ${mapType}`);
+            if (imageryProvider) {
+                viewer.imageryLayers.addImageryProvider(imageryProvider);
+                updateStatusIndicator(`Base map: ${mapType}`);
+            }
         }
 
         function updateStatusIndicator(message) {

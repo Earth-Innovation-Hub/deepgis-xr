@@ -11,16 +11,148 @@
     <script src="//code.jquery.com/jquery-1.10.2.js"></script>
     <script src="//code.jquery.com/ui/1.11.4/jquery-ui.js"></script>
 
+    <!-- Bootstrap CSS for better styling -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
-
-
-
+    <style>
+        body {
+            background-attachment: fixed;
+            background-size: cover;
+            background-position: center;
+        }
+        
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 30px;
+            margin: 50px auto;
+            max-width: 1200px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            backdrop-filter: blur(10px);
+        }
+        
+        .viewer-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            height: 100%;
+        }
+        
+        .viewer-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+        }
+        
+        .card-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+        
+        .nav-section {
+            background: rgba(248, 249, 250, 0.8);
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+    </style>
 </head>
-<body onload="getNewImage()" background="/static/images/labelag-splash.jpeg" style="width:40%;background-position:center;">
-<div id="main>">
+<body onload="getNewImage()" background="/static/images/labelag-splash.jpeg">
 
-    <div id="info" class=bgcolor="#c0c0c0">
-        <h2>Instructions</h2>
+<div class="main-container">
+    <!-- Navigation Section -->
+    <div class="nav-section">
+        <h1 class="text-center mb-4"><i class="fas fa-globe-americas me-3"></i>DeepGIS Web Platform</h1>
+        <p class="text-center lead mb-4">Advanced Geospatial Analysis and Labeling Tools</p>
+        
+        <div class="row g-4">
+            <!-- Traditional 2D Labeling -->
+            <div class="col-md-6 col-lg-4">
+                <div class="card viewer-card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <div class="card-icon text-primary">
+                            <i class="fas fa-image"></i>
+                        </div>
+                        <h5 class="card-title">2D Image Labeling</h5>
+                        <p class="card-text">Traditional image annotation and labeling interface</p>
+                        <a href="label" class="btn btn-primary"><i class="fas fa-play me-2"></i>Start Labeling</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map-based Labeling -->
+            <div class="col-md-6 col-lg-4">
+                <div class="card viewer-card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <div class="card-icon text-success">
+                            <i class="fas fa-map"></i>
+                        </div>
+                        <h5 class="card-title">2D Map Labeling</h5>
+                        <p class="card-text">Geospatial data labeling with Leaflet mapping</p>
+                        <a href="map-label" class="btn btn-success"><i class="fas fa-map-marked-alt me-2"></i>Open Map</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3D Model Viewing -->
+            <div class="col-md-6 col-lg-4">
+                <div class="card viewer-card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <div class="card-icon text-info">
+                            <i class="fas fa-cube"></i>
+                        </div>
+                        <h5 class="card-title">3D Model Viewer</h5>
+                        <p class="card-text">Three.js based 3D model visualization and labeling</p>
+                        <a href="label/3d" class="btn btn-info"><i class="fas fa-play me-2"></i>View 3D</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3D Sigma Version -->
+            <div class="col-md-6 col-lg-4">
+                <div class="card viewer-card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <div class="card-icon text-warning">
+                            <i class="fas fa-rocket"></i>
+                        </div>
+                        <h5 class="card-title">3D Viewer (Sigma)</h5>
+                        <p class="card-text">Optimized 3D viewer with advanced performance features</p>
+                        <a href="label/3d/sigma" class="btn btn-warning"><i class="fas fa-rocket me-2"></i>Launch Sigma</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- NEW: Cesium Hybrid Viewer -->
+            <div class="col-md-6 col-lg-4">
+                <div class="card viewer-card h-100 border-0 shadow-sm border-danger">
+                    <div class="card-body text-center">
+                        <div class="card-icon text-danger">
+                            <i class="fas fa-globe"></i>
+                        </div>
+                        <h5 class="card-title">Cesium Hybrid Viewer <span class="badge bg-danger">NEW</span></h5>
+                        <p class="card-text">Advanced 2D/3D hybrid viewer with geospatial capabilities</p>
+                        <a href="label/cesium" class="btn btn-danger"><i class="fas fa-globe me-2"></i>Launch Cesium</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- STL Viewer -->
+            <div class="col-md-6 col-lg-4">
+                <div class="card viewer-card h-100 border-0 shadow-sm">
+                    <div class="card-body text-center">
+                        <div class="card-icon text-secondary">
+                            <i class="fas fa-shapes"></i>
+                        </div>
+                        <h5 class="card-title">STL Viewer</h5>
+                        <p class="card-text">Specialized viewer for STL 3D model files</p>
+                        <a href="stl-viewer" class="btn btn-secondary"><i class="fas fa-shapes me-2"></i>View STL</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Original Instructions Section -->
+    <div id="info" class="nav-section">
+        <h2><i class="fas fa-info-circle me-2"></i>Instructions</h2>
         <p>
             <ol>
                 <li>Choose category to label.</li>
@@ -30,33 +162,30 @@
 
         <p>Label one apple per circle!</p>
         <p>
-            <table id="imageExampleTable"><tr>
-                <td id="imageExample" bgcolor="blue">
+            <table id="imageExampleTable" class="table table-bordered"><tr>
+                <td id="imageExample" class="bg-primary text-white text-center">
                     <div>
-                        <img src="/static/images/connectedLabels.png" alt="" width="134" height="93" />
+                        <img src="/static/images/connectedLabels.png" alt="" width="134" height="93" class="img-fluid" />
                     </div>
                     Example Image
                 </td>
-                <td id="imageIncorrectExample" bgcolor="red">
+                <td id="imageIncorrectExample" class="bg-danger text-white text-center">
                     <div>
-                        <img src="/static/images/connectedLabelsIncorrect.png" alt="" width="134" height="93" />
+                        <img src="/static/images/connectedLabelsIncorrect.png" alt="" width="134" height="93" class="img-fluid" />
                     </div>
                     Incorrect Label
                 </td>
-                <td id="imageCorrectExample" bgcolor="green">
+                <td id="imageCorrectExample" class="bg-success text-white text-center">
                     <div>
-                        <img src="/static/images/connectedLabelsCorrect.png" alt="" width="134" height="93" />
+                        <img src="/static/images/connectedLabelsCorrect.png" alt="" width="134" height="93" class="img-fluid" />
                     </div>
                     Correct Label
                 </td>
-
-
             </tr></table>
-
         </p>
-        <p>Start labeling <a target="_blank" href="label" style="color:hotpink">here</a></p>
     </div>
-
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
