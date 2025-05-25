@@ -837,6 +837,14 @@
             <span class="camera-info-value" id="cameraAlt">--</span>
         </div>
         <div class="camera-info-item">
+            <span class="camera-info-label">Ground:</span>
+            <span class="camera-info-value" id="cameraGroundHeight">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">AGL:</span>
+            <span class="camera-info-value" id="cameraAGL">--</span>
+        </div>
+        <div class="camera-info-item">
             <span class="camera-info-label">Heading:</span>
             <span class="camera-info-value" id="cameraHeading">--</span>
         </div>
@@ -1907,7 +1915,7 @@
             const pitch = Cesium.Math.toDegrees(camera.pitch);
             const roll = Cesium.Math.toDegrees(camera.roll);
             
-            // Update display elements
+            // Update basic display elements
             document.getElementById('cameraLon').textContent = longitude.toFixed(6) + '°';
             document.getElementById('cameraLat').textContent = latitude.toFixed(6) + '°';
             document.getElementById('cameraAlt').textContent = altitude.toFixed(1) + ' m';
@@ -1915,11 +1923,54 @@
             document.getElementById('cameraPitch').textContent = pitch.toFixed(1) + '°';
             document.getElementById('cameraRoll').textContent = roll.toFixed(1) + '°';
             
+            // Query ground elevation asynchronously
+            queryGroundElevation(longitude, latitude, altitude);
+            
             // Update compass
             updateCompass(heading);
             
             // Update attitude indicator
             updateAttitudeIndicator(pitch, roll);
+        }
+
+        async function queryGroundElevation(longitude, latitude, cameraAltitude) {
+            try {
+                // Use Cesium terrain sampling directly (no CORS issues)
+                const cartographic = Cesium.Cartographic.fromDegrees(longitude, latitude);
+                const terrainProvider = window.DeepGISTopology.viewer.terrainProvider;
+                
+                // Sample terrain at current position
+                const sampledPositions = await Cesium.sampleTerrain(terrainProvider, 11, [cartographic]);
+                const groundHeight = sampledPositions[0].height || 0;
+                
+                // Update display with Cesium terrain data
+                updateGroundHeightDisplay(groundHeight, cameraAltitude);
+                
+            } catch (error) {
+                console.warn('Error querying ground elevation:', error);
+                // Show error state
+                document.getElementById('cameraGroundHeight').textContent = 'Error';
+                document.getElementById('cameraAGL').textContent = 'Error';
+            }
+        }
+
+        function updateGroundHeightDisplay(groundHeight, cameraAltitude) {
+            // Calculate Above Ground Level (AGL)
+            const agl = cameraAltitude - groundHeight;
+            
+            // Update display elements
+            document.getElementById('cameraGroundHeight').textContent = groundHeight.toFixed(1) + ' m';
+            document.getElementById('cameraAGL').textContent = agl.toFixed(1) + ' m';
+            
+            // Add visual indicator for AGL status
+            const aglElement = document.getElementById('cameraAGL');
+            if (agl < 100) {
+                aglElement.style.color = '#ef4444'; // Red for low altitude
+            } else if (agl < 500) {
+                aglElement.style.color = '#f59e0b'; // Orange for medium altitude
+            } else {
+                aglElement.style.color = '#f1f5f9'; // White for high altitude
+            }
         }
 
         function updateCompass(headingDegrees) {
