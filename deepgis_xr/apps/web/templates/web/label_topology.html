@@ -96,6 +96,7 @@
             padding: 20px;
             text-align: center;
             border-bottom: 1px solid #334155;
+            position: relative;
         }
 
         .sidebar-header h5 {
@@ -107,6 +108,51 @@
         .sidebar-header i {
             margin-right: 8px;
             color: #3b82f6;
+        }
+
+        .sidebar-collapse-btn {
+            position: absolute;
+            top: 50%;
+            right: 15px;
+            transform: translateY(-50%);
+            background: #3b82f6;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            padding: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            z-index: 1001;
+        }
+
+        .sidebar-collapse-btn:hover {
+            background: #2563eb;
+        }
+
+        .sidebar-collapsed {
+            transform: translateX(calc(100% - 60px)) !important;
+        }
+
+        .sidebar-collapsed .sidebar-content {
+            overflow: hidden;
+        }
+
+        .sidebar-collapsed .layer-controls,
+        .sidebar-collapsed .statistics-section {
+            display: none;
+        }
+
+        .sidebar-collapsed .sidebar-header h5,
+        .sidebar-collapsed .sidebar-header small {
+            display: none;
+        }
+
+        .sidebar-collapsed .sidebar-header {
+            padding: 20px 10px;
+        }
+
+        #cesiumContainer.sidebar-collapsed {
+            right: 60px;
         }
 
         .layer-controls {
@@ -367,6 +413,11 @@
             align-items: center;
             justify-content: center;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: right 0.3s ease;
+        }
+
+        .compass-widget.sidebar-collapsed {
+            right: 90px;
         }
 
         .compass-face {
@@ -472,6 +523,11 @@
             backdrop-filter: blur(5px);
             overflow: hidden;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: right 0.3s ease;
+        }
+
+        .attitude-indicator.sidebar-collapsed {
+            right: 90px;
         }
 
         .attitude-horizon {
@@ -585,12 +641,26 @@
                 max-width: 350px;
             }
 
+            #sidebar-wrapper.sidebar-collapsed {
+                transform: translateX(calc(100% - 60px));
+                width: 60px;
+                max-width: 60px;
+            }
+
             #cesiumContainer {
                 right: 0;
             }
 
+            #cesiumContainer.sidebar-collapsed {
+                right: 60px;
+            }
+
             #wrapper.show-sidebar #sidebar-wrapper {
                 transform: translateX(0);
+            }
+
+            #wrapper.show-sidebar #sidebar-wrapper.sidebar-collapsed {
+                transform: translateX(calc(100% - 60px));
             }
 
             .compass-widget {
@@ -598,9 +668,17 @@
                 top: 150px;
             }
 
+            .compass-widget.sidebar-collapsed {
+                right: 75px;
+            }
+
             .attitude-indicator {
                 right: 15px;
                 top: 260px;
+            }
+
+            .attitude-indicator.sidebar-collapsed {
+                right: 75px;
             }
         }
 
@@ -670,6 +748,9 @@
                 <div class="sidebar-header">
                     <h5><i class="fas fa-globe"></i> DeepGIS Topology</h5>
                     <small>Hybrid 2D/3D Viewer</small>
+                    <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Collapse Sidebar">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
                 </div>
                 
                 <div class="layer-controls">
@@ -1427,6 +1508,37 @@
             document.getElementById('sidebarToggle').addEventListener('click', () => {
                 const wrapper = document.getElementById('wrapper');
                 wrapper.classList.toggle('show-sidebar');
+                setTimeout(() => {
+                    viewer.resize();
+                }, 300);
+            });
+
+            // Sidebar collapse/expand
+            document.getElementById('sidebarCollapseBtn').addEventListener('click', () => {
+                const sidebar = document.getElementById('sidebar-wrapper');
+                const cesiumContainer = document.getElementById('cesiumContainer');
+                const collapseBtn = document.getElementById('sidebarCollapseBtn');
+                const icon = collapseBtn.querySelector('i');
+                const compass = document.getElementById('compassWidget');
+                const attitude = document.getElementById('attitudeIndicator');
+                
+                sidebar.classList.toggle('sidebar-collapsed');
+                cesiumContainer.classList.toggle('sidebar-collapsed');
+                compass.classList.toggle('sidebar-collapsed');
+                attitude.classList.toggle('sidebar-collapsed');
+                
+                // Update button icon and tooltip
+                if (sidebar.classList.contains('sidebar-collapsed')) {
+                    icon.className = 'fas fa-chevron-left';
+                    collapseBtn.title = 'Expand Sidebar';
+                    updateStatusIndicator('Sidebar collapsed');
+                } else {
+                    icon.className = 'fas fa-chevron-right';
+                    collapseBtn.title = 'Collapse Sidebar';
+                    updateStatusIndicator('Sidebar expanded');
+                }
+                
+                // Resize Cesium viewer after animation
                 setTimeout(() => {
                     viewer.resize();
                 }, 300);
