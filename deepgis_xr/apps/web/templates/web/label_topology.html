@@ -35,7 +35,7 @@
         #cesiumContainer {
             position: absolute;
             top: 0;
-            right: 350px;
+            right: 320px; /* Updated to match new sidebar width */
             bottom: 0;
             left: 0;
             width: auto;
@@ -44,69 +44,97 @@
         }
 
         #sidebar-wrapper {
-            width: 350px;
+            width: 320px; /* Reduced from 350px */
             position: fixed;
             height: 100%;
             z-index: 1000;
             top: 0;
             right: 0;
-            background: #1e293b;
-            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            box-shadow: -2px 0 20px rgba(0,0,0,0.3);
             overflow-y: auto;
             transform: translateX(0);
             transition: transform 0.3s ease;
+            border-left: 1px solid #334155;
         }
 
-        /* Scrollbar styling */
+        /* Scrollbar styling - thinner and more modern */
         #sidebar-wrapper::-webkit-scrollbar {
-            width: 4px;
+            width: 3px;
         }
 
         #sidebar-wrapper::-webkit-scrollbar-track {
-            background: #334155;
+            background: transparent;
         }
 
         #sidebar-wrapper::-webkit-scrollbar-thumb {
             background: #64748b;
-            border-radius: 2px;
+            border-radius: 3px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
         }
 
         .mobile-toggle {
             position: fixed;
             top: 15px;
-            right: 365px;
+            right: 335px; /* Updated for new sidebar width */
             z-index: 2000;
             background: #3b82f6;
             border: none;
-            border-radius: 6px;
-            padding: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            border-radius: 8px;
+            padding: 8px 12px;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
             display: none;
             color: white;
-            transition: background-color 0.2s ease;
+            transition: all 0.2s ease;
+            font-size: 14px;
         }
 
         .mobile-toggle:hover {
             background: #2563eb;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
         }
 
         .sidebar-header {
-            background: #0f172a;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
             color: white;
-            padding: 20px;
+            padding: 16px;
             text-align: center;
             border-bottom: 1px solid #334155;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sidebar-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6);
         }
 
         .sidebar-header h5 {
-            margin: 0;
-            font-size: 1.3rem;
-            font-weight: 600;
+            margin: 0 0 4px 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar-header small {
+            color: #94a3b8;
+            font-size: 0.75rem;
+            font-weight: 500;
         }
 
         .sidebar-header i {
-            margin-right: 8px;
+            margin-right: 6px;
             color: #3b82f6;
+            font-size: 1.1rem;
         }
 
         .layer-controls {
@@ -114,60 +142,77 @@
         }
 
         .layer-group {
-            margin: 15px;
-            background: #334155;
-            border-radius: 8px;
-            padding: 15px;
-            border: 1px solid #475569;
+            margin: 12px 10px; /* Reduced margins */
+            background: rgba(51, 65, 85, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px; /* Reduced padding */
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            transition: all 0.2s ease;
+        }
+
+        .layer-group:hover {
+            background: rgba(51, 65, 85, 0.8);
+            border-color: rgba(59, 130, 246, 0.3);
+            transform: translateY(-1px);
         }
 
         .layer-group-title {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             color: #f1f5f9;
-            border-bottom: 1px solid #475569;
-            padding-bottom: 8px;
-            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(71, 85, 105, 0.5);
+            padding-bottom: 6px; /* Reduced padding */
+            margin-bottom: 10px; /* Reduced margin */
             font-weight: 600;
-            font-size: 0.95rem;
+            font-size: 0.85rem; /* Slightly smaller */
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .layer-group-title i {
             color: #3b82f6;
+            font-size: 0.9rem;
         }
 
         .form-select {
-            background: #475569;
-            border: 1px solid #64748b;
+            background: rgba(71, 85, 105, 0.8);
+            border: 1px solid rgba(100, 116, 139, 0.5);
             color: #f1f5f9;
-            border-radius: 6px;
-            padding: 8px 10px;
-            transition: border-color 0.2s ease;
+            border-radius: 8px;
+            padding: 6px 8px; /* Reduced padding */
+            transition: all 0.2s ease;
+            font-size: 0.85rem; /* Smaller font */
+            backdrop-filter: blur(5px);
         }
 
         .form-select:focus {
-            background: #475569;
+            background: rgba(71, 85, 105, 0.9);
             border-color: #3b82f6;
             box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
             color: #f1f5f9;
+            outline: none;
         }
 
         .form-check {
-            padding: 6px 0;
-            transition: background-color 0.2s ease;
+            padding: 4px 0; /* Reduced padding */
+            transition: all 0.2s ease;
+            border-radius: 6px;
         }
 
         .form-check:hover {
             background: rgba(255, 255, 255, 0.05);
-            border-radius: 4px;
-            padding-left: 6px;
+            padding-left: 4px;
         }
 
         .form-check-input {
-            background: #64748b;
+            background: rgba(100, 116, 139, 0.8);
             border: 1px solid #94a3b8;
-            border-radius: 3px;
+            border-radius: 4px;
+            width: 16px; /* Smaller checkboxes */
+            height: 16px;
+            margin-top: 2px;
         }
 
         .form-check-input:checked {
@@ -179,6 +224,16 @@
             color: #cbd5e1;
             font-weight: 500;
             margin-left: 6px;
+            font-size: 0.8rem; /* Smaller font */
+            display: flex;
+            align-items: center;
+        }
+
+        .form-check-label i {
+            font-size: 0.75rem;
+            margin-right: 6px;
+            width: 12px;
+            text-align: center;
         }
 
         .form-check:hover .form-check-label {
@@ -186,104 +241,216 @@
         }
 
         .btn {
-            border-radius: 6px;
+            border-radius: 8px;
             font-weight: 500;
-            transition: background-color 0.2s ease;
+            transition: all 0.2s ease;
             margin: 2px 0;
             width: 100%;
+            padding: 6px 12px; /* Reduced padding */
+            font-size: 0.8rem; /* Smaller font */
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn:hover::before {
+            left: 100%;
         }
 
         .btn-primary {
-            background: #3b82f6;
-            border-color: #3b82f6;
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
         }
 
         .btn-primary:hover {
-            background: #2563eb;
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
         }
 
         .btn-success {
-            background: #10b981;
-            border-color: #10b981;
+            background: linear-gradient(135deg, #10b981, #059669);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
         }
 
         .btn-warning {
-            background: #f59e0b;
-            border-color: #f59e0b;
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-warning:hover {
+            background: linear-gradient(135deg, #d97706, #b45309);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
         }
 
         .btn-danger {
-            background: #ef4444;
-            border-color: #ef4444;
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
         }
 
-        /* Statistics Section */
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn i {
+            font-size: 0.75rem;
+            margin-right: 4px;
+        }
+
+        /* Statistics Section - More compact */
         .statistics-section {
-            background: #7c3aed;
-            border: 1px solid #8b5cf6;
-            border-radius: 8px;
-            padding: 15px;
-            margin: 20px 15px;
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            border: 1px solid rgba(139, 92, 246, 0.5);
+            border-radius: 12px;
+            padding: 12px;
+            margin: 12px 10px;
+            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
         }
 
         .statistics-title {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
             color: #f1f5f9;
             font-weight: 600;
-            font-size: 0.95rem;
-            margin-bottom: 12px;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
             border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-            padding-bottom: 8px;
+            padding-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .statistics-title i {
             color: #a78bfa;
+            font-size: 0.9rem;
         }
 
         .chart-container {
             position: relative;
-            height: 200px;
+            height: 160px; /* Reduced height */
             width: 100%;
             background: rgba(255, 255, 255, 0.1);
-            border-radius: 6px;
-            padding: 8px;
+            border-radius: 8px;
+            padding: 6px;
+            backdrop-filter: blur(5px);
         }
 
-        /* View Mode Controls */
+        /* View Mode Controls - More compact */
         .view-controls {
-            background: #059669;
-            border: 1px solid #10b981;
+            background: linear-gradient(135deg, #059669, #047857);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.2);
         }
 
         .view-controls .btn {
-            margin: 3px 0;
-            font-size: 0.85rem;
+            margin: 2px 0;
+            font-size: 0.75rem;
+            padding: 5px 10px;
         }
 
-        /* Measurement Controls */
+        /* Measurement Controls - More compact */
         .measurement-controls {
-            background: #dc2626;
-            border: 1px solid #ef4444;
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
         }
 
         .measurements-list {
-            max-height: 150px;
+            max-height: 120px; /* Reduced height */
             overflow-y: auto;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 4px;
-            padding: 8px;
-            margin-top: 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 6px;
+            margin-top: 6px;
+            backdrop-filter: blur(5px);
         }
 
         .measurement-item {
             background: rgba(255, 255, 255, 0.1);
             border-radius: 4px;
-            padding: 6px;
-            margin: 4px 0;
-            font-size: 0.85rem;
+            padding: 4px 6px; /* Reduced padding */
+            margin: 2px 0;
+            font-size: 0.75rem; /* Smaller font */
             color: #f1f5f9;
+            border-left: 2px solid #3b82f6;
+        }
+
+        /* Form groups - more compact spacing */
+        .form-group {
+            margin-bottom: 8px; /* Reduced from default */
+        }
+
+        .form-label {
+            color: #cbd5e1;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-control {
+            background: rgba(71, 85, 105, 0.8);
+            border: 1px solid rgba(100, 116, 139, 0.5);
+            color: #f1f5f9;
+            border-radius: 8px;
+            padding: 6px 8px;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        .form-control:focus {
+            background: rgba(71, 85, 105, 0.9);
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+            outline: none;
+        }
+
+        /* WebXR section styling */
+        #webxrControls {
+            background: linear-gradient(135deg, #7c2d92, #6b21a8);
+            border: 1px solid rgba(139, 92, 246, 0.5);
+            box-shadow: 0 4px 12px rgba(124, 45, 146, 0.2);
+        }
+
+        #vrStatus {
+            color: #cbd5e1;
+            font-size: 0.75rem;
+            margin-top: 6px;
+            padding: 6px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 6px;
+            border-left: 2px solid #8b5cf6;
+            backdrop-filter: blur(5px);
+        }
+
+        /* Model controls when visible */
+        #modelControls {
+            background: linear-gradient(135deg, #374151, #1f2937);
+            border: 1px solid rgba(75, 85, 99, 0.5);
+            box-shadow: 0 4px 12px rgba(55, 65, 81, 0.2);
         }
 
         /* Status Indicators */
@@ -355,7 +522,7 @@
         .compass-widget {
             position: absolute;
             top: 150px;
-            right: 380px;
+            right: 350px; /* Updated for new sidebar width */
             width: 90px;
             height: 90px;
             background: rgba(0, 0, 0, 0.8);
@@ -458,11 +625,62 @@
             text-align: center;
         }
 
+        /* Celestial indicators for sun and moon */
+        .celestial-indicator {
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            transition: all 0.2s ease;
+            z-index: 5;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+        }
+
+        .sun-indicator {
+            background: radial-gradient(circle, #fbbf24 0%, #f59e0b 100%);
+            color: #ffffff;
+            box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+            border: 1px solid #f59e0b;
+        }
+
+        .sun-indicator.below-horizon {
+            background: radial-gradient(circle, #64748b 0%, #475569 100%);
+            color: #94a3b8;
+            box-shadow: 0 0 4px rgba(100, 116, 139, 0.3);
+            border: 1px solid #64748b;
+            opacity: 0.6;
+        }
+
+        .moon-indicator {
+            background: radial-gradient(circle, #e2e8f0 0%, #cbd5e1 100%);
+            color: #1e293b;
+            box-shadow: 0 0 6px rgba(226, 232, 240, 0.5);
+            border: 1px solid #cbd5e1;
+        }
+
+        .moon-indicator.below-horizon {
+            background: radial-gradient(circle, #475569 0%, #334155 100%);
+            color: #64748b;
+            box-shadow: 0 0 3px rgba(71, 85, 105, 0.3);
+            border: 1px solid #475569;
+            opacity: 0.6;
+        }
+
+        .celestial-indicator i {
+            font-size: 8px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+        }
+
         /* Aviation-style attitude indicator */
         .attitude-indicator {
             position: absolute;
             top: 260px;
-            right: 380px;
+            right: 350px; /* Updated for new sidebar width */
             width: 90px;
             height: 90px;
             background: rgba(0, 0, 0, 0.9);
@@ -581,8 +799,8 @@
 
             #sidebar-wrapper {
                 transform: translateX(100%);
-                width: 85%;
-                max-width: 350px;
+                width: 90%; /* Increased from 85% for better mobile experience */
+                max-width: 320px; /* Match desktop width */
             }
 
             #cesiumContainer {
@@ -596,11 +814,113 @@
             .compass-widget {
                 right: 15px;
                 top: 150px;
+                width: 70px; /* Smaller on mobile */
+                height: 70px;
+            }
+
+            .compass-face {
+                width: 60px;
+                height: 60px;
+            }
+
+            .compass-needle {
+                height: 25px;
             }
 
             .attitude-indicator {
                 right: 15px;
-                top: 260px;
+                top: 240px; /* Adjusted for smaller compass */
+                width: 70px;
+                height: 70px;
+            }
+
+            .attitude-horizon {
+                width: 140px;
+                height: 140px;
+            }
+
+            /* Make sidebar content more touch-friendly on mobile */
+            .layer-group {
+                margin: 8px 6px;
+                padding: 10px;
+            }
+
+            .btn {
+                padding: 8px 12px;
+                font-size: 0.85rem;
+                margin: 3px 0;
+            }
+
+            .form-check {
+                padding: 6px 0;
+            }
+
+            .form-check-label {
+                font-size: 0.85rem;
+            }
+
+            .layer-group-title {
+                font-size: 0.9rem;
+            }
+
+            /* Adjust camera info for mobile */
+            .camera-info {
+                top: 70px;
+                left: 8px;
+                padding: 8px;
+                font-size: 0.7rem;
+                min-width: 180px;
+            }
+
+            .status-indicator {
+                top: 8px;
+                left: 8px;
+                padding: 4px 8px;
+                font-size: 0.8rem;
+            }
+
+            .performance-indicator {
+                top: 40px;
+                left: 8px;
+                padding: 4px 8px;
+                font-size: 0.75rem;
+            }
+        }
+
+        /* Tablet responsive adjustments */
+        @media (max-width: 1024px) and (min-width: 769px) {
+            #sidebar-wrapper {
+                width: 300px; /* Slightly smaller on tablets */
+            }
+
+            #cesiumContainer {
+                right: 300px;
+            }
+
+            .mobile-toggle {
+                right: 315px;
+            }
+
+            .compass-widget {
+                right: 330px;
+                width: 80px;
+                height: 80px;
+            }
+
+            .compass-face {
+                width: 70px;
+                height: 70px;
+            }
+
+            .attitude-indicator {
+                right: 330px;
+                width: 80px;
+                height: 80px;
+            }
+
+            .attitude-horizon {
+                width: 160px;
+                height: 160px;
             }
         }
 
@@ -934,6 +1254,13 @@
             </div>
             <div class="compass-needle" id="compassNeedle"></div>
             <div class="compass-center"></div>
+            <!-- Sun and Moon indicators -->
+            <div class="celestial-indicator sun-indicator" id="sunIndicator">
+                <i class="fas fa-sun"></i>
+            </div>
+            <div class="celestial-indicator moon-indicator" id="moonIndicator">
+                <i class="fas fa-moon"></i>
+            </div>
         </div>
         <div class="compass-heading" id="compassHeading">0°</div>
     </div>
@@ -1164,12 +1491,12 @@
                 viewer.scene.fog.enabled = true;
                 viewer.scene.fog.density = 0.0001;
 
-                // Set initial view to a nice location
+                // Set initial view to Mount Everest
                 viewer.camera.setView({
-                    destination: Cesium.Cartesian3.fromDegrees(-111.26536, 33.78202, 1000),
+                    destination: Cesium.Cartesian3.fromDegrees(87.036623, 27.986569, 11268.8),
                     orientation: {
-                        heading: Cesium.Math.toRadians(0),
-                        pitch: Cesium.Math.toRadians(0),
+                        heading: Cesium.Math.toRadians(270.7),
+                        pitch: Cesium.Math.toRadians(-18.3),
                         roll: 0.0
                     }
                 });
@@ -1436,14 +1763,14 @@
 
             document.getElementById('homeView').addEventListener('click', () => {
                 viewer.camera.setView({
-                    destination: Cesium.Cartesian3.fromDegrees(-111.26536, 33.78202, 1000),
+                    destination: Cesium.Cartesian3.fromDegrees(87.036623, 27.986569, 11268.8),
                     orientation: {
-                        heading: Cesium.Math.toRadians(0),
-                        pitch: Cesium.Math.toRadians(-45),
+                        heading: Cesium.Math.toRadians(270.7),
+                        pitch: Cesium.Math.toRadians(-18.3),
                         roll: 0.0
                     }
                 });
-                updateStatusIndicator('Home View');
+                updateStatusIndicator('Home View - Mount Everest');
             });
 
             // Measurement tools
@@ -2049,14 +2376,20 @@
             // Query ground elevation asynchronously
             queryGroundElevation(longitude, latitude, altitude);
             
-            // Update compass
-            updateCompass(heading);
+            // Calculate sun and moon positions for compass
+            const now = new Date();
+            const sunPos = calculateSunPosition(now, latitude, longitude);
+            const moonPos = calculateMoonPosition(now, latitude, longitude);
+            
+            // Update compass with sun and moon positions
+            updateCompass(heading, sunPos, moonPos);
             
             // Update attitude indicator
             updateAttitudeIndicator(pitch, roll);
             
-            // Update sun and moon positions
-            updateSunMoonInfo(longitude, latitude);
+            // Update sun and moon info display
+            updateSunDisplay(sunPos);
+            updateMoonDisplay(moonPos);
         }
 
         async function queryGroundElevation(longitude, latitude, cameraAltitude) {
@@ -2099,7 +2432,7 @@
             }
         }
 
-        function updateCompass(headingDegrees) {
+        function updateCompass(headingDegrees, sunPos = null, moonPos = null) {
             // Normalize heading to 0-360 range
             let normalizedHeading = headingDegrees;
             while (normalizedHeading < 0) normalizedHeading += 360;
@@ -2134,6 +2467,56 @@
             }
             
             headingDisplay.textContent = normalizedHeading.toFixed(0) + '° ' + cardinalDirection;
+            
+            // Update sun and moon positions on compass
+            if (sunPos) {
+                updateCelestialIndicator('sunIndicator', sunPos.azimuth, normalizedHeading, sunPos.elevation);
+            }
+            
+            if (moonPos) {
+                updateCelestialIndicator('moonIndicator', moonPos.azimuth, normalizedHeading, moonPos.elevation);
+            }
+        }
+
+        function updateCelestialIndicator(elementId, celestialAzimuth, cameraHeading, elevation) {
+            const indicator = document.getElementById(elementId);
+            if (!indicator) return;
+            
+            // Calculate relative bearing from camera heading to celestial object
+            // If camera points at 0° (north) and sun is at 90° (east), relative bearing is 90°
+            // If camera points at 90° (east) and sun is at 90° (east), relative bearing is 0°
+            let relativeBearing = celestialAzimuth - cameraHeading;
+            
+            // Normalize to -180 to +180 range
+            while (relativeBearing > 180) relativeBearing -= 360;
+            while (relativeBearing < -180) relativeBearing += 360;
+            
+            // Convert to compass dial coordinates
+            // On the compass dial, 0° is at the top (north), positive angles go clockwise
+            // The relative bearing tells us how many degrees clockwise from the camera's forward direction
+            const dialAngle = relativeBearing;
+            
+            // Calculate position on the compass face (radius of 35px from center)
+            const radius = 35;
+            const angleRad = (dialAngle * Math.PI) / 180;
+            
+            // Calculate x,y position relative to compass center
+            // Note: In CSS, positive Y is down, so we negate the sin component
+            const x = radius * Math.sin(angleRad);
+            const y = -radius * Math.cos(angleRad);
+            
+            // Position the indicator (compass center is at 50%, 50%)
+            indicator.style.left = `calc(50% + ${x}px)`;
+            indicator.style.top = `calc(50% + ${y}px)`;
+            
+            // Update appearance based on elevation (above/below horizon)
+            if (elevation > 0) {
+                indicator.classList.remove('below-horizon');
+                indicator.style.display = 'flex';
+            } else {
+                indicator.classList.add('below-horizon');
+                indicator.style.display = 'flex'; // Still show but dimmed
+            }
         }
 
         function updateAttitudeIndicator(pitchDegrees, rollDegrees) {
