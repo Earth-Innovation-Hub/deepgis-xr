@@ -17,9 +17,9 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     
-    <!-- Preload GLTF model and related resources for better loading performance -->
-    <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb" as="fetch" crossorigin="anonymous">
-    <link rel="dns-prefetch" href="https://deepgis.org">
+    <!-- Preload disabled due to CORS issues - using Ion Asset ID instead -->
+    <!-- <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb" as="fetch" crossorigin="anonymous"> -->
+    <link rel="dns-prefetch" href="https://cesium.com">
     
     <!-- Suppress Cesium source map 404 errors -->
     <script>
@@ -1246,7 +1246,7 @@
                         <div class="form-group mb-3">
                             <label class="form-label" style="color: #cbd5e1;">Model URL or Ion Asset ID:</label>
                             <input type="text" class="form-control" id="modelUrl" 
-                                   value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                                   value="75343"
                                    placeholder="Enter Ion Asset ID (e.g., 75343) or URL"
                                    style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
                             <small class="text-muted">
@@ -1724,6 +1724,40 @@
             }
         }
 
+        // CORS Help and Detection Function
+        function showCORSHelp() {
+            const helpMessage = `
+🚫 CORS (Cross-Origin Resource Sharing) Issue Detected
+
+The model cannot be loaded due to browser security restrictions. Here are your options:
+
+✅ RECOMMENDED SOLUTIONS:
+1. Use Ion Asset ID: Enter "75343" instead of the URL
+2. Upload model to Cesium Ion and use the Asset ID
+3. Host the model on a CORS-enabled server
+
+🔧 TECHNICAL SOLUTIONS:
+1. Add CORS headers to your server:
+   - Access-Control-Allow-Origin: *
+   - Access-Control-Allow-Methods: GET, HEAD
+   - Access-Control-Allow-Headers: Range, Accept
+
+2. For development: Use a local server with CORS disabled
+   - Chrome: --disable-web-security --user-data-dir=/tmp/chrome
+   - Firefox: Set security.fileuri.strict_origin_policy to false
+
+3. Convert large models to 3D Tiles for better performance
+
+📋 Current Status:
+- Model URL: ${document.getElementById('modelUrl').value}
+- Browser: ${navigator.userAgent.split(' ')[0]}
+- Protocol: ${window.location.protocol}
+            `;
+            
+            console.log(helpMessage);
+            showSnackBar('CORS issue detected. Check console for detailed help.', 'warning');
+        }
+
         // Enhanced model loading with Ion 3D Tiles support and location options
         async function loadGLTFModel(viewer) {
             const modelUrl = document.getElementById('modelUrl').value.trim();
@@ -1873,11 +1907,7 @@
                     
                     // Show CORS help message if needed
                     if (connectivityTest.error && connectivityTest.error.includes('CORS')) {
-                        console.log('CORS Help: To load external models, consider:');
-                        console.log('1. Use Cesium Ion Asset IDs instead of direct URLs');
-                        console.log('2. Host models on a CORS-enabled server');
-                        console.log('3. Use a local development server with CORS disabled');
-                        console.log('4. Convert models to Ion 3D Tilesets');
+                        showCORSHelp();
                     }
 
                     // Enhanced model loading with better CORS and error handling
@@ -2177,8 +2207,37 @@
 
             } catch (error) {
                 console.error('Error loading model:', error);
-                updateStatusIndicator('Error loading model: ' + error.message);
-                showSnackBar('Failed to load 3D model. Check console for details.', 'error');
+                
+                // Provide specific error messages based on error type
+                let errorMessage = 'Unknown error occurred';
+                let suggestion = 'Check console for details';
+                
+                if (error.message.includes('CORS') || error.message.includes('cross-origin')) {
+                    errorMessage = 'CORS policy blocked the model loading';
+                    suggestion = 'Try using an Ion Asset ID instead of a direct URL';
+                    showCORSHelp();
+                } else if (error.message.includes('404') || error.message.includes('Not Found')) {
+                    errorMessage = 'Model file not found (404)';
+                    suggestion = 'Check if the URL is correct and the file exists';
+                } else if (error.message.includes('timeout')) {
+                    errorMessage = 'Model loading timed out';
+                    suggestion = 'File may be too large. Try using 3D Tiles or Ion Asset ID';
+                } else if (error.message.includes('network')) {
+                    errorMessage = 'Network error occurred';
+                    suggestion = 'Check your internet connection';
+                }
+                
+                updateStatusIndicator(`Error: ${errorMessage}`);
+                showSnackBar(`Failed to load 3D model: ${errorMessage}. ${suggestion}`, 'error');
+                
+                // Log detailed error information
+                console.error('Detailed error info:', {
+                    message: error.message,
+                    stack: error.stack,
+                    modelUrl: document.getElementById('modelUrl').value,
+                    userAgent: navigator.userAgent,
+                    timestamp: new Date().toISOString()
+                });
             }
         }
 
