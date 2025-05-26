@@ -534,6 +534,7 @@
             align-items: center;
             justify-content: center;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: right 0.3s ease;
         }
 
         .compass-face {
@@ -690,6 +691,7 @@
             backdrop-filter: blur(5px);
             overflow: hidden;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: right 0.3s ease;
         }
 
         .attitude-horizon {
@@ -931,6 +933,8 @@
 
         #wrapper.fullscreen-mode #cesiumContainer {
             right: 0;
+            left: 0;
+            width: 100%;
         }
 
         #wrapper.fullscreen-mode .compass-widget {
@@ -943,6 +947,44 @@
 
         #wrapper.fullscreen-mode .mobile-toggle {
             right: 15px;
+        }
+
+        /* Additional fullscreen styles for when document is in fullscreen */
+        :fullscreen #cesiumContainer,
+        :-webkit-full-screen #cesiumContainer,
+        :-moz-full-screen #cesiumContainer,
+        :-ms-fullscreen #cesiumContainer {
+            right: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+        }
+
+        :fullscreen #sidebar-wrapper,
+        :-webkit-full-screen #sidebar-wrapper,
+        :-moz-full-screen #sidebar-wrapper,
+        :-ms-fullscreen #sidebar-wrapper {
+            transform: translateX(100%) !important;
+        }
+
+        :fullscreen .compass-widget,
+        :-webkit-full-screen .compass-widget,
+        :-moz-full-screen .compass-widget,
+        :-ms-fullscreen .compass-widget {
+            right: 15px !important;
+        }
+
+        :fullscreen .attitude-indicator,
+        :-webkit-full-screen .attitude-indicator,
+        :-moz-full-screen .attitude-indicator,
+        :-ms-fullscreen .attitude-indicator {
+            right: 15px !important;
+        }
+
+        :fullscreen .mobile-toggle,
+        :-webkit-full-screen .mobile-toggle,
+        :-moz-full-screen .mobile-toggle,
+        :-ms-fullscreen .mobile-toggle {
+            right: 15px !important;
         }
 
         /* Loading overlay */
@@ -1837,6 +1879,9 @@
             // Fullscreen change detection
             const handleFullscreenChange = () => {
                 const wrapper = document.getElementById('wrapper');
+                const cesiumContainer = document.getElementById('cesiumContainer');
+                const compassWidget = document.getElementById('compassWidget');
+                const attitudeIndicator = document.getElementById('attitudeIndicator');
                 const isFullscreen = !!(document.fullscreenElement || 
                                        document.webkitFullscreenElement || 
                                        document.mozFullScreenElement || 
@@ -1846,10 +1891,30 @@
                     // Store current sidebar state before entering fullscreen
                     wrapper.dataset.sidebarStateBeforeFullscreen = wrapper.classList.contains('show-sidebar') ? 'true' : 'false';
                     wrapper.classList.add('fullscreen-mode');
-                    updateStatusIndicator('Fullscreen mode - Sidebar collapsed');
+                    
+                    // Force cesium container to full width
+                    cesiumContainer.style.right = '0';
+                    cesiumContainer.style.left = '0';
+                    cesiumContainer.style.width = '100%';
+                    
+                    // Move compass and attitude indicators to right edge
+                    compassWidget.style.right = '15px';
+                    attitudeIndicator.style.right = '15px';
+                    
+                    updateStatusIndicator('Fullscreen mode - Viewport expanded');
                 } else {
                     // Restore sidebar state when exiting fullscreen
                     wrapper.classList.remove('fullscreen-mode');
+                    
+                    // Restore cesium container dimensions
+                    cesiumContainer.style.right = '320px';
+                    cesiumContainer.style.left = '0';
+                    cesiumContainer.style.width = 'auto';
+                    
+                    // Restore compass and attitude indicators to sidebar position
+                    compassWidget.style.right = '350px';
+                    attitudeIndicator.style.right = '350px';
+                    
                     const wasShowingSidebar = wrapper.dataset.sidebarStateBeforeFullscreen === 'true';
                     if (wasShowingSidebar) {
                         wrapper.classList.add('show-sidebar');
@@ -1857,9 +1922,13 @@
                     updateStatusIndicator('Exited fullscreen - Sidebar restored');
                 }
                 
-                // Resize viewer after transition
+                // Resize viewer after transition with a longer delay to ensure DOM updates
                 setTimeout(() => {
                     viewer.resize();
+                    // Force a second resize to ensure proper viewport calculation
+                    setTimeout(() => {
+                        viewer.resize();
+                    }, 100);
                 }, 300);
             };
 
