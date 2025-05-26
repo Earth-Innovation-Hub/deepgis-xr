@@ -96,7 +96,6 @@
             padding: 20px;
             text-align: center;
             border-bottom: 1px solid #334155;
-            position: relative;
         }
 
         .sidebar-header h5 {
@@ -108,51 +107,6 @@
         .sidebar-header i {
             margin-right: 8px;
             color: #3b82f6;
-        }
-
-        .sidebar-collapse-btn {
-            position: absolute;
-            top: 50%;
-            right: 15px;
-            transform: translateY(-50%);
-            background: #3b82f6;
-            border: none;
-            border-radius: 4px;
-            color: white;
-            padding: 8px;
-            cursor: pointer;
-            transition: background-color 0.2s ease;
-            z-index: 1001;
-        }
-
-        .sidebar-collapse-btn:hover {
-            background: #2563eb;
-        }
-
-        .sidebar-collapsed {
-            transform: translateX(calc(100% - 60px)) !important;
-        }
-
-        .sidebar-collapsed .sidebar-content {
-            overflow: hidden;
-        }
-
-        .sidebar-collapsed .layer-controls,
-        .sidebar-collapsed .statistics-section {
-            display: none;
-        }
-
-        .sidebar-collapsed .sidebar-header h5,
-        .sidebar-collapsed .sidebar-header small {
-            display: none;
-        }
-
-        .sidebar-collapsed .sidebar-header {
-            padding: 20px 10px;
-        }
-
-        #cesiumContainer.sidebar-collapsed {
-            right: 60px;
         }
 
         .layer-controls {
@@ -413,11 +367,6 @@
             align-items: center;
             justify-content: center;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-            transition: right 0.3s ease;
-        }
-
-        .compass-widget.sidebar-collapsed {
-            right: 90px;
         }
 
         .compass-face {
@@ -523,11 +472,6 @@
             backdrop-filter: blur(5px);
             overflow: hidden;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-            transition: right 0.3s ease;
-        }
-
-        .attitude-indicator.sidebar-collapsed {
-            right: 90px;
         }
 
         .attitude-horizon {
@@ -641,26 +585,12 @@
                 max-width: 350px;
             }
 
-            #sidebar-wrapper.sidebar-collapsed {
-                transform: translateX(calc(100% - 60px));
-                width: 60px;
-                max-width: 60px;
-            }
-
             #cesiumContainer {
                 right: 0;
             }
 
-            #cesiumContainer.sidebar-collapsed {
-                right: 60px;
-            }
-
             #wrapper.show-sidebar #sidebar-wrapper {
                 transform: translateX(0);
-            }
-
-            #wrapper.show-sidebar #sidebar-wrapper.sidebar-collapsed {
-                transform: translateX(calc(100% - 60px));
             }
 
             .compass-widget {
@@ -668,18 +598,31 @@
                 top: 150px;
             }
 
-            .compass-widget.sidebar-collapsed {
-                right: 75px;
-            }
-
             .attitude-indicator {
                 right: 15px;
                 top: 260px;
             }
+        }
 
-            .attitude-indicator.sidebar-collapsed {
-                right: 75px;
-            }
+        /* Fullscreen mode styles */
+        #wrapper.fullscreen-mode #sidebar-wrapper {
+            transform: translateX(100%);
+        }
+
+        #wrapper.fullscreen-mode #cesiumContainer {
+            right: 0;
+        }
+
+        #wrapper.fullscreen-mode .compass-widget {
+            right: 15px;
+        }
+
+        #wrapper.fullscreen-mode .attitude-indicator {
+            right: 15px;
+        }
+
+        #wrapper.fullscreen-mode .mobile-toggle {
+            right: 15px;
         }
 
         /* Loading overlay */
@@ -748,9 +691,6 @@
                 <div class="sidebar-header">
                     <h5><i class="fas fa-globe"></i> DeepGIS Topology</h5>
                     <small>Hybrid 2D/3D Viewer</small>
-                    <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="Collapse Sidebar">
-                        <i class="fas fa-chevron-right"></i>
-                    </button>
                 </div>
                 
                 <div class="layer-controls">
@@ -814,6 +754,25 @@
                         <button class="btn btn-success" id="homeView">
                             <i class="fas fa-home me-2"></i>Home View
                         </button>
+                    </div>
+
+                    <!-- WebXR Controls -->
+                    <div class="layer-group" id="webxrControls" style="background: #7c2d92; border: 1px solid #8b5cf6;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-vr-cardboard"></i> WebXR / VR
+                        </div>
+                        <button class="btn btn-primary" id="checkVRSupport">
+                            <i class="fas fa-search me-2"></i>Check VR Support
+                        </button>
+                        <button class="btn btn-success" id="enterVR" disabled>
+                            <i class="fas fa-vr-cardboard me-2"></i>Enter VR
+                        </button>
+                        <button class="btn btn-danger" id="exitVR" disabled>
+                            <i class="fas fa-times me-2"></i>Exit VR
+                        </button>
+                        <div id="vrStatus" style="color: #cbd5e1; font-size: 0.85rem; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                            VR Status: Not checked
+                        </div>
                     </div>
 
                     <!-- Measurement Tools -->
@@ -936,6 +895,31 @@
         <div class="camera-info-item">
             <span class="camera-info-label">Roll:</span>
             <span class="camera-info-value" id="cameraRoll">--</span>
+        </div>
+        
+        <!-- Sun and Moon Information -->
+        <div class="camera-info-title" style="margin-top: 10px; border-top: 1px solid #475569; padding-top: 8px;">
+            <i class="fas fa-sun" style="color: #fbbf24; margin-right: 5px;"></i>Sun & Moon
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Sun Az:</span>
+            <span class="camera-info-value" id="sunAzimuth">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Sun El:</span>
+            <span class="camera-info-value" id="sunElevation">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Moon Az:</span>
+            <span class="camera-info-value" id="moonAzimuth">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Moon El:</span>
+            <span class="camera-info-value" id="moonElevation">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Phase:</span>
+            <span class="camera-info-value" id="moonPhase">--</span>
         </div>
     </div>
 
@@ -1110,7 +1094,17 @@
                 'http://mbtiles.deepgis.org',
             TOPOLOGY_SERVER: window.location.protocol === 'https:' ?
                 'https://localhost:8092' :
-                'http://localhost:8092'
+                'http://localhost:8092',
+            // WebXR state
+            webxr: {
+                session: null,
+                referenceSpace: null,
+                gl: null,
+                baseLayer: null,
+                isSupported: false,
+                isInSession: false,
+                frameOfRef: null
+            }
         };
 
         // Initialize Cesium viewer
@@ -1513,35 +1507,52 @@
                 }, 300);
             });
 
-            // Sidebar collapse/expand
-            document.getElementById('sidebarCollapseBtn').addEventListener('click', () => {
-                const sidebar = document.getElementById('sidebar-wrapper');
-                const cesiumContainer = document.getElementById('cesiumContainer');
-                const collapseBtn = document.getElementById('sidebarCollapseBtn');
-                const icon = collapseBtn.querySelector('i');
-                const compass = document.getElementById('compassWidget');
-                const attitude = document.getElementById('attitudeIndicator');
+            // Fullscreen change detection
+            const handleFullscreenChange = () => {
+                const wrapper = document.getElementById('wrapper');
+                const isFullscreen = !!(document.fullscreenElement || 
+                                       document.webkitFullscreenElement || 
+                                       document.mozFullScreenElement || 
+                                       document.msFullscreenElement);
                 
-                sidebar.classList.toggle('sidebar-collapsed');
-                cesiumContainer.classList.toggle('sidebar-collapsed');
-                compass.classList.toggle('sidebar-collapsed');
-                attitude.classList.toggle('sidebar-collapsed');
-                
-                // Update button icon and tooltip
-                if (sidebar.classList.contains('sidebar-collapsed')) {
-                    icon.className = 'fas fa-chevron-left';
-                    collapseBtn.title = 'Expand Sidebar';
-                    updateStatusIndicator('Sidebar collapsed');
+                if (isFullscreen) {
+                    // Store current sidebar state before entering fullscreen
+                    wrapper.dataset.sidebarStateBeforeFullscreen = wrapper.classList.contains('show-sidebar') ? 'true' : 'false';
+                    wrapper.classList.add('fullscreen-mode');
+                    updateStatusIndicator('Fullscreen mode - Sidebar collapsed');
                 } else {
-                    icon.className = 'fas fa-chevron-right';
-                    collapseBtn.title = 'Collapse Sidebar';
-                    updateStatusIndicator('Sidebar expanded');
+                    // Restore sidebar state when exiting fullscreen
+                    wrapper.classList.remove('fullscreen-mode');
+                    const wasShowingSidebar = wrapper.dataset.sidebarStateBeforeFullscreen === 'true';
+                    if (wasShowingSidebar) {
+                        wrapper.classList.add('show-sidebar');
+                    }
+                    updateStatusIndicator('Exited fullscreen - Sidebar restored');
                 }
                 
-                // Resize Cesium viewer after animation
+                // Resize viewer after transition
                 setTimeout(() => {
                     viewer.resize();
                 }, 300);
+            };
+
+            // Add fullscreen event listeners for different browsers
+            document.addEventListener('fullscreenchange', handleFullscreenChange);
+            document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+            document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+            document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+            // WebXR controls
+            document.getElementById('checkVRSupport').addEventListener('click', () => {
+                checkWebXRSupport();
+            });
+
+            document.getElementById('enterVR').addEventListener('click', () => {
+                enterWebXR();
+            });
+
+            document.getElementById('exitVR').addEventListener('click', () => {
+                exitWebXR();
             });
         }
 
@@ -2043,6 +2054,9 @@
             
             // Update attitude indicator
             updateAttitudeIndicator(pitch, roll);
+            
+            // Update sun and moon positions
+            updateSunMoonInfo(longitude, latitude);
         }
 
         async function queryGroundElevation(longitude, latitude, cameraAltitude) {
@@ -2148,6 +2162,237 @@
             readout.textContent = `P:${normalizedPitch.toFixed(0)}° R:${normalizedRoll.toFixed(0)}°`;
         }
 
+        // Astronomical calculation functions
+        function updateSunMoonInfo(longitude, latitude) {
+            const now = new Date();
+            
+            // Calculate sun position
+            const sunPos = calculateSunPosition(now, latitude, longitude);
+            
+            // Calculate moon position
+            const moonPos = calculateMoonPosition(now, latitude, longitude);
+            
+            // Update display elements
+            updateSunDisplay(sunPos);
+            updateMoonDisplay(moonPos);
+        }
+
+        function calculateSunPosition(date, latitude, longitude) {
+            // Convert to Julian date
+            const jd = getJulianDate(date);
+            const n = jd - 2451545.0;
+            
+            // Mean longitude of the sun
+            let L = (280.460 + 0.9856474 * n) % 360;
+            if (L < 0) L += 360;
+            
+            // Mean anomaly
+            let g = Math.PI / 180 * ((357.528 + 0.9856003 * n) % 360);
+            
+            // Ecliptic longitude
+            const lambda = Math.PI / 180 * (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g));
+            
+            // Obliquity of ecliptic
+            const epsilon = Math.PI / 180 * (23.439 - 0.0000004 * n);
+            
+            // Right ascension and declination
+            const alpha = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+            const delta = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+            
+            // Local hour angle
+            const gmst = (18.697374558 + 24.06570982441908 * n) % 24;
+            const lmst = (gmst + longitude / 15) % 24;
+            const ha = Math.PI / 180 * (lmst * 15 - alpha * 180 / Math.PI);
+            
+            // Convert to horizontal coordinates
+            const lat_rad = Math.PI / 180 * latitude;
+            
+            const elevation = Math.asin(
+                Math.sin(lat_rad) * Math.sin(delta) + 
+                Math.cos(lat_rad) * Math.cos(delta) * Math.cos(ha)
+            );
+            
+            const azimuth = Math.atan2(
+                -Math.sin(ha),
+                Math.tan(delta) * Math.cos(lat_rad) - Math.sin(lat_rad) * Math.cos(ha)
+            );
+            
+            return {
+                azimuth: (azimuth * 180 / Math.PI + 360) % 360,
+                elevation: elevation * 180 / Math.PI,
+                isVisible: elevation > 0
+            };
+        }
+
+        function calculateMoonPosition(date, latitude, longitude) {
+            // Simplified lunar position calculation
+            const jd = getJulianDate(date);
+            const T = (jd - 2451545.0) / 36525;
+            
+            // Moon's mean longitude
+            let L = (218.3164477 + 481267.88123421 * T) % 360;
+            if (L < 0) L += 360;
+            
+            // Moon's mean anomaly
+            let M = (134.9633964 + 477198.8675055 * T) % 360;
+            if (M < 0) M += 360;
+            
+            // Sun's mean anomaly
+            let Ms = (357.5291092 + 35999.0502909 * T) % 360;
+            if (Ms < 0) Ms += 360;
+            
+            // Moon's argument of latitude
+            let F = (93.2720950 + 483202.0175233 * T) % 360;
+            if (F < 0) F += 360;
+            
+            // Convert to radians
+            L *= Math.PI / 180;
+            M *= Math.PI / 180;
+            Ms *= Math.PI / 180;
+            F *= Math.PI / 180;
+            
+            // Longitude correction
+            const dL = 6.289 * Math.sin(M) + 1.274 * Math.sin(2 * L - M) - 0.658 * Math.sin(2 * L);
+            const lambda = L + dL * Math.PI / 180;
+            
+            // Latitude correction
+            const dB = 5.128 * Math.sin(F) + 0.281 * Math.sin(M + F);
+            const beta = dB * Math.PI / 180;
+            
+            // Convert to equatorial coordinates
+            const epsilon = 23.439 * Math.PI / 180; // Obliquity
+            
+            const alpha = Math.atan2(
+                Math.sin(lambda) * Math.cos(epsilon) - Math.tan(beta) * Math.sin(epsilon),
+                Math.cos(lambda)
+            );
+            
+            const delta = Math.asin(
+                Math.sin(beta) * Math.cos(epsilon) + Math.cos(beta) * Math.sin(epsilon) * Math.sin(lambda)
+            );
+            
+            // Local hour angle
+            const gmst = (18.697374558 + 24.06570982441908 * (jd - 2451545.0)) % 24;
+            const lmst = (gmst + longitude / 15) % 24;
+            const ha = Math.PI / 180 * (lmst * 15 - alpha * 180 / Math.PI);
+            
+            // Convert to horizontal coordinates
+            const lat_rad = Math.PI / 180 * latitude;
+            
+            const elevation = Math.asin(
+                Math.sin(lat_rad) * Math.sin(delta) + 
+                Math.cos(lat_rad) * Math.cos(delta) * Math.cos(ha)
+            );
+            
+            const azimuth = Math.atan2(
+                -Math.sin(ha),
+                Math.tan(delta) * Math.cos(lat_rad) - Math.sin(lat_rad) * Math.cos(ha)
+            );
+            
+            // Calculate moon phase
+            const phase = calculateMoonPhase(jd);
+            
+            return {
+                azimuth: (azimuth * 180 / Math.PI + 360) % 360,
+                elevation: elevation * 180 / Math.PI,
+                isVisible: elevation > 0,
+                phase: phase
+            };
+        }
+
+        function calculateMoonPhase(jd) {
+            // Days since new moon reference
+            const daysSinceNew = (jd - 2451549.5) % 29.53058868;
+            const phase = daysSinceNew / 29.53058868;
+            
+            if (phase < 0.0625) return "New";
+            else if (phase < 0.1875) return "Waxing Crescent";
+            else if (phase < 0.3125) return "First Quarter";
+            else if (phase < 0.4375) return "Waxing Gibbous";
+            else if (phase < 0.5625) return "Full";
+            else if (phase < 0.6875) return "Waning Gibbous";
+            else if (phase < 0.8125) return "Last Quarter";
+            else if (phase < 0.9375) return "Waning Crescent";
+            else return "New";
+        }
+
+        function getJulianDate(date) {
+            const a = Math.floor((14 - (date.getMonth() + 1)) / 12);
+            const y = date.getFullYear() + 4800 - a;
+            const m = (date.getMonth() + 1) + 12 * a - 3;
+            
+            const jdn = date.getDate() + Math.floor((153 * m + 2) / 5) + 365 * y + 
+                       Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+            
+            const jd = jdn + (date.getHours() - 12) / 24 + date.getMinutes() / 1440 + 
+                      date.getSeconds() / 86400 + date.getMilliseconds() / 86400000;
+            
+            return jd;
+        }
+
+        function updateSunDisplay(sunPos) {
+            const azElement = document.getElementById('sunAzimuth');
+            const elElement = document.getElementById('sunElevation');
+            
+            azElement.textContent = sunPos.azimuth.toFixed(1) + '°';
+            elElement.textContent = sunPos.elevation.toFixed(1) + '°';
+            
+            // Color coding based on sun position
+            if (sunPos.elevation > 0) {
+                // Sun is above horizon
+                azElement.style.color = '#fbbf24'; // Yellow
+                elElement.style.color = '#fbbf24';
+            } else if (sunPos.elevation > -6) {
+                // Civil twilight
+                azElement.style.color = '#f97316'; // Orange
+                elElement.style.color = '#f97316';
+            } else if (sunPos.elevation > -12) {
+                // Nautical twilight
+                azElement.style.color = '#8b5cf6'; // Purple
+                elElement.style.color = '#8b5cf6';
+            } else {
+                // Night
+                azElement.style.color = '#64748b'; // Gray
+                elElement.style.color = '#64748b';
+            }
+        }
+
+        function updateMoonDisplay(moonPos) {
+            const azElement = document.getElementById('moonAzimuth');
+            const elElement = document.getElementById('moonElevation');
+            const phaseElement = document.getElementById('moonPhase');
+            
+            azElement.textContent = moonPos.azimuth.toFixed(1) + '°';
+            elElement.textContent = moonPos.elevation.toFixed(1) + '°';
+            phaseElement.textContent = moonPos.phase;
+            
+            // Color coding based on moon visibility
+            if (moonPos.isVisible) {
+                azElement.style.color = '#e2e8f0'; // Light gray
+                elElement.style.color = '#e2e8f0';
+                phaseElement.style.color = '#e2e8f0';
+            } else {
+                azElement.style.color = '#64748b'; // Dark gray
+                elElement.style.color = '#64748b';
+                phaseElement.style.color = '#64748b';
+            }
+            
+            // Add moon phase emoji
+            const phaseEmojis = {
+                "New": "🌑",
+                "Waxing Crescent": "🌒",
+                "First Quarter": "🌓",
+                "Waxing Gibbous": "🌔",
+                "Full": "🌕",
+                "Waning Gibbous": "🌖",
+                "Last Quarter": "🌗",
+                "Waning Crescent": "🌘"
+            };
+            
+            const emoji = phaseEmojis[moonPos.phase] || "🌑";
+            phaseElement.textContent = `${emoji} ${moonPos.phase}`;
+        }
+
         function initializeHistogram() {
             const ctx = document.getElementById('histogram').getContext('2d');
             window.DeepGISTopology.histogram_chart = new Chart(ctx, {
@@ -2215,6 +2460,249 @@
             snackbar.textContent = message;
             document.body.appendChild(snackbar);
             setTimeout(() => snackbar.remove(), 3000);
+        }
+
+        // ===== WebXR Implementation =====
+        
+        async function checkWebXRSupport() {
+            const statusElement = document.getElementById('vrStatus');
+            const enterButton = document.getElementById('enterVR');
+            
+            try {
+                if (!navigator.xr) {
+                    statusElement.textContent = 'VR Status: WebXR not supported';
+                    statusElement.style.color = '#ef4444';
+                    return false;
+                }
+                
+                const isSupported = await navigator.xr.isSessionSupported('immersive-vr');
+                window.DeepGISTopology.webxr.isSupported = isSupported;
+                
+                if (isSupported) {
+                    statusElement.textContent = 'VR Status: WebXR supported! Ready for VR.';
+                    statusElement.style.color = '#10b981';
+                    enterButton.disabled = false;
+                    updateStatusIndicator('WebXR VR support detected');
+                } else {
+                    statusElement.textContent = 'VR Status: WebXR available but VR not supported';
+                    statusElement.style.color = '#f59e0b';
+                }
+                
+                return isSupported;
+                
+            } catch (error) {
+                console.error('Error checking WebXR support:', error);
+                statusElement.textContent = 'VR Status: Error checking support';
+                statusElement.style.color = '#ef4444';
+                return false;
+            }
+        }
+        
+        async function enterWebXR() {
+            if (!window.DeepGISTopology.webxr.isSupported) {
+                showSnackBar('WebXR VR not supported on this device');
+                return;
+            }
+            
+            const viewer = window.DeepGISTopology.viewer;
+            if (!viewer) {
+                showSnackBar('Cesium viewer not initialized');
+                return;
+            }
+            
+            try {
+                updateStatusIndicator('Entering VR mode...');
+                
+                // Request XR session
+                const session = await navigator.xr.requestSession('immersive-vr', {
+                    requiredFeatures: ['local-floor'],
+                    optionalFeatures: ['hand-tracking', 'layers']
+                });
+                
+                window.DeepGISTopology.webxr.session = session;
+                window.DeepGISTopology.webxr.isInSession = true;
+                
+                // Get the WebGL context from Cesium
+                const gl = viewer.scene.context._gl;
+                window.DeepGISTopology.webxr.gl = gl;
+                
+                // Create XRWebGLLayer
+                const baseLayer = new XRWebGLLayer(session, gl);
+                window.DeepGISTopology.webxr.baseLayer = baseLayer;
+                
+                // Update render state
+                await session.updateRenderState({ baseLayer: baseLayer });
+                
+                // Get reference space
+                const referenceSpace = await session.requestReferenceSpace('local-floor');
+                window.DeepGISTopology.webxr.referenceSpace = referenceSpace;
+                
+                // Set up session event handlers
+                session.addEventListener('end', onXRSessionEnd);
+                session.addEventListener('inputsourceschange', onInputSourcesChange);
+                
+                // Start the render loop
+                session.requestAnimationFrame(onXRFrame);
+                
+                // Update UI
+                document.getElementById('enterVR').disabled = true;
+                document.getElementById('exitVR').disabled = false;
+                document.getElementById('vrStatus').textContent = 'VR Status: In VR session';
+                document.getElementById('vrStatus').style.color = '#10b981';
+                
+                updateStatusIndicator('VR mode active');
+                showSnackBar('Entered VR mode successfully!');
+                
+            } catch (error) {
+                console.error('Error entering WebXR:', error);
+                updateStatusIndicator('Failed to enter VR mode');
+                showSnackBar('Failed to enter VR: ' + error.message);
+            }
+        }
+        
+        async function exitWebXR() {
+            const session = window.DeepGISTopology.webxr.session;
+            if (session) {
+                await session.end();
+            }
+        }
+        
+        function onXRSessionEnd() {
+            window.DeepGISTopology.webxr.session = null;
+            window.DeepGISTopology.webxr.isInSession = false;
+            window.DeepGISTopology.webxr.referenceSpace = null;
+            window.DeepGISTopology.webxr.baseLayer = null;
+            
+            // Update UI
+            document.getElementById('enterVR').disabled = false;
+            document.getElementById('exitVR').disabled = true;
+            document.getElementById('vrStatus').textContent = 'VR Status: Session ended';
+            document.getElementById('vrStatus').style.color = '#cbd5e1';
+            
+            updateStatusIndicator('Exited VR mode');
+            showSnackBar('Exited VR mode');
+        }
+        
+        function onInputSourcesChange(event) {
+            console.log('XR input sources changed:', event);
+            // Handle controller connections/disconnections
+        }
+        
+        function onXRFrame(time, frame) {
+            const session = window.DeepGISTopology.webxr.session;
+            const viewer = window.DeepGISTopology.viewer;
+            
+            if (!session || !viewer) return;
+            
+            // Continue the render loop
+            session.requestAnimationFrame(onXRFrame);
+            
+            const gl = window.DeepGISTopology.webxr.gl;
+            const baseLayer = window.DeepGISTopology.webxr.baseLayer;
+            const referenceSpace = window.DeepGISTopology.webxr.referenceSpace;
+            
+            if (!gl || !baseLayer || !referenceSpace) return;
+            
+            try {
+                // Get the pose
+                const pose = frame.getViewerPose(referenceSpace);
+                if (!pose) return;
+                
+                // Bind the framebuffer
+                gl.bindFramebuffer(gl.FRAMEBUFFER, baseLayer.framebuffer);
+                
+                // Render for each eye
+                for (let i = 0; i < pose.views.length; i++) {
+                    const view = pose.views[i];
+                    const viewport = baseLayer.getViewport(view);
+                    
+                    // Set viewport
+                    gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+                    
+                    // Update camera for this eye
+                    updateCameraForXRView(viewer, view, pose);
+                    
+                    // Render the scene
+                    viewer.scene.render();
+                }
+                
+            } catch (error) {
+                console.error('Error in XR frame:', error);
+            }
+        }
+        
+        function updateCameraForXRView(viewer, view, pose) {
+            const camera = viewer.scene.camera;
+            
+            // Convert XR matrices to Cesium format
+            const viewMatrix = view.transform.inverse.matrix;
+            const projectionMatrix = view.projectionMatrix;
+            
+            // Extract position from pose transform
+            const transform = pose.transform;
+            const position = new Cesium.Cartesian3(
+                transform.position.x,
+                transform.position.y, 
+                transform.position.z
+            );
+            
+            // Convert to world coordinates (this is simplified - you may need more complex transforms)
+            const worldPosition = Cesium.Matrix4.multiplyByPoint(
+                viewer.scene.globe.ellipsoid.eastNorthUpToFixedFrame(camera.position),
+                position,
+                new Cesium.Cartesian3()
+            );
+            
+            // Update camera position
+            camera.position = worldPosition;
+            
+            // Extract orientation from view transform
+            const orientation = new Cesium.Quaternion(
+                view.transform.orientation.x,
+                view.transform.orientation.y,
+                view.transform.orientation.z,
+                view.transform.orientation.w
+            );
+            
+            // Convert quaternion to heading/pitch/roll
+            const hpr = Cesium.HeadingPitchRoll.fromQuaternion(orientation);
+            camera.setView({
+                orientation: {
+                    heading: hpr.heading,
+                    pitch: hpr.pitch,
+                    roll: hpr.roll
+                }
+            });
+            
+            // Set custom projection matrix if needed
+            // Note: This is advanced and may require custom Cesium modifications
+            // camera.frustum.projectionMatrix = Cesium.Matrix4.fromArray(projectionMatrix);
+        }
+        
+        // WebXR Controller Support
+        function handleXRControllers(session, frame, referenceSpace) {
+            if (!session.inputSources) return;
+            
+            for (const inputSource of session.inputSources) {
+                if (inputSource.gripSpace) {
+                    const gripPose = frame.getPose(inputSource.gripSpace, referenceSpace);
+                    if (gripPose) {
+                        // Handle controller position/orientation
+                        console.log('Controller pose:', gripPose.transform);
+                    }
+                }
+                
+                if (inputSource.gamepad) {
+                    // Handle button presses
+                    const gamepad = inputSource.gamepad;
+                    for (let i = 0; i < gamepad.buttons.length; i++) {
+                        if (gamepad.buttons[i].pressed) {
+                            console.log(`Button ${i} pressed on controller`);
+                            // Add your button handling logic here
+                        }
+                    }
+                }
+            }
         }
     </script>
 </body>
