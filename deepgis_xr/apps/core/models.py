@@ -210,7 +210,7 @@ class TiledGISLabel(TiledLabel):
     geometry = models.TextField(max_length=100000)
 
     def __str__(self):
-        return f'GIS Label: {self.category} at ({self.northeast_lat},{self.northeast_lng})'
+        return f'GIS Label: {self.category} at ({self.northeast_lat},{self.northeast_lng})' 
 
 
 # ===== VEHICLE TRACKING MODELS =====
