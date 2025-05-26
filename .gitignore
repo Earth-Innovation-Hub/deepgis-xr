@@ -72,4 +72,93 @@ htmlcov/
 .coverage
 .coverage.*
 coverage.xml
-*.cover 
+*.cover
+
+# Large 3D model files
+*.gltf
+*.glb
+*.fbx
+*.obj
+*.dae
+*.3ds
+*.blend
+*.stl
+*.ply
+*.x3d
+
+# Large geospatial data files
+*.mbtiles
+*.tif
+*.tiff
+*.geotiff
+*.shp
+*.kml
+*.kmz
+*.gpx
+*.osm
+*.pbf
+
+# Large media files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.wmv
+*.flv
+*.webm
+*.m4v
+*.3gp
+
+# Large audio files
+*.wav
+*.flac
+*.aiff
+*.mp3
+*.ogg
+*.wma
+*.m4a
+
+# Large image files (over certain size)
+*.psd
+*.ai
+*.eps
+*.svg
+*.raw
+*.cr2
+*.nef
+*.arw
+*.dng
+
+# Specific large files and directories
+staticfiles/models/
+static/models/
+static/tifs/
+static/scripts/data.json
+data/*.mbtiles
+data/backup_*/
+
+# Navagunjara model files (specifically large ones)
+*navagunjara*.glb
+*navagunjara*.gltf
+*navagunjara*.stl
+
+# Any file larger than 100MB (GitHub limit is 100MB)
+# Note: This is a reminder - git doesn't support size-based ignoring
+# Use git-lfs for large files if needed
+
+# Temporary and cache directories
+tmp/
+cache/
+.cache/
+node_modules/
+.npm/
+.yarn/
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db 
