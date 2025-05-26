@@ -1898,8 +1898,8 @@
                     cesiumContainer.style.width = '100%';
                     
                     // Move compass and attitude indicators to right edge
-                    compassWidget.style.right = '15px';
-                    attitudeIndicator.style.right = '15px';
+                    if (compassWidget) compassWidget.style.right = '15px';
+                    if (attitudeIndicator) attitudeIndicator.style.right = '15px';
                     
                     updateStatusIndicator('Fullscreen mode - Viewport expanded');
                 } else {
@@ -1912,8 +1912,8 @@
                     cesiumContainer.style.width = 'auto';
                     
                     // Restore compass and attitude indicators to sidebar position
-                    compassWidget.style.right = '350px';
-                    attitudeIndicator.style.right = '350px';
+                    if (compassWidget) compassWidget.style.right = '350px';
+                    if (attitudeIndicator) attitudeIndicator.style.right = '350px';
                     
                     const wasShowingSidebar = wrapper.dataset.sidebarStateBeforeFullscreen === 'true';
                     if (wasShowingSidebar) {
