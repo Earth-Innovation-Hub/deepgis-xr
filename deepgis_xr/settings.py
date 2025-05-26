@@ -151,4 +151,18 @@ TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
 
 # Tile server settings
 TILESERVER_URL = 'https://tileserver'
-TILESERVER_PORT = '80' 
+TILESERVER_PORT = '80'
+
+# MIME type configuration for 3D model files
+import mimetypes
+mimetypes.add_type('application/octet-stream', '.glb')
+mimetypes.add_type('model/gltf-binary', '.glb')
+mimetypes.add_type('model/gltf+json', '.gltf')
+mimetypes.add_type('application/gltf+json', '.gltf')
+
+# Static file serving configuration for large files
+DATA_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024  # 200MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 200 * 1024 * 1024  # 200MB
+
+# Add middleware for model optimization
+MIDDLEWARE.insert(-1, 'deepgis_xr.apps.web.middleware.model_optimizations.ModelOptimizationMiddleware') 

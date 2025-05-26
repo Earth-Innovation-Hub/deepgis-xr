@@ -17,6 +17,23 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     
+    <!-- Preload GLTF model and related resources for better loading performance -->
+    <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb" as="fetch" crossorigin="anonymous">
+    <link rel="dns-prefetch" href="https://deepgis.org">
+    
+    <!-- Suppress Cesium source map 404 errors -->
+    <script>
+        // Suppress console errors for missing source maps
+        const originalConsoleError = console.error;
+        console.error = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
+                return; // Suppress source map errors
+            }
+            originalConsoleError.apply(console, args);
+        };
+    </script>
+    
     <!-- Suppress Cesium Ion warnings immediately after Cesium loads -->
     <script>
         // Set Cesium Ion access token to enable 3D tiles and terrain
@@ -426,6 +443,45 @@
             box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
             color: #f1f5f9;
             outline: none;
+        }
+
+        .form-range {
+            background: transparent;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #475569 0%, #3b82f6 50%, #475569 100%);
+            outline: none;
+        }
+
+        .form-range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid #1e293b;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .form-range::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid #1e293b;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .text-muted {
+            color: #94a3b8 !important;
+            font-size: 0.75rem;
+            margin-top: 4px;
+            text-align: center;
         }
 
         /* WebXR section styling */
@@ -1168,9 +1224,45 @@
                         <div class="form-group mb-3">
                             <label class="form-label" style="color: #cbd5e1;">Model URL or Ion Asset ID:</label>
                             <input type="text" class="form-control" id="modelUrl" 
-                                   value="75343"
+                                   value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
                                    placeholder="Enter Ion Asset ID (e.g., 75343) or URL"
                                    style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                            <small class="text-muted">
+                                <strong>Fallback:</strong> If primary URL fails, will try Ion Asset ID 75343
+                            </small>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label" style="color: #cbd5e1;">Model Location:</label>
+                            <select class="form-select" id="modelLocation">
+                                <option value="mount_everest">Mount Everest, Nepal/Tibet</option>
+                                <option value="current_view">Current View Location</option>
+                                <option value="custom">Custom Coordinates</option>
+                            </select>
+                        </div>
+                        <div class="form-group mb-3" id="customLocationInputs" style="display: none;">
+                            <div class="row">
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="customLon" 
+                                           placeholder="Longitude" step="0.000001"
+                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="customLat" 
+                                           placeholder="Latitude" step="0.000001"
+                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="customAlt" 
+                                           placeholder="Altitude (m)" step="1" value="0"
+                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label" style="color: #cbd5e1;">Model Scale:</label>
+                            <input type="range" class="form-range" id="modelScale" 
+                                   min="0.1" max="10" step="0.1" value="1.0">
+                            <small class="text-muted" id="scaleValue">Scale: 1.0x</small>
                         </div>
                         <button class="btn btn-success" id="loadModel">
                             <i class="fas fa-download me-2"></i>Load Model
@@ -1533,12 +1625,12 @@
                 viewer.scene.fog.enabled = true;
                 viewer.scene.fog.density = 0.0001;
 
-                // Set initial view to Mount Everest
+                // Set initial view to Mount Everest, Nepal/Tibet
                 viewer.camera.setView({
-                    destination: Cesium.Cartesian3.fromDegrees(87.036623, 27.986569, 11268.8),
+                    destination: Cesium.Cartesian3.fromDegrees(87.050870, 27.937370, 10503.7),
                     orientation: {
-                        heading: Cesium.Math.toRadians(270.7),
-                        pitch: Cesium.Math.toRadians(-18.3),
+                        heading: Cesium.Math.toRadians(294.7),
+                        pitch: Cesium.Math.toRadians(-7.9),
                         roll: 0.0
                     }
                 });
@@ -1607,7 +1699,7 @@
             }
         }
 
-        // Enhanced model loading with Ion 3D Tiles support
+        // Enhanced model loading with Ion 3D Tiles support and location options
         async function loadGLTFModel(viewer) {
             const modelUrl = document.getElementById('modelUrl').value.trim();
             if (!modelUrl) {
@@ -1615,19 +1707,87 @@
                 return;
             }
 
+            const locationOption = document.getElementById('modelLocation').value;
+            const scale = parseFloat(document.getElementById('modelScale').value);
+
+            // Add debug logging
+            console.log('GLTF Loading Debug Info:', {
+                modelUrl: modelUrl,
+                locationOption: locationOption,
+                scale: scale,
+                cesiumVersion: Cesium.VERSION,
+                userAgent: navigator.userAgent,
+                webglSupport: !!window.WebGLRenderingContext,
+                webgl2Support: !!window.WebGL2RenderingContext
+            });
+
             updateStatusIndicator('Loading 3D model...');
 
             try {
+                // Determine model position based on location option
+                let modelPosition;
+                let shouldZoomToLocation = false;
+
+                switch (locationOption) {
+                    case 'mount_everest':
+                        // Mount Everest coordinates: 27.9881° N, 86.9250° E
+                        modelPosition = Cesium.Cartesian3.fromDegrees(86.9250, 27.9881, 8848);
+                        shouldZoomToLocation = true;
+                        break;
+                    
+                    case 'custom':
+                        const customLon = parseFloat(document.getElementById('customLon').value);
+                        const customLat = parseFloat(document.getElementById('customLat').value);
+                        const customAlt = parseFloat(document.getElementById('customAlt').value) || 0;
+                        
+                        if (isNaN(customLon) || isNaN(customLat)) {
+                            updateStatusIndicator('Please enter valid custom coordinates');
+                            return;
+                        }
+                        
+                        modelPosition = Cesium.Cartesian3.fromDegrees(customLon, customLat, customAlt);
+                        shouldZoomToLocation = true;
+                        break;
+                    
+                    case 'current_view':
+                    default:
+                        // Use current camera position
+                        const cameraPosition = viewer.camera.positionCartographic;
+                        modelPosition = Cesium.Cartesian3.fromRadians(
+                            cameraPosition.longitude,
+                            cameraPosition.latitude,
+                            0 // Place on ground
+                        );
+                        break;
+                }
+
                 // Check if it's an Ion Asset ID (numeric)
                 if (/^\d+$/.test(modelUrl)) {
                     // Load from Ion using Asset ID
                     const ionAssetId = parseInt(modelUrl);
                     const tileset = await Cesium.Cesium3DTileset.fromIonAssetId(ionAssetId);
+                    
+                    // Apply transform to position the tileset
+                    const transform = Cesium.Transforms.eastNorthUpToFixedFrame(modelPosition);
+                    const scaleMatrix = Cesium.Matrix4.fromUniformScale(scale);
+                    tileset.modelMatrix = Cesium.Matrix4.multiply(transform, scaleMatrix, new Cesium.Matrix4());
+                    
                     viewer.scene.primitives.add(tileset);
                     window.DeepGISTopology.currentLayers.models.push(tileset);
                     
-                    // Zoom to tileset
-                    viewer.zoomTo(tileset);
+                    // Zoom to tileset or location
+                    if (shouldZoomToLocation) {
+                        viewer.camera.setView({
+                            destination: Cesium.Cartesian3.fromDegrees(
+                                Cesium.Math.toDegrees(Cesium.Cartographic.fromCartesian(modelPosition).longitude),
+                                Cesium.Math.toDegrees(Cesium.Cartographic.fromCartesian(modelPosition).latitude),
+                                1000
+                            )
+                        });
+                    } else {
+                        viewer.zoomTo(tileset);
+                    }
+                    
                     updateStatusIndicator(`Ion 3D Tileset ${ionAssetId} loaded successfully`);
                     showSnackBar(`3D Tileset loaded from Cesium Ion (Asset ID: ${ionAssetId})`);
                     
@@ -1639,16 +1799,33 @@
                     }
                     
                     const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetUrl);
+                    
+                    // Apply transform to position the tileset
+                    const transform = Cesium.Transforms.eastNorthUpToFixedFrame(modelPosition);
+                    const scaleMatrix = Cesium.Matrix4.fromUniformScale(scale);
+                    tileset.modelMatrix = Cesium.Matrix4.multiply(transform, scaleMatrix, new Cesium.Matrix4());
+                    
                     viewer.scene.primitives.add(tileset);
                     window.DeepGISTopology.currentLayers.models.push(tileset);
                     
-                    // Zoom to tileset
-                    viewer.zoomTo(tileset);
+                    // Zoom to tileset or location
+                    if (shouldZoomToLocation) {
+                        viewer.camera.setView({
+                            destination: Cesium.Cartesian3.fromDegrees(
+                                Cesium.Math.toDegrees(Cesium.Cartographic.fromCartesian(modelPosition).longitude),
+                                Cesium.Math.toDegrees(Cesium.Cartographic.fromCartesian(modelPosition).latitude),
+                                1000
+                            )
+                        });
+                    } else {
+                        viewer.zoomTo(tileset);
+                    }
+                    
                     updateStatusIndicator('3D Tileset loaded successfully');
                     showSnackBar('3D Tileset loaded from URL');
                     
-                } else {
-                    // Load as regular GLTF model
+                                } else {
+                    // Load as regular GLTF/GLB model with enhanced error handling
                     // Validate URL format
                     try {
                         new URL(modelUrl);
@@ -1657,41 +1834,425 @@
                         return;
                     }
 
-                    // Get current camera position for model placement
-                    const cameraPosition = viewer.camera.positionCartographic;
-                    const modelPosition = Cesium.Cartesian3.fromRadians(
-                        cameraPosition.longitude,
-                        cameraPosition.latitude,
-                        0 // Place on ground
-                    );
+                    // Test connectivity first
+                    updateStatusIndicator('Testing model connectivity...');
+                    const connectivityTest = await testModelConnectivity(modelUrl);
+                    
+                    if (!connectivityTest.ping && !connectivityTest.cors) {
+                        updateStatusIndicator('Model not accessible - trying fallback methods...');
+                        console.warn('Model connectivity failed, proceeding with fallback strategies');
+                        showSnackBar('CORS restrictions detected. Trying alternative loading methods...', 'warning');
+                    } else {
+                        updateStatusIndicator('Model accessible - proceeding with load...');
+                    }
+                    
+                    // Show CORS help message if needed
+                    if (connectivityTest.error && connectivityTest.error.includes('CORS')) {
+                        console.log('CORS Help: To load external models, consider:');
+                        console.log('1. Use Cesium Ion Asset IDs instead of direct URLs');
+                        console.log('2. Host models on a CORS-enabled server');
+                        console.log('3. Use a local development server with CORS disabled');
+                        console.log('4. Convert models to Ion 3D Tilesets');
+                    }
 
-                    // Use the correct API for Cesium 1.111+
-                    const entity = viewer.entities.add({
-                        name: 'GLTF Model',
-                        position: modelPosition,
-                        model: {
-                            uri: modelUrl,
-                            scale: 1.0,
-                            minimumPixelSize: 64,
-                            maximumScale: 10000,
-                            runAnimations: false,
-                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
+                    // Enhanced model loading with better CORS and error handling
+                    updateStatusIndicator('Preparing to load 3D model...');
+                    
+                    // Try multiple loading strategies
+                    let loadingSuccess = false;
+                    let entity = null;
+                    
+                    // Strategy 1: Direct load with enhanced CORS settings
+                    try {
+                        updateStatusIndicator('Loading 3D model (Strategy 1)...');
+                        
+                        entity = viewer.entities.add({
+                            name: 'GLTF Model - Navagunjara Digital Twin',
+                            position: modelPosition,
+                            model: {
+                                uri: modelUrl,
+                                scale: scale,
+                                minimumPixelSize: 64,
+                                maximumScale: 10000,
+                                runAnimations: true,
+                                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                                silhouetteColor: Cesium.Color.YELLOW,
+                                silhouetteSize: 2.0,
+                                show: true,
+                                distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
+                                // Enhanced loading properties for large files
+                                incrementallyLoadTextures: true,
+                                backFaceCulling: false,
+                                shadows: Cesium.ShadowMode.ENABLED,
+                                // Add these properties for better large file handling
+                                clampAnimations: false,
+                                asynchronous: true,
+                                allowPicking: true,
+                                credit: undefined
+                            },
+                            description: `
+                                <h3>Navagunjara Reborn Digital Twin</h3>
+                                <p>Propane and Solar Powered Art Installation</p>
+                                <p><strong>Location:</strong> ${locationOption === 'mount_everest' ? 'Mount Everest, Nepal/Tibet' : 'Custom Location'}</p>
+                                <p><strong>Scale:</strong> ${scale}x</p>
+                                <p><strong>Model URL:</strong> <a href="${modelUrl}" target="_blank">View Source</a></p>
+                            `
+                        });
+
+                        // Wait for model to load with extended timeout for large files
+                        const loadPromise = entity.model.readyPromise;
+                        // Increase timeout to 2 minutes for large GLB files (130MB+)
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('Model loading timeout - file may be too large')), 120000)
+                        );
+                        
+                        // Add progress monitoring for large files
+                        const progressInterval = setInterval(() => {
+                            if (entity.model.ready) {
+                                clearInterval(progressInterval);
+                            } else {
+                                updateStatusIndicator('Loading large GLB file... (this may take several minutes)');
+                            }
+                        }, 5000);
+                        
+                        try {
+                            await Promise.race([loadPromise, timeoutPromise]);
+                            clearInterval(progressInterval);
+                        } catch (error) {
+                            clearInterval(progressInterval);
+                            throw error;
                         }
-                    });
+                        
+                        updateStatusIndicator('3D model loaded successfully');
+                        showSnackBar(`3D model loaded at ${locationOption === 'mount_everest' ? 'Mount Everest' : 'selected location'}`, 'success');
+                        console.log('Model loaded successfully with Strategy 1');
+                        loadingSuccess = true;
+                        
+                    } catch (strategy1Error) {
+                        console.warn('Strategy 1 failed:', strategy1Error);
+                        
+                        // Remove failed entity
+                        if (entity) {
+                            viewer.entities.remove(entity);
+                            entity = null;
+                        }
+                        
+                                                 // Strategy 2: Try with CORS proxy or alternative methods
+                         try {
+                             updateStatusIndicator('Retrying with CORS bypass (Strategy 2)...');
+                             
+                             // Try multiple CORS bypass methods
+                             let response = null;
+                             const corsProxies = [
+                                 '', // Direct first
+                                 'https://cors-anywhere.herokuapp.com/',
+                                 'https://api.allorigins.win/raw?url=',
+                                 'https://corsproxy.io/?'
+                             ];
+                             
+                             for (const proxy of corsProxies) {
+                                 try {
+                                     const proxyUrl = proxy + encodeURIComponent(modelUrl);
+                                     const testUrl = proxy === '' ? modelUrl : proxyUrl;
+                                     
+                                     console.log(`Trying ${proxy === '' ? 'direct' : 'proxy'}: ${testUrl}`);
+                                     
+                                     response = await fetch(testUrl, { 
+                                         method: 'GET',
+                                         mode: proxy === '' ? 'cors' : 'cors',
+                                         credentials: 'omit',
+                                         headers: {
+                                             'Accept': 'application/octet-stream, model/gltf-binary, model/gltf+json, */*',
+                                             'User-Agent': 'Mozilla/5.0 (compatible; DeepGIS-XR/1.0)'
+                                         }
+                                     });
+                                     
+                                     if (response.ok) {
+                                         console.log(`Success with ${proxy === '' ? 'direct' : 'proxy'}: ${testUrl}`);
+                                         break;
+                                     }
+                                 } catch (proxyError) {
+                                     console.warn(`Failed with ${proxy === '' ? 'direct' : 'proxy'}:`, proxyError);
+                                     continue;
+                                 }
+                             }
+                            
+                            if (!response.ok) {
+                                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                            }
+                            
+                            // Create blob URL for local loading
+                            const modelBlob = await response.blob();
+                            const blobUrl = URL.createObjectURL(modelBlob);
+                            
+                            entity = viewer.entities.add({
+                                name: 'GLTF Model - Navagunjara Digital Twin (Blob)',
+                                position: modelPosition,
+                                model: {
+                                    uri: blobUrl,
+                                    scale: scale,
+                                    minimumPixelSize: 64,
+                                    maximumScale: 10000,
+                                    runAnimations: true,
+                                    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                                    silhouetteColor: Cesium.Color.YELLOW,
+                                    silhouetteSize: 2.0,
+                                    show: true,
+                                    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
+                                    incrementallyLoadTextures: true,
+                                    backFaceCulling: false,
+                                    shadows: Cesium.ShadowMode.ENABLED
+                                },
+                                description: `
+                                    <h3>Navagunjara Reborn Digital Twin</h3>
+                                    <p>Propane and Solar Powered Art Installation (Loaded via Blob)</p>
+                                    <p><strong>Location:</strong> ${locationOption === 'mount_everest' ? 'Mount Everest, Nepal/Tibet' : 'Custom Location'}</p>
+                                    <p><strong>Scale:</strong> ${scale}x</p>
+                                    <p><strong>Original URL:</strong> <a href="${modelUrl}" target="_blank">View Source</a></p>
+                                `
+                            });
+                            
+                            await entity.model.readyPromise;
+                            
+                            // Clean up blob URL after successful load
+                            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+                            
+                            updateStatusIndicator('3D model loaded successfully (Strategy 2)');
+                            showSnackBar('3D model loaded using alternative method');
+                            console.log('Model loaded successfully with Strategy 2');
+                            loadingSuccess = true;
+                            
+                        } catch (strategy2Error) {
+                            console.warn('Strategy 2 failed:', strategy2Error);
+                            
+                            // Remove failed entity
+                            if (entity) {
+                                viewer.entities.remove(entity);
+                                entity = null;
+                            }
+                            
+                                                         // Strategy 3: Try alternative model URLs
+                             try {
+                                 updateStatusIndicator('Trying alternative model sources (Strategy 3)...');
+                                 
+                                 // Try alternative model URLs
+                                 const alternativeUrls = [
+                                     'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb',
+                                     'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf',
+                                     'https://modelviewer.dev/shared-assets/models/Astronaut.glb'
+                                 ];
+                                 
+                                 let alternativeSuccess = false;
+                                 for (const altUrl of alternativeUrls) {
+                                     try {
+                                         console.log('Trying alternative model:', altUrl);
+                                         
+                                         entity = viewer.entities.add({
+                                             name: 'Alternative 3D Model',
+                                             position: modelPosition,
+                                             model: {
+                                                 uri: altUrl,
+                                                 scale: scale,
+                                                 minimumPixelSize: 64,
+                                                 maximumScale: 10000,
+                                                 runAnimations: true,
+                                                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                                                 show: true,
+                                                 incrementallyLoadTextures: true,
+                                                 backFaceCulling: false,
+                                                 shadows: Cesium.ShadowMode.ENABLED
+                                             },
+                                             description: `
+                                                 <h3>Alternative 3D Model</h3>
+                                                 <p>Fallback model loaded due to CORS restrictions</p>
+                                                 <p><strong>Original URL:</strong> ${modelUrl}</p>
+                                                 <p><strong>Loaded URL:</strong> ${altUrl}</p>
+                                             `
+                                         });
+                                         
+                                         await entity.model.readyPromise;
+                                         
+                                         updateStatusIndicator('Alternative model loaded successfully');
+                                         showSnackBar('Primary model failed, loaded alternative model');
+                                         console.log('Alternative model loaded successfully:', altUrl);
+                                         alternativeSuccess = true;
+                                         loadingSuccess = true;
+                                         break;
+                                         
+                                     } catch (altError) {
+                                         console.warn('Alternative model failed:', altUrl, altError);
+                                         if (entity) {
+                                             viewer.entities.remove(entity);
+                                             entity = null;
+                                         }
+                                         continue;
+                                     }
+                                 }
+                                 
+                                 // Strategy 4: Fallback to Ion Asset if alternatives fail
+                                 if (!alternativeSuccess) {
+                                     try {
+                                         updateStatusIndicator('Loading Ion fallback model (Strategy 4)...');
+                                         
+                                         const fallbackTileset = await Cesium.Cesium3DTileset.fromIonAssetId(75343);
+                                         
+                                         // Apply transform to position the tileset
+                                         const transform = Cesium.Transforms.eastNorthUpToFixedFrame(modelPosition);
+                                         const scaleMatrix = Cesium.Matrix4.fromUniformScale(scale);
+                                         fallbackTileset.modelMatrix = Cesium.Matrix4.multiply(transform, scaleMatrix, new Cesium.Matrix4());
+                                         
+                                         viewer.scene.primitives.add(fallbackTileset);
+                                         window.DeepGISTopology.currentLayers.models.push(fallbackTileset);
+                                         
+                                         updateStatusIndicator('Ion fallback model loaded successfully');
+                                         showSnackBar('All direct models failed, loaded Ion fallback model');
+                                         console.log('Ion fallback model loaded successfully');
+                                         loadingSuccess = true;
+                                         
+                                     } catch (ionError) {
+                                         console.error('Ion fallback also failed:', ionError);
+                                     }
+                                 }
+                                 
+                             } catch (strategy3Error) {
+                                 console.error('All loading strategies failed:', {
+                                     strategy1: strategy1Error,
+                                     strategy2: strategy2Error,
+                                     strategy3: strategy3Error
+                                 });
+                                 updateStatusIndicator('Failed to load any 3D model - CORS restrictions detected');
+                                 showSnackBar('All model loading attempts failed due to CORS restrictions. Try using a local model file or Ion Asset ID.', 'error');
+                             }
+                        }
+                    }
+                    
+                    // Add entity to tracking if successfully loaded
+                    if (entity && loadingSuccess) {
+                        window.DeepGISTopology.currentLayers.models.push(entity);
+                    }
 
-                    window.DeepGISTopology.currentLayers.models.push(entity);
-                    updateStatusIndicator('3D model loaded successfully');
-
-                    // Zoom to model with some distance
-                    viewer.zoomTo(entity, new Cesium.HeadingPitchRange(0, -0.5, 200));
-                    showSnackBar('3D model loaded at current view location');
+                    // Zoom to model location
+                    if (shouldZoomToLocation) {
+                        viewer.camera.setView({
+                            destination: Cesium.Cartesian3.fromDegrees(
+                                Cesium.Math.toDegrees(Cesium.Cartographic.fromCartesian(modelPosition).longitude),
+                                Cesium.Math.toDegrees(Cesium.Cartographic.fromCartesian(modelPosition).latitude),
+                                500 // Closer view for GLTF models
+                            ),
+                            orientation: {
+                                heading: Cesium.Math.toRadians(0),
+                                pitch: Cesium.Math.toRadians(0), // Set to 0 degrees for horizontal view
+                                roll: 0.0
+                            }
+                        });
+                    } else {
+                        viewer.zoomTo(entity, new Cesium.HeadingPitchRange(0, 0, 200)); // Also set pitch to 0 for zoom
+                    }
                 }
 
             } catch (error) {
                 console.error('Error loading model:', error);
                 updateStatusIndicator('Error loading model: ' + error.message);
-                showSnackBar('Failed to load 3D model. Check console for details.');
+                showSnackBar('Failed to load 3D model. Check console for details.', 'error');
             }
+        }
+
+        // Test network connectivity and CORS for GLTF models
+        async function testModelConnectivity(modelUrl) {
+            const tests = {
+                ping: false,
+                cors: false,
+                contentType: null,
+                contentLength: null,
+                error: null,
+                isGLB: false,
+                fileSize: null
+            };
+            
+            try {
+                // Test 1: Basic connectivity with HEAD request
+                try {
+                    const headResponse = await fetch(modelUrl, { 
+                        method: 'HEAD',
+                        mode: 'cors',
+                        credentials: 'omit',
+                        cache: 'no-cache'
+                    });
+                    tests.ping = headResponse.ok;
+                    tests.contentType = headResponse.headers.get('content-type');
+                    tests.contentLength = headResponse.headers.get('content-length');
+                    
+                    // Check if it's a GLB file and validate content type
+                    if (modelUrl.toLowerCase().endsWith('.glb')) {
+                        tests.isGLB = true;
+                        tests.fileSize = parseInt(tests.contentLength) || 0;
+                        
+                        // Warn about incorrect content-type for GLB files
+                        if (tests.contentType && 
+                            !tests.contentType.includes('application/octet-stream') &&
+                            !tests.contentType.includes('model/gltf-binary') &&
+                            !tests.contentType.includes('application/gltf-binary')) {
+                            console.warn(`GLB file served with incorrect content-type: ${tests.contentType}`);
+                            console.warn('Expected: application/octet-stream or model/gltf-binary');
+                            tests.error = `Incorrect content-type for GLB: ${tests.contentType}`;
+                        }
+                        
+                        // Warn about large file sizes
+                        if (tests.fileSize > 100 * 1024 * 1024) { // 100MB
+                            console.warn(`Large GLB file detected: ${(tests.fileSize / 1024 / 1024).toFixed(1)}MB`);
+                            console.warn('Consider optimizing or converting to 3D Tiles for better performance');
+                        }
+                    }
+                } catch (headError) {
+                    console.warn('HEAD request failed:', headError);
+                }
+                
+                // Test 2: CORS preflight test with GLB-specific headers
+                try {
+                    const corsResponse = await fetch(modelUrl, { 
+                        method: 'GET',
+                        mode: 'cors',
+                        credentials: 'omit',
+                        cache: 'no-cache',
+                        headers: {
+                            'Range': 'bytes=0-1023', // Request first 1KB only
+                            'Accept': 'application/octet-stream, model/gltf-binary, application/gltf-binary, */*'
+                        }
+                    });
+                    tests.cors = corsResponse.ok;
+                    
+                    // For GLB files, check the binary header
+                    if (tests.isGLB && corsResponse.ok) {
+                        try {
+                            const buffer = await corsResponse.arrayBuffer();
+                            const view = new DataView(buffer);
+                            
+                            // Check GLB magic number (first 4 bytes should be "glTF")
+                            const magic = view.getUint32(0, true);
+                            const expectedMagic = 0x46546C67; // "glTF" in little-endian
+                            
+                            if (magic !== expectedMagic) {
+                                tests.error = 'Invalid GLB file: Missing or incorrect magic number';
+                                console.error('GLB validation failed: Invalid magic number');
+                            } else {
+                                console.log('GLB file validation passed: Correct magic number found');
+                            }
+                        } catch (validationError) {
+                            console.warn('GLB validation failed:', validationError);
+                        }
+                    }
+                } catch (corsError) {
+                    tests.error = corsError.message;
+                    console.warn('CORS test failed:', corsError);
+                }
+                
+            } catch (generalError) {
+                tests.error = generalError.message;
+                console.error('Connectivity test failed:', generalError);
+            }
+            
+            console.log('Model Connectivity Test Results:', tests);
+            return tests;
         }
 
         // Enhanced elevation measurement using custom server
@@ -1805,10 +2366,10 @@
 
             document.getElementById('homeView').addEventListener('click', () => {
                 viewer.camera.setView({
-                    destination: Cesium.Cartesian3.fromDegrees(87.036623, 27.986569, 11268.8),
+                    destination: Cesium.Cartesian3.fromDegrees(87.050870, 27.937370, 10503.7),
                     orientation: {
-                        heading: Cesium.Math.toRadians(270.7),
-                        pitch: Cesium.Math.toRadians(-18.3),
+                        heading: Cesium.Math.toRadians(294.7),
+                        pitch: Cesium.Math.toRadians(-7.9),
                         roll: 0.0
                     }
                 });
@@ -1855,6 +2416,21 @@
 
             document.getElementById('removeModel').addEventListener('click', () => {
                 removeModels(viewer);
+            });
+
+            // Model location selection
+            document.getElementById('modelLocation').addEventListener('change', (e) => {
+                const customInputs = document.getElementById('customLocationInputs');
+                if (e.target.value === 'custom') {
+                    customInputs.style.display = 'block';
+                } else {
+                    customInputs.style.display = 'none';
+                }
+            });
+
+            // Model scale slider
+            document.getElementById('modelScale').addEventListener('input', (e) => {
+                document.getElementById('scaleValue').textContent = `Scale: ${e.target.value}x`;
             });
 
             // Base map selection
@@ -2892,15 +3468,24 @@
             }
         });
 
-        // Show snackbar notifications
-        function showSnackBar(message) {
+        // Show snackbar notifications with different types
+        function showSnackBar(message, type = 'info') {
             const snackbar = document.createElement('div');
+            
+            // Define colors for different types
+            const colors = {
+                info: '#333',
+                success: '#10b981',
+                warning: '#f59e0b',
+                error: '#ef4444'
+            };
+            
             snackbar.style.cssText = `
                 position: fixed;
                 bottom: 20px;
                 left: 50%;
                 transform: translateX(-50%);
-                background-color: #333;
+                background-color: ${colors[type] || colors.info};
                 color: white;
                 padding: 12px 24px;
                 border-radius: 4px;
@@ -2908,10 +3493,14 @@
                 min-width: 250px;
                 text-align: center;
                 box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+                font-weight: ${type === 'error' ? 'bold' : 'normal'};
             `;
             snackbar.textContent = message;
             document.body.appendChild(snackbar);
-            setTimeout(() => snackbar.remove(), 3000);
+            
+            // Show errors longer
+            const duration = type === 'error' ? 5000 : 3000;
+            setTimeout(() => snackbar.remove(), duration);
         }
 
         // ===== WebXR Implementation =====
