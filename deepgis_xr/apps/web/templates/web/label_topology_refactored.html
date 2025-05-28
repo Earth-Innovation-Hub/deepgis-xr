@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DeepGIS Topology Hybrid Viewer</title>
+    
+    <!-- CSRF Token for API requests -->
+    {% csrf_token %}
+    
+    <!-- Cesium Dependencies -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <!-- Additional Dependencies -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+    
+    <!-- Cesium Ion Token -->
+    <script>
+        // Suppress console errors for missing source maps
+        const originalConsoleError = console.error;
+        console.error = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
+                return;
+            }
+            originalConsoleError.apply(console, args);
+        };
+        
+        // Set Cesium Ion access token
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+    </script>
+    
+    <style>
+        /* CSS Custom Properties for consistent theming */
+        :root {
+            /* Color Palette */
+            --primary-blue: #3b82f6;
+            --primary-blue-dark: #2563eb;
+            --primary-blue-darker: #1d4ed8;
+            --success-green: #10b981;
+            --success-green-dark: #059669;
+            --success-green-darker: #047857;
+            --warning-orange: #f59e0b;
+            --warning-orange-dark: #d97706;
+            --warning-orange-darker: #b45309;
+            --danger-red: #ef4444;
+            --danger-red-dark: #dc2626;
+            --danger-red-darker: #b91c1c;
+            --purple: #7c3aed;
+            --purple-dark: #6d28d9;
+            --purple-variant: #8b5cf6;
+            
+            /* Neutral Colors */
+            --slate-900: #0f172a;
+            --slate-800: #1e293b;
+            --slate-700: #334155;
+            --slate-600: #475569;
+            --slate-500: #64748b;
+            --slate-400: #94a3b8;
+            --slate-300: #cbd5e1;
+            --slate-100: #f1f5f9;
+            
+            /* Spacing */
+            --sidebar-width: 320px;
+            --border-radius: 8px;
+            --border-radius-lg: 12px;
+            --spacing-xs: 4px;
+            --spacing-sm: 6px;
+            --spacing-md: 8px;
+            --spacing-lg: 12px;
+            --spacing-xl: 16px;
+            
+            /* Shadows */
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.15);
+            --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.2);
+            
+            /* Transitions */
+            --transition-fast: 0.2s ease;
+            --transition-normal: 0.3s ease;
+        }
+
+        /* Base Styles */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+
+        /* Layout Components */
+        #cesiumContainer {
+            position: absolute;
+            top: 0;
+            right: var(--sidebar-width);
+            bottom: 0;
+            left: 0;
+            width: auto;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #sidebar-wrapper {
+            width: var(--sidebar-width);
+            position: fixed;
+            height: 100%;
+            z-index: 1000;
+            top: 0;
+            right: 0;
+            background: linear-gradient(180deg, var(--slate-800) 0%, var(--slate-900) 100%);
+            box-shadow: -2px 0 20px rgba(0,0,0,0.3);
+            overflow-y: auto;
+            transform: translateX(0);
+            transition: transform var(--transition-normal);
+            border-left: 1px solid var(--slate-700);
+        }
+
+        /* Utility Classes for Gradients */
+        .gradient-primary {
+            background: linear-gradient(135deg, var(--primary-blue), var(--primary-blue-dark));
+        }
+        
+        .gradient-success {
+            background: linear-gradient(135deg, var(--success-green), var(--success-green-dark));
+        }
+        
+        .gradient-warning {
+            background: linear-gradient(135deg, var(--warning-orange), var(--warning-orange-dark));
+        }
+        
+        .gradient-danger {
+            background: linear-gradient(135deg, var(--danger-red), var(--danger-red-dark));
+        }
+        
+        .gradient-purple {
+            background: linear-gradient(135deg, var(--purple), var(--purple-dark));
+        }
+
+        /* Button Base Class with Variants */
+        .btn-base {
+            border-radius: var(--border-radius);
+            font-weight: 500;
+            transition: all var(--transition-fast);
+            margin: 2px 0;
+            width: 100%;
+            padding: var(--spacing-sm) var(--spacing-lg);
+            font-size: 0.8rem;
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-base::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn-base:hover::before {
+            left: 100%;
+        }
+
+        .btn-base:hover {
+            transform: translateY(-1px);
+        }
+
+        /* Button Variants using Utility Classes */
+        .btn-primary {
+            @extend .btn-base, .gradient-primary;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--primary-blue-dark), var(--primary-blue-darker));
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-success {
+            @extend .btn-base, .gradient-success;
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            background: linear-gradient(135deg, var(--success-green-dark), var(--success-green-darker));
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-warning {
+            @extend .btn-base, .gradient-warning;
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-warning:hover {
+            background: linear-gradient(135deg, var(--warning-orange-dark), var(--warning-orange-darker));
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+
+        .btn-danger {
+            @extend .btn-base, .gradient-danger;
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: linear-gradient(135deg, var(--danger-red-dark), var(--danger-red-darker));
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+
+        /* Form Control Base Class */
+        .form-control-base {
+            background: rgba(71, 85, 105, 0.8);
+            border: 1px solid rgba(100, 116, 139, 0.5);
+            color: var(--slate-100);
+            border-radius: var(--border-radius);
+            padding: var(--spacing-sm) var(--spacing-md);
+            transition: all var(--transition-fast);
+            font-size: 0.85rem;
+            backdrop-filter: blur(5px);
+        }
+
+        .form-control-base:focus {
+            background: rgba(71, 85, 105, 0.9);
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: var(--slate-100);
+            outline: none;
+        }
+
+        .form-select {
+            @extend .form-control-base;
+        }
+
+        .form-control {
+            @extend .form-control-base;
+        }
+
+        /* Layer Group Base Class */
+        .layer-group-base {
+            margin: var(--spacing-lg) 10px;
+            background: rgba(51, 65, 85, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            transition: all var(--transition-fast);
+        }
+
+        .layer-group-base:hover {
+            background: rgba(51, 65, 85, 0.8);
+            border-color: rgba(59, 130, 246, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .layer-group {
+            @extend .layer-group-base;
+        }
+
+        /* Specialized Layer Groups */
+        .view-controls {
+            @extend .layer-group-base, .gradient-success;
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.2);
+        }
+
+        .measurement-controls {
+            @extend .layer-group-base, .gradient-danger;
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
+        }
+
+        .statistics-section {
+            @extend .layer-group-base, .gradient-purple;
+            border: 1px solid rgba(139, 92, 246, 0.5);
+            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
+        }
+
+        #webxrControls {
+            @extend .layer-group-base;
+            background: linear-gradient(135deg, #7c2d92, #6b21a8);
+            border: 1px solid var(--purple-variant);
+            box-shadow: 0 4px 12px rgba(124, 45, 146, 0.2);
+        }
+
+        /* Widget Positioning Utility */
+        .widget-positioned {
+            position: absolute;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            box-shadow: var(--shadow-md);
+            transition: right var(--transition-normal);
+        }
+
+        /* Compass and Attitude Indicators */
+        .compass-widget {
+            @extend .widget-positioned;
+            top: 150px;
+            right: 350px;
+            width: 90px;
+            height: 90px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 50%;
+            border: 2px solid var(--primary-blue);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .attitude-indicator {
+            @extend .widget-positioned;
+            top: 260px;
+            right: 350px;
+            width: 90px;
+            height: 90px;
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 50%;
+            border: 3px solid var(--primary-blue);
+            overflow: hidden;
+        }
+
+        /* Responsive Mixins */
+        @media (max-width: 768px) {
+            :root {
+                --sidebar-width: 90%;
+            }
+            
+            .mobile-toggle {
+                display: block;
+                right: 15px;
+            }
+
+            #sidebar-wrapper {
+                transform: translateX(100%);
+                max-width: var(--sidebar-width);
+            }
+
+            #cesiumContainer {
+                right: 0;
+            }
+
+            #wrapper.show-sidebar #sidebar-wrapper {
+                transform: translateX(0);
+            }
+
+            .compass-widget,
+            .attitude-indicator {
+                right: 15px;
+            }
+
+            .compass-widget {
+                width: 70px;
+                height: 70px;
+                top: 150px;
+            }
+
+            .attitude-indicator {
+                width: 70px;
+                height: 70px;
+                top: 240px;
+            }
+        }
+
+        @media (max-width: 1024px) and (min-width: 769px) {
+            :root {
+                --sidebar-width: 300px;
+            }
+
+            .compass-widget,
+            .attitude-indicator {
+                right: 330px;
+                width: 80px;
+                height: 80px;
+            }
+        }
+
+        /* Remaining specific styles that couldn't be generalized */
+        .sidebar-header {
+            background: linear-gradient(135deg, var(--slate-900) 0%, var(--slate-800) 100%);
+            color: white;
+            padding: var(--spacing-xl);
+            text-align: center;
+            border-bottom: 1px solid var(--slate-700);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sidebar-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--primary-blue), var(--purple-variant), var(--primary-blue));
+        }
+
+        .layer-group-title {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            color: var(--slate-100);
+            border-bottom: 1px solid rgba(71, 85, 105, 0.5);
+            padding-bottom: var(--spacing-sm);
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .layer-group-title i {
+            color: var(--primary-blue);
+            font-size: 0.9rem;
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            color: white;
+            font-size: 18px;
+        }
+
+        .loading-content {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        /* Additional utility classes for common patterns */
+        .text-primary { color: var(--primary-blue); }
+        .text-success { color: var(--success-green); }
+        .text-warning { color: var(--warning-orange); }
+        .text-danger { color: var(--danger-red); }
+        .text-muted { color: var(--slate-400); }
+
+        .bg-glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .border-primary { border-color: var(--primary-blue); }
+        .shadow-primary { box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
+    </style>
+</head>
+
+<body>
+    <!-- Mobile toggle button -->
+    <button class="mobile-toggle" id="sidebarToggle" style="display: none;">
+        <i class="fa fa-bars"></i>
+    </button>
+
+    <div id="wrapper">
+        <div id="sidebar-wrapper">
+            <div class="sidebar-content">
+                <div class="sidebar-header">
+                    <h5><i class="fas fa-globe"></i> DeepGIS Topology</h5>
+                    <small>Hybrid 2D/3D Viewer</small>
+                </div>
+                
+                <div class="layer-controls">
+                    <!-- Date Selection -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-calendar-alt"></i> Available Dates
+                        </div>
+                        <div class="form-group mb-3">
+                            <select class="form-select" id="dateSelect">
+                                <!-- Will be populated dynamically -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Layer Types -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-layer-group"></i> Layer Types
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="rasterLayerToggle" checked>
+                            <label class="form-check-label" for="rasterLayerToggle">
+                                <i class="fas fa-image me-2"></i>Raster Layer
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="vectorLayerToggle" checked>
+                            <label class="form-check-label" for="vectorLayerToggle">
+                                <i class="fas fa-vector-square me-2"></i>Vector Layer
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="terrainToggle">
+                            <label class="form-check-label" for="terrainToggle">
+                                <i class="fas fa-mountain me-2"></i>3D Terrain
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="modelsToggle">
+                            <label class="form-check-label" for="modelsToggle">
+                                <i class="fas fa-cube me-2"></i>3D Models
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- View Controls -->
+                    <div class="view-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-eye"></i> View Controls
+                        </div>
+                        <button class="btn-primary" id="view2D">
+                            <i class="fas fa-map me-2"></i>2D Map View
+                        </button>
+                        <button class="btn-primary" id="view3D">
+                            <i class="fas fa-cube me-2"></i>3D Globe View
+                        </button>
+                        <button class="btn-primary" id="viewColumbus">
+                            <i class="fas fa-compass me-2"></i>Columbus View
+                        </button>
+                        <button class="btn-success" id="homeView">
+                            <i class="fas fa-home me-2"></i>Home View
+                        </button>
+                    </div>
+
+                    <!-- WebXR Controls -->
+                    <div id="webxrControls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-vr-cardboard"></i> WebXR / VR
+                        </div>
+                        <button class="btn-primary" id="checkVRSupport">
+                            <i class="fas fa-search me-2"></i>Check VR Support
+                        </button>
+                        <button class="btn-success" id="enterVR" disabled>
+                            <i class="fas fa-vr-cardboard me-2"></i>Enter VR
+                        </button>
+                        <button class="btn-danger" id="exitVR" disabled>
+                            <i class="fas fa-times me-2"></i>Exit VR
+                        </button>
+                        <div id="vrStatus" class="text-muted">
+                            VR Status: Not checked
+                        </div>
+                    </div>
+
+                    <!-- Measurement Tools -->
+                    <div class="measurement-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-ruler"></i> Measurement Tools
+                        </div>
+                        <button class="btn-warning" id="measureDistance">
+                            <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+                        </button>
+                        <button class="btn-warning" id="measureArea">
+                            <i class="fas fa-draw-polygon me-2"></i>Measure Area
+                        </button>
+                        <button class="btn-warning" id="measureHeight">
+                            <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+                        </button>
+                        <button class="btn-danger" id="clearMeasurements">
+                            <i class="fas fa-trash me-2"></i>Clear All
+                        </button>
+                        
+                        <div class="measurements-list bg-glass" id="measurementsList">
+                            <small>No measurements yet</small>
+                        </div>
+                    </div>
+
+                    <!-- Base Map Selection -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-map"></i> Base Map
+                        </div>
+                        <div class="form-group">
+                            <select class="form-select" id="baseMapSelect">
+                                <option value="ion_satellite">Ion Satellite</option>
+                                <option value="ion_streets">Ion Streets</option>
+                                <option value="osm">OpenStreetMap</option>
+                                <option value="satellite">Bing Satellite</option>
+                                <option value="bing">Bing Streets</option>
+                                <option value="mapbox">Mapbox Streets</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics Section -->
+                <div class="statistics-section">
+                    <div class="layer-group-title">
+                        <i class="fas fa-chart-bar"></i> Statistics
+                    </div>
+                    <div class="chart-container bg-glass">
+                        <canvas id="histogram"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="cesiumContainer"></div>
+
+    <!-- Status Indicators -->
+    <div class="status-indicator" id="statusIndicator">
+        Initializing Cesium...
+    </div>
+
+    <div class="performance-indicator" id="performanceIndicator">
+        FPS: --
+    </div>
+
+    <!-- Compass Widget -->
+    <div class="compass-widget" id="compassWidget">
+        <div class="compass-face">
+            <!-- Compass content -->
+        </div>
+    </div>
+
+    <!-- Attitude Indicator -->
+    <div class="attitude-indicator" id="attitudeIndicator">
+        <div class="attitude-horizon" id="attitudeHorizon">
+            <!-- Attitude indicator content -->
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <i class="fas fa-globe fa-3x fa-spin text-primary"></i>
+            <div>Initializing DeepGIS Topology Viewer...</div>
+            <div class="loading-progress">
+                <div class="loading-bar" id="loadingBar"></div>
+            </div>
+            <div id="loadingStatus">Setting up 3D environment...</div>
+        </div>
+    </div>
+
+    <script>
+        // Consolidated JavaScript with reduced duplication
+        
+        // Configuration object to reduce scattered constants
+        const CONFIG = {
+            SIDEBAR_WIDTH: 320,
+            MBTILES_SERVER: window.location.protocol === 'https:' ? 
+                'https://mbtiles.deepgis.org' : 
+                'http://mbtiles.deepgis.org',
+            TOPOLOGY_SERVER: window.location.protocol === 'https:' ?
+                'https://localhost:8092' :
+                'http://localhost:8092',
+            MOUNT_EVEREST: {
+                longitude: 87.050870,
+                latitude: 27.937370,
+                altitude: 10503.7,
+                heading: 294.7,
+                pitch: -7.9
+            }
+        };
+
+        // Global state management
+        window.DeepGISTopology = {
+            viewer: null,
+            currentLayers: { raster: null, vector: null, terrain: null, models: [] },
+            measurements: [],
+            histogram_chart: null,
+            isInitialized: false,
+            webxr: {
+                session: null,
+                referenceSpace: null,
+                gl: null,
+                baseLayer: null,
+                isSupported: false,
+                isInSession: false
+            },
+            ...CONFIG
+        };
+
+        // Utility functions for common operations
+        const Utils = {
+            updateStatus: (message) => {
+                document.getElementById('statusIndicator').textContent = message;
+            },
+            
+            updateLoadingStatus: (message, progress) => {
+                document.getElementById('loadingStatus').textContent = message;
+                document.getElementById('loadingBar').style.width = progress + '%';
+            },
+            
+            showSnackBar: (message, type = 'info') => {
+                const colors = {
+                    info: '#333',
+                    success: 'var(--success-green)',
+                    warning: 'var(--warning-orange)',
+                    error: 'var(--danger-red)'
+                };
+                
+                const snackbar = document.createElement('div');
+                snackbar.style.cssText = `
+                    position: fixed;
+                    bottom: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background-color: ${colors[type] || colors.info};
+                    color: white;
+                    padding: 12px 24px;
+                    border-radius: var(--border-radius);
+                    z-index: 10000;
+                    min-width: 250px;
+                    text-align: center;
+                    box-shadow: var(--shadow-md);
+                `;
+                snackbar.textContent = message;
+                document.body.appendChild(snackbar);
+                
+                setTimeout(() => snackbar.remove(), type === 'error' ? 5000 : 3000);
+            },
+
+            // Generic button event handler factory
+            createButtonHandler: (action, statusMessage) => {
+                return () => {
+                    try {
+                        action();
+                        Utils.updateStatus(statusMessage);
+                    } catch (error) {
+                        console.error('Button action failed:', error);
+                        Utils.updateStatus('Error: ' + error.message);
+                    }
+                };
+            }
+        };
+
+        // Celestial calculations base class to reduce duplication
+        class CelestialCalculator {
+            static getJulianDate(date) {
+                const a = Math.floor((14 - (date.getMonth() + 1)) / 12);
+                const y = date.getFullYear() + 4800 - a;
+                const m = (date.getMonth() + 1) + 12 * a - 3;
+                
+                const jdn = date.getDate() + Math.floor((153 * m + 2) / 5) + 365 * y + 
+                           Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+                
+                return jdn + (date.getHours() - 12) / 24 + date.getMinutes() / 1440 + 
+                      date.getSeconds() / 86400 + date.getMilliseconds() / 86400000;
+            }
+
+            static toHorizontalCoordinates(alpha, delta, latitude, longitude, jd) {
+                const gmst = (18.697374558 + 24.06570982441908 * (jd - 2451545.0)) % 24;
+                const lmst = (gmst + longitude / 15) % 24;
+                const ha = Math.PI / 180 * (lmst * 15 - alpha * 180 / Math.PI);
+                const lat_rad = Math.PI / 180 * latitude;
+                
+                const elevation = Math.asin(
+                    Math.sin(lat_rad) * Math.sin(delta) + 
+                    Math.cos(lat_rad) * Math.cos(delta) * Math.cos(ha)
+                );
+                
+                const azimuth = Math.atan2(
+                    -Math.sin(ha),
+                    Math.tan(delta) * Math.cos(lat_rad) - Math.sin(lat_rad) * Math.cos(ha)
+                );
+                
+                return {
+                    azimuth: (azimuth * 180 / Math.PI + 360) % 360,
+                    elevation: elevation * 180 / Math.PI,
+                    isVisible: elevation > 0
+                };
+            }
+
+            static calculateSunPosition(date, latitude, longitude) {
+                const jd = this.getJulianDate(date);
+                const n = jd - 2451545.0;
+                
+                let L = (280.460 + 0.9856474 * n) % 360;
+                if (L < 0) L += 360;
+                
+                let g = Math.PI / 180 * ((357.528 + 0.9856003 * n) % 360);
+                const lambda = Math.PI / 180 * (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g));
+                const epsilon = Math.PI / 180 * (23.439 - 0.0000004 * n);
+                
+                const alpha = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+                const delta = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+                
+                return this.toHorizontalCoordinates(alpha, delta, latitude, longitude, jd);
+            }
+
+            static calculateMoonPosition(date, latitude, longitude) {
+                const jd = this.getJulianDate(date);
+                const T = (jd - 2451545.0) / 36525;
+                
+                // Simplified lunar calculations
+                let L = (218.3164477 + 481267.88123421 * T) % 360;
+                let M = (134.9633964 + 477198.8675055 * T) % 360;
+                let F = (93.2720950 + 483202.0175233 * T) % 360;
+                
+                if (L < 0) L += 360;
+                if (M < 0) M += 360;
+                if (F < 0) F += 360;
+                
+                L *= Math.PI / 180;
+                M *= Math.PI / 180;
+                F *= Math.PI / 180;
+                
+                const dL = 6.289 * Math.sin(M) + 1.274 * Math.sin(2 * L - M) - 0.658 * Math.sin(2 * L);
+                const lambda = L + dL * Math.PI / 180;
+                const dB = 5.128 * Math.sin(F) + 0.281 * Math.sin(M + F);
+                const beta = dB * Math.PI / 180;
+                
+                const epsilon = 23.439 * Math.PI / 180;
+                const alpha = Math.atan2(
+                    Math.sin(lambda) * Math.cos(epsilon) - Math.tan(beta) * Math.sin(epsilon),
+                    Math.cos(lambda)
+                );
+                const delta = Math.asin(
+                    Math.sin(beta) * Math.cos(epsilon) + Math.cos(beta) * Math.sin(epsilon) * Math.sin(lambda)
+                );
+                
+                const result = this.toHorizontalCoordinates(alpha, delta, latitude, longitude, jd);
+                result.phase = this.calculateMoonPhase(jd);
+                return result;
+            }
+
+            static calculateMoonPhase(jd) {
+                const daysSinceNew = (jd - 2451549.5) % 29.53058868;
+                const phase = daysSinceNew / 29.53058868;
+                
+                const phases = [
+                    [0.0625, "New"],
+                    [0.1875, "Waxing Crescent"],
+                    [0.3125, "First Quarter"],
+                    [0.4375, "Waxing Gibbous"],
+                    [0.5625, "Full"],
+                    [0.6875, "Waning Gibbous"],
+                    [0.8125, "Last Quarter"],
+                    [0.9375, "Waning Crescent"]
+                ];
+                
+                for (const [threshold, name] of phases) {
+                    if (phase < threshold) return name;
+                }
+                return "New";
+            }
+        }
+
+        // Initialize Cesium viewer
+        async function initializeCesium() {
+            try {
+                Utils.updateLoadingStatus('Configuring Cesium...', 20);
+                
+                Utils.updateLoadingStatus('Creating viewer...', 40);
+                const viewer = new Cesium.Viewer('cesiumContainer', {
+                    animation: false,
+                    baseLayerPicker: false,
+                    fullscreenButton: true,
+                    geocoder: true,
+                    homeButton: true,
+                    infoBox: true,
+                    sceneModePicker: true,
+                    selectionIndicator: true,
+                    timeline: false,
+                    navigationHelpButton: true,
+                    navigationInstructionsInitiallyVisible: false,
+                    scene3DOnly: false
+                });
+
+                window.DeepGISTopology.viewer = viewer;
+
+                Utils.updateLoadingStatus('Setting up scene...', 60);
+                
+                // Configure terrain
+                try {
+                    if (typeof Cesium.createWorldTerrainAsync === 'function') {
+                        viewer.terrainProvider = await Cesium.createWorldTerrainAsync();
+                    } else if (typeof Cesium.createWorldTerrain === 'function') {
+                        viewer.terrainProvider = Cesium.createWorldTerrain();
+                    } else {
+                        viewer.terrainProvider = new Cesium.CesiumTerrainProvider({
+                            url: Cesium.IonResource.fromAssetId(1)
+                        });
+                    }
+                } catch (error) {
+                    console.warn('Failed to load Ion terrain:', error);
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                }
+
+                // Configure scene
+                viewer.scene.globe.enableLighting = true;
+                viewer.scene.fog.enabled = true;
+                viewer.scene.fog.density = 0.0001;
+
+                // Set initial view to Mount Everest
+                const { longitude, latitude, altitude, heading, pitch } = CONFIG.MOUNT_EVEREST;
+                viewer.camera.setView({
+                    destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, altitude),
+                    orientation: {
+                        heading: Cesium.Math.toRadians(heading),
+                        pitch: Cesium.Math.toRadians(pitch),
+                        roll: 0.0
+                    }
+                });
+
+                Utils.updateLoadingStatus('Setting up event handlers...', 80);
+                setupEventHandlers(viewer);
+
+                Utils.updateLoadingStatus('Complete!', 100);
+                
+                setTimeout(() => {
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                    Utils.updateStatus('Ready');
+                    window.DeepGISTopology.isInitialized = true;
+                }, 500);
+
+                initializeHistogram();
+                startPerformanceMonitoring(viewer);
+
+                return viewer;
+
+            } catch (error) {
+                console.error('Error initializing Cesium:', error);
+                Utils.updateLoadingStatus('Error: ' + error.message);
+                Utils.updateStatus('Error');
+            }
+        }
+
+        // Simplified event handler setup using utility functions
+        function setupEventHandlers(viewer) {
+            const handlers = {
+                'view2D': () => viewer.scene.mode = Cesium.SceneMode.SCENE2D,
+                'view3D': () => viewer.scene.mode = Cesium.SceneMode.SCENE3D,
+                'viewColumbus': () => viewer.scene.mode = Cesium.SceneMode.COLUMBUS_VIEW,
+                'homeView': () => {
+                    const { longitude, latitude, altitude, heading, pitch } = CONFIG.MOUNT_EVEREST;
+                    viewer.camera.setView({
+                        destination: Cesium.Cartesian3.fromDegrees(longitude, latitude, altitude),
+                        orientation: {
+                            heading: Cesium.Math.toRadians(heading),
+                            pitch: Cesium.Math.toRadians(pitch),
+                            roll: 0.0
+                        }
+                    });
+                }
+            };
+
+            // Register button handlers
+            Object.entries(handlers).forEach(([id, action]) => {
+                document.getElementById(id)?.addEventListener('click', 
+                    Utils.createButtonHandler(action, `${id} activated`));
+            });
+
+            // Sidebar toggle
+            document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+                document.getElementById('wrapper').classList.toggle('show-sidebar');
+                setTimeout(() => viewer.resize(), 300);
+            });
+        }
+
+        // Simplified performance monitoring
+        function startPerformanceMonitoring(viewer) {
+            let lastTime = performance.now();
+            let frameCount = 0;
+
+            function updateMetrics() {
+                frameCount++;
+                const currentTime = performance.now();
+                
+                if (currentTime - lastTime >= 1000) {
+                    const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+                    document.getElementById('performanceIndicator').textContent = `FPS: ${fps}`;
+                    frameCount = 0;
+                    lastTime = currentTime;
+                }
+                
+                updateCameraPoseInfo(viewer);
+                requestAnimationFrame(updateMetrics);
+            }
+            
+            requestAnimationFrame(updateMetrics);
+        }
+
+        function updateCameraPoseInfo(viewer) {
+            const camera = viewer.camera;
+            const position = camera.positionCartographic;
+            
+            const longitude = Cesium.Math.toDegrees(position.longitude);
+            const latitude = Cesium.Math.toDegrees(position.latitude);
+            const altitude = position.height;
+            
+            // Update celestial positions
+            const now = new Date();
+            const sunPos = CelestialCalculator.calculateSunPosition(now, latitude, longitude);
+            const moonPos = CelestialCalculator.calculateMoonPosition(now, latitude, longitude);
+            
+            // Update displays (simplified)
+            updateCompass(Cesium.Math.toDegrees(camera.heading), sunPos, moonPos);
+            updateAttitudeIndicator(Cesium.Math.toDegrees(camera.pitch), Cesium.Math.toDegrees(camera.roll));
+        }
+
+        function updateCompass(headingDegrees, sunPos, moonPos) {
+            let normalizedHeading = headingDegrees;
+            while (normalizedHeading < 0) normalizedHeading += 360;
+            while (normalizedHeading >= 360) normalizedHeading -= 360;
+            
+            const needle = document.getElementById('compassNeedle');
+            if (needle) {
+                needle.style.transform = `translate(-50%, -100%) rotate(${normalizedHeading}deg)`;
+            }
+        }
+
+        function updateAttitudeIndicator(pitchDegrees, rollDegrees) {
+            const horizon = document.getElementById('attitudeHorizon');
+            if (horizon) {
+                const pitchOffset = Math.max(-90, Math.min(90, pitchDegrees)) * 1.5;
+                let normalizedRoll = rollDegrees;
+                while (normalizedRoll > 180) normalizedRoll -= 360;
+                while (normalizedRoll < -180) normalizedRoll += 360;
+                
+                horizon.style.transform = `translate(-50%, calc(-50% + ${-pitchOffset}px)) rotate(${-normalizedRoll}deg)`;
+            }
+        }
+
+        function initializeHistogram() {
+            const ctx = document.getElementById('histogram')?.getContext('2d');
+            if (ctx) {
+                window.DeepGISTopology.histogram_chart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: [],
+                        datasets: [{
+                            label: 'Feature Distribution',
+                            data: [],
+                            backgroundColor: 'rgba(59, 130, 246, 0.6)',
+                            borderColor: 'rgba(59, 130, 246, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { labels: { color: 'white' } }
+                        },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                ticks: { color: 'white' },
+                                grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                            },
+                            x: {
+                                ticks: { color: 'white' },
+                                grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initializeCesium);
+    </script>
+</body>
+</html> 

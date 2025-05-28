@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeepGIS Topology Hybrid Viewer</title>
+    <title>DeepGIS Decision Support System</title>
     
     <!-- CSRF Token for API requests -->
     {% csrf_token %}
@@ -616,11 +616,14 @@
         }
 
         .compass-face {
+            position: relative;
             width: 80px;
             height: 80px;
-            position: relative;
+            background: radial-gradient(circle, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 100%);
             border-radius: 50%;
-            background: radial-gradient(circle, rgba(59, 130, 246, 0.1) 0%, rgba(0, 0, 0, 0.3) 100%);
+            border: 2px solid #3b82f6;
+            backdrop-filter: blur(5px);
+            transition: transform 0.1s ease; /* Add smooth rotation transition */
         }
 
         .compass-needle {
@@ -707,61 +710,63 @@
         /* Celestial indicators for sun and moon */
         .celestial-indicator {
             position: absolute;
-            width: 16px;
-            height: 16px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 10px;
-            transition: all 0.2s ease;
-            z-index: 5;
+            transition: all 0.3s ease;
+            z-index: 8;
             pointer-events: none;
             transform: translate(-50%, -50%);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
         }
 
         .sun-indicator {
             background: radial-gradient(circle, #fbbf24 0%, #f59e0b 100%);
             color: #ffffff;
-            box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
-            border: 1px solid #f59e0b;
+            border: 2px solid #f59e0b;
+            box-shadow: 0 0 12px rgba(251, 191, 36, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
         }
 
         .sun-indicator.below-horizon {
             background: radial-gradient(circle, #64748b 0%, #475569 100%);
             color: #94a3b8;
-            box-shadow: 0 0 4px rgba(100, 116, 139, 0.3);
-            border: 1px solid #64748b;
-            opacity: 0.6;
+            border: 2px solid #64748b;
+            box-shadow: 0 0 6px rgba(100, 116, 139, 0.3), 0 2px 8px rgba(0, 0, 0, 0.4);
+            opacity: 0.7;
         }
 
         .moon-indicator {
             background: radial-gradient(circle, #e2e8f0 0%, #cbd5e1 100%);
             color: #1e293b;
-            box-shadow: 0 0 6px rgba(226, 232, 240, 0.5);
-            border: 1px solid #cbd5e1;
+            border: 2px solid #cbd5e1;
+            box-shadow: 0 0 10px rgba(226, 232, 240, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
         }
 
         .moon-indicator.below-horizon {
             background: radial-gradient(circle, #475569 0%, #334155 100%);
             color: #64748b;
-            box-shadow: 0 0 3px rgba(71, 85, 105, 0.3);
-            border: 1px solid #475569;
-            opacity: 0.6;
+            border: 2px solid #475569;
+            box-shadow: 0 0 6px rgba(71, 85, 105, 0.3), 0 2px 8px rgba(0, 0, 0, 0.4);
+            opacity: 0.7;
         }
 
         .celestial-indicator i {
-            font-size: 8px;
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+            font-size: 9px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
         }
 
         /* Aviation-style attitude indicator */
         .attitude-indicator {
-            position: absolute;
-            top: 260px;
-            right: 350px; /* Updated for new sidebar width */
+            position: relative !important;
+            top: 0 !important;
+            right: 0 !important;
             width: 90px;
             height: 90px;
+            margin: 0 auto 15px auto;
             background: rgba(0, 0, 0, 0.9);
             border-radius: 50%;
             border: 3px solid #3b82f6;
@@ -769,7 +774,7 @@
             backdrop-filter: blur(5px);
             overflow: hidden;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-            transition: right 0.3s ease;
+            transition: none !important;
         }
 
         .attitude-horizon {
@@ -856,18 +861,313 @@
         }
 
         .attitude-readout {
-            position: absolute;
-            bottom: -30px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: white;
+            position: relative;
+            top: 0;
+            right: 0;
+            transform: none;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
             font-size: 10px;
             font-weight: bold;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 2px 6px;
-            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
             text-align: center;
-            min-width: 60px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            margin: 0 auto;
+        }
+
+        /* Navigation Widget Group - Container for heading and attitude widgets */
+        .navigation-widget-group {
+            position: absolute;
+            top: 150px;
+            right: 350px;
+            width: 120px;
+            z-index: 1000;
+            transition: right 0.3s ease;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 12px;
+            padding: 10px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .navigation-widget-group .widget-title {
+            color: #f1f5f9;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.8;
+        }
+
+        /* Heading Dial Widget - now relative within group */
+        .heading-dial {
+            position: relative !important;
+            top: 0 !important;
+            right: 0 !important;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 35px auto;
+            z-index: 1000;
+            transition: none !important;
+        }
+
+        .heading-dial-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 2px 4px rgba(59, 130, 246, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .heading-dial-face {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 90px;
+            height: 90px;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                #1e293b 0deg 45deg,
+                #334155 45deg 90deg,
+                #1e293b 90deg 135deg,
+                #334155 135deg 180deg,
+                #1e293b 180deg 225deg,
+                #334155 225deg 270deg,
+                #1e293b 270deg 315deg,
+                #334155 315deg 360deg
+            );
+            transition: transform 0.2s ease;
+        }
+
+        .heading-dial-markings {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 80px;
+            height: 80px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-mark {
+            position: absolute;
+            background: #e2e8f0;
+            transform-origin: center bottom;
+        }
+
+        .heading-dial-mark.major {
+            width: 2px;
+            height: 12px;
+            background: #f1f5f9;
+        }
+
+        .heading-dial-mark.minor {
+            width: 1px;
+            height: 6px;
+            background: #94a3b8;
+        }
+
+        .heading-dial-labels {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 70px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label {
+            position: absolute;
+            color: #f1f5f9;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label.north {
+            color: #ef4444;
+            font-size: 14px;
+        }
+
+        .heading-dial-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 3px;
+            height: 35px;
+            background: linear-gradient(to bottom, #ef4444 0%, #dc2626 50%, #f1f5f9 50%, #e2e8f0 100%);
+            transform: translate(-50%, -100%);
+            transform-origin: bottom center;
+            border-radius: 2px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        .heading-dial-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border: 2px solid #f1f5f9;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .heading-dial-readout {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Aviation-style attitude indicator - now relative within group */
+        .attitude-indicator {
+            position: relative;
+            top: 0;
+            right: 0;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 15px auto;
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: none;
+        }
+
+        .attitude-horizon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 180px;
+            height: 180px;
+            transform: translate(-50%, -50%);
+            transition: transform 0.1s ease;
+        }
+
+        .attitude-sky {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 100%);
+        }
+
+        .attitude-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to top, #8b4513 0%, #daa520 100%);
+        }
+
+        .attitude-horizon-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: white;
+            transform: translateY(-50%);
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .attitude-aircraft {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+        }
+
+        .attitude-aircraft::before,
+        .attitude-aircraft::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translateY(-50%);
+        }
+
+        .attitude-aircraft::before {
+            left: -16px;
+        }
+
+        .attitude-aircraft::after {
+            right: -16px;
+        }
+
+        .attitude-center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #ff6b35;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            border: 1px solid white;
+        }
+
+        .attitude-readout {
+            position: relative;
+            top: 0;
+            right: 0;
+            transform: none;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            margin: 0 auto;
         }
 
         /* Responsive Design */
@@ -879,8 +1179,8 @@
 
             #sidebar-wrapper {
                 transform: translateX(100%);
-                width: 90%; /* Increased from 85% for better mobile experience */
-                max-width: 320px; /* Match desktop width */
+                width: 90%;
+                max-width: 320px;
             }
 
             #cesiumContainer {
@@ -891,32 +1191,55 @@
                 transform: translateX(0);
             }
 
-            .compass-widget {
+            .navigation-widget-group {
                 right: 15px;
                 top: 150px;
-                width: 70px; /* Smaller on mobile */
+                width: 100px;
+                padding: 8px;
+            }
+
+            .navigation-widget-group .widget-title {
+                font-size: 10px;
+                margin-bottom: 6px;
+            }
+
+            .heading-dial {
+                width: 80px;
+                height: 80px;
+                margin-bottom: 12px;
+            }
+
+            .heading-dial-face {
+                width: 70px;
                 height: 70px;
             }
 
-            .compass-face {
-                width: 60px;
-                height: 60px;
+            .heading-dial-needle {
+                height: 28px;
             }
 
-            .compass-needle {
-                height: 25px;
+            .heading-dial-readout {
+                font-size: 9px;
+                padding: 2px 4px;
+                min-width: 40px;
+                bottom: -20px;
             }
 
             .attitude-indicator {
-                right: 15px;
-                top: 240px; /* Adjusted for smaller compass */
                 width: 70px;
                 height: 70px;
+                margin-bottom: 10px;
             }
 
             .attitude-horizon {
                 width: 140px;
                 height: 140px;
+            }
+
+            .attitude-readout {
+                font-size: 9px;
+                padding: 2px 4px;
+                min-width: 40px;
             }
 
             /* Make sidebar content more touch-friendly on mobile */
@@ -981,19 +1304,22 @@
                 right: 315px;
             }
 
-            .compass-widget {
+            .navigation-widget-group {
                 right: 330px;
+                width: 110px;
+            }
+
+            .heading-dial {
+                width: 90px;
+                height: 90px;
+            }
+
+            .heading-dial-face {
                 width: 80px;
                 height: 80px;
             }
 
-            .compass-face {
-                width: 70px;
-                height: 70px;
-            }
-
             .attitude-indicator {
-                right: 330px;
                 width: 80px;
                 height: 80px;
             }
@@ -1015,11 +1341,7 @@
             width: 100%;
         }
 
-        #wrapper.fullscreen-mode .compass-widget {
-            right: 15px;
-        }
-
-        #wrapper.fullscreen-mode .attitude-indicator {
+        #wrapper.fullscreen-mode .navigation-widget-group {
             right: 15px;
         }
 
@@ -1044,17 +1366,10 @@
             transform: translateX(100%) !important;
         }
 
-        :fullscreen .compass-widget,
-        :-webkit-full-screen .compass-widget,
-        :-moz-full-screen .compass-widget,
-        :-ms-fullscreen .compass-widget {
-            right: 15px !important;
-        }
-
-        :fullscreen .attitude-indicator,
-        :-webkit-full-screen .attitude-indicator,
-        :-moz-full-screen .attitude-indicator,
-        :-ms-fullscreen .attitude-indicator {
+        :fullscreen .navigation-widget-group,
+        :-webkit-full-screen .navigation-widget-group,
+        :-moz-full-screen .navigation-widget-group,
+        :-ms-fullscreen .navigation-widget-group {
             right: 15px !important;
         }
 
@@ -1117,6 +1432,289 @@
         .cesium-viewer-geocoderContainer {
             background: rgba(42, 42, 42, 0.8) !important;
         }
+
+        /* Geographic North Indicator */
+        .geographic-indicator {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            width: 12px;
+            height: 12px;
+            background: rgba(59, 130, 246, 0.9);
+            color: white;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: bold;
+            font-family: monospace;
+            border: 1px solid #1e40af;
+            z-index: 6;
+            pointer-events: none;
+        }
+
+        /* Heading Dial Widget */
+        .heading-dial {
+            position: absolute;
+            top: 150px;
+            right: 350px;
+            width: 100px;
+            height: 100px;
+            z-index: 1000;
+            transition: right 0.3s ease;
+        }
+
+        .heading-dial-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 2px 4px rgba(59, 130, 246, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .heading-dial-face {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 90px;
+            height: 90px;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                #1e293b 0deg 45deg,
+                #334155 45deg 90deg,
+                #1e293b 90deg 135deg,
+                #334155 135deg 180deg,
+                #1e293b 180deg 225deg,
+                #334155 225deg 270deg,
+                #1e293b 270deg 315deg,
+                #334155 315deg 360deg
+            );
+            transition: transform 0.2s ease;
+        }
+
+        .heading-dial-markings {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 80px;
+            height: 80px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-mark {
+            position: absolute;
+            background: #e2e8f0;
+            transform-origin: center bottom;
+        }
+
+        .heading-dial-mark.major {
+            width: 2px;
+            height: 12px;
+            background: #f1f5f9;
+        }
+
+        .heading-dial-mark.minor {
+            width: 1px;
+            height: 6px;
+            background: #94a3b8;
+        }
+
+        .heading-dial-labels {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 70px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label {
+            position: absolute;
+            color: #f1f5f9;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label.north {
+            color: #ef4444;
+            font-size: 14px;
+        }
+
+        .heading-dial-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 3px;
+            height: 35px;
+            background: linear-gradient(to bottom, #ef4444 0%, #dc2626 50%, #f1f5f9 50%, #e2e8f0 100%);
+            transform: translate(-50%, -100%);
+            transform-origin: bottom center;
+            border-radius: 2px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        .heading-dial-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border: 2px solid #f1f5f9;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .heading-dial-readout {
+            position: absolute;
+            bottom: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 60px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Aviation-style attitude indicator - now relative within group */
+        .attitude-indicator {
+            position: relative;
+            top: 0;
+            right: 0;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 15px auto;
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: none;
+        }
+
+        .attitude-horizon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 180px;
+            height: 180px;
+            transform: translate(-50%, -50%);
+            transition: transform 0.1s ease;
+        }
+
+        .attitude-sky {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 100%);
+        }
+
+        .attitude-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to top, #8b4513 0%, #daa520 100%);
+        }
+
+        .attitude-horizon-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: white;
+            transform: translateY(-50%);
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .attitude-aircraft {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+        }
+
+        .attitude-aircraft::before,
+        .attitude-aircraft::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translateY(-50%);
+        }
+
+        .attitude-aircraft::before {
+            left: -16px;
+        }
+
+        .attitude-aircraft::after {
+            right: -16px;
+        }
+
+        .attitude-center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #ff6b35;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            border: 1px solid white;
+        }
+
+        .attitude-readout {
+            position: relative;
+            top: 0;
+            right: 0;
+            transform: none;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            margin: 0 auto;
+        }
     </style>
 </head>
 
@@ -1129,7 +1727,7 @@
         <div id="sidebar-wrapper">
             <div class="sidebar-content">
                 <div class="sidebar-header">
-                    <h5><i class="fas fa-globe"></i> DeepGIS Topology</h5>
+                    <h5><i class="fas fa-globe"></i> DeepGIS Decision Support System</h5>
                     <small>Hybrid 2D/3D Viewer</small>
                 </div>
                 
@@ -1241,16 +1839,16 @@
                     <!-- 3D Model Controls -->
                     <div class="layer-group" id="modelControls" style="display: none;">
                         <div class="layer-group-title">
-                            <i class="fas fa-cube"></i> 3D Model Controls
+                            <i class="fas fa-cube"></i> Navagunjara Digital Twin
                         </div>
                         <div class="form-group mb-3">
-                            <label class="form-label" style="color: #cbd5e1;">Model URL or Ion Asset ID:</label>
+                            <label class="form-label" style="color: #cbd5e1;">3D Model:</label>
                             <input type="text" class="form-control" id="modelUrl" 
-                                   value="75343"
-                                   placeholder="Enter Ion Asset ID (e.g., 75343) or URL"
-                                   style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                   value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                                   readonly
+                                   style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; cursor: not-allowed;">
                             <small class="text-muted">
-                                <strong>Fallback:</strong> If primary URL fails, will try Ion Asset ID 75343
+                                <strong>Navagunjara Reborn Digital Twin</strong> - Propane and Solar Powered Art Installation
                             </small>
                         </div>
                         <div class="form-group mb-3">
@@ -1287,7 +1885,7 @@
                             <small class="text-muted" id="scaleValue">Scale: 1.0x</small>
                         </div>
                         <button class="btn btn-success" id="loadModel">
-                            <i class="fas fa-download me-2"></i>Load Model
+                            <i class="fas fa-download me-2"></i>Load Navagunjara
                         </button>
                         <button class="btn btn-danger" id="removeModel">
                             <i class="fas fa-trash me-2"></i>Remove Model
@@ -1329,7 +1927,7 @@
     <div id="cesiumContainer"></div>
 
     <!-- Main Heading -->
-    <div class="main-heading">DeepGIS Topology</div>
+    <div class="main-heading">DeepGIS Decision Support System</div>
 
     <!-- Status Indicators -->
     <div class="status-indicator" id="statusIndicator">
@@ -1402,45 +2000,47 @@
         </div>
     </div>
 
-    <!-- Compass Widget -->
-    <div class="compass-widget" id="compassWidget">
-        <div class="compass-face">
-            <div class="compass-labels">
-                <div class="compass-label north">N</div>
-                <div class="compass-label east">E</div>
-                <div class="compass-label south">S</div>
-                <div class="compass-label west">W</div>
+    <!-- Navigation Widget Group - Contains heading dial and attitude indicator -->
+    <div class="navigation-widget-group" id="navigationWidgetGroup">
+        <div class="widget-title">Navigation</div>
+        
+        <!-- Heading Dial Widget -->
+        <div class="heading-dial" id="headingDial">
+            <div class="heading-dial-container">
+                <div class="heading-dial-face" id="headingDialFace">
+                    <div class="heading-dial-markings" id="headingDialMarkings">
+                        <!-- Markings will be generated by JavaScript -->
+                    </div>
+                    <div class="heading-dial-labels" id="headingDialLabels">
+                        <!-- Labels will be positioned by JavaScript -->
+                    </div>
+                </div>
+                <div class="heading-dial-needle" id="headingDialNeedle"></div>
+                <div class="heading-dial-center"></div>
             </div>
-            <div class="compass-needle" id="compassNeedle"></div>
-            <div class="compass-center"></div>
-            <!-- Sun and Moon indicators -->
-            <div class="celestial-indicator sun-indicator" id="sunIndicator">
-                <i class="fas fa-sun"></i>
-            </div>
-            <div class="celestial-indicator moon-indicator" id="moonIndicator">
-                <i class="fas fa-moon"></i>
-            </div>
+            <div class="heading-dial-readout" id="headingDialReadout">000°T</div>
         </div>
-        <div class="compass-heading" id="compassHeading">0°</div>
-    </div>
 
-    <!-- Attitude Indicator -->
-    <div class="attitude-indicator" id="attitudeIndicator">
-        <div class="attitude-horizon" id="attitudeHorizon">
-            <div class="attitude-sky"></div>
-            <div class="attitude-ground"></div>
-            <div class="attitude-horizon-line"></div>
+        <!-- Attitude Indicator -->
+        <div class="attitude-indicator" id="attitudeIndicator">
+            <div class="attitude-horizon" id="attitudeHorizon">
+                <div class="attitude-sky"></div>
+                <div class="attitude-ground"></div>
+                <div class="attitude-horizon-line"></div>
+            </div>
+            <div class="attitude-aircraft"></div>
+            <div class="attitude-center-dot"></div>
         </div>
-        <div class="attitude-aircraft"></div>
-        <div class="attitude-center-dot"></div>
-        <div class="attitude-readout" id="attitudeReadout">0° | 0°</div>
+        
+        <!-- Attitude Readout -->
+        <div class="attitude-readout" id="attitudeReadout">000°P 000°R</div>
     </div>
 
     <!-- Loading Overlay -->
     <div class="loading-overlay" id="loadingOverlay">
         <div class="loading-content">
             <i class="fas fa-globe fa-3x fa-spin" style="color: #3b82f6; margin-bottom: 20px;"></i>
-            <div>Initializing DeepGIS Topology Viewer...</div>
+            <div>Initializing DeepGIS Decision Support System...</div>
             <div class="loading-progress">
                 <div class="loading-bar" id="loadingBar"></div>
             </div>
@@ -1682,6 +2282,9 @@
                 // Initialize histogram
                 initializeHistogram();
 
+                // Initialize heading dial
+                initializeHeadingDial();
+
                 // Start performance monitoring
                 startPerformanceMonitoring(viewer);
 
@@ -1758,11 +2361,11 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             showSnackBar('CORS issue detected. Check console for detailed help.', 'warning');
         }
 
-        // Enhanced model loading with Ion 3D Tiles support and location options
+        // Enhanced model loading with progressive loading and optimization
         async function loadGLTFModel(viewer) {
             const modelUrl = document.getElementById('modelUrl').value.trim();
             if (!modelUrl) {
-                updateStatusIndicator('Please enter a model URL or Ion Asset ID');
+                updateStatusIndicator('Model URL not available');
                 return;
             }
 
@@ -1781,6 +2384,9 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             });
 
             updateStatusIndicator('Loading 3D model...');
+
+            // Progressive loading strategy for large models
+            const progressiveModelUrls = getProgressiveModelUrls(modelUrl);
 
             try {
                 // Determine model position based on location option
@@ -1884,107 +2490,129 @@ The model cannot be loaded due to browser security restrictions. Here are your o
                     showSnackBar('3D Tileset loaded from URL');
                     
                                 } else {
-                    // Load as regular GLTF/GLB model with enhanced error handling
-                    // Validate URL format
-                    try {
-                        new URL(modelUrl);
-                    } catch (e) {
-                        updateStatusIndicator('Invalid URL format');
-                        return;
-                    }
-
-                    // Test connectivity first
-                    updateStatusIndicator('Testing model connectivity...');
-                    const connectivityTest = await testModelConnectivity(modelUrl);
+                    // Load as regular GLTF/GLB model with progressive loading
+                    updateStatusIndicator('Preparing progressive model loading...');
                     
-                    if (!connectivityTest.ping && !connectivityTest.cors) {
-                        updateStatusIndicator('Model not accessible - trying fallback methods...');
-                        console.warn('Model connectivity failed, proceeding with fallback strategies');
-                        showSnackBar('CORS restrictions detected. Trying alternative loading methods...', 'warning');
-                    } else {
-                        updateStatusIndicator('Model accessible - proceeding with load...');
-                    }
-                    
-                    // Show CORS help message if needed
-                    if (connectivityTest.error && connectivityTest.error.includes('CORS')) {
-                        showCORSHelp();
-                    }
-
-                    // Enhanced model loading with better CORS and error handling
-                    updateStatusIndicator('Preparing to load 3D model...');
-                    
-                    // Try multiple loading strategies
+                    // Try progressive loading with optimized variants
                     let loadingSuccess = false;
                     let entity = null;
                     
-                    // Strategy 1: Direct load with enhanced CORS settings
-                    try {
-                        updateStatusIndicator('Loading 3D model (Strategy 1)...');
-                        
-                        entity = viewer.entities.add({
-                            name: 'GLTF Model - Navagunjara Digital Twin',
-                            position: modelPosition,
-                            model: {
-                                uri: modelUrl,
-                                scale: scale,
-                                minimumPixelSize: 64,
-                                maximumScale: 10000,
-                                runAnimations: true,
-                                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                                silhouetteColor: Cesium.Color.YELLOW,
-                                silhouetteSize: 2.0,
-                                show: true,
-                                distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
-                                // Enhanced loading properties for large files
-                                incrementallyLoadTextures: true,
-                                backFaceCulling: false,
-                                shadows: Cesium.ShadowMode.ENABLED,
-                                // Add these properties for better large file handling
-                                clampAnimations: false,
-                                asynchronous: true,
-                                allowPicking: true,
-                                credit: undefined
-                            },
-                            description: `
-                                <h3>Navagunjara Reborn Digital Twin</h3>
-                                <p>Propane and Solar Powered Art Installation</p>
-                                <p><strong>Location:</strong> ${locationOption === 'mount_everest' ? 'Mount Everest, Nepal/Tibet' : 'Custom Location'}</p>
-                                <p><strong>Scale:</strong> ${scale}x</p>
-                                <p><strong>Model URL:</strong> <a href="${modelUrl}" target="_blank">View Source</a></p>
-                            `
-                        });
-
-                        // Wait for model to load with extended timeout for large files
-                        const loadPromise = entity.model.readyPromise;
-                        // Increase timeout to 2 minutes for large GLB files (130MB+)
-                        const timeoutPromise = new Promise((_, reject) => 
-                            setTimeout(() => reject(new Error('Model loading timeout - file may be too large')), 120000)
-                        );
-                        
-                        // Add progress monitoring for large files
-                        const progressInterval = setInterval(() => {
-                            if (entity.model.ready) {
-                                clearInterval(progressInterval);
-                            } else {
-                                updateStatusIndicator('Loading large GLB file... (this may take several minutes)');
-                            }
-                        }, 5000);
+                    for (let i = 0; i < progressiveModelUrls.length && !loadingSuccess; i++) {
+                        const currentModelUrl = progressiveModelUrls[i];
+                        const isOptimized = currentModelUrl !== modelUrl;
                         
                         try {
-                            await Promise.race([loadPromise, timeoutPromise]);
-                            clearInterval(progressInterval);
-                        } catch (error) {
-                            clearInterval(progressInterval);
-                            throw error;
+                            // Validate URL format
+                            new URL(currentModelUrl);
+                        } catch (e) {
+                            console.warn(`Invalid URL format: ${currentModelUrl}`);
+                            continue;
                         }
+
+                        updateStatusIndicator(`Loading model variant ${i + 1}/${progressiveModelUrls.length}${isOptimized ? ' (optimized)' : ''}...`);
                         
-                        updateStatusIndicator('3D model loaded successfully');
-                        showSnackBar(`3D model loaded at ${locationOption === 'mount_everest' ? 'Mount Everest' : 'selected location'}`, 'success');
-                        console.log('Model loaded successfully with Strategy 1');
-                        loadingSuccess = true;
+                        try {
+                            // Skip connectivity test for now to avoid JSON parsing issues
+                            console.log(`Attempting to load model variant ${i + 1}: ${currentModelUrl}`);
+
+                            // Try loading this variant directly
+                            try {
+                                updateStatusIndicator(`Loading 3D model variant ${i + 1}...`);
                         
-                    } catch (strategy1Error) {
-                        console.warn('Strategy 1 failed:', strategy1Error);
+                                entity = viewer.entities.add({
+                                    name: `GLTF Model - Navagunjara Digital Twin${isOptimized ? ' (Optimized)' : ''}`,
+                                    position: modelPosition,
+                                    model: {
+                                        uri: currentModelUrl,
+                                        scale: scale,
+                                        minimumPixelSize: 64,
+                                        maximumScale: 10000,
+                                        runAnimations: true,
+                                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                                        silhouetteColor: Cesium.Color.YELLOW,
+                                        silhouetteSize: 2.0,
+                                        show: true,
+                                        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
+                                        // Enhanced loading properties for large files
+                                        incrementallyLoadTextures: true,
+                                        backFaceCulling: false,
+                                        shadows: Cesium.ShadowMode.ENABLED,
+                                        // Add these properties for better large file handling
+                                        clampAnimations: false,
+                                        asynchronous: true,
+                                        allowPicking: true,
+                                        credit: undefined
+                                    },
+                                    description: `
+                                        <h3>Navagunjara Reborn Digital Twin${isOptimized ? ' (Optimized)' : ''}</h3>
+                                        <p><strong>Propane and Solar Powered Art Installation</strong></p>
+                                        <p>A mythical creature from Hindu mythology, reimagined as a sustainable digital art piece.</p>
+                                        <p><strong>Location:</strong> ${locationOption === 'mount_everest' ? 'Mount Everest, Nepal/Tibet' : 'Custom Location'}</p>
+                                        <p><strong>Scale:</strong> ${scale}x</p>
+                                        <p><strong>Model Source:</strong> <a href="${currentModelUrl}" target="_blank">DeepGIS Model Repository</a></p>
+                                        ${isOptimized ? '<p><strong>Optimization:</strong> This is an optimized variant for better performance</p>' : ''}
+                                        <p><em>This is the exclusive 3D model available in this viewer.</em></p>
+                                    `
+                                });
+
+                                // Wait for model to load with extended timeout for large files
+                                const loadPromise = entity.model.readyPromise;
+                                // Increase timeout to 2 minutes for large GLB files (130MB+)
+                                const timeoutPromise = new Promise((_, reject) => 
+                                    setTimeout(() => reject(new Error('Model loading timeout - file may be too large')), 120000)
+                                );
+                                
+                                // Add progress monitoring for large files
+                                const progressInterval = setInterval(() => {
+                                    if (entity.model.ready) {
+                                        clearInterval(progressInterval);
+                                    } else {
+                                        updateStatusIndicator('Loading large GLB file... (this may take several minutes)');
+                                    }
+                                }, 5000);
+                                
+                                try {
+                                    await Promise.race([loadPromise, timeoutPromise]);
+                                    clearInterval(progressInterval);
+                                } catch (error) {
+                                    clearInterval(progressInterval);
+                                    throw error;
+                                }
+                                
+                                updateStatusIndicator(`3D model variant ${i + 1} loaded successfully`);
+                                showSnackBar(`3D model loaded at ${locationOption === 'mount_everest' ? 'Mount Everest' : 'selected location'}${isOptimized ? ' (optimized variant)' : ''}`, 'success');
+                                console.log(`Model variant ${i + 1} loaded successfully`);
+                                loadingSuccess = true;
+                                break; // Exit the variant loading loop
+                                
+                            } catch (variantError) {
+                                console.warn(`Variant ${i + 1} failed:`, variantError);
+                                
+                                // Remove failed entity
+                                if (entity) {
+                                    viewer.entities.remove(entity);
+                                    entity = null;
+                                }
+                                
+                                // Continue to next variant
+                                continue;
+                            }
+                            
+                        } catch (connectivityError) {
+                            console.warn(`Connectivity test failed for variant ${i + 1}:`, connectivityError);
+                            continue;
+                        }
+                    }
+                    
+                    // If no variants loaded successfully, show error
+                    if (!loadingSuccess) {
+                        updateStatusIndicator('All model variants failed to load');
+                        showSnackBar('Failed to load any model variant. Check console for details.', 'error');
+                    }
+                    
+                    // If no variants loaded successfully, try fallback strategies
+                    if (!loadingSuccess) {
+                        console.warn('Progressive loading failed, trying fallback strategies...');
                         
                         // Remove failed entity
                         if (entity) {
@@ -1992,193 +2620,9 @@ The model cannot be loaded due to browser security restrictions. Here are your o
                             entity = null;
                         }
                         
-                                                 // Strategy 2: Try with CORS proxy or alternative methods
-                         try {
-                             updateStatusIndicator('Retrying with CORS bypass (Strategy 2)...');
-                             
-                             // Try multiple CORS bypass methods
-                             let response = null;
-                             const corsProxies = [
-                                 '', // Direct first
-                                 'https://cors-anywhere.herokuapp.com/',
-                                 'https://api.allorigins.win/raw?url=',
-                                 'https://corsproxy.io/?'
-                             ];
-                             
-                             for (const proxy of corsProxies) {
-                                 try {
-                                     const proxyUrl = proxy + encodeURIComponent(modelUrl);
-                                     const testUrl = proxy === '' ? modelUrl : proxyUrl;
-                                     
-                                     console.log(`Trying ${proxy === '' ? 'direct' : 'proxy'}: ${testUrl}`);
-                                     
-                                     response = await fetch(testUrl, { 
-                                         method: 'GET',
-                                         mode: proxy === '' ? 'cors' : 'cors',
-                                         credentials: 'omit',
-                                         headers: {
-                                             'Accept': 'application/octet-stream, model/gltf-binary, model/gltf+json, */*',
-                                             'User-Agent': 'Mozilla/5.0 (compatible; DeepGIS-XR/1.0)'
-                                         }
-                                     });
-                                     
-                                     if (response.ok) {
-                                         console.log(`Success with ${proxy === '' ? 'direct' : 'proxy'}: ${testUrl}`);
-                                         break;
-                                     }
-                                 } catch (proxyError) {
-                                     console.warn(`Failed with ${proxy === '' ? 'direct' : 'proxy'}:`, proxyError);
-                                     continue;
-                                 }
-                             }
-                            
-                            if (!response.ok) {
-                                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                            }
-                            
-                            // Create blob URL for local loading
-                            const modelBlob = await response.blob();
-                            const blobUrl = URL.createObjectURL(modelBlob);
-                            
-                            entity = viewer.entities.add({
-                                name: 'GLTF Model - Navagunjara Digital Twin (Blob)',
-                                position: modelPosition,
-                                model: {
-                                    uri: blobUrl,
-                                    scale: scale,
-                                    minimumPixelSize: 64,
-                                    maximumScale: 10000,
-                                    runAnimations: true,
-                                    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                                    silhouetteColor: Cesium.Color.YELLOW,
-                                    silhouetteSize: 2.0,
-                                    show: true,
-                                    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 50000.0),
-                                    incrementallyLoadTextures: true,
-                                    backFaceCulling: false,
-                                    shadows: Cesium.ShadowMode.ENABLED
-                                },
-                                description: `
-                                    <h3>Navagunjara Reborn Digital Twin</h3>
-                                    <p>Propane and Solar Powered Art Installation (Loaded via Blob)</p>
-                                    <p><strong>Location:</strong> ${locationOption === 'mount_everest' ? 'Mount Everest, Nepal/Tibet' : 'Custom Location'}</p>
-                                    <p><strong>Scale:</strong> ${scale}x</p>
-                                    <p><strong>Original URL:</strong> <a href="${modelUrl}" target="_blank">View Source</a></p>
-                                `
-                            });
-                            
-                            await entity.model.readyPromise;
-                            
-                            // Clean up blob URL after successful load
-                            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-                            
-                            updateStatusIndicator('3D model loaded successfully (Strategy 2)');
-                            showSnackBar('3D model loaded using alternative method');
-                            console.log('Model loaded successfully with Strategy 2');
-                            loadingSuccess = true;
-                            
-                        } catch (strategy2Error) {
-                            console.warn('Strategy 2 failed:', strategy2Error);
-                            
-                            // Remove failed entity
-                            if (entity) {
-                                viewer.entities.remove(entity);
-                                entity = null;
-                            }
-                            
-                                                         // Strategy 3: Try alternative model URLs
-                             try {
-                                 updateStatusIndicator('Trying alternative model sources (Strategy 3)...');
-                                 
-                                 // Try alternative model URLs
-                                 const alternativeUrls = [
-                                     'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb',
-                                     'https://threejs.org/examples/models/gltf/DamagedHelmet/glTF/DamagedHelmet.gltf',
-                                     'https://modelviewer.dev/shared-assets/models/Astronaut.glb'
-                                 ];
-                                 
-                                 let alternativeSuccess = false;
-                                 for (const altUrl of alternativeUrls) {
-                                     try {
-                                         console.log('Trying alternative model:', altUrl);
-                                         
-                                         entity = viewer.entities.add({
-                                             name: 'Alternative 3D Model',
-                                             position: modelPosition,
-                                             model: {
-                                                 uri: altUrl,
-                                                 scale: scale,
-                                                 minimumPixelSize: 64,
-                                                 maximumScale: 10000,
-                                                 runAnimations: true,
-                                                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                                                 show: true,
-                                                 incrementallyLoadTextures: true,
-                                                 backFaceCulling: false,
-                                                 shadows: Cesium.ShadowMode.ENABLED
-                                             },
-                                             description: `
-                                                 <h3>Alternative 3D Model</h3>
-                                                 <p>Fallback model loaded due to CORS restrictions</p>
-                                                 <p><strong>Original URL:</strong> ${modelUrl}</p>
-                                                 <p><strong>Loaded URL:</strong> ${altUrl}</p>
-                                             `
-                                         });
-                                         
-                                         await entity.model.readyPromise;
-                                         
-                                         updateStatusIndicator('Alternative model loaded successfully');
-                                         showSnackBar('Primary model failed, loaded alternative model');
-                                         console.log('Alternative model loaded successfully:', altUrl);
-                                         alternativeSuccess = true;
-                                         loadingSuccess = true;
-                                         break;
-                                         
-                                     } catch (altError) {
-                                         console.warn('Alternative model failed:', altUrl, altError);
-                                         if (entity) {
-                                             viewer.entities.remove(entity);
-                                             entity = null;
-                                         }
-                                         continue;
-                                     }
-                                 }
-                                 
-                                 // Strategy 4: Fallback to Ion Asset if alternatives fail
-                                 if (!alternativeSuccess) {
-                                     try {
-                                         updateStatusIndicator('Loading Ion fallback model (Strategy 4)...');
-                                         
-                                         const fallbackTileset = await Cesium.Cesium3DTileset.fromIonAssetId(75343);
-                                         
-                                         // Apply transform to position the tileset
-                                         const transform = Cesium.Transforms.eastNorthUpToFixedFrame(modelPosition);
-                                         const scaleMatrix = Cesium.Matrix4.fromUniformScale(scale);
-                                         fallbackTileset.modelMatrix = Cesium.Matrix4.multiply(transform, scaleMatrix, new Cesium.Matrix4());
-                                         
-                                         viewer.scene.primitives.add(fallbackTileset);
-                                         window.DeepGISTopology.currentLayers.models.push(fallbackTileset);
-                                         
-                                         updateStatusIndicator('Ion fallback model loaded successfully');
-                                         showSnackBar('All direct models failed, loaded Ion fallback model');
-                                         console.log('Ion fallback model loaded successfully');
-                                         loadingSuccess = true;
-                                         
-                                     } catch (ionError) {
-                                         console.error('Ion fallback also failed:', ionError);
-                                     }
-                                 }
-                                 
-                             } catch (strategy3Error) {
-                                 console.error('All loading strategies failed:', {
-                                     strategy1: strategy1Error,
-                                     strategy2: strategy2Error,
-                                     strategy3: strategy3Error
-                                 });
-                                 updateStatusIndicator('Failed to load any 3D model - CORS restrictions detected');
-                                 showSnackBar('All model loading attempts failed due to CORS restrictions. Try using a local model file or Ion Asset ID.', 'error');
-                             }
-                        }
+                        // No fallback available - this is the only model
+                        updateStatusIndicator('Navagunjara model loading failed');
+                        showSnackBar('Failed to load the Navagunjara Digital Twin model. Please check your internet connection and try again.', 'error');
                     }
                     
                     // Add entity to tracking if successfully loaded
@@ -2241,6 +2685,37 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             }
         }
 
+        // Progressive model URL generation for the Navagunjara model
+        function getProgressiveModelUrls(originalUrl) {
+            // This function is specifically designed for the Navagunjara model
+            if (originalUrl.includes('navagunjara-reborn-digital-twin-propane-and-solar-v4.glb')) {
+                // Return optimized variants in order of preference
+                const baseUrl = originalUrl.replace('navagunjara-reborn-digital-twin-propane-and-solar-v4.glb', '');
+                
+                // Detect device capabilities
+                const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                const isLowEnd = navigator.hardwareConcurrency <= 4 || navigator.deviceMemory <= 4;
+                
+                if (isMobile || isLowEnd) {
+                    return [
+                        baseUrl + 'navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD3.glb',
+                        baseUrl + 'navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD4.glb',
+                        originalUrl // Fallback to original
+                    ];
+                } else {
+                    return [
+                        baseUrl + 'navagunjara-reborn-digital-twin-propane-and-solar-v4_draco.glb',
+                        baseUrl + 'navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD1.glb',
+                        baseUrl + 'navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD2.glb',
+                        originalUrl // Fallback to original
+                    ];
+                }
+            }
+            
+            // For the Navagunjara model, always return the original URL as primary
+            return [originalUrl];
+        }
+
         // Test network connectivity and CORS for GLTF models
         async function testModelConnectivity(modelUrl) {
             const tests = {
@@ -2291,40 +2766,26 @@ The model cannot be loaded due to browser security restrictions. Here are your o
                     console.warn('HEAD request failed:', headError);
                 }
                 
-                // Test 2: CORS preflight test with GLB-specific headers
+                // Test 2: Simple CORS test without range requests (to avoid JSON parsing issues)
                 try {
+                    // Just test if we can make a basic request without downloading the full file
                     const corsResponse = await fetch(modelUrl, { 
-                        method: 'GET',
+                        method: 'HEAD', // Use HEAD to avoid downloading content
                         mode: 'cors',
                         credentials: 'omit',
                         cache: 'no-cache',
                         headers: {
-                            'Range': 'bytes=0-1023', // Request first 1KB only
                             'Accept': 'application/octet-stream, model/gltf-binary, application/gltf-binary, */*'
                         }
                     });
                     tests.cors = corsResponse.ok;
                     
-                    // For GLB files, check the binary header
-                    if (tests.isGLB && corsResponse.ok) {
-                        try {
-                            const buffer = await corsResponse.arrayBuffer();
-                            const view = new DataView(buffer);
-                            
-                            // Check GLB magic number (first 4 bytes should be "glTF")
-                            const magic = view.getUint32(0, true);
-                            const expectedMagic = 0x46546C67; // "glTF" in little-endian
-                            
-                            if (magic !== expectedMagic) {
-                                tests.error = 'Invalid GLB file: Missing or incorrect magic number';
-                                console.error('GLB validation failed: Invalid magic number');
-                            } else {
-                                console.log('GLB file validation passed: Correct magic number found');
-                            }
-                        } catch (validationError) {
-                            console.warn('GLB validation failed:', validationError);
-                        }
+                    if (corsResponse.ok) {
+                        console.log('CORS test passed: Model should be accessible');
+                    } else {
+                        console.warn(`CORS test failed: ${corsResponse.status} ${corsResponse.statusText}`);
                     }
+                    
                 } catch (corsError) {
                     tests.error = corsError.message;
                     console.warn('CORS test failed:', corsError);
@@ -3110,8 +3571,8 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             const sunPos = calculateSunPosition(now, latitude, longitude);
             const moonPos = calculateMoonPosition(now, latitude, longitude);
             
-            // Update compass with sun and moon positions
-            updateCompass(heading, sunPos, moonPos);
+            // Update heading dial with sun and moon positions
+            updateHeadingDial(heading, sunPos, moonPos);
             
             // Update attitude indicator
             updateAttitudeIndicator(pitch, roll);
@@ -3162,91 +3623,12 @@ The model cannot be loaded due to browser security restrictions. Here are your o
         }
 
         function updateCompass(headingDegrees, sunPos = null, moonPos = null) {
-            // Normalize heading to 0-360 range
-            let normalizedHeading = headingDegrees;
-            while (normalizedHeading < 0) normalizedHeading += 360;
-            while (normalizedHeading >= 360) normalizedHeading -= 360;
-            
-            // Update compass needle rotation
-            const needle = document.getElementById('compassNeedle');
-            needle.style.transform = `translate(-50%, -100%) rotate(${normalizedHeading}deg)`;
-            
-            // Update heading display
-            const headingDisplay = document.getElementById('compassHeading');
-            headingDisplay.textContent = normalizedHeading.toFixed(0) + '°';
-            
-            // Add cardinal direction
-            let cardinalDirection = '';
-            if (normalizedHeading >= 337.5 || normalizedHeading < 22.5) {
-                cardinalDirection = 'N';
-            } else if (normalizedHeading >= 22.5 && normalizedHeading < 67.5) {
-                cardinalDirection = 'NE';
-            } else if (normalizedHeading >= 67.5 && normalizedHeading < 112.5) {
-                cardinalDirection = 'E';
-            } else if (normalizedHeading >= 112.5 && normalizedHeading < 157.5) {
-                cardinalDirection = 'SE';
-            } else if (normalizedHeading >= 157.5 && normalizedHeading < 202.5) {
-                cardinalDirection = 'S';
-            } else if (normalizedHeading >= 202.5 && normalizedHeading < 247.5) {
-                cardinalDirection = 'SW';
-            } else if (normalizedHeading >= 247.5 && normalizedHeading < 292.5) {
-                cardinalDirection = 'W';
-            } else if (normalizedHeading >= 292.5 && normalizedHeading < 337.5) {
-                cardinalDirection = 'NW';
-            }
-            
-            headingDisplay.textContent = normalizedHeading.toFixed(0) + '° ' + cardinalDirection;
-            
-            // Update sun and moon positions on compass
-            if (sunPos) {
-                updateCelestialIndicator('sunIndicator', sunPos.azimuth, normalizedHeading, sunPos.elevation);
-            }
-            
-            if (moonPos) {
-                updateCelestialIndicator('moonIndicator', moonPos.azimuth, normalizedHeading, moonPos.elevation);
-            }
+            // This function has been replaced by updateHeadingDial
+            // Keeping as stub to avoid errors during transition
+            console.warn('updateCompass is deprecated, use updateHeadingDial instead');
         }
 
-        function updateCelestialIndicator(elementId, celestialAzimuth, cameraHeading, elevation) {
-            const indicator = document.getElementById(elementId);
-            if (!indicator) return;
-            
-            // Calculate relative bearing from camera heading to celestial object
-            // If camera points at 0° (north) and sun is at 90° (east), relative bearing is 90°
-            // If camera points at 90° (east) and sun is at 90° (east), relative bearing is 0°
-            let relativeBearing = celestialAzimuth - cameraHeading;
-            
-            // Normalize to -180 to +180 range
-            while (relativeBearing > 180) relativeBearing -= 360;
-            while (relativeBearing < -180) relativeBearing += 360;
-            
-            // Convert to compass dial coordinates
-            // On the compass dial, 0° is at the top (north), positive angles go clockwise
-            // The relative bearing tells us how many degrees clockwise from the camera's forward direction
-            const dialAngle = relativeBearing;
-            
-            // Calculate position on the compass face (radius of 35px from center)
-            const radius = 35;
-            const angleRad = (dialAngle * Math.PI) / 180;
-            
-            // Calculate x,y position relative to compass center
-            // Note: In CSS, positive Y is down, so we negate the sin component
-            const x = radius * Math.sin(angleRad);
-            const y = -radius * Math.cos(angleRad);
-            
-            // Position the indicator (compass center is at 50%, 50%)
-            indicator.style.left = `calc(50% + ${x}px)`;
-            indicator.style.top = `calc(50% + ${y}px)`;
-            
-            // Update appearance based on elevation (above/below horizon)
-            if (elevation > 0) {
-                indicator.classList.remove('below-horizon');
-                indicator.style.display = 'flex';
-            } else {
-                indicator.classList.add('below-horizon');
-                indicator.style.display = 'flex'; // Still show but dimmed
-            }
-        }
+        // Old updateCelestialIndicator function has been moved to the heading dial implementation above
 
         function updateAttitudeIndicator(pitchDegrees, rollDegrees) {
             // Normalize angles
@@ -3271,7 +3653,7 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             
             // Update readout display
             const readout = document.getElementById('attitudeReadout');
-            readout.textContent = `P:${normalizedPitch.toFixed(0)}° R:${normalizedRoll.toFixed(0)}°`;
+            readout.textContent = `${normalizedPitch.toFixed(0).padStart(3, '0')}°P ${normalizedRoll.toFixed(0).padStart(3, '0')}°R`;
         }
 
         // Astronomical calculation functions
@@ -3828,6 +4210,119 @@ The model cannot be loaded due to browser security restrictions. Here are your o
                     }
                 }
             }
+        }
+
+        // Initialize heading dial markings and labels
+        function initializeHeadingDial() {
+            const markingsContainer = document.getElementById('headingDialMarkings');
+            const labelsContainer = document.getElementById('headingDialLabels');
+            
+            // Clear existing content
+            markingsContainer.innerHTML = '';
+            labelsContainer.innerHTML = '';
+            
+            // Create markings and labels for every 10 degrees
+            for (let angle = 0; angle < 360; angle += 10) {
+                // Create marking
+                const mark = document.createElement('div');
+                mark.className = angle % 30 === 0 ? 'heading-dial-mark major' : 'heading-dial-mark minor';
+                
+                // Position marking at edge of dial
+                const markRadius = angle % 30 === 0 ? 40 : 37;
+                const markAngle = (angle - 90) * Math.PI / 180; // -90 to start at top (North)
+                const markX = markRadius * Math.cos(markAngle);
+                const markY = markRadius * Math.sin(markAngle);
+                
+                mark.style.left = `calc(50% + ${markX}px)`;
+                mark.style.top = `calc(50% + ${markY}px)`;
+                mark.style.transform = `translate(-50%, -50%) rotate(${angle}deg)`;
+                
+                markingsContainer.appendChild(mark);
+                
+                // Create labels for major markings (every 30 degrees)
+                if (angle % 30 === 0) {
+                    const label = document.createElement('div');
+                    label.className = 'heading-dial-label';
+                    
+                    // Special styling for North
+                    if (angle === 0) {
+                        label.className += ' north';
+                        label.textContent = 'N';
+                    } else if (angle === 90) {
+                        label.textContent = 'E';
+                    } else if (angle === 180) {
+                        label.textContent = 'S';
+                    } else if (angle === 270) {
+                        label.textContent = 'W';
+                    } else {
+                        // Show numeric heading for other directions
+                        label.textContent = (angle / 10).toString().padStart(2, '0');
+                    }
+                    
+                    // Position label inside the dial
+                    const labelRadius = 32;
+                    const labelAngle = (angle - 90) * Math.PI / 180;
+                    const labelX = labelRadius * Math.cos(labelAngle);
+                    const labelY = labelRadius * Math.sin(labelAngle);
+                    
+                    label.style.left = `calc(50% + ${labelX}px)`;
+                    label.style.top = `calc(50% + ${labelY}px)`;
+                    
+                    labelsContainer.appendChild(label);
+                }
+            }
+        }
+
+        function updateHeadingDial(headingDegrees, sunPos = null, moonPos = null) {
+            // Normalize heading to 0-360 range
+            let normalizedHeading = headingDegrees;
+            while (normalizedHeading < 0) normalizedHeading += 360;
+            while (normalizedHeading >= 360) normalizedHeading -= 360;
+            
+            // Rotate the dial face counter-clockwise so the current heading appears at the top
+            const dialFace = document.getElementById('headingDialFace');
+            dialFace.style.transform = `translate(-50%, -50%) rotate(${-normalizedHeading}deg)`;
+            
+            // Update heading readout
+            const readout = document.getElementById('headingDialReadout');
+            const cardinalDirection = getCardinalDirection(normalizedHeading);
+            readout.textContent = `${normalizedHeading.toFixed(0).padStart(3, '0')}°T`;
+        }
+
+        function updateCelestialIndicator(elementId, celestialAzimuth, elevation, currentHeading = 0) {
+            const indicator = document.getElementById(elementId);
+            if (!indicator) return;
+            
+            // Position celestial objects at their true azimuth relative to North
+            // Since the dial face rotates counter-clockwise by -currentHeading, 
+            // we need to counter-rotate the celestial positions by +currentHeading
+            // Convert azimuth to dial coordinates (0° = North at top)
+            const compensatedAzimuth = celestialAzimuth - currentHeading; // Counter the dial rotation
+            const dialAngle = (compensatedAzimuth - 90) * Math.PI / 180; // -90 to start at top
+            
+            // Position on the dial face (radius of 38px from center)
+            const radius = 38;
+            const x = radius * Math.cos(dialAngle);
+            const y = radius * Math.sin(dialAngle);
+            
+            indicator.style.left = `calc(50% + ${x}px)`;
+            indicator.style.top = `calc(50% + ${y}px)`;
+            
+            // Update appearance based on elevation
+            if (elevation > 0) {
+                indicator.classList.remove('below-horizon');
+                indicator.style.display = 'flex';
+            } else {
+                indicator.classList.add('below-horizon');
+                indicator.style.display = 'flex';
+            }
+        }
+
+        function getCardinalDirection(heading) {
+            const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 
+                               'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+            const index = Math.round(heading / 22.5) % 16;
+            return directions[index];
         }
     </script>
 </body>

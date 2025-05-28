@@ -10,6 +10,7 @@ urlpatterns = [
     path('label/3d/dev/', views.label_3d_dev, name='label_3d_dev'),
     path('label/3d/sigma/', label_3d_sigma, name='label_3d_sigma'),
     path('label/3d/topology/', views.label_topology, name='label_topology'),
+    path('label/3d/topology/sigma/', views.label_topology_sigma, name='label_topology_sigma'),
     path('stl-viewer/', views.stl_viewer, name='stl_viewer'),
     path('map-label/', views.map_label, name='map_label'),
     path('view-label/', views.view_label, name='view_label'),

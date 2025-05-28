@@ -1,0 +1,21 @@
+{
+    "models": {
+        "navagunjara-reborn-digital-twin-propane-and-solar-v4": {
+            "name": "Navagunjara Reborn Digital Twin",
+            "description": "Propane and Solar Powered Art Installation",
+            "size": "140MB",
+            "format": "GLB",
+            "optimized_variants": [
+                "navagunjara-reborn-digital-twin-propane-and-solar-v4_draco.glb",
+                "navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD1.glb",
+                "navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD2.glb"
+            ]
+        }
+    },
+    "endpoints": {
+        "base_url": "https://deepgis.org/static/deepgis/models/gltf/",
+        "cors_enabled": true,
+        "range_requests": true,
+        "compression": "gzip"
+    }
+}
