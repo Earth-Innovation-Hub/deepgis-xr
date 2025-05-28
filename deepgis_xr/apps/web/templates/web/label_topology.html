@@ -1173,40 +1173,55 @@
         /* Responsive Design */
         @media (max-width: 768px) {
             .mobile-toggle {
-                display: block;
-                right: 15px;
+                display: none; /* Hide sidebar toggle on mobile */
             }
 
             #sidebar-wrapper {
-                transform: translateX(100%);
-                width: 90%;
-                max-width: 320px;
+                display: none; /* Hide entire sidebar on mobile */
             }
 
             #cesiumContainer {
                 right: 0;
+                left: 0;
+                width: 100%;
             }
 
-            #wrapper.show-sidebar #sidebar-wrapper {
-                transform: translateX(0);
+            /* Hide most UI elements on mobile */
+            .status-indicator,
+            .performance-indicator,
+            .camera-info,
+            .main-heading {
+                display: none;
             }
 
+            /* Only show navigation widget group on mobile */
             .navigation-widget-group {
+                display: block;
                 right: 15px;
-                top: 150px;
+                top: 20px;
                 width: 100px;
                 padding: 8px;
+                background: rgba(15, 23, 42, 0.9);
+                backdrop-filter: blur(15px);
+                border: 2px solid rgba(59, 130, 246, 0.4);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
             }
 
             .navigation-widget-group .widget-title {
                 font-size: 10px;
                 margin-bottom: 6px;
+                color: #e2e8f0;
             }
 
             .heading-dial {
                 width: 80px;
                 height: 80px;
                 margin-bottom: 12px;
+            }
+
+            .heading-dial-container {
+                border: 2px solid #3b82f6;
+                box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
             }
 
             .heading-dial-face {
@@ -1216,19 +1231,24 @@
 
             .heading-dial-needle {
                 height: 28px;
+                width: 2px;
             }
 
             .heading-dial-readout {
                 font-size: 9px;
                 padding: 2px 4px;
                 min-width: 40px;
-                bottom: -20px;
+                bottom: -18px;
+                background: rgba(15, 23, 42, 0.95);
+                border: 1px solid #3b82f6;
             }
 
             .attitude-indicator {
                 width: 70px;
                 height: 70px;
                 margin-bottom: 10px;
+                border: 2px solid #3b82f6;
+                box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
             }
 
             .attitude-horizon {
@@ -1240,53 +1260,29 @@
                 font-size: 9px;
                 padding: 2px 4px;
                 min-width: 40px;
+                background: rgba(15, 23, 42, 0.95);
+                border: 1px solid #3b82f6;
             }
 
-            /* Make sidebar content more touch-friendly on mobile */
-            .layer-group {
-                margin: 8px 6px;
-                padding: 10px;
+            /* Hide all other widgets and controls on mobile */
+            .compass-widget,
+            #wrapper.show-sidebar #sidebar-wrapper {
+                display: none !important;
             }
 
-            .btn {
-                padding: 8px 12px;
-                font-size: 0.85rem;
-                margin: 3px 0;
+            /* Ensure Cesium toolbar is still accessible but minimal */
+            .cesium-viewer-toolbar {
+                background: rgba(15, 23, 42, 0.8) !important;
             }
 
-            .form-check {
-                padding: 6px 0;
+            .cesium-viewer-geocoderContainer {
+                background: rgba(15, 23, 42, 0.8) !important;
             }
 
-            .form-check-label {
-                font-size: 0.85rem;
-            }
-
-            .layer-group-title {
-                font-size: 0.9rem;
-            }
-
-            /* Adjust camera info for mobile */
-            .camera-info {
-                top: 70px;
-                left: 8px;
-                padding: 8px;
-                font-size: 0.7rem;
-                min-width: 180px;
-            }
-
-            .status-indicator {
-                top: 8px;
-                left: 8px;
-                padding: 4px 8px;
-                font-size: 0.8rem;
-            }
-
-            .performance-indicator {
-                top: 40px;
-                left: 8px;
-                padding: 4px 8px;
-                font-size: 0.75rem;
+            /* Make sure fullscreen and other essential Cesium controls work */
+            .cesium-viewer-fullscreenContainer,
+            .cesium-viewer-vrContainer {
+                background: rgba(15, 23, 42, 0.8) !important;
             }
         }
 
@@ -3001,12 +2997,14 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             const handleFullscreenChange = () => {
                 const wrapper = document.getElementById('wrapper');
                 const cesiumContainer = document.getElementById('cesiumContainer');
-                const compassWidget = document.getElementById('compassWidget');
-                const attitudeIndicator = document.getElementById('attitudeIndicator');
+                const navigationWidgetGroup = document.getElementById('navigationWidgetGroup');
                 const isFullscreen = !!(document.fullscreenElement || 
                                        document.webkitFullscreenElement || 
                                        document.mozFullScreenElement || 
                                        document.msFullscreenElement);
+                
+                // Check if we're on mobile
+                const isMobile = window.innerWidth <= 768;
                 
                 if (isFullscreen) {
                     // Store current sidebar state before entering fullscreen
@@ -3018,29 +3016,49 @@ The model cannot be loaded due to browser security restrictions. Here are your o
                     cesiumContainer.style.left = '0';
                     cesiumContainer.style.width = '100%';
                     
-                    // Move compass and attitude indicators to right edge
-                    if (compassWidget) compassWidget.style.right = '15px';
-                    if (attitudeIndicator) attitudeIndicator.style.right = '15px';
-                    
-                    updateStatusIndicator('Fullscreen mode - Viewport expanded');
+                    // On mobile, keep navigation widgets visible and positioned properly
+                    if (isMobile) {
+                        if (navigationWidgetGroup) {
+                            navigationWidgetGroup.style.right = '15px';
+                            navigationWidgetGroup.style.top = '20px';
+                            navigationWidgetGroup.style.display = 'block';
+                        }
+                        updateStatusIndicator('Fullscreen mode - Mobile navigation active');
+                    } else {
+                        // Desktop fullscreen behavior
+                        if (navigationWidgetGroup) navigationWidgetGroup.style.right = '15px';
+                        updateStatusIndicator('Fullscreen mode - Viewport expanded');
+                    }
                 } else {
-                    // Restore sidebar state when exiting fullscreen
+                    // Restore from fullscreen
                     wrapper.classList.remove('fullscreen-mode');
                     
-                    // Restore cesium container dimensions
-                    cesiumContainer.style.right = '320px';
-                    cesiumContainer.style.left = '0';
-                    cesiumContainer.style.width = 'auto';
-                    
-                    // Restore compass and attitude indicators to sidebar position
-                    if (compassWidget) compassWidget.style.right = '350px';
-                    if (attitudeIndicator) attitudeIndicator.style.right = '350px';
-                    
-                    const wasShowingSidebar = wrapper.dataset.sidebarStateBeforeFullscreen === 'true';
-                    if (wasShowingSidebar) {
-                        wrapper.classList.add('show-sidebar');
+                    if (isMobile) {
+                        // Mobile: keep container full width and navigation visible
+                        cesiumContainer.style.right = '0';
+                        cesiumContainer.style.left = '0';
+                        cesiumContainer.style.width = '100%';
+                        
+                        if (navigationWidgetGroup) {
+                            navigationWidgetGroup.style.right = '15px';
+                            navigationWidgetGroup.style.top = '20px';
+                            navigationWidgetGroup.style.display = 'block';
+                        }
+                        updateStatusIndicator('Mobile mode - Navigation dials active');
+                    } else {
+                        // Desktop: restore sidebar layout
+                        cesiumContainer.style.right = '320px';
+                        cesiumContainer.style.left = '0';
+                        cesiumContainer.style.width = 'auto';
+                        
+                        if (navigationWidgetGroup) navigationWidgetGroup.style.right = '350px';
+                        
+                        const wasShowingSidebar = wrapper.dataset.sidebarStateBeforeFullscreen === 'true';
+                        if (wasShowingSidebar) {
+                            wrapper.classList.add('show-sidebar');
+                        }
+                        updateStatusIndicator('Desktop mode - Sidebar restored');
                     }
-                    updateStatusIndicator('Exited fullscreen - Sidebar restored');
                 }
                 
                 // Resize viewer after transition with a longer delay to ensure DOM updates
@@ -3058,6 +3076,51 @@ The model cannot be loaded due to browser security restrictions. Here are your o
             document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
             document.addEventListener('mozfullscreenchange', handleFullscreenChange);
             document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+            // Handle window resize for responsive behavior
+            window.addEventListener('resize', () => {
+                const isMobile = window.innerWidth <= 768;
+                const cesiumContainer = document.getElementById('cesiumContainer');
+                const navigationWidgetGroup = document.getElementById('navigationWidgetGroup');
+                const wrapper = document.getElementById('wrapper');
+                
+                if (isMobile) {
+                    // Force mobile layout
+                    cesiumContainer.style.right = '0';
+                    cesiumContainer.style.left = '0';
+                    cesiumContainer.style.width = '100%';
+                    
+                    if (navigationWidgetGroup) {
+                        navigationWidgetGroup.style.right = '15px';
+                        navigationWidgetGroup.style.top = '20px';
+                        navigationWidgetGroup.style.display = 'block';
+                    }
+                    
+                    // Hide sidebar on mobile
+                    wrapper.classList.remove('show-sidebar');
+                } else {
+                    // Restore desktop layout if not in fullscreen
+                    const isFullscreen = !!(document.fullscreenElement || 
+                                           document.webkitFullscreenElement || 
+                                           document.mozFullScreenElement || 
+                                           document.msFullscreenElement);
+                    
+                    if (!isFullscreen) {
+                        cesiumContainer.style.right = '320px';
+                        cesiumContainer.style.left = '0';
+                        cesiumContainer.style.width = 'auto';
+                        
+                        if (navigationWidgetGroup) {
+                            navigationWidgetGroup.style.right = '350px';
+                        }
+                    }
+                }
+                
+                // Resize viewer
+                setTimeout(() => {
+                    viewer.resize();
+                }, 100);
+            });
 
             // WebXR controls
             document.getElementById('checkVRSupport').addEventListener('click', () => {
@@ -3927,12 +3990,42 @@ The model cannot be loaded due to browser security restrictions. Here are your o
         // Initialize everything when page loads
         document.addEventListener('DOMContentLoaded', async () => {
             try {
+                // Initialize mobile mode if needed
+                initializeMobileMode();
+                
                 await initializeCesium();
             } catch (error) {
                 console.error('Failed to initialize application:', error);
                 document.getElementById('loadingStatus').textContent = 'Failed to initialize: ' + error.message;
             }
         });
+
+        // Initialize mobile mode layout
+        function initializeMobileMode() {
+            const isMobile = window.innerWidth <= 768;
+            
+            if (isMobile) {
+                const cesiumContainer = document.getElementById('cesiumContainer');
+                const navigationWidgetGroup = document.getElementById('navigationWidgetGroup');
+                const wrapper = document.getElementById('wrapper');
+                
+                // Set up mobile layout immediately
+                cesiumContainer.style.right = '0';
+                cesiumContainer.style.left = '0';
+                cesiumContainer.style.width = '100%';
+                
+                if (navigationWidgetGroup) {
+                    navigationWidgetGroup.style.right = '15px';
+                    navigationWidgetGroup.style.top = '20px';
+                    navigationWidgetGroup.style.display = 'block';
+                }
+                
+                // Ensure sidebar is hidden
+                wrapper.classList.remove('show-sidebar');
+                
+                console.log('Mobile mode initialized - Only navigation dials visible');
+            }
+        }
 
         // Show snackbar notifications with different types
         function showSnackBar(message, type = 'info') {
