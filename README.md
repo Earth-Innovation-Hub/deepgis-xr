@@ -6,7 +6,9 @@ A Django-based geospatial platform for extended reality (XR) applications with i
 
 - **Geospatial Processing**: Built on GDAL/OGR with support for various spatial data formats
 - **Tile Server Integration**: Built-in MapTiler tile server for high-performance map serving
-- **Machine Learning Ready**: Includes PyTorch and scikit-image for ML/AI processing
+- **Rock Tile Serving**: High-resolution rock surface imagery (zoom 15-23) via XYZ tiles and MBTiles
+- **Semi-Supervised Labeling**: AI-assisted labeling with Mask2Former and Segment Anything integration
+- **Machine Learning Ready**: Includes PyTorch, Vision-Language Models (CLIP), and scikit-image for ML/AI processing
 - **Real-time Processing**: Celery integration for asynchronous task processing
 - **REST API**: Full REST API support through Django REST framework
 - **Cross-Origin Support**: Configured CORS headers for web and mobile clients
@@ -154,6 +156,23 @@ For production deployment:
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Documentation
+
+Specialized guides are available for different features:
+
+- **[Rock Tiles Setup](ROCK_TILES_SETUP.md)** - Configure and serve high-resolution rock imagery
+- **[3D Model Optimization](README_3D_OPTIMIZATIONS.md)** - Optimize large 3D models for web delivery
+- **[Topology Server](README_TOPOLOGY_SERVER.md)** - Advanced 3D terrain and model serving
+
+## Access URLs
+
+### Production Services
+- **Main Application**: https://deepgis.org/
+- **Semi-Supervised Labeling**: https://deepgis.org/label/semi-supervised/
+- **Rock Tiles (Direct XYZ)**: https://rocks.deepgis.org/{z}/{x}/{y}.png
+- **TileServer GL**: https://mbtiles.deepgis.org/
+- **Rock Tiles (MBTiles)**: https://mbtiles.deepgis.org/data/rock_tiles_deepgis/
 
 ## Support
 
