@@ -38,4 +38,10 @@ urlpatterns = [
     
     # API endpoints
     path('api/elevation-proxy', views.elevation_proxy, name='elevation_proxy'),
+    
+    # Semi-supervised labeling (Mask2Former / Segment Anything)
+    path('label/semi-supervised/', views.label_semi_supervised, name='label_semi_supervised'),
+    path('label/semi-supervised/api/generate-labels/', views.generate_assisted_labels, name='generate_assisted_labels'),
+    path('label/semi-supervised/api/save-labels/', views.save_assisted_labels, name='save_assisted_labels'),
+    path('label/semi-supervised/api/get-images/', views.get_label_images, name='get_label_images'),
 ] 
