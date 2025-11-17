@@ -1,0 +1,102 @@
+        /* Debug Console Styles */
+        #debugConsoleContent {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.2) transparent;
+        }
+
+        #debugConsoleContent::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #debugConsoleContent::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #debugConsoleContent::-webkit-scrollbar-thumb {
+            background-color: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+
+        .debug-log-entry {
+            margin-bottom: 6px;
+            padding: 4px 6px;
+            border-left: 3px solid;
+            border-radius: 2px;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .debug-log-entry.request {
+            border-left-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .debug-log-entry.response {
+            border-left-color: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .debug-log-entry.error {
+            border-left-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .debug-log-entry.layer {
+            border-left-color: #8b5cf6;
+            background: rgba(139, 92, 246, 0.1);
+        }
+
+        .debug-log-entry.info {
+            border-left-color: #64748b;
+            background: rgba(100, 116, 139, 0.1);
+        }
+
+        .debug-log-timestamp {
+            color: #64748b;
+            font-size: 10px;
+            margin-right: 6px;
+        }
+
+        .debug-log-type {
+            font-weight: 600;
+            margin-right: 6px;
+        }
+
+        .debug-log-details {
+            color: #cbd5e1;
+            margin-top: 2px;
+            font-size: 10px;
+            padding-left: 12px;
+        }
+
+        .overlay-layer-toggle:checked + label {
+            color: #60a5fa;
+            font-weight: 500;
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            transition: all 0.2s ease;
+        }
+
+        .layer-group:hover {
+            background: rgba(51, 65, 85, 0.8);
+            border-color: rgba(59, 130, 246, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .layer-group-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #f1f5f9;
+            border-bottom: 1px solid rgba(71, 85, 105, 0.5);
+            padding-bottom: 6px; /* Reduced padding */
+            margin-bottom: 10px; /* Reduced margin */
+            font-weight: 600;
+            font-size: 0.85rem; /* Slightly smaller */
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .layer-group-title i {
+            color: #3b82f6;
+            font-size: 0.9rem;
+        }

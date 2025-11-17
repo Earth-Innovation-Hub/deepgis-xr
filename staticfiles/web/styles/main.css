@@ -1,0 +1,1768 @@
+
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+
+        #cesiumContainer {
+            position: absolute;
+            top: 0;
+            right: 320px; /* Updated to match new sidebar width */
+            bottom: 0;
+            left: 0;
+            width: auto;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #sidebar-wrapper {
+            width: 320px; /* Reduced from 350px */
+            position: fixed;
+            height: 100%;
+            z-index: 1000;
+            top: 0;
+            right: 0;
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            box-shadow: -2px 0 20px rgba(0,0,0,0.3);
+            overflow-y: auto;
+            transform: translateX(0);
+            transition: transform 0.3s ease;
+            border-left: 1px solid #334155;
+        }
+
+        /* Scrollbar styling - thinner and more modern */
+        #sidebar-wrapper::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb {
+            background: #64748b;
+            border-radius: 3px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .mobile-toggle {
+            position: fixed;
+            top: 15px;
+            right: 335px; /* Updated for new sidebar width */
+            z-index: 2000;
+            background: #3b82f6;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 12px;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+            display: none;
+            color: white;
+            transition: all 0.2s ease;
+            font-size: 14px;
+        }
+
+        .mobile-toggle:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .sidebar-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white;
+            padding: 16px;
+            text-align: center;
+            border-bottom: 1px solid #334155;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sidebar-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6);
+        }
+
+        .sidebar-header h5 {
+            margin: 0 0 4px 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar-header small {
+            color: #94a3b8;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .sidebar-header i {
+            margin-right: 6px;
+            color: #3b82f6;
+            font-size: 1.1rem;
+        }
+
+        .layer-controls {
+            padding: 0;
+        }
+
+        .layer-group {
+            margin: 12px 10px; /* Reduced margins */
+            background: rgba(51, 65, 85, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px; /* Reduced padding */
+        }
+
+        #overlayLayersList {
+            max-height: 200px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.3) transparent;
+        }
+
+        #overlayLayersList::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #overlayLayersList::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #overlayLayersList::-webkit-scrollbar-thumb {
+            background-color: rgba(255,255,255,0.3);
+            border-radius: 3px;
+        }
+
+        /* Debug Console Styles */
+        #debugConsoleContent {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.2) transparent;
+        }
+
+        #debugConsoleContent::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #debugConsoleContent::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #debugConsoleContent::-webkit-scrollbar-thumb {
+            background-color: rgba(255,255,255,0.2);
+            border-radius: 3px;
+        }
+
+        .debug-log-entry {
+            margin-bottom: 6px;
+            padding: 4px 6px;
+            border-left: 3px solid;
+            border-radius: 2px;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .debug-log-entry.request {
+            border-left-color: #3b82f6;
+            background: rgba(59, 130, 246, 0.1);
+        }
+
+        .debug-log-entry.response {
+            border-left-color: #10b981;
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .debug-log-entry.error {
+            border-left-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .debug-log-entry.layer {
+            border-left-color: #8b5cf6;
+            background: rgba(139, 92, 246, 0.1);
+        }
+
+        .debug-log-entry.info {
+            border-left-color: #64748b;
+            background: rgba(100, 116, 139, 0.1);
+        }
+
+        .debug-log-timestamp {
+            color: #64748b;
+            font-size: 10px;
+            margin-right: 6px;
+        }
+
+        .debug-log-type {
+            font-weight: 600;
+            margin-right: 6px;
+        }
+
+        .debug-log-details {
+            color: #cbd5e1;
+            margin-top: 2px;
+            font-size: 10px;
+            padding-left: 12px;
+        }
+
+        .overlay-layer-toggle:checked + label {
+            color: #60a5fa;
+            font-weight: 500;
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            transition: all 0.2s ease;
+        }
+
+        .layer-group:hover {
+            background: rgba(51, 65, 85, 0.8);
+            border-color: rgba(59, 130, 246, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .layer-group-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #f1f5f9;
+            border-bottom: 1px solid rgba(71, 85, 105, 0.5);
+            padding-bottom: 6px; /* Reduced padding */
+            margin-bottom: 10px; /* Reduced margin */
+            font-weight: 600;
+            font-size: 0.85rem; /* Slightly smaller */
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .layer-group-title i {
+            color: #3b82f6;
+            font-size: 0.9rem;
+        }
+
+        .form-select {
+            background: rgba(71, 85, 105, 0.8);
+            border: 1px solid rgba(100, 116, 139, 0.5);
+            color: #f1f5f9;
+            border-radius: 8px;
+            padding: 6px 8px; /* Reduced padding */
+            transition: all 0.2s ease;
+            font-size: 0.85rem; /* Smaller font */
+            backdrop-filter: blur(5px);
+        }
+
+        .form-select:focus {
+            background: rgba(71, 85, 105, 0.9);
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+            outline: none;
+        }
+
+        .form-check {
+            padding: 4px 0; /* Reduced padding */
+            transition: all 0.2s ease;
+            border-radius: 6px;
+        }
+
+        .form-check:hover {
+            background: rgba(255, 255, 255, 0.05);
+            padding-left: 4px;
+        }
+
+        .form-check-input {
+            background: rgba(100, 116, 139, 0.8);
+            border: 1px solid #94a3b8;
+            border-radius: 4px;
+            width: 16px; /* Smaller checkboxes */
+            height: 16px;
+            margin-top: 2px;
+        }
+
+        .form-check-input:checked {
+            background: #3b82f6;
+            border-color: #3b82f6;
+        }
+
+        .form-check-label {
+            color: #cbd5e1;
+            font-weight: 500;
+            margin-left: 6px;
+            font-size: 0.8rem; /* Smaller font */
+            display: flex;
+            align-items: center;
+        }
+
+        .form-check-label i {
+            font-size: 0.75rem;
+            margin-right: 6px;
+            width: 12px;
+            text-align: center;
+        }
+
+        .form-check:hover .form-check-label {
+            color: #f1f5f9;
+        }
+
+        .btn {
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            margin: 2px 0;
+            width: 100%;
+            padding: 6px 12px; /* Reduced padding */
+            font-size: 0.8rem; /* Smaller font */
+            border: none;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn:hover::before {
+            left: 100%;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #10b981, #059669);
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-warning:hover {
+            background: linear-gradient(135deg, #d97706, #b45309);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn i {
+            font-size: 0.75rem;
+            margin-right: 4px;
+        }
+
+        /* Statistics Section - More compact */
+        .statistics-section {
+            background: linear-gradient(135deg, #7c3aed, #6d28d9);
+            border: 1px solid rgba(139, 92, 246, 0.5);
+            border-radius: 12px;
+            padding: 12px;
+            margin: 12px 10px;
+            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
+        }
+
+        .statistics-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #f1f5f9;
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+            padding-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .statistics-title i {
+            color: #a78bfa;
+            font-size: 0.9rem;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 160px; /* Reduced height */
+            width: 100%;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 6px;
+            backdrop-filter: blur(5px);
+        }
+
+        /* View Mode Controls - More compact */
+        .view-controls {
+            background: linear-gradient(135deg, #059669, #047857);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.2);
+        }
+
+        .view-controls .btn {
+            margin: 2px 0;
+            font-size: 0.75rem;
+            padding: 5px 10px;
+        }
+
+        /* Measurement Controls - More compact */
+        .measurement-controls {
+            background: linear-gradient(135deg, #dc2626, #b91c1c);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
+        }
+
+        .measurements-list {
+            max-height: 120px; /* Reduced height */
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 6px;
+            margin-top: 6px;
+            backdrop-filter: blur(5px);
+        }
+
+        .measurement-item {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            padding: 4px 6px; /* Reduced padding */
+            margin: 2px 0;
+            font-size: 0.75rem; /* Smaller font */
+            color: #f1f5f9;
+            border-left: 2px solid #3b82f6;
+        }
+
+        /* Form groups - more compact spacing */
+        .form-group {
+            margin-bottom: 8px; /* Reduced from default */
+        }
+
+        .form-label {
+            color: #cbd5e1;
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-control {
+            background: rgba(71, 85, 105, 0.8);
+            border: 1px solid rgba(100, 116, 139, 0.5);
+            color: #f1f5f9;
+            border-radius: 8px;
+            padding: 6px 8px;
+            font-size: 0.85rem;
+            transition: all 0.2s ease;
+        }
+
+        .form-control:focus {
+            background: rgba(71, 85, 105, 0.9);
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+            outline: none;
+        }
+
+        .form-range {
+            background: transparent;
+            -webkit-appearance: none;
+            appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: linear-gradient(to right, #475569 0%, #3b82f6 50%, #475569 100%);
+            outline: none;
+        }
+
+        .form-range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid #1e293b;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .form-range::-moz-range-thumb {
+            height: 18px;
+            width: 18px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+            border: 2px solid #1e293b;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .text-muted {
+            color: #94a3b8 !important;
+            font-size: 0.75rem;
+            margin-top: 4px;
+            text-align: center;
+        }
+
+        /* WebXR section styling */
+        #webxrControls {
+            background: linear-gradient(135deg, #7c2d92, #6b21a8);
+            border: 1px solid rgba(139, 92, 246, 0.5);
+            box-shadow: 0 4px 12px rgba(124, 45, 146, 0.2);
+        }
+
+        #vrStatus {
+            color: #cbd5e1;
+            font-size: 0.75rem;
+            margin-top: 6px;
+            padding: 6px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 6px;
+            border-left: 2px solid #8b5cf6;
+            backdrop-filter: blur(5px);
+        }
+
+        /* Model controls when visible */
+        #modelControls {
+            background: linear-gradient(135deg, #374151, #1f2937);
+            border: 1px solid rgba(75, 85, 99, 0.5);
+            box-shadow: 0 4px 12px rgba(55, 65, 81, 0.2);
+        }
+
+        /* Status Indicators */
+        .status-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: #059669;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            z-index: 1000;
+        }
+
+        .performance-indicator {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            background: #7c3aed;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-weight: bold;
+            z-index: 1000;
+            font-size: 0.8rem;
+        }
+
+        /* Main heading overlay */
+        .main-heading {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(71, 85, 105, 0.3);
+            border-radius: 12px;
+            padding: 12px 24px;
+            color: #f1f5f9;
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            font-weight: 600;
+            text-align: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+            z-index: 1500;
+            letter-spacing: 0.5px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Camera pose information */
+        .camera-info {
+            position: absolute;
+            top: 90px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            z-index: 1000;
+            min-width: 200px;
+            backdrop-filter: blur(5px);
+        }
+
+        .camera-info-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #3b82f6;
+            border-bottom: 1px solid #3b82f6;
+            padding-bottom: 2px;
+        }
+
+        .camera-info-item {
+            margin: 2px 0;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .camera-info-label {
+            color: #cbd5e1;
+        }
+
+        .camera-info-value {
+            color: #f1f5f9;
+            font-weight: bold;
+        }
+
+        /* Compass widget */
+        .compass-widget {
+            position: absolute;
+            top: 150px;
+            right: 350px; /* Updated for new sidebar width */
+            width: 90px;
+            height: 90px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 50%;
+            border: 2px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: right 0.3s ease;
+        }
+
+        .compass-face {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            background: radial-gradient(circle, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 100%);
+            border-radius: 50%;
+            border: 2px solid #3b82f6;
+            backdrop-filter: blur(5px);
+            transition: transform 0.1s ease; /* Add smooth rotation transition */
+        }
+
+        .compass-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 2px;
+            height: 30px;
+            background: linear-gradient(to bottom, #ef4444 0%, #ef4444 50%, #f1f5f9 50%, #f1f5f9 100%);
+            transform-origin: bottom center;
+            transform: translate(-50%, -100%);
+            border-radius: 1px;
+            transition: transform 0.1s ease;
+        }
+
+        .compass-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 6px;
+            height: 6px;
+            background: #3b82f6;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            border: 1px solid white;
+        }
+
+        .compass-labels {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .compass-label {
+            position: absolute;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: Arial, sans-serif;
+        }
+
+        .compass-label.north {
+            top: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ef4444;
+        }
+
+        .compass-label.east {
+            right: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .compass-label.south {
+            bottom: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .compass-label.west {
+            left: 2px;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .compass-heading {
+            position: absolute;
+            bottom: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 11px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 2px 6px;
+            border-radius: 3px;
+            min-width: 40px;
+            text-align: center;
+        }
+
+        /* Celestial indicators for sun and moon */
+        .celestial-indicator {
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            transition: all 0.3s ease;
+            z-index: 8;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .sun-indicator {
+            background: radial-gradient(circle, #fbbf24 0%, #f59e0b 100%);
+            color: #ffffff;
+            border: 2px solid #f59e0b;
+            box-shadow: 0 0 12px rgba(251, 191, 36, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .sun-indicator.below-horizon {
+            background: radial-gradient(circle, #64748b 0%, #475569 100%);
+            color: #94a3b8;
+            border: 2px solid #64748b;
+            box-shadow: 0 0 6px rgba(100, 116, 139, 0.3), 0 2px 8px rgba(0, 0, 0, 0.4);
+            opacity: 0.7;
+        }
+
+        .moon-indicator {
+            background: radial-gradient(circle, #e2e8f0 0%, #cbd5e1 100%);
+            color: #1e293b;
+            border: 2px solid #cbd5e1;
+            box-shadow: 0 0 10px rgba(226, 232, 240, 0.5), 0 2px 8px rgba(0, 0, 0, 0.4);
+        }
+
+        .moon-indicator.below-horizon {
+            background: radial-gradient(circle, #475569 0%, #334155 100%);
+            color: #64748b;
+            border: 2px solid #475569;
+            box-shadow: 0 0 6px rgba(71, 85, 105, 0.3), 0 2px 8px rgba(0, 0, 0, 0.4);
+            opacity: 0.7;
+        }
+
+        .celestial-indicator i {
+            font-size: 9px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Aviation-style attitude indicator */
+        .attitude-indicator {
+            position: relative !important;
+            top: 0 !important;
+            right: 0 !important;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 15px auto;
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: none !important;
+        }
+
+        .attitude-horizon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 180px;
+            height: 180px;
+            transform: translate(-50%, -50%);
+            transition: transform 0.1s ease;
+        }
+
+        .attitude-sky {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 100%);
+        }
+
+        .attitude-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to top, #8b4513 0%, #daa520 100%);
+        }
+
+        .attitude-horizon-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: white;
+            transform: translateY(-50%);
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .attitude-aircraft {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+        }
+
+        .attitude-aircraft::before,
+        .attitude-aircraft::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translateY(-50%);
+        }
+
+        .attitude-aircraft::before {
+            left: -16px;
+        }
+
+        .attitude-aircraft::after {
+            right: -16px;
+        }
+
+        .attitude-center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #ff6b35;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            border: 1px solid white;
+        }
+
+        .attitude-readout {
+            position: relative;
+            top: 0;
+            right: 0;
+            transform: none;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            margin: 0 auto;
+        }
+
+        /* Navigation Widget Group - Container for heading and attitude widgets */
+        .navigation-widget-group {
+            position: absolute;
+            top: 150px;
+            right: 350px;
+            width: 120px;
+            z-index: 1000;
+            transition: right 0.3s ease;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 12px;
+            padding: 10px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .navigation-widget-group .widget-title {
+            color: #f1f5f9;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.8;
+        }
+
+        /* Heading Dial Widget - now relative within group */
+        .heading-dial {
+            position: relative !important;
+            top: 0 !important;
+            right: 0 !important;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 35px auto;
+            z-index: 1000;
+            transition: none !important;
+        }
+
+        .heading-dial-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 2px 4px rgba(59, 130, 246, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .heading-dial-face {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 90px;
+            height: 90px;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                #1e293b 0deg 45deg,
+                #334155 45deg 90deg,
+                #1e293b 90deg 135deg,
+                #334155 135deg 180deg,
+                #1e293b 180deg 225deg,
+                #334155 225deg 270deg,
+                #1e293b 270deg 315deg,
+                #334155 315deg 360deg
+            );
+            transition: transform 0.2s ease;
+        }
+
+        .heading-dial-markings {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 80px;
+            height: 80px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-mark {
+            position: absolute;
+            background: #e2e8f0;
+            transform-origin: center bottom;
+        }
+
+        .heading-dial-mark.major {
+            width: 2px;
+            height: 12px;
+            background: #f1f5f9;
+        }
+
+        .heading-dial-mark.minor {
+            width: 1px;
+            height: 6px;
+            background: #94a3b8;
+        }
+
+        .heading-dial-labels {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 70px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label {
+            position: absolute;
+            color: #f1f5f9;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label.north {
+            color: #ef4444;
+            font-size: 14px;
+        }
+
+        .heading-dial-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 3px;
+            height: 35px;
+            background: linear-gradient(to bottom, #ef4444 0%, #dc2626 50%, #f1f5f9 50%, #e2e8f0 100%);
+            transform: translate(-50%, -100%);
+            transform-origin: bottom center;
+            border-radius: 2px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        .heading-dial-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border: 2px solid #f1f5f9;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .heading-dial-readout {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Aviation-style attitude indicator - now relative within group */
+        .attitude-indicator {
+            position: relative;
+            top: 0;
+            right: 0;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 15px auto;
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: none;
+        }
+
+        .attitude-horizon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 180px;
+            height: 180px;
+            transform: translate(-50%, -50%);
+            transition: transform 0.1s ease;
+        }
+
+        .attitude-sky {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 100%);
+        }
+
+        .attitude-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to top, #8b4513 0%, #daa520 100%);
+        }
+
+        .attitude-horizon-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: white;
+            transform: translateY(-50%);
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .attitude-aircraft {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+        }
+
+        .attitude-aircraft::before,
+        .attitude-aircraft::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translateY(-50%);
+        }
+
+        .attitude-aircraft::before {
+            left: -16px;
+        }
+
+        .attitude-aircraft::after {
+            right: -16px;
+        }
+
+        .attitude-center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #ff6b35;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            border: 1px solid white;
+        }
+
+        .attitude-readout {
+            position: relative;
+            top: 0;
+            right: 0;
+            transform: none;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            margin: 0 auto;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .mobile-toggle {
+                display: none; /* Hide sidebar toggle on mobile */
+            }
+
+            #sidebar-wrapper {
+                display: none; /* Hide entire sidebar on mobile */
+            }
+
+            #cesiumContainer {
+                right: 0;
+                left: 0;
+                width: 100%;
+            }
+
+            /* Hide most UI elements on mobile */
+            .status-indicator,
+            .performance-indicator,
+            .camera-info,
+            .main-heading {
+                display: none;
+            }
+
+            /* Only show navigation widget group on mobile */
+            .navigation-widget-group {
+                display: block;
+                right: 15px;
+                top: 20px;
+                width: 100px;
+                padding: 8px;
+                background: rgba(15, 23, 42, 0.9);
+                backdrop-filter: blur(15px);
+                border: 2px solid rgba(59, 130, 246, 0.4);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            }
+
+            .navigation-widget-group .widget-title {
+                font-size: 10px;
+                margin-bottom: 6px;
+                color: #e2e8f0;
+            }
+
+            .heading-dial {
+                width: 80px;
+                height: 80px;
+                margin-bottom: 12px;
+            }
+
+            .heading-dial-container {
+                border: 2px solid #3b82f6;
+                box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+            }
+
+            .heading-dial-face {
+                width: 70px;
+                height: 70px;
+            }
+
+            .heading-dial-needle {
+                height: 28px;
+                width: 2px;
+            }
+
+            .heading-dial-readout {
+                font-size: 9px;
+                padding: 2px 4px;
+                min-width: 40px;
+                bottom: -18px;
+                background: rgba(15, 23, 42, 0.95);
+                border: 1px solid #3b82f6;
+            }
+
+            .attitude-indicator {
+                width: 70px;
+                height: 70px;
+                margin-bottom: 10px;
+                border: 2px solid #3b82f6;
+                box-shadow: 0 4px 20px rgba(59, 130, 246, 0.3);
+            }
+
+            .attitude-horizon {
+                width: 140px;
+                height: 140px;
+            }
+
+            .attitude-readout {
+                font-size: 9px;
+                padding: 2px 4px;
+                min-width: 40px;
+                background: rgba(15, 23, 42, 0.95);
+                border: 1px solid #3b82f6;
+            }
+
+            /* Hide all other widgets and controls on mobile */
+            .compass-widget,
+            #wrapper.show-sidebar #sidebar-wrapper {
+                display: none !important;
+            }
+
+            /* Ensure Cesium toolbar is still accessible but minimal */
+            .cesium-viewer-toolbar {
+                background: rgba(15, 23, 42, 0.8) !important;
+            }
+
+            .cesium-viewer-geocoderContainer {
+                background: rgba(15, 23, 42, 0.8) !important;
+            }
+
+            /* Make sure fullscreen and other essential Cesium controls work */
+            .cesium-viewer-fullscreenContainer,
+            .cesium-viewer-vrContainer {
+                background: rgba(15, 23, 42, 0.8) !important;
+            }
+        }
+
+        /* Tablet responsive adjustments */
+        @media (max-width: 1024px) and (min-width: 769px) {
+            #sidebar-wrapper {
+                width: 300px; /* Slightly smaller on tablets */
+            }
+
+            #cesiumContainer {
+                right: 300px;
+            }
+
+            .mobile-toggle {
+                right: 315px;
+            }
+
+            .navigation-widget-group {
+                right: 330px;
+                width: 110px;
+            }
+
+            .heading-dial {
+                width: 90px;
+                height: 90px;
+            }
+
+            .heading-dial-face {
+                width: 80px;
+                height: 80px;
+            }
+
+            .attitude-indicator {
+                width: 80px;
+                height: 80px;
+            }
+
+            .attitude-horizon {
+                width: 160px;
+                height: 160px;
+            }
+        }
+
+        /* Fullscreen mode styles */
+        #wrapper.fullscreen-mode #sidebar-wrapper {
+            transform: translateX(100%);
+        }
+
+        #wrapper.fullscreen-mode #cesiumContainer {
+            right: 0;
+            left: 0;
+            width: 100%;
+        }
+
+        #wrapper.fullscreen-mode .navigation-widget-group {
+            right: 15px;
+        }
+
+        #wrapper.fullscreen-mode .mobile-toggle {
+            right: 15px;
+        }
+
+        /* Additional fullscreen styles for when document is in fullscreen */
+        :fullscreen #cesiumContainer,
+        :-webkit-full-screen #cesiumContainer,
+        :-moz-full-screen #cesiumContainer,
+        :-ms-fullscreen #cesiumContainer {
+            right: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+        }
+
+        :fullscreen #sidebar-wrapper,
+        :-webkit-full-screen #sidebar-wrapper,
+        :-moz-full-screen #sidebar-wrapper,
+        :-ms-fullscreen #sidebar-wrapper {
+            transform: translateX(100%) !important;
+        }
+
+        :fullscreen .navigation-widget-group,
+        :-webkit-full-screen .navigation-widget-group,
+        :-moz-full-screen .navigation-widget-group,
+        :-ms-fullscreen .navigation-widget-group {
+            right: 15px !important;
+        }
+
+        :fullscreen .mobile-toggle,
+        :-webkit-full-screen .mobile-toggle,
+        :-moz-full-screen .mobile-toggle,
+        :-ms-fullscreen .mobile-toggle {
+            right: 15px !important;
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            color: white;
+            font-size: 18px;
+        }
+
+        .loading-content {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+
+        .loading-progress {
+            width: 200px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+            margin: 15px 0;
+            overflow: hidden;
+        }
+
+        .loading-bar {
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+
+        /* Toolbar styling */
+        .cesium-viewer-toolbar {
+            background: rgba(42, 42, 42, 0.8) !important;
+        }
+
+        .cesium-button {
+            background: rgba(48, 51, 107, 0.8) !important;
+        }
+
+        .cesium-viewer-geocoderContainer {
+            background: rgba(42, 42, 42, 0.8) !important;
+        }
+
+        /* Geographic North Indicator */
+        .geographic-indicator {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            width: 12px;
+            height: 12px;
+            background: rgba(59, 130, 246, 0.9);
+            color: white;
+            border-radius: 2px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            font-weight: bold;
+            font-family: monospace;
+            border: 1px solid #1e40af;
+            z-index: 6;
+            pointer-events: none;
+        }
+
+        /* Heading Dial Widget */
+        .heading-dial {
+            position: absolute;
+            top: 150px;
+            right: 350px;
+            width: 100px;
+            height: 100px;
+            z-index: 1000;
+            transition: right 0.3s ease;
+        }
+
+        .heading-dial-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.9) 100%);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), inset 0 2px 4px rgba(59, 130, 246, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .heading-dial-face {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 90px;
+            height: 90px;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+            background: conic-gradient(
+                from 0deg,
+                #1e293b 0deg 45deg,
+                #334155 45deg 90deg,
+                #1e293b 90deg 135deg,
+                #334155 135deg 180deg,
+                #1e293b 180deg 225deg,
+                #334155 225deg 270deg,
+                #1e293b 270deg 315deg,
+                #334155 315deg 360deg
+            );
+            transition: transform 0.2s ease;
+        }
+
+        .heading-dial-markings {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 80px;
+            height: 80px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-mark {
+            position: absolute;
+            background: #e2e8f0;
+            transform-origin: center bottom;
+        }
+
+        .heading-dial-mark.major {
+            width: 2px;
+            height: 12px;
+            background: #f1f5f9;
+        }
+
+        .heading-dial-mark.minor {
+            width: 1px;
+            height: 6px;
+            background: #94a3b8;
+        }
+
+        .heading-dial-labels {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 70px;
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label {
+            position: absolute;
+            color: #f1f5f9;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+            transform: translate(-50%, -50%);
+        }
+
+        .heading-dial-label.north {
+            color: #ef4444;
+            font-size: 14px;
+        }
+
+        .heading-dial-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 3px;
+            height: 35px;
+            background: linear-gradient(to bottom, #ef4444 0%, #dc2626 50%, #f1f5f9 50%, #e2e8f0 100%);
+            transform: translate(-50%, -100%);
+            transform-origin: bottom center;
+            border-radius: 2px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        .heading-dial-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border: 2px solid #f1f5f9;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .heading-dial-readout {
+            position: absolute;
+            bottom: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 60px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Aviation-style attitude indicator - now relative within group */
+        .attitude-indicator {
+            position: relative;
+            top: 0;
+            right: 0;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 15px auto;
+            background: rgba(0, 0, 0, 0.9);
+            border-radius: 50%;
+            border: 3px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: none;
+        }
+
+        .attitude-horizon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 180px;
+            height: 180px;
+            transform: translate(-50%, -50%);
+            transition: transform 0.1s ease;
+        }
+
+        .attitude-sky {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to bottom, #4a90e2 0%, #87ceeb 100%);
+        }
+
+        .attitude-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(to top, #8b4513 0%, #daa520 100%);
+        }
+
+        .attitude-horizon-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: white;
+            transform: translateY(-50%);
+            box-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+        }
+
+        .attitude-aircraft {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+            box-shadow: 0 0 3px rgba(0, 0, 0, 0.7);
+        }
+
+        .attitude-aircraft::before,
+        .attitude-aircraft::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 12px;
+            height: 2px;
+            background: #ff6b35;
+            transform: translateY(-50%);
+        }
+
+        .attitude-aircraft::before {
+            left: -16px;
+        }
+
+        .attitude-aircraft::after {
+            right: -16px;
+        }
+
+        .attitude-center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #ff6b35;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            border: 1px solid white;
+        }
+
+        .attitude-readout {
+            position: relative;
+            top: 0;
+            right: 0;
+            transform: none;
+            background: rgba(15, 23, 42, 0.9);
+            color: #f1f5f9;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            border: 1px solid #3b82f6;
+            min-width: 50px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 1001;
+            margin: 0 auto;
+        }
+    

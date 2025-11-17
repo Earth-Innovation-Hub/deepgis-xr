@@ -92,33 +92,38 @@ map_label = MapLabelView.as_view()
 view_label = ViewLabelView.as_view()
 results = ResultsView.as_view()
 
+# Helper function to reduce duplication in simple view functions
+def simple_render(request, template_name):
+    """Render a simple template without additional context."""
+    return render(request, template_name)
+
 def index(request):
-    return render(request, 'web/index.html')
+    return simple_render(request, 'web/index.html')
 
 def label(request):
-    return render(request, 'web/label.html')
+    return simple_render(request, 'web/label.html')
 
 def stl_viewer(request):
     """
     Renders the modular Three.js STL viewer page.
     This is a cleaner reimplementation of the 3D model viewer functionality.
     """
-    return render(request, 'web/stl_viewer.html')
+    return simple_render(request, 'web/stl_viewer.html')
 
 def label_3d(request):
-    return render(request, 'web/label_3d.html')
+    return simple_render(request, 'web/label_3d.html')
 
 def label_3d_dev(request):
-    return render(request, 'web/label_3d_dev.html')
+    return simple_render(request, 'web/label_3d_dev.html')
 
 def map_label(request):
-    return render(request, 'web/map_label.html')
+    return simple_render(request, 'web/map_label.html')
 
 def view_label(request):
-    return render(request, 'web/view_label.html')
+    return simple_render(request, 'web/view_label.html')
 
 def results(request):
-    return render(request, 'web/results.html')
+    return simple_render(request, 'web/results.html')
 
 @csrf_exempt
 def get_category_info(request):
@@ -533,22 +538,24 @@ def get_raster_info(request):
                 'lat_lng': [raster.latitude, raster.longitude]
             })
         
-        return JsonResponse({
-            'status': 'success',
-            'message': raster_info
-        })
+        return success_json_response({'message': raster_info})
     except Exception as e:
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e)
-        }, status=500)
+        return error_json_response(str(e), status=500)
+
+# Helper function to get tileserver URL (reduces duplication)
+def get_tileserver_url(request):
+    """Get tileserver URL based on environment and request host."""
+    import os
+    default_url = 'https://mbtiles.deepgis.org'
+    # Allow localhost override for development
+    if 'localhost' in request.get_host() or '127.0.0.1' in request.get_host():
+        default_url = 'http://localhost:8091'
+    return os.environ.get('MBTILES_SERVER', default_url)
 
 @csrf_exempt
 def get_tileserver_layers(request):
     """Get available layers from the tileserver."""
-    
-    # Configure tileserver URL - use local for development
-    TILESERVER_URL = 'https://localhost:8091'
+    TILESERVER_URL = get_tileserver_url(request)
     
     try:
         # Fetch layers from tileserver
@@ -589,24 +596,34 @@ def get_tileserver_layers(request):
             
             layers[layer_id] = layer
         
-        return JsonResponse({
-            'status': 'success',
+        return success_json_response({
             'layers': layers,
             'tileserver': TILESERVER_URL
         })
         
     except requests.exceptions.RequestException as e:
         print(f'Tileserver error: {str(e)}')
-        return JsonResponse({
-            'status': 'error',
-            'message': 'Could not connect to tileserver'
-        }, status=503)
+        return error_json_response('Could not connect to tileserver', status=503)
     except Exception as e:
         print(f'Unexpected error: {str(e)}')
-        return JsonResponse({
-            'status': 'error',
-            'message': str(e)
-        }, status=500)
+        return error_json_response(str(e), status=500)
+
+# Helper functions to reduce JsonResponse duplication
+def success_json_response(data=None, message=None, **kwargs):
+    """Create a standardized success JsonResponse."""
+    response_data = {'status': 'success'}
+    if message:
+        response_data['message'] = message
+    if data:
+        response_data.update(data)
+    response_data.update(kwargs)
+    return JsonResponse(response_data)
+
+def error_json_response(message, status=500, **kwargs):
+    """Create a standardized error JsonResponse."""
+    response_data = {'status': 'error', 'message': message}
+    response_data.update(kwargs)
+    return JsonResponse(response_data, status=status)
 
 @csrf_exempt
 def get_all_images(request):

@@ -1,0 +1,218 @@
+            right: 320px; /* Updated to match new sidebar width */
+            bottom: 0;
+            left: 0;
+            width: auto;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #sidebar-wrapper {
+            width: 320px; /* Reduced from 350px */
+            position: fixed;
+            height: 100%;
+            z-index: 1000;
+            top: 0;
+            right: 0;
+            background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+            box-shadow: -2px 0 20px rgba(0,0,0,0.3);
+            overflow-y: auto;
+            transform: translateX(0);
+            transition: transform 0.3s ease;
+            border-left: 1px solid #334155;
+        }
+
+        /* Scrollbar styling - thinner and more modern */
+        #sidebar-wrapper::-webkit-scrollbar {
+            width: 3px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb {
+            background: #64748b;
+            border-radius: 3px;
+        }
+
+        #sidebar-wrapper::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .mobile-toggle {
+            position: fixed;
+            top: 15px;
+            right: 335px; /* Updated for new sidebar width */
+            z-index: 2000;
+            background: #3b82f6;
+            border: none;
+            border-radius: 8px;
+            padding: 8px 12px;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+            display: none;
+            color: white;
+            transition: all 0.2s ease;
+            font-size: 14px;
+        }
+
+        .mobile-toggle:hover {
+            background: #2563eb;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(59, 130, 246, 0.4);
+        }
+
+        .sidebar-header {
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: white;
+            padding: 16px;
+            text-align: center;
+            border-bottom: 1px solid #334155;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sidebar-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6);
+        }
+
+        .sidebar-header h5 {
+            margin: 0 0 4px 0;
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar-header small {
+            color: #94a3b8;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .sidebar-header i {
+            margin-right: 6px;
+            color: #3b82f6;
+            font-size: 1.1rem;
+        }
+
+        .layer-controls {
+            padding: 0;
+        }
+
+        .layer-group {
+            margin: 12px 10px; /* Reduced margins */
+            background: rgba(51, 65, 85, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: 12px;
+            padding: 12px; /* Reduced padding */
+        }
+
+        #overlayLayersList {
+            max-height: 200px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.3) transparent;
+        }
+
+        #overlayLayersList::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #overlayLayersList::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #overlayLayersList::-webkit-scrollbar-thumb {
+            background-color: rgba(255,255,255,0.3);
+            border-radius: 3px;
+        }
+
+            right: 350px; /* Updated for new sidebar width */
+            width: 90px;
+            height: 90px;
+            background: rgba(0, 0, 0, 0.8);
+            border-radius: 50%;
+            border: 2px solid #3b82f6;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            transition: right 0.3s ease;
+        }
+
+                display: none; /* Hide sidebar toggle on mobile */
+            }
+
+            #sidebar-wrapper {
+                display: none; /* Hide entire sidebar on mobile */
+            }
+
+            #cesiumContainer {
+                right: 0;
+                left: 0;
+                width: 100%;
+            }
+
+            /* Hide most UI elements on mobile */
+            .status-indicator,
+            .performance-indicator,
+            .camera-info,
+            .main-heading {
+                display: none;
+            }
+
+            #wrapper.show-sidebar #sidebar-wrapper {
+                display: none !important;
+            }
+
+            /* Ensure Cesium toolbar is still accessible but minimal */
+            .cesium-viewer-toolbar {
+                background: rgba(15, 23, 42, 0.8) !important;
+            }
+
+            .cesium-viewer-geocoderContainer {
+                background: rgba(15, 23, 42, 0.8) !important;
+            }
+
+            /* Make sure fullscreen and other essential Cesium controls work */
+            .cesium-viewer-fullscreenContainer,
+            .cesium-viewer-vrContainer {
+                background: rgba(15, 23, 42, 0.8) !important;
+            }
+        }
+
+            #sidebar-wrapper {
+                width: 300px; /* Slightly smaller on tablets */
+            }
+
+            #cesiumContainer {
+                right: 300px;
+            }
+
+            .mobile-toggle {
+                right: 315px;
+            }
+
+        #wrapper.fullscreen-mode #sidebar-wrapper {
+            transform: translateX(100%);
+        }
+
+        #wrapper.fullscreen-mode #cesiumContainer {
+            right: 0;
+            left: 0;
+            width: 100%;
+        }
+
+        :fullscreen #sidebar-wrapper,
+        :-webkit-full-screen #sidebar-wrapper,
+        :-moz-full-screen #sidebar-wrapper,
+        :-ms-fullscreen #sidebar-wrapper {
+            transform: translateX(100%) !important;
+        }
