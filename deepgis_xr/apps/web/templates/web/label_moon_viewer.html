@@ -1,0 +1,1647 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DeepGIS Moon Viewer</title>
+    
+    <!-- CSRF Token for API requests -->
+    {% csrf_token %}
+    
+    <!-- Cesium Dependencies -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <!-- Additional Dependencies -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+    
+    <!-- Cesium Ion Token -->
+    <script>
+        // Suppress console errors for missing source maps
+        const originalConsoleError = console.error;
+        console.error = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
+                return;
+            }
+            originalConsoleError.apply(console, args);
+        };
+        
+        // Set Cesium Ion access token
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+    </script>
+    
+    <style>
+        /* CSS Custom Properties for consistent theming */
+        :root {
+            /* Color Palette - Moon themed */
+            --primary-blue: #6b7db8;
+            --primary-blue-dark: #4d5d8f;
+            --primary-blue-darker: #3a4870;
+            --success-green: #10b981;
+            --success-green-dark: #059669;
+            --success-green-darker: #047857;
+            --warning-orange: #f59e0b;
+            --warning-orange-dark: #d97706;
+            --warning-orange-darker: #b45309;
+            --danger-red: #ef4444;
+            --danger-red-dark: #dc2626;
+            --danger-red-darker: #b91c1c;
+            --moon-silver: #c0c0d0;
+            --moon-silver-dark: #9090a0;
+            --moon-gray: #505060;
+            
+            /* Neutral Colors */
+            --slate-900: #0f0f1a;
+            --slate-800: #1a1a2b;
+            --slate-700: #2a2a3b;
+            --slate-600: #404055;
+            --slate-500: #606070;
+            --slate-400: #8080a0;
+            --slate-300: #b0b0c8;
+            --slate-100: #e8e8f0;
+            
+            /* Spacing */
+            --sidebar-width: 320px;
+            --border-radius: 8px;
+            --border-radius-lg: 12px;
+            --spacing-xs: 4px;
+            --spacing-sm: 6px;
+            --spacing-md: 8px;
+            --spacing-lg: 12px;
+            --spacing-xl: 16px;
+            
+            /* Shadows */
+            --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+            --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+            
+            /* Transitions */
+            --transition-fast: 0.2s ease;
+            --transition-normal: 0.3s ease;
+        }
+
+        /* Base Styles */
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+        }
+
+        /* Layout Components */
+        #cesiumContainer {
+            position: absolute;
+            top: 0;
+            right: var(--sidebar-width);
+            bottom: 0;
+            left: 0;
+            width: auto;
+            height: 100%;
+            z-index: 1;
+        }
+
+        #sidebar-wrapper {
+            width: var(--sidebar-width);
+            position: fixed;
+            height: 100%;
+            z-index: 1000;
+            top: 0;
+            right: 0;
+            background: linear-gradient(180deg, var(--slate-800) 0%, var(--slate-900) 100%);
+            box-shadow: -2px 0 20px rgba(0,0,0,0.5);
+            overflow-y: auto;
+            transform: translateX(0);
+            transition: transform var(--transition-normal);
+            border-left: 1px solid var(--slate-700);
+        }
+
+        /* Utility Classes for Gradients */
+        .gradient-primary {
+            background: linear-gradient(135deg, var(--primary-blue), var(--primary-blue-dark));
+        }
+        
+        .gradient-success {
+            background: linear-gradient(135deg, var(--success-green), var(--success-green-dark));
+        }
+        
+        .gradient-warning {
+            background: linear-gradient(135deg, var(--warning-orange), var(--warning-orange-dark));
+        }
+        
+        .gradient-danger {
+            background: linear-gradient(135deg, var(--danger-red), var(--danger-red-dark));
+        }
+        
+        .gradient-moon {
+            background: linear-gradient(135deg, var(--moon-silver), var(--moon-silver-dark));
+        }
+
+        /* Button Base Class with Variants */
+        .btn-base {
+            border-radius: var(--border-radius);
+            font-weight: 500;
+            transition: all var(--transition-fast);
+            margin: 2px 0;
+            width: 100%;
+            padding: var(--spacing-sm) var(--spacing-lg);
+            font-size: 0.8rem;
+            border: none;
+            position: relative;
+            overflow: hidden;
+            color: white;
+            cursor: pointer;
+        }
+
+        .btn-base::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .btn-base:hover::before {
+            left: 100%;
+        }
+
+        .btn-base:hover {
+            transform: translateY(-1px);
+        }
+
+        /* Button Variants */
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-blue), var(--primary-blue-dark));
+            box-shadow: 0 2px 8px rgba(107, 125, 184, 0.4);
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(135deg, var(--primary-blue-dark), var(--primary-blue-darker));
+            box-shadow: 0 4px 12px rgba(107, 125, 184, 0.6);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, var(--success-green), var(--success-green-dark));
+            box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-success:hover {
+            background: linear-gradient(135deg, var(--success-green-dark), var(--success-green-darker));
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+        }
+
+        .btn-warning {
+            background: linear-gradient(135deg, var(--warning-orange), var(--warning-orange-dark));
+            box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+        }
+
+        .btn-warning:hover {
+            background: linear-gradient(135deg, var(--warning-orange-dark), var(--warning-orange-darker));
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger-red), var(--danger-red-dark));
+            box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+        }
+
+        .btn-danger:hover {
+            background: linear-gradient(135deg, var(--danger-red-dark), var(--danger-red-darker));
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+        }
+
+        .btn-moon {
+            background: linear-gradient(135deg, var(--moon-silver), var(--moon-silver-dark));
+            box-shadow: 0 2px 8px rgba(192, 192, 208, 0.4);
+            color: var(--slate-900);
+        }
+
+        .btn-moon:hover {
+            background: linear-gradient(135deg, var(--moon-silver-dark), var(--moon-gray));
+            box-shadow: 0 4px 12px rgba(192, 192, 208, 0.6);
+            color: white;
+        }
+
+        /* Form Control Base Class */
+        .form-control-base {
+            background: rgba(71, 71, 105, 0.8);
+            border: 1px solid rgba(100, 100, 139, 0.5);
+            color: var(--slate-100);
+            border-radius: var(--border-radius);
+            padding: var(--spacing-sm) var(--spacing-md);
+            transition: all var(--transition-fast);
+            font-size: 0.85rem;
+            backdrop-filter: blur(5px);
+        }
+
+        .form-control-base:focus {
+            background: rgba(71, 71, 105, 0.9);
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 2px rgba(107, 125, 184, 0.2);
+            color: var(--slate-100);
+            outline: none;
+        }
+
+        .form-select {
+            background: rgba(71, 71, 105, 0.8);
+            border: 1px solid rgba(100, 100, 139, 0.5);
+            color: var(--slate-100);
+            border-radius: var(--border-radius);
+            padding: var(--spacing-sm) var(--spacing-md);
+            transition: all var(--transition-fast);
+            font-size: 0.85rem;
+            backdrop-filter: blur(5px);
+        }
+
+        .form-control {
+            background: rgba(71, 71, 105, 0.8);
+            border: 1px solid rgba(100, 100, 139, 0.5);
+            color: var(--slate-100);
+            border-radius: var(--border-radius);
+            padding: var(--spacing-sm) var(--spacing-md);
+            transition: all var(--transition-fast);
+            font-size: 0.85rem;
+            backdrop-filter: blur(5px);
+        }
+
+        /* Layer Group Base Class */
+        .layer-group-base {
+            margin: var(--spacing-lg) 10px;
+            background: rgba(51, 51, 85, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(71, 71, 105, 0.5);
+            transition: all var(--transition-fast);
+        }
+
+        .layer-group-base:hover {
+            background: rgba(51, 51, 85, 0.8);
+            border-color: rgba(107, 125, 184, 0.3);
+            transform: translateY(-1px);
+        }
+
+        .layer-group {
+            margin: var(--spacing-lg) 10px;
+            background: rgba(51, 51, 85, 0.6);
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(71, 71, 105, 0.5);
+            transition: all var(--transition-fast);
+        }
+
+        /* Specialized Layer Groups */
+        .view-controls {
+            margin: var(--spacing-lg) 10px;
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.3));
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+            box-shadow: 0 4px 12px rgba(5, 150, 105, 0.2);
+        }
+
+        .measurement-controls {
+            margin: var(--spacing-lg) 10px;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2), rgba(220, 38, 38, 0.3));
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2);
+        }
+
+        .landing-sites-section {
+            margin: var(--spacing-lg) 10px;
+            background: linear-gradient(135deg, rgba(192, 192, 208, 0.2), rgba(144, 144, 160, 0.3));
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(192, 192, 208, 0.5);
+            box-shadow: 0 4px 12px rgba(192, 192, 208, 0.2);
+        }
+
+        .statistics-section {
+            margin: var(--spacing-lg) 10px;
+            background: linear-gradient(135deg, rgba(107, 125, 184, 0.2), rgba(77, 93, 143, 0.3));
+            backdrop-filter: blur(10px);
+            border-radius: var(--border-radius-lg);
+            padding: var(--spacing-lg);
+            border: 1px solid rgba(107, 125, 184, 0.5);
+            box-shadow: 0 4px 12px rgba(107, 125, 184, 0.2);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            :root {
+                --sidebar-width: 90%;
+            }
+            
+            .mobile-toggle {
+                display: block !important;
+                position: fixed;
+                top: 10px;
+                right: 15px;
+                z-index: 1001;
+                background: var(--slate-800);
+                border: 1px solid var(--slate-700);
+                color: white;
+                padding: 10px 15px;
+                border-radius: var(--border-radius);
+                cursor: pointer;
+            }
+
+            #sidebar-wrapper {
+                transform: translateX(100%);
+                max-width: var(--sidebar-width);
+            }
+
+            #cesiumContainer {
+                right: 0;
+            }
+
+            #wrapper.show-sidebar #sidebar-wrapper {
+                transform: translateX(0);
+            }
+        }
+
+        /* Additional specific styles */
+        .sidebar-header {
+            background: linear-gradient(135deg, var(--slate-900) 0%, var(--slate-800) 100%);
+            color: white;
+            padding: var(--spacing-xl);
+            text-align: center;
+            border-bottom: 1px solid var(--slate-700);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .sidebar-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--moon-silver), var(--primary-blue), var(--moon-silver));
+        }
+
+        .layer-group-title {
+            display: flex;
+            align-items: center;
+            gap: var(--spacing-sm);
+            color: var(--slate-100);
+            border-bottom: 1px solid rgba(71, 71, 105, 0.5);
+            padding-bottom: var(--spacing-sm);
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .layer-group-title i {
+            color: var(--moon-silver);
+            font-size: 0.9rem;
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+            color: white;
+            font-size: 18px;
+        }
+
+        .loading-content {
+            text-align: center;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 30px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(192, 192, 208, 0.2);
+        }
+
+        .loading-progress {
+            width: 200px;
+            height: 4px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
+            margin: 15px auto;
+            overflow: hidden;
+        }
+
+        .loading-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--moon-silver), var(--primary-blue));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        /* Status Indicators */
+        .status-indicator {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            z-index: 100;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(192, 192, 208, 0.3);
+        }
+
+        .performance-indicator {
+            position: absolute;
+            top: 45px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: var(--moon-silver);
+            padding: 8px 12px;
+            border-radius: var(--border-radius);
+            font-size: 0.85rem;
+            z-index: 100;
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(192, 192, 208, 0.3);
+        }
+
+        /* Widget Positioning */
+        .widget-positioned {
+            position: absolute;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            box-shadow: var(--shadow-lg);
+            transition: right var(--transition-normal);
+        }
+
+        /* Compass Widget */
+        .compass-widget {
+            position: absolute;
+            top: 150px;
+            right: 350px;
+            width: 120px;
+            height: 120px;
+            background: radial-gradient(circle, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.95) 100%);
+            border-radius: 50%;
+            border: 3px solid var(--moon-silver);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(192, 192, 208, 0.1);
+            transition: right var(--transition-normal);
+        }
+
+        .compass-face {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .compass-needle {
+            position: absolute;
+            bottom: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-bottom: 45px solid var(--danger-red);
+            transform-origin: bottom center;
+            transform: translate(-50%, 0) rotate(0deg);
+            transition: transform 0.3s ease-out;
+            filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.8));
+        }
+
+        .compass-center {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background: white;
+            border-radius: 50%;
+            z-index: 2;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+        }
+
+        .compass-label {
+            position: absolute;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .compass-label-n { top: 8px; left: 50%; transform: translateX(-50%); }
+        .compass-label-e { top: 50%; right: 8px; transform: translateY(-50%); }
+        .compass-label-s { bottom: 8px; left: 50%; transform: translateX(-50%); }
+        .compass-label-w { top: 50%; left: 8px; transform: translateY(-50%); }
+
+        .compass-heading-display {
+            position: absolute;
+            bottom: -35px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: var(--moon-silver);
+            padding: 4px 12px;
+            border-radius: var(--border-radius);
+            font-size: 13px;
+            font-weight: bold;
+            white-space: nowrap;
+            border: 1px solid var(--moon-silver);
+        }
+
+        /* Attitude Indicator */
+        .attitude-indicator {
+            position: absolute;
+            top: 310px;
+            right: 350px;
+            width: 120px;
+            height: 120px;
+            background: radial-gradient(circle, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.95) 100%);
+            border-radius: 50%;
+            border: 3px solid var(--primary-blue);
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            transition: right var(--transition-normal);
+        }
+
+        .attitude-horizon {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 300px;
+            height: 300px;
+            transform: translate(-50%, -50%);
+            transition: transform 0.3s ease-out;
+        }
+
+        .attitude-sky {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(180deg, #1e3a8a 0%, #3b82f6 100%);
+        }
+
+        .attitude-ground {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 50%;
+            background: linear-gradient(0deg, #422006 0%, #78350f 100%);
+        }
+
+        .attitude-line {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: white;
+            box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+        }
+
+        .attitude-aircraft {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 10;
+        }
+
+        .attitude-aircraft::before,
+        .attitude-aircraft::after {
+            content: '';
+            position: absolute;
+            background: var(--warning-orange);
+            box-shadow: 0 0 8px rgba(245, 158, 11, 0.8);
+        }
+
+        .attitude-aircraft::before {
+            width: 40px;
+            height: 3px;
+            left: -20px;
+            top: 0;
+        }
+
+        .attitude-aircraft::after {
+            width: 3px;
+            height: 15px;
+            left: 0;
+            top: -7px;
+        }
+
+        .attitude-display {
+            position: absolute;
+            bottom: -35px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: var(--primary-blue);
+            padding: 4px 12px;
+            border-radius: var(--border-radius);
+            font-size: 11px;
+            font-weight: bold;
+            white-space: nowrap;
+            border: 1px solid var(--primary-blue);
+        }
+
+        /* Camera Pose Panel */
+        .camera-pose-panel {
+            position: absolute;
+            top: 470px;
+            right: 350px;
+            width: 120px;
+            background: rgba(0, 0, 0, 0.9);
+            border: 2px solid var(--moon-silver);
+            border-radius: var(--border-radius-lg);
+            padding: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            transition: right var(--transition-normal);
+        }
+
+        .camera-pose-title {
+            color: var(--moon-silver);
+            font-size: 12px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(192, 192, 208, 0.3);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .camera-pose-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 3px 0;
+            font-size: 11px;
+        }
+
+        .camera-pose-label {
+            color: var(--slate-400);
+            font-weight: 500;
+        }
+
+        .camera-pose-value {
+            color: var(--slate-100);
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Responsive adjustments for widgets */
+        @media (max-width: 768px) {
+            .compass-widget,
+            .attitude-indicator,
+            .camera-pose-panel {
+                right: 15px;
+            }
+
+            .compass-widget {
+                width: 90px;
+                height: 90px;
+                top: 140px;
+            }
+
+            .attitude-indicator {
+                width: 90px;
+                height: 90px;
+                top: 270px;
+            }
+
+            .camera-pose-panel {
+                top: 400px;
+                width: 100px;
+                font-size: 10px;
+            }
+        }
+
+        @media (max-width: 1024px) and (min-width: 769px) {
+            .compass-widget,
+            .attitude-indicator,
+            .camera-pose-panel {
+                right: 330px;
+            }
+        }
+
+        /* Utility classes */
+        .text-primary { color: var(--primary-blue); }
+        .text-success { color: var(--success-green); }
+        .text-warning { color: var(--warning-orange); }
+        .text-danger { color: var(--danger-red); }
+        .text-muted { color: var(--slate-400); }
+        .text-moon { color: var(--moon-silver); }
+
+        .bg-glass {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(10px);
+            padding: 10px;
+            border-radius: var(--border-radius);
+            margin-top: 10px;
+        }
+
+        .form-check {
+            margin-bottom: 8px;
+        }
+
+        .form-check-input {
+            margin-right: 8px;
+        }
+
+        .form-check-label {
+            color: var(--slate-100);
+            font-size: 0.85rem;
+        }
+
+        .measurements-list {
+            max-height: 150px;
+            overflow-y: auto;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 200px;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Mobile toggle button -->
+    <button class="mobile-toggle" id="sidebarToggle" style="display: none;">
+        <i class="fa fa-bars"></i>
+    </button>
+
+    <div id="wrapper">
+        <div id="sidebar-wrapper">
+            <div class="sidebar-content">
+                <div class="sidebar-header">
+                    <h5><i class="fas fa-moon"></i> DeepGIS Moon Viewer</h5>
+                    <small>Lunar Surface Explorer</small>
+                </div>
+                
+                <div class="layer-controls">
+                    <!-- Layer Types -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-layer-group"></i> Layer Types
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="moonImageryToggle" checked>
+                            <label class="form-check-label" for="moonImageryToggle">
+                                <i class="fas fa-image me-2"></i>Moon Imagery
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="moonTerrainToggle" checked>
+                            <label class="form-check-label" for="moonTerrainToggle">
+                                <i class="fas fa-mountain me-2"></i>Moon Terrain
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="landingSitesToggle" checked>
+                            <label class="form-check-label" for="landingSitesToggle">
+                                <i class="fas fa-flag me-2"></i>Landing Sites
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- View Controls -->
+                    <div class="view-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-eye"></i> View Controls
+                        </div>
+                        <button class="btn-primary btn-base" id="view2D">
+                            <i class="fas fa-map me-2"></i>2D Map View
+                        </button>
+                        <button class="btn-primary btn-base" id="view3D">
+                            <i class="fas fa-cube me-2"></i>3D Globe View
+                        </button>
+                        <button class="btn-primary btn-base" id="viewColumbus">
+                            <i class="fas fa-compass me-2"></i>Columbus View
+                        </button>
+                        <button class="btn-success btn-base" id="homeView">
+                            <i class="fas fa-home me-2"></i>Home View
+                        </button>
+                    </div>
+
+                    <!-- Apollo Landing Sites -->
+                    <div class="landing-sites-section">
+                        <div class="layer-group-title">
+                            <i class="fas fa-rocket"></i> Apollo Landing Sites
+                        </div>
+                        <button class="btn-moon btn-base" id="apollo11">
+                            <i class="fas fa-flag me-2"></i>Apollo 11
+                        </button>
+                        <button class="btn-moon btn-base" id="apollo12">
+                            <i class="fas fa-flag me-2"></i>Apollo 12
+                        </button>
+                        <button class="btn-moon btn-base" id="apollo14">
+                            <i class="fas fa-flag me-2"></i>Apollo 14
+                        </button>
+                        <button class="btn-moon btn-base" id="apollo15">
+                            <i class="fas fa-flag me-2"></i>Apollo 15
+                        </button>
+                        <button class="btn-moon btn-base" id="apollo16">
+                            <i class="fas fa-flag me-2"></i>Apollo 16
+                        </button>
+                        <button class="btn-moon btn-base" id="apollo17">
+                            <i class="fas fa-flag me-2"></i>Apollo 17
+                        </button>
+                    </div>
+
+                    <!-- Measurement Tools -->
+                    <div class="measurement-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-ruler"></i> Measurement Tools
+                        </div>
+                        <button class="btn-warning btn-base" id="measureDistance">
+                            <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+                        </button>
+                        <button class="btn-warning btn-base" id="measureArea">
+                            <i class="fas fa-draw-polygon me-2"></i>Measure Area
+                        </button>
+                        <button class="btn-warning btn-base" id="measureHeight">
+                            <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+                        </button>
+                        <button class="btn-danger btn-base" id="clearMeasurements">
+                            <i class="fas fa-trash me-2"></i>Clear All
+                        </button>
+                        
+                        <div class="measurements-list bg-glass" id="measurementsList">
+                            <small class="text-muted">No measurements yet</small>
+                        </div>
+                    </div>
+
+                    <!-- Base Map Selection -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-map"></i> Base Layer
+                        </div>
+                        <div class="form-group">
+                            <select class="form-select" id="baseLayerSelect">
+                                <option value="moon_default">Moon Default</option>
+                                <option value="moon_clementine">Clementine</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics Section -->
+                <div class="statistics-section">
+                    <div class="layer-group-title">
+                        <i class="fas fa-chart-bar"></i> Statistics
+                    </div>
+                    <div class="bg-glass" style="padding: 10px;">
+                        <div style="font-size: 0.8rem; color: var(--slate-300);">
+                            <div><strong>Camera Info:</strong></div>
+                            <div id="cameraInfo">Initializing...</div>
+                        </div>
+                    </div>
+                    <div class="bg-glass" style="padding: 10px; margin-top: 10px;">
+                        <div style="font-size: 0.8rem; color: var(--slate-300);">
+                            <div><strong>Earth Position:</strong></div>
+                            <div id="earthInfo">Calculating...</div>
+                        </div>
+                    </div>
+                    <div class="bg-glass" style="padding: 10px; margin-top: 10px;">
+                        <div style="font-size: 0.8rem; color: var(--slate-300);">
+                            <div><strong>Sun Position:</strong></div>
+                            <div id="sunInfo">Calculating...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="cesiumContainer"></div>
+
+    <!-- Status Indicators -->
+    <div class="status-indicator" id="statusIndicator">
+        Initializing Cesium Moon Viewer...
+    </div>
+
+    <div class="performance-indicator" id="performanceIndicator">
+        FPS: --
+    </div>
+
+    <!-- Compass Widget -->
+    <div class="compass-widget" id="compassWidget">
+        <div class="compass-face">
+            <div class="compass-label compass-label-n">N</div>
+            <div class="compass-label compass-label-e">E</div>
+            <div class="compass-label compass-label-s">S</div>
+            <div class="compass-label compass-label-w">W</div>
+            <div class="compass-needle" id="compassNeedle"></div>
+            <div class="compass-center"></div>
+        </div>
+        <div class="compass-heading-display" id="compassHeadingDisplay">000°T</div>
+    </div>
+
+    <!-- Attitude Indicator -->
+    <div class="attitude-indicator" id="attitudeIndicator">
+        <div class="attitude-horizon" id="attitudeHorizon">
+            <div class="attitude-sky"></div>
+            <div class="attitude-line"></div>
+            <div class="attitude-ground"></div>
+        </div>
+        <div class="attitude-aircraft"></div>
+        <div class="attitude-display" id="attitudeDisplay">P:0° R:0°</div>
+    </div>
+
+    <!-- Camera Pose Panel -->
+    <div class="camera-pose-panel" id="cameraPosePanel">
+        <div class="camera-pose-title">Camera Pose</div>
+        <div class="camera-pose-item">
+            <span class="camera-pose-label">Lon:</span>
+            <span class="camera-pose-value" id="poseLongitude">--</span>
+        </div>
+        <div class="camera-pose-item">
+            <span class="camera-pose-label">Lat:</span>
+            <span class="camera-pose-value" id="poseLatitude">--</span>
+        </div>
+        <div class="camera-pose-item">
+            <span class="camera-pose-label">Alt:</span>
+            <span class="camera-pose-value" id="poseAltitude">--</span>
+        </div>
+        <div class="camera-pose-item">
+            <span class="camera-pose-label">Hdg:</span>
+            <span class="camera-pose-value" id="poseHeading">--</span>
+        </div>
+        <div class="camera-pose-item">
+            <span class="camera-pose-label">Pitch:</span>
+            <span class="camera-pose-value" id="posePitch">--</span>
+        </div>
+        <div class="camera-pose-item">
+            <span class="camera-pose-label">Roll:</span>
+            <span class="camera-pose-value" id="poseRoll">--</span>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <i class="fas fa-moon fa-3x fa-spin text-moon"></i>
+            <div style="margin-top: 15px;">Initializing DeepGIS Moon Viewer...</div>
+            <div class="loading-progress">
+                <div class="loading-bar" id="loadingBar"></div>
+            </div>
+            <div id="loadingStatus" style="font-size: 0.9rem; margin-top: 10px; color: var(--slate-400);">Setting up lunar environment...</div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration object
+        const CONFIG = {
+            SIDEBAR_WIDTH: 320,
+            MOON_RADIUS: 1737400, // Moon radius in meters
+            APOLLO_SITES: {
+                apollo11: { name: 'Apollo 11', lon: 23.47297, lat: 0.67408, description: 'First crewed Moon landing (July 20, 1969)' },
+                apollo12: { name: 'Apollo 12', lon: -23.42157, lat: -3.01239, description: 'Second crewed Moon landing (November 19, 1969)' },
+                apollo14: { name: 'Apollo 14', lon: -17.47139, lat: -3.64544, description: 'Third crewed Moon landing (February 5, 1971)' },
+                apollo15: { name: 'Apollo 15', lon: 3.62981, lat: 26.13224, description: 'Fourth crewed Moon landing (July 30, 1971)' },
+                apollo16: { name: 'Apollo 16', lon: 15.50019, lat: -8.97301, description: 'Fifth crewed Moon landing (April 21, 1972)' },
+                apollo17: { name: 'Apollo 17', lon: 30.77168, lat: 20.19080, description: 'Sixth and final crewed Moon landing (December 11, 1972)' }
+            }
+        };
+
+        // Global state management
+        window.DeepGISMoon = {
+            viewer: null,
+            landingSiteEntities: [],
+            measurements: [],
+            measurementMode: null,
+            measurementPoints: [],
+            isInitialized: false,
+            ...CONFIG
+        };
+
+        // Utility functions
+        const Utils = {
+            updateStatus: (message) => {
+                document.getElementById('statusIndicator').textContent = message;
+            },
+            
+            updateLoadingStatus: (message, progress) => {
+                document.getElementById('loadingStatus').textContent = message;
+                document.getElementById('loadingBar').style.width = progress + '%';
+            },
+            
+            showSnackBar: (message, type = 'info') => {
+                const colors = {
+                    info: '#333',
+                    success: 'var(--success-green)',
+                    warning: 'var(--warning-orange)',
+                    error: 'var(--danger-red)'
+                };
+                
+                const snackbar = document.createElement('div');
+                snackbar.style.cssText = `
+                    position: fixed;
+                    bottom: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background-color: ${colors[type] || colors.info};
+                    color: white;
+                    padding: 12px 24px;
+                    border-radius: var(--border-radius);
+                    z-index: 10000;
+                    min-width: 250px;
+                    text-align: center;
+                    box-shadow: var(--shadow-md);
+                `;
+                snackbar.textContent = message;
+                document.body.appendChild(snackbar);
+                
+                setTimeout(() => snackbar.remove(), type === 'error' ? 5000 : 3000);
+            },
+
+            createButtonHandler: (action, statusMessage) => {
+                return () => {
+                    try {
+                        action();
+                        if (statusMessage) Utils.updateStatus(statusMessage);
+                    } catch (error) {
+                        console.error('Button action failed:', error);
+                        Utils.updateStatus('Error: ' + error.message);
+                    }
+                };
+            },
+
+            formatDistance: (meters) => {
+                if (meters < 1000) {
+                    return meters.toFixed(2) + ' m';
+                } else {
+                    return (meters / 1000).toFixed(2) + ' km';
+                }
+            },
+
+            formatArea: (squareMeters) => {
+                if (squareMeters < 1000000) {
+                    return squareMeters.toFixed(2) + ' m²';
+                } else {
+                    return (squareMeters / 1000000).toFixed(2) + ' km²';
+                }
+            }
+        };
+
+        // Celestial body calculations for Moon perspective
+        class LunarCelestialCalculator {
+            static calculateEarthPosition(date, observerLat, observerLon) {
+                // From the Moon's perspective, Earth appears in the sky
+                // The Moon is tidally locked, so Earth stays relatively fixed in the sky
+                
+                // For near side of Moon, Earth is always visible
+                // For far side of Moon, Earth is never visible
+                
+                // Simple approximation: Earth's position depends on observer location
+                // Near side observers see Earth near zenith, far side see nothing
+                
+                let earthVisible = false;
+                let azimuth = 0;
+                let elevation = -90;
+                
+                // Check if observer is on near side (longitude range approximately -90 to +90)
+                if (observerLon >= -90 && observerLon <= 90) {
+                    earthVisible = true;
+                    // Earth appears roughly overhead on near side
+                    // Simplified: Earth's elevation relates to how far from center of near side
+                    const distanceFromCenter = Math.sqrt(
+                        Math.pow(observerLon, 2) + Math.pow(observerLat, 2)
+                    );
+                    elevation = Math.max(0, 90 - distanceFromCenter);
+                    
+                    // Azimuth points toward sub-Earth point (approximately 0,0)
+                    azimuth = (Math.atan2(-observerLon, -observerLat) * 180 / Math.PI + 360) % 360;
+                }
+                
+                return {
+                    azimuth: azimuth,
+                    elevation: elevation,
+                    isVisible: earthVisible,
+                    phase: this.calculateEarthPhase(date)
+                };
+            }
+
+            static calculateEarthPhase(date) {
+                // Earth's phase as seen from Moon is opposite to Moon's phase as seen from Earth
+                const jd = this.getJulianDate(date);
+                const daysSinceNew = (jd - 2451549.5) % 29.53058868;
+                const moonPhase = daysSinceNew / 29.53058868;
+                
+                // Earth phase is opposite
+                const earthPhase = (moonPhase + 0.5) % 1.0;
+                
+                if (earthPhase < 0.0625 || earthPhase >= 0.9375) return "New Earth";
+                if (earthPhase < 0.1875) return "Waning Crescent Earth";
+                if (earthPhase < 0.3125) return "Last Quarter Earth";
+                if (earthPhase < 0.4375) return "Waning Gibbous Earth";
+                if (earthPhase < 0.5625) return "Full Earth";
+                if (earthPhase < 0.6875) return "Waxing Gibbous Earth";
+                if (earthPhase < 0.8125) return "First Quarter Earth";
+                return "Waxing Crescent Earth";
+            }
+
+            static calculateSunPosition(date, observerLat, observerLon) {
+                // Sun position as seen from Moon
+                // The Sun rises and sets on the Moon over ~29.5 Earth days
+                
+                const jd = this.getJulianDate(date);
+                
+                // Lunar day calculation (one lunar day = 29.53 Earth days)
+                const lunarDayCycle = (jd - 2451549.5) % 29.53058868;
+                const lunarDayProgress = lunarDayCycle / 29.53058868;
+                
+                // Sun's azimuth changes over the lunar day
+                const sunAzimuth = lunarDayProgress * 360;
+                
+                // Sun's elevation depends on latitude and time in lunar day
+                // Simplified: Sun rises in east, sets in west, takes ~14.75 days
+                let sunElevation;
+                if (lunarDayProgress < 0.5) {
+                    // Daytime
+                    sunElevation = Math.sin(lunarDayProgress * Math.PI) * (90 - Math.abs(observerLat));
+                } else {
+                    // Nighttime
+                    sunElevation = Math.sin((lunarDayProgress - 1) * Math.PI) * (90 - Math.abs(observerLat));
+                }
+                
+                return {
+                    azimuth: sunAzimuth,
+                    elevation: sunElevation,
+                    isVisible: sunElevation > 0,
+                    lunarDay: (lunarDayProgress * 100).toFixed(1) + '%'
+                };
+            }
+
+            static getJulianDate(date) {
+                const a = Math.floor((14 - (date.getMonth() + 1)) / 12);
+                const y = date.getFullYear() + 4800 - a;
+                const m = (date.getMonth() + 1) + 12 * a - 3;
+                
+                const jdn = date.getDate() + Math.floor((153 * m + 2) / 5) + 365 * y + 
+                           Math.floor(y / 4) - Math.floor(y / 100) + Math.floor(y / 400) - 32045;
+                
+                return jdn + (date.getHours() - 12) / 24 + date.getMinutes() / 1440 + 
+                      date.getSeconds() / 86400 + date.getMilliseconds() / 86400000;
+            }
+        }
+
+        // Initialize Cesium Moon viewer
+        async function initializeCesium() {
+            try {
+                Utils.updateLoadingStatus('Configuring Cesium for Moon...', 20);
+                
+                Utils.updateLoadingStatus('Creating Moon viewer...', 40);
+                const viewer = new Cesium.Viewer('cesiumContainer', {
+                    animation: false,
+                    baseLayerPicker: false,
+                    fullscreenButton: true,
+                    geocoder: false,
+                    homeButton: true,
+                    infoBox: true,
+                    sceneModePicker: true,
+                    selectionIndicator: true,
+                    timeline: false,
+                    navigationHelpButton: true,
+                    navigationInstructionsInitiallyVisible: false,
+                    scene3DOnly: false,
+                    imageryProvider: false,
+                    terrainProvider: undefined
+                });
+
+                window.DeepGISMoon.viewer = viewer;
+
+                Utils.updateLoadingStatus('Loading Moon imagery and terrain...', 60);
+                
+                // Set Moon as the central body
+                viewer.scene.globe.enableLighting = true;
+                
+                // Load Moon imagery from Cesium Ion (using the Moon asset)
+                try {
+                    // Cesium Ion Moon Imagery Asset ID: 31115
+                    const moonImagery = await Cesium.IonImageryProvider.fromAssetId(31115);
+                    viewer.imageryLayers.addImageryProvider(moonImagery);
+                } catch (error) {
+                    console.warn('Failed to load Moon imagery from Ion:', error);
+                    Utils.showSnackBar('Moon imagery not available', 'warning');
+                }
+
+                // Load Moon terrain from Cesium Ion
+                try {
+                    // Cesium Ion Moon Terrain Asset ID: 31116
+                    const moonTerrain = await Cesium.CesiumTerrainProvider.fromIonAssetId(31116);
+                    viewer.terrainProvider = moonTerrain;
+                } catch (error) {
+                    console.warn('Failed to load Moon terrain from Ion:', error);
+                    // Use ellipsoid (smooth sphere) as fallback
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
+                        ellipsoid: Cesium.Ellipsoid.MOON
+                    });
+                }
+
+                // Configure scene for Moon
+                viewer.scene.globe.ellipsoid = Cesium.Ellipsoid.MOON;
+                viewer.scene.fog.enabled = false; // No atmosphere on Moon
+                viewer.scene.skyBox = new Cesium.SkyBox({
+                    sources: {
+                        positiveX: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                        negativeX: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                        positiveY: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                        negativeY: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                        positiveZ: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+                        negativeZ: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+                    }
+                });
+
+                // Set initial view to Apollo 11 landing site
+                const apollo11 = CONFIG.APOLLO_SITES.apollo11;
+                viewer.camera.setView({
+                    destination: Cesium.Cartesian3.fromDegrees(apollo11.lon, apollo11.lat, 5000, Cesium.Ellipsoid.MOON),
+                    orientation: {
+                        heading: 0,
+                        pitch: Cesium.Math.toRadians(-45),
+                        roll: 0.0
+                    }
+                });
+
+                Utils.updateLoadingStatus('Adding Apollo landing sites...', 75);
+                addLandingSites(viewer);
+
+                Utils.updateLoadingStatus('Setting up event handlers...', 85);
+                setupEventHandlers(viewer);
+
+                Utils.updateLoadingStatus('Complete!', 100);
+                
+                setTimeout(() => {
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                    Utils.updateStatus('Ready - Moon Viewer Active');
+                    window.DeepGISMoon.isInitialized = true;
+                    Utils.showSnackBar('Moon viewer initialized successfully!', 'success');
+                }, 500);
+
+                startPerformanceMonitoring(viewer);
+
+                return viewer;
+
+            } catch (error) {
+                console.error('Error initializing Cesium Moon viewer:', error);
+                Utils.updateLoadingStatus('Error: ' + error.message, 0);
+                Utils.updateStatus('Error');
+                Utils.showSnackBar('Failed to initialize Moon viewer', 'error');
+            }
+        }
+
+        // Add Apollo landing site markers
+        function addLandingSites(viewer) {
+            Object.entries(CONFIG.APOLLO_SITES).forEach(([id, site]) => {
+                const entity = viewer.entities.add({
+                    id: id,
+                    name: site.name,
+                    description: site.description,
+                    position: Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 0, Cesium.Ellipsoid.MOON),
+                    billboard: {
+                        image: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTUiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzMzMzMzMyIgc3Ryb2tlLXdpZHRoPSIyIi8+PHRleHQgeD0iMjAiIHk9IjI1IiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiMzMzMzMzMiPvCflqA8L3RleHQ+PC9zdmc+',
+                        width: 40,
+                        height: 40,
+                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM
+                    },
+                    label: {
+                        text: site.name,
+                        font: '14px sans-serif',
+                        fillColor: Cesium.Color.WHITE,
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        verticalOrigin: Cesium.VerticalOrigin.TOP,
+                        pixelOffset: new Cesium.Cartesian2(0, 10)
+                    }
+                });
+                
+                window.DeepGISMoon.landingSiteEntities.push(entity);
+            });
+        }
+
+        // Event handler setup
+        function setupEventHandlers(viewer) {
+            // View mode handlers
+            const handlers = {
+                'view2D': () => viewer.scene.mode = Cesium.SceneMode.SCENE2D,
+                'view3D': () => viewer.scene.mode = Cesium.SceneMode.SCENE3D,
+                'viewColumbus': () => viewer.scene.mode = Cesium.SceneMode.COLUMBUS_VIEW,
+                'homeView': () => {
+                    const apollo11 = CONFIG.APOLLO_SITES.apollo11;
+                    viewer.camera.setView({
+                        destination: Cesium.Cartesian3.fromDegrees(apollo11.lon, apollo11.lat, 5000, Cesium.Ellipsoid.MOON),
+                        orientation: {
+                            heading: 0,
+                            pitch: Cesium.Math.toRadians(-45),
+                            roll: 0.0
+                        }
+                    });
+                }
+            };
+
+            // Register view handlers
+            Object.entries(handlers).forEach(([id, action]) => {
+                document.getElementById(id)?.addEventListener('click', 
+                    Utils.createButtonHandler(action, `${id} activated`));
+            });
+
+            // Apollo site navigation handlers
+            Object.entries(CONFIG.APOLLO_SITES).forEach(([id, site]) => {
+                document.getElementById(id)?.addEventListener('click', () => {
+                    viewer.camera.flyTo({
+                        destination: Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 2000, Cesium.Ellipsoid.MOON),
+                        orientation: {
+                            heading: 0,
+                            pitch: Cesium.Math.toRadians(-45),
+                            roll: 0.0
+                        },
+                        duration: 2
+                    });
+                    Utils.updateStatus(`Flying to ${site.name}`);
+                    Utils.showSnackBar(`Navigating to ${site.name}`, 'info');
+                });
+            });
+
+            // Measurement handlers
+            document.getElementById('measureDistance')?.addEventListener('click', () => {
+                startMeasurement('distance');
+            });
+
+            document.getElementById('measureArea')?.addEventListener('click', () => {
+                startMeasurement('area');
+            });
+
+            document.getElementById('measureHeight')?.addEventListener('click', () => {
+                startMeasurement('height');
+            });
+
+            document.getElementById('clearMeasurements')?.addEventListener('click', () => {
+                clearAllMeasurements();
+            });
+
+            // Toggle handlers
+            document.getElementById('landingSitesToggle')?.addEventListener('change', (e) => {
+                window.DeepGISMoon.landingSiteEntities.forEach(entity => {
+                    entity.show = e.target.checked;
+                });
+            });
+
+            // Sidebar toggle
+            document.getElementById('sidebarToggle')?.addEventListener('click', () => {
+                document.getElementById('wrapper').classList.toggle('show-sidebar');
+                setTimeout(() => {
+                    viewer.resize();
+                    // Adjust widget positions for mobile
+                    const isSidebarVisible = document.getElementById('wrapper').classList.contains('show-sidebar');
+                    if (window.innerWidth <= 768) {
+                        const widgets = [
+                            document.getElementById('compassWidget'),
+                            document.getElementById('attitudeIndicator'),
+                            document.getElementById('cameraPosePanel')
+                        ];
+                        widgets.forEach((widget, index) => {
+                            if (widget) {
+                                // First two are flex (compass and attitude), last is block (pose panel)
+                                const displayType = index < 2 ? 'flex' : 'block';
+                                widget.style.display = isSidebarVisible ? 'none' : displayType;
+                            }
+                        });
+                    }
+                }, 300);
+            });
+        }
+
+        // Measurement functions
+        function startMeasurement(type) {
+            window.DeepGISMoon.measurementMode = type;
+            window.DeepGISMoon.measurementPoints = [];
+            Utils.updateStatus(`Click on the Moon to measure ${type}`);
+            Utils.showSnackBar(`Click on the Moon surface to measure ${type}`, 'info');
+        }
+
+        function clearAllMeasurements() {
+            window.DeepGISMoon.measurements.forEach(measurement => {
+                if (measurement.entity) {
+                    window.DeepGISMoon.viewer.entities.remove(measurement.entity);
+                }
+            });
+            window.DeepGISMoon.measurements = [];
+            document.getElementById('measurementsList').innerHTML = '<small class="text-muted">No measurements yet</small>';
+            Utils.updateStatus('Measurements cleared');
+        }
+
+        // Performance monitoring
+        function startPerformanceMonitoring(viewer) {
+            let lastTime = performance.now();
+            let frameCount = 0;
+
+            function updateMetrics() {
+                frameCount++;
+                const currentTime = performance.now();
+                
+                if (currentTime - lastTime >= 1000) {
+                    const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
+                    document.getElementById('performanceIndicator').textContent = `FPS: ${fps}`;
+                    frameCount = 0;
+                    lastTime = currentTime;
+                }
+                
+                updateCameraInfo(viewer);
+                requestAnimationFrame(updateMetrics);
+            }
+            
+            requestAnimationFrame(updateMetrics);
+        }
+
+        function updateCameraInfo(viewer) {
+            const camera = viewer.camera;
+            const position = camera.positionCartographic;
+            
+            const longitude = Cesium.Math.toDegrees(position.longitude);
+            const latitude = Cesium.Math.toDegrees(position.latitude);
+            const altitude = position.height;
+            const heading = Cesium.Math.toDegrees(camera.heading);
+            const pitch = Cesium.Math.toDegrees(camera.pitch);
+            const roll = Cesium.Math.toDegrees(camera.roll);
+            
+            // Update sidebar info
+            const infoDiv = document.getElementById('cameraInfo');
+            if (infoDiv) {
+                infoDiv.innerHTML = `
+                    Lat: ${latitude.toFixed(4)}°<br>
+                    Lon: ${longitude.toFixed(4)}°<br>
+                    Alt: ${Utils.formatDistance(altitude)}
+                `;
+            }
+
+            // Update compass
+            updateCompass(heading);
+
+            // Update attitude indicator
+            updateAttitudeIndicator(pitch, roll);
+
+            // Update camera pose panel
+            updateCameraPosePanel(longitude, latitude, altitude, heading, pitch, roll);
+
+            // Update celestial body positions
+            updateCelestialBodies(latitude, longitude);
+        }
+
+        function updateCelestialBodies(latitude, longitude) {
+            const now = new Date();
+            
+            // Calculate Earth position as seen from Moon
+            const earthPos = LunarCelestialCalculator.calculateEarthPosition(now, latitude, longitude);
+            const earthInfoDiv = document.getElementById('earthInfo');
+            if (earthInfoDiv) {
+                if (earthPos.isVisible) {
+                    earthInfoDiv.innerHTML = `
+                        Az: ${earthPos.azimuth.toFixed(1)}°<br>
+                        El: ${earthPos.elevation.toFixed(1)}°<br>
+                        Phase: ${earthPos.phase}<br>
+                        <span style="color: var(--success-green);">★ Visible</span>
+                    `;
+                } else {
+                    earthInfoDiv.innerHTML = `
+                        <span style="color: var(--danger-red);">✕ Not Visible</span><br>
+                        <small>(Far side of Moon)</small>
+                    `;
+                }
+            }
+
+            // Calculate Sun position as seen from Moon
+            const sunPos = LunarCelestialCalculator.calculateSunPosition(now, latitude, longitude);
+            const sunInfoDiv = document.getElementById('sunInfo');
+            if (sunInfoDiv) {
+                sunInfoDiv.innerHTML = `
+                    Az: ${sunPos.azimuth.toFixed(1)}°<br>
+                    El: ${sunPos.elevation.toFixed(1)}°<br>
+                    Lunar Day: ${sunPos.lunarDay}<br>
+                    ${sunPos.isVisible ? 
+                        '<span style="color: var(--warning-orange);">☀ Day</span>' : 
+                        '<span style="color: var(--primary-blue);">☾ Night</span>'}
+                `;
+            }
+        }
+
+        function updateCompass(headingDegrees) {
+            // Normalize heading to 0-360
+            let normalizedHeading = headingDegrees;
+            while (normalizedHeading < 0) normalizedHeading += 360;
+            while (normalizedHeading >= 360) normalizedHeading -= 360;
+            
+            const needle = document.getElementById('compassNeedle');
+            const display = document.getElementById('compassHeadingDisplay');
+            
+            if (needle) {
+                needle.style.transform = `translate(-50%, 0) rotate(${normalizedHeading}deg)`;
+            }
+            
+            if (display) {
+                display.textContent = `${Math.round(normalizedHeading).toString().padStart(3, '0')}°T`;
+            }
+        }
+
+        function updateAttitudeIndicator(pitchDegrees, rollDegrees) {
+            const horizon = document.getElementById('attitudeHorizon');
+            const display = document.getElementById('attitudeDisplay');
+            
+            if (horizon) {
+                // Limit pitch to reasonable range for display
+                const pitchOffset = Math.max(-90, Math.min(90, pitchDegrees)) * 1.5;
+                
+                // Normalize roll
+                let normalizedRoll = rollDegrees;
+                while (normalizedRoll > 180) normalizedRoll -= 360;
+                while (normalizedRoll < -180) normalizedRoll += 360;
+                
+                horizon.style.transform = `translate(-50%, calc(-50% + ${-pitchOffset}px)) rotate(${-normalizedRoll}deg)`;
+            }
+            
+            if (display) {
+                const pitchDisplay = Math.round(pitchDegrees);
+                const rollDisplay = Math.round(rollDegrees);
+                display.textContent = `P:${pitchDisplay}° R:${rollDisplay}°`;
+            }
+        }
+
+        function updateCameraPosePanel(lon, lat, alt, heading, pitch, roll) {
+            // Update longitude
+            const lonElement = document.getElementById('poseLongitude');
+            if (lonElement) {
+                lonElement.textContent = lon.toFixed(3) + '°';
+            }
+
+            // Update latitude
+            const latElement = document.getElementById('poseLatitude');
+            if (latElement) {
+                latElement.textContent = lat.toFixed(3) + '°';
+            }
+
+            // Update altitude
+            const altElement = document.getElementById('poseAltitude');
+            if (altElement) {
+                if (alt < 1000) {
+                    altElement.textContent = alt.toFixed(0) + 'm';
+                } else {
+                    altElement.textContent = (alt / 1000).toFixed(2) + 'km';
+                }
+            }
+
+            // Update heading
+            const headingElement = document.getElementById('poseHeading');
+            if (headingElement) {
+                let normalizedHeading = heading;
+                while (normalizedHeading < 0) normalizedHeading += 360;
+                while (normalizedHeading >= 360) normalizedHeading -= 360;
+                headingElement.textContent = normalizedHeading.toFixed(1) + '°';
+            }
+
+            // Update pitch
+            const pitchElement = document.getElementById('posePitch');
+            if (pitchElement) {
+                pitchElement.textContent = pitch.toFixed(1) + '°';
+            }
+
+            // Update roll
+            const rollElement = document.getElementById('poseRoll');
+            if (rollElement) {
+                rollElement.textContent = roll.toFixed(1) + '°';
+            }
+        }
+
+        // Initialize when page loads
+        document.addEventListener('DOMContentLoaded', initializeCesium);
+    </script>
+</body>
+</html>
+

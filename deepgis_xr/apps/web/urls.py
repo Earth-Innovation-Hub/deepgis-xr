@@ -12,6 +12,7 @@ urlpatterns = [
     path('label/3d/topology/', views.label_topology_sigma, name='label_topology'),  # Now uses SIGMA (refactored)
     path('label/3d/topology/legacy/', views.label_topology, name='label_topology_legacy'),  # Original version
     path('label/3d/topology/sigma/', views.label_topology_sigma, name='label_topology_sigma'),  # Explicit SIGMA URL
+    path('label/3d/moon/', views.label_moon_viewer, name='label_moon_viewer'),  # Moon viewer
     path('stl-viewer/', views.stl_viewer, name='stl_viewer'),
     path('map-label/', views.map_label, name='map_label'),
     path('view-label/', views.view_label, name='view_label'),

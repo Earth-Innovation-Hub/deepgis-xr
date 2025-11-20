@@ -1130,6 +1130,52 @@ def label_topology_sigma(request):
     
     return render(request, 'web/label_topology_refactored.html', context)
 
+def label_moon_viewer(request):
+    """
+    Cesium Moon viewer with 3D visualization capabilities.
+    This viewer provides:
+        - Lunar surface visualization
+        - Moon terrain and imagery from Cesium Ion
+        - Interactive measurement tools
+        - Multiple view modes (2D/3D/Columbus)
+        - Real-time performance monitoring
+        - Responsive design with mobile support
+    """
+    context = {}
+    
+    # Add Moon viewer configuration information
+    viewer_info = {
+        'version': 'Moon Viewer',
+        'engine': 'Cesium.js',
+        'celestial_body': 'Moon',
+        'features': [
+            'Multiple view modes (2D/3D/Columbus)',
+            'Interactive measurement tools',
+            'Lunar terrain visualization',
+            'Moon surface imagery',
+            'Real-time performance monitoring',
+            'Responsive design with mobile support',
+            'Famous lunar landing sites'
+        ],
+        'data_sources': [
+            'Cesium Ion Moon imagery',
+            'Cesium Ion Moon terrain',
+            'Apollo landing site markers',
+            'Lunar feature annotations'
+        ],
+        'landing_sites': [
+            {'name': 'Apollo 11', 'lat': 0.67408, 'lon': 23.47297},
+            {'name': 'Apollo 12', 'lat': -3.01239, 'lon': -23.42157},
+            {'name': 'Apollo 14', 'lat': -3.64544, 'lon': -17.47139},
+            {'name': 'Apollo 15', 'lat': 26.13224, 'lon': 3.62981},
+            {'name': 'Apollo 16', 'lat': -8.97301, 'lon': 15.50019},
+            {'name': 'Apollo 17', 'lat': 20.19080, 'lon': 30.77168}
+        ]
+    }
+    context['viewer_info'] = viewer_info
+    
+    return render(request, 'web/label_moon_viewer.html', context)
+
 @csrf_exempt
 def elevation_proxy(request):
     """Proxy for elevation data APIs to avoid CORS issues."""
