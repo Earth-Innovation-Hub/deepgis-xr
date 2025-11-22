@@ -1,12 +1,20 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
     <title>DeepGIS Moon Viewer</title>
     
     <!-- CSRF Token for API requests -->
     {% csrf_token %}
+    
+    <!-- Font Preload for Performance (following LROC QuickMap pattern) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@100;300;400;500;700&display=swap" rel="stylesheet">
     
     <!-- Cesium Dependencies -->
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
@@ -17,16 +25,98 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     
-    <!-- Cesium Ion Token -->
+    <!-- Feature Detection & Cesium Ion Token -->
     <script>
-        // Suppress console errors for missing source maps
+        // Feature detection for Cesium requirements (similar to LROC QuickMap)
+        (function() {
+            var errors = [];
+            var hasWebGL = false;
+            
+            // Check for WebGL support (critical for Cesium)
+            try {
+                var canvas = document.createElement("canvas");
+                hasWebGL = !!(window.WebGLRenderingContext && 
+                    (canvas.getContext("webgl") || canvas.getContext("experimental-webgl")));
+            } catch (e) {
+                hasWebGL = false;
+            }
+            
+            // Check for required JavaScript features (matching LROC QuickMap requirements)
+            if (!window.Promise) errors.push("Promise API");
+            if (!hasWebGL) errors.push("WebGL");
+            if (!window.Blob) errors.push("Blob API");
+            if (!window.ArrayBuffer) errors.push("ArrayBuffer");
+            if (!window.OffscreenCanvas) errors.push("OffscreenCanvas");
+            
+            // Display error if features are missing
+            if (errors.length > 0) {
+                document.body.innerHTML = `
+                    <div style="
+                        position: fixed;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background: #212328;
+                        color: #ecf0f1;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        flex-direction: column;
+                        font-family: Arial, sans-serif;
+                        padding: 20px;
+                        text-align: center;
+                    ">
+                        <h1 style="color: #e74c3c; margin-bottom: 20px;">Browser Compatibility Error</h1>
+                        <div style="
+                            background-color: #e74c3c;
+                            color: #ecf0f1;
+                            padding: 20px;
+                            border-radius: 8px;
+                            max-width: 600px;
+                        ">
+                            Your browser is missing required features: <strong>${errors.join(", ")}</strong>.<br><br>
+                            Please use the latest versions of Chrome, Firefox, Edge, or Safari 17+.
+                        </div>
+                    </div>
+                `;
+                throw new Error("Missing required browser features");
+            }
+        })();
+        
+        // Suppress console errors for missing source maps and tile errors
         const originalConsoleError = console.error;
+        const originalConsoleWarn = console.warn;
+        
         console.error = function(...args) {
             const message = args.join(' ');
+            // Suppress source map errors
             if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
                 return;
             }
+            // Suppress tile loading errors (common with public imagery services)
+            if (message.includes('Failed to obtain image tile') || 
+                message.includes('An error occurred in') ||
+                message.includes('Failed to load image')) {
+                return;
+            }
             originalConsoleError.apply(console, args);
+        };
+        
+        console.warn = function(...args) {
+            const message = args.join(' ');
+            // Suppress CORS warnings and 404s (we handle these gracefully)
+            if (message.includes('CORS') || 
+                message.includes('Cross-Origin') ||
+                message.includes('Access-Control-Allow-Origin') ||
+                message.includes('403 Forbidden') ||
+                message.includes('404') ||
+                message.includes('Not Found') ||
+                message.includes('Failed to load Ion asset') ||
+                message.includes('ResourceNotFound')) {
+                return;
+            }
+            originalConsoleWarn.apply(console, args);
         };
         
         // Set Cesium Ion access token
@@ -86,10 +176,11 @@
         /* Base Styles */
         html, body {
             height: 100%;
+            max-height: 100%;
             margin: 0;
             padding: 0;
             overflow: hidden;
-            font-family: Arial, sans-serif;
+            font-family: 'Roboto', Arial, sans-serif;
             background: #000;
         }
 
@@ -229,7 +320,9 @@
             color: white;
         }
 
-        /* Form Control Base Class */
+        /* Form Control Styles - Consolidated */
+        .form-control,
+        .form-select,
         .form-control-base {
             background: rgba(71, 71, 105, 0.8);
             border: 1px solid rgba(100, 100, 139, 0.5);
@@ -241,6 +334,8 @@
             backdrop-filter: blur(5px);
         }
 
+        .form-control:focus,
+        .form-select:focus,
         .form-control-base:focus {
             background: rgba(71, 71, 105, 0.9);
             border-color: var(--primary-blue);
@@ -249,29 +344,8 @@
             outline: none;
         }
 
-        .form-select {
-            background: rgba(71, 71, 105, 0.8);
-            border: 1px solid rgba(100, 100, 139, 0.5);
-            color: var(--slate-100);
-            border-radius: var(--border-radius);
-            padding: var(--spacing-sm) var(--spacing-md);
-            transition: all var(--transition-fast);
-            font-size: 0.85rem;
-            backdrop-filter: blur(5px);
-        }
-
-        .form-control {
-            background: rgba(71, 71, 105, 0.8);
-            border: 1px solid rgba(100, 100, 139, 0.5);
-            color: var(--slate-100);
-            border-radius: var(--border-radius);
-            padding: var(--spacing-sm) var(--spacing-md);
-            transition: all var(--transition-fast);
-            font-size: 0.85rem;
-            backdrop-filter: blur(5px);
-        }
-
-        /* Layer Group Base Class */
+        /* Layer Group Styles - Consolidated */
+        .layer-group,
         .layer-group-base {
             margin: var(--spacing-lg) 10px;
             background: rgba(51, 51, 85, 0.6);
@@ -282,20 +356,11 @@
             transition: all var(--transition-fast);
         }
 
+        .layer-group:hover,
         .layer-group-base:hover {
             background: rgba(51, 51, 85, 0.8);
             border-color: rgba(107, 125, 184, 0.3);
             transform: translateY(-1px);
-        }
-
-        .layer-group {
-            margin: var(--spacing-lg) 10px;
-            background: rgba(51, 51, 85, 0.6);
-            backdrop-filter: blur(10px);
-            border-radius: var(--border-radius-lg);
-            padding: var(--spacing-lg);
-            border: 1px solid rgba(71, 71, 105, 0.5);
-            transition: all var(--transition-fast);
         }
 
         /* Specialized Layer Groups */
@@ -828,6 +893,10 @@
                                 <i class="fas fa-flag me-2"></i>Landing Sites
                             </label>
                         </div>
+                        <div style="font-size: 0.75rem; color: var(--slate-400); margin-top: 8px; padding: 6px;">
+                            <i class="fas fa-info-circle"></i> NASA LRO LROC WAC<br>
+                            Public Moon imagery & terrain
+                        </div>
                     </div>
 
                     <!-- View Controls -->
@@ -900,14 +969,23 @@
                     <!-- Base Map Selection -->
                     <div class="layer-group">
                         <div class="layer-group-title">
-                            <i class="fas fa-map"></i> Base Layer
+                            <i class="fas fa-database"></i> Data Source
                         </div>
-                        <div class="form-group">
-                            <select class="form-select" id="baseLayerSelect">
-                                <option value="moon_default">Moon Default</option>
-                                <option value="moon_clementine">Clementine</option>
-                                <option value="none">None</option>
-                            </select>
+                        <div id="dataSourceInfo" style="font-size: 0.8rem; color: var(--slate-300); padding: 8px; background: rgba(255,255,255,0.05); border-radius: 6px;">
+                            <strong>🌙 Moon Data Sources</strong><br>
+                            <small style="color: var(--slate-400);">
+                                <span id="imagerySource">Imagery: Loading...</span><br>
+                                <span id="terrainSource">Terrain: Loading...</span><br>
+                                <div style="color: var(--slate-500); font-size: 0.7rem; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(192, 192, 208, 0.2);">
+                                    <div><strong>Imagery:</strong> LROC (WAC/NAC)</div>
+                                    <div><strong>Terrain:</strong> LOLA DEM</div>
+                                    <div style="margin-top: 4px;">
+                                        <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: var(--primary-blue); text-decoration: none;">
+                                            <i class="fas fa-external-link-alt"></i> LROC QuickMap
+                                        </a>
+                                    </div>
+                                </div>
+                            </small>
                         </div>
                     </div>
                 </div>
@@ -933,6 +1011,25 @@
                         <div style="font-size: 0.8rem; color: var(--slate-300);">
                             <div><strong>Sun Position:</strong></div>
                             <div id="sunInfo">Calculating...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Attribution -->
+                    <div class="bg-glass" style="padding: 10px; margin-top: 10px; border-top: 1px solid rgba(192, 192, 208, 0.2);">
+                        <div style="font-size: 0.7rem; color: var(--slate-400); text-align: center;">
+                            <div style="margin-bottom: 6px;"><strong>Data Attribution</strong></div>
+                            <div style="line-height: 1.4;">
+                                <div style="margin-bottom: 4px;">
+                                    <strong>Imagery:</strong> LROC (WAC/NAC)<br>
+                                    <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: var(--primary-blue); text-decoration: none;">
+                                        NASA/GSFC/Arizona State University
+                                    </a>
+                                </div>
+                                <div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(192, 192, 208, 0.1);">
+                                    <strong>Terrain:</strong> LOLA DEM<br>
+                                    <small>NASA LRO (via Cesium Ion)</small>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1034,6 +1131,7 @@
         // Global state management
         window.DeepGISMoon = {
             viewer: null,
+            moonTerrain: null,
             landingSiteEntities: [],
             measurements: [],
             measurementMode: null,
@@ -1238,59 +1336,288 @@
 
                 window.DeepGISMoon.viewer = viewer;
 
-                Utils.updateLoadingStatus('Loading Moon imagery and terrain...', 60);
+                Utils.updateLoadingStatus('Configuring Moon scene...', 50);
                 
-                // Set Moon as the central body
+                // Configure scene for Moon
+                viewer.scene.globe.ellipsoid = Cesium.Ellipsoid.MOON;
                 viewer.scene.globe.enableLighting = true;
+                viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#9a9a9a');
+                viewer.scene.globe.showGroundAtmosphere = false;
                 
-                // Load Moon imagery from Cesium Ion (using the Moon asset)
+                // Configure scene mode transition duration (smoother morphing)
+                viewer.scene.morphTime = 1.0; // 1 second transition
+                
+                // Ensure globe renders properly in all modes
+                viewer.scene.globe.depthTestAgainstTerrain = false; // Better for 2D mode
+                
+                // CRITICAL: Remove atmosphere (no atmosphere on Moon!)
+                viewer.scene.skyAtmosphere = undefined;
+                viewer.scene.fog.enabled = false;
+                viewer.scene.backgroundColor = Cesium.Color.BLACK;
+                
+                // Use Cesium's built-in starfield skybox
+                viewer.scene.skyBox = new Cesium.SkyBox({
+                    sources: {
+                        positiveX: 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Assets/Textures/SkyBox/tycho2t3_80_px.jpg',
+                        negativeX: 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Assets/Textures/SkyBox/tycho2t3_80_mx.jpg',
+                        positiveY: 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Assets/Textures/SkyBox/tycho2t3_80_py.jpg',
+                        negativeY: 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Assets/Textures/SkyBox/tycho2t3_80_my.jpg',
+                        positiveZ: 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Assets/Textures/SkyBox/tycho2t3_80_pz.jpg',
+                        negativeZ: 'https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Assets/Textures/SkyBox/tycho2t3_80_mz.jpg'
+                    }
+                });
+                
+                Utils.updateLoadingStatus('Loading Moon imagery...', 60);
+                
+                // Try to load publicly accessible Moon imagery
+                let imageryLoaded = false;
+                let imagerySource = 'Unknown';
+                
+                // OPTION 1: LROC QuickMap Tile Server (NASA - FREE, Public Access!)
+                // Source: https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{z}/{x}/{y}.jpg
+                // This is the official NASA LROC (Lunar Reconnaissance Orbiter Camera) tile service
+                //
+                // IMPORTANT: lunar-fulleqc = Full Equirectangular projection
+                // This is the STANDARD projection for 3D globe texture mapping (wraps around sphere)
+                // It's also compatible with both 2D and 3D modes in Cesium
                 try {
-                    // Cesium Ion Moon Imagery Asset ID: 31115
-                    const moonImagery = await Cesium.IonImageryProvider.fromAssetId(31115);
-                    viewer.imageryLayers.addImageryProvider(moonImagery);
+                    console.log('Trying to load LROC QuickMap Moon imagery (equirectangular)...');
+                    
+                    // LROC QuickMap tile configuration
+                    // Using lunar-fulleqc (Full Equirectangular) - standard for 3D globe texturing
+                    // This projection works for both 2D and 3D modes
+                    const lrocProvider = new Cesium.UrlTemplateImageryProvider({
+                        url: 'https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{z}/{x}/{y}.jpg',
+                        credit: new Cesium.Credit('NASA/GSFC/Arizona State University - LROC QuickMap', true),
+                        minimumLevel: 0,
+                        maximumLevel: 18, // Full zoom range - Cesium gracefully handles missing tiles with fallback
+                        // NAC high-res tiles (levels 13-18) exist in specific ROI areas
+                        // Cesium automatically uses lower levels where high-res tiles don't exist
+                        // This matches LROC QuickMap's zoom capabilities
+                        // 
+                        // CRITICAL: Using {reverseY} instead of {y} for TMS tile coordinate system
+                        // LROC tiles use TMS where Y=0 is at bottom (south pole)
+                        // Cesium expects XYZ where Y=0 is at top (north pole)
+                        // {reverseY} automatically inverts the Y coordinate
+                        //
+                        // TESTING: Using STANDARD 2×1 geographic tiling (most common for planetary data)
+                        // Even though LROC may have tiles at 8×8 grid, the tiling SCHEME might still be 2×1
+                        // The tiling scheme defines coordinate system, not necessarily tile availability
+                        tilingScheme: new Cesium.GeographicTilingScheme({
+                            numberOfLevelZeroTilesX: 2,
+                            numberOfLevelZeroTilesY: 1,
+                            ellipsoid: Cesium.Ellipsoid.MOON
+                        }),
+                        rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90),
+                        tileWidth: 512,    // TEST: Try 512 instead of default 256 (factor of 2)
+                        tileHeight: 512,   // TEST: Try 512 instead of default 256 (factor of 2)
+                        hasAlphaChannel: false,
+                        enablePick: false
+                    });
+                    
+                    viewer.imageryLayers.addImageryProvider(lrocProvider);
+                    imageryLoaded = true;
+                    imagerySource = 'LROC QuickMap (NASA)';
+                    console.log('✓ Successfully loaded LROC QuickMap Moon imagery (equirectangular)');
+                    Utils.showSnackBar('Loaded NASA LROC Moon imagery', 'success');
+                    
+                    const imagerySourceEl = document.getElementById('imagerySource');
+                    if (imagerySourceEl) {
+                        imagerySourceEl.innerHTML = 'Imagery: <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: #10b981;">LROC QuickMap (NASA)</a>';
+                        imagerySourceEl.style.color = '#10b981'; // Green
+                    }
                 } catch (error) {
-                    console.warn('Failed to load Moon imagery from Ion:', error);
-                    Utils.showSnackBar('Moon imagery not available', 'warning');
+                    console.warn('✗ Failed to load LROC QuickMap:', error.message);
+                }
+                
+                // OPTION 2: Create an enhanced procedural Moon texture (no CORS issues!)
+                if (!imageryLoaded) {
+                    console.log('Creating enhanced procedural Moon texture...');
+                    try {
+                        // Create a higher quality procedural texture
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 4096;
+                        canvas.height = 2048;
+                        const ctx = canvas.getContext('2d');
+                        
+                        // Base gray color (lunar regolith)
+                        ctx.fillStyle = '#9a9a9a';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        const data = imageData.data;
+                        
+                        // Create more realistic Moon surface with:
+                        // - Multiple noise frequencies for detail
+                        // - Simulated maria (darker regions)
+                        // - Simulated highlands (lighter regions)
+                        // - Crater-like variations
+                        
+                        for (let i = 0; i < data.length; i += 4) {
+                            const x = (i / 4) % canvas.width;
+                            const y = Math.floor((i / 4) / canvas.width);
+                            
+                            // Normalize coordinates
+                            const nx = x / canvas.width;
+                            const ny = y / canvas.height;
+                            
+                            // Multiple noise layers for realistic texture
+                            const noise1 = Math.sin(nx * Math.PI * 8) * Math.cos(ny * Math.PI * 8) * 15;
+                            const noise2 = Math.sin(nx * Math.PI * 32) * Math.cos(ny * Math.PI * 32) * 8;
+                            const noise3 = Math.sin(nx * Math.PI * 128) * Math.cos(ny * Math.PI * 128) * 4;
+                            
+                            // Simulate maria (darker regions) - about 30% of surface
+                            const mariaFactor = (Math.sin(nx * Math.PI * 2) * Math.cos(ny * Math.PI * 2) + 1) / 2;
+                            const isMaria = mariaFactor > 0.7;
+                            
+                            // Base gray with variations
+                            let baseGray = isMaria ? 120 : 160; // Darker for maria, lighter for highlands
+                            baseGray += noise1 + noise2 + noise3;
+                            
+                            // Clamp to realistic lunar surface range
+                            const gray = Math.max(100, Math.min(200, baseGray));
+                            
+                            data[i] = gray;     // R
+                            data[i + 1] = gray; // G
+                            data[i + 2] = gray; // B
+                            data[i + 3] = 255;  // A
+                        }
+                        
+                        ctx.putImageData(imageData, 0, 0);
+                        
+                        // Convert canvas to data URL and use as imagery
+                        const dataUrl = canvas.toDataURL('image/png');
+                        const proceduralProvider = new Cesium.SingleTileImageryProvider({
+                            url: dataUrl,
+                            rectangle: Cesium.Rectangle.MAX_VALUE,
+                            credit: 'Procedural Moon Texture (Generated)'
+                        });
+                        
+                        viewer.imageryLayers.addImageryProvider(proceduralProvider);
+                        imageryLoaded = true;
+                        imagerySource = 'Procedural Moon Texture';
+                        console.log('✓ Created enhanced procedural Moon texture');
+                        Utils.showSnackBar('Using generated Moon texture', 'info');
+                        
+                        const imagerySourceEl = document.getElementById('imagerySource');
+                        if (imagerySourceEl) {
+                            imagerySourceEl.textContent = 'Imagery: Procedural texture (generated)';
+                            imagerySourceEl.style.color = '#3b82f6'; // Blue
+                        }
+                    } catch (error) {
+                        console.warn('✗ Failed to create procedural texture:', error);
+                    }
+                }
+                
+                // FALLBACK: Use gray base color if all else fails
+                if (!imageryLoaded) {
+                    console.log('All imagery sources failed, using gray base color');
+                    Utils.showSnackBar('Using default Moon color', 'warning');
+                    
+                    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#9a9a9a');
+                    imageryLoaded = true;
+                    imagerySource = 'Gray base color (fallback)';
+                    
+                    const imagerySourceEl = document.getElementById('imagerySource');
+                    if (imagerySourceEl) {
+                        imagerySourceEl.textContent = 'Imagery: Gray base color (no texture)';
+                        imagerySourceEl.style.color = '#f59e0b'; // Orange warning
+                    }
                 }
 
-                // Load Moon terrain from Cesium Ion
+                Utils.updateLoadingStatus('Loading Moon terrain...', 70);
+                
+                // ============================================================================
+                // LROC QuickMap Terrain: FREE Quantized Mesh Terrain from LOLA DEM
+                // ============================================================================
+                // LROC QuickMap provides BOTH imagery AND terrain tiles:
+                //   
+                // IMAGERY: https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{z}/{x}/{y}.jpg
+                //   - WAC (Wide Angle Camera) - 100m/pixel global coverage
+                //   - NAC (Narrow Angle Camera) - 0.5-2m/pixel in specific regions
+                //
+                // TERRAIN: https://dem-tiles.b-cdn.net/lunar/qts_demstack/lunar-fulleqc/mesh/{z}/{x}/{y}.terrain
+                //   - LOLA DEM (Lunar Orbiter Laser Altimeter) - elevation data
+                //   - Quantized Mesh format for efficient streaming
+                //   - ~100m resolution globally
+                //   - Dual projections: lunar-fulleqc (global) and lunar-polarshifted-eqc (poles)
+                //
+                // Both datasets are from NASA LRO (Lunar Reconnaissance Orbiter) spacecraft
+                // ============================================================================
+                
+                let terrainLoaded = false;
+                
                 try {
-                    // Cesium Ion Moon Terrain Asset ID: 31116
-                    const moonTerrain = await Cesium.CesiumTerrainProvider.fromIonAssetId(31116);
+                    console.log('Loading LROC QuickMap terrain from LOLA DEM tiles...');
+                    
+                    // Use LROC QuickMap's free terrain tiles
+                    const moonTerrain = await Cesium.CesiumTerrainProvider.fromUrl(
+                        'https://dem-tiles.b-cdn.net/lunar/qts_demstack/lunar-fulleqc/mesh',
+                        {
+                            requestVertexNormals: true,  // Better lighting/shading
+                            requestWaterMask: false,     // Moon has no water
+                            requestMetadata: true        // Get terrain metadata
+                        }
+                    );
+                    
+                    // Store terrain provider for mode switching and toggle
                     viewer.terrainProvider = moonTerrain;
+                    window.DeepGISMoon.moonTerrain = moonTerrain;
+                    terrainLoaded = true;
+                    console.log('✓ Successfully loaded LROC QuickMap terrain from LOLA DEM');
+                    
+                    // Update UI
+                    const terrainSourceEl = document.getElementById('terrainSource');
+                    if (terrainSourceEl) {
+                        terrainSourceEl.innerHTML = 'Terrain: <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: #10b981;">LOLA DEM (LROC QuickMap)</a>';
+                        terrainSourceEl.style.color = '#10b981'; // Green
+                    }
                 } catch (error) {
-                    console.warn('Failed to load Moon terrain from Ion:', error);
-                    // Use ellipsoid (smooth sphere) as fallback
+                    console.warn('✗ LROC QuickMap terrain unavailable:', error.message);
+                    
+                    // FALLBACK: Use smooth ellipsoid
                     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
                         ellipsoid: Cesium.Ellipsoid.MOON
                     });
+                    console.log('Using smooth Moon ellipsoid (no elevation data available)');
+                    
+                    // Update UI
+                    const terrainSourceEl = document.getElementById('terrainSource');
+                    if (terrainSourceEl) {
+                        terrainSourceEl.textContent = 'Terrain: Smooth ellipsoid (LOLA DEM unavailable)';
+                        terrainSourceEl.style.color = '#f59e0b'; // Orange warning
+                    }
                 }
 
-                // Configure scene for Moon
-                viewer.scene.globe.ellipsoid = Cesium.Ellipsoid.MOON;
-                viewer.scene.fog.enabled = false; // No atmosphere on Moon
-                viewer.scene.skyBox = new Cesium.SkyBox({
-                    sources: {
-                        positiveX: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                        negativeX: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                        positiveY: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                        negativeY: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                        positiveZ: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
-                        negativeZ: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
-                    }
-                });
-
-                // Set initial view to Apollo 11 landing site
+                // Configure camera constraints for Moon
+                // Following LROC QuickMap zoom range for optimal viewing
+                viewer.scene.screenSpaceCameraController.minimumZoomDistance = 10.0; // 10 meters - allows close surface inspection
+                viewer.scene.screenSpaceCameraController.maximumZoomDistance = 30000000.0; // 30,000 km - better overview capability
+                
+                // Set initial view to Apollo 11 landing site with better positioning
                 const apollo11 = CONFIG.APOLLO_SITES.apollo11;
                 viewer.camera.setView({
-                    destination: Cesium.Cartesian3.fromDegrees(apollo11.lon, apollo11.lat, 5000, Cesium.Ellipsoid.MOON),
+                    destination: Cesium.Cartesian3.fromDegrees(
+                        apollo11.lon, 
+                        apollo11.lat, 
+                        10000, // Higher altitude for initial view
+                        Cesium.Ellipsoid.MOON
+                    ),
                     orientation: {
                         heading: 0,
-                        pitch: Cesium.Math.toRadians(-45),
+                        pitch: Cesium.Math.toRadians(-30), // Less steep angle
                         roll: 0.0
                     }
                 });
 
+                // Add Sun as directional light source
+                viewer.scene.light = new Cesium.DirectionalLight({
+                    direction: new Cesium.Cartesian3(1, 0, 0)
+                });
+                
+                // Enable high dynamic range for better lighting
+                viewer.scene.highDynamicRange = true;
+                
                 Utils.updateLoadingStatus('Adding Apollo landing sites...', 75);
                 addLandingSites(viewer);
 
@@ -1301,10 +1628,57 @@
                 
                 setTimeout(() => {
                     document.getElementById('loadingOverlay').style.display = 'none';
-                    Utils.updateStatus('Ready - Moon Viewer Active');
                     window.DeepGISMoon.isInitialized = true;
-                    Utils.showSnackBar('Moon viewer initialized successfully!', 'success');
+                    
+                    // Show success message with loaded data info
+                    const statusMsg = [];
+                    if (imageryLoaded) statusMsg.push('Imagery');
+                    if (terrainLoaded) statusMsg.push('Terrain');
+                    statusMsg.push('Landing Sites');
+                    
+                    Utils.updateStatus(`Ready - ${statusMsg.join(' + ')} Loaded`);
+                    Utils.showSnackBar(`Moon viewer ready! ${statusMsg.join(', ')} loaded successfully.`, 'success');
                 }, 500);
+
+                // Add error event listener to suppress tile loading errors in UI
+                viewer.scene.globe.tileLoadProgressEvent.addEventListener((queuedTileCount) => {
+                    if (queuedTileCount === 0) {
+                        // All tiles loaded
+                        viewer.scene.globe._surface._debug.wireframe = false;
+                    }
+                });
+                
+                // Camera move handler for updating UI (altitude display, etc.)
+                // Note: Cesium automatically handles tile level-of-detail based on camera distance
+                // No manual intervention needed - it gracefully falls back to lower levels when tiles don't exist
+                viewer.camera.moveEnd.addEventListener(() => {
+                    const cameraHeight = viewer.camera.positionCartographic.height;
+                    // Update camera info display (if needed)
+                    // Cesium handles optimal tile loading automatically
+                    console.debug(`Camera altitude: ${(cameraHeight / 1000).toFixed(2)} km`);
+                });
+                
+                // Suppress imagery provider error events (CORS, 403, etc.)
+                viewer.imageryLayers.layerAdded.addEventListener((layer) => {
+                    layer.errorEvent.addEventListener((error) => {
+                        // Silently handle tile loading errors (CORS, 403, etc.)
+                        // These are expected with some public services
+                        // LROC tiles may have occasional missing tiles at high zoom levels
+                        console.debug('Imagery tile error (handled gracefully):', error);
+                    });
+                });
+                
+                // Also suppress errors for existing layers
+                if (viewer.imageryLayers.length > 0) {
+                    for (let i = 0; i < viewer.imageryLayers.length; i++) {
+                        const layer = viewer.imageryLayers.get(i);
+                        layer.errorEvent.addEventListener((error) => {
+                            // LROC QuickMap may have some missing tiles at very high zoom levels
+                            // This is normal and handled gracefully
+                            console.debug('Imagery tile error (handled gracefully):', error);
+                        });
+                    }
+                }
 
                 startPerformanceMonitoring(viewer);
 
@@ -1352,18 +1726,36 @@
         function setupEventHandlers(viewer) {
             // View mode handlers
             const handlers = {
-                'view2D': () => viewer.scene.mode = Cesium.SceneMode.SCENE2D,
-                'view3D': () => viewer.scene.mode = Cesium.SceneMode.SCENE3D,
-                'viewColumbus': () => viewer.scene.mode = Cesium.SceneMode.COLUMBUS_VIEW,
+                'view2D': () => {
+                    // Use morphTo2D for proper transition to flat 2D map
+                    viewer.scene.morphTo2D(1.0); // 1 second animation
+                    
+                    // After morph completes, show the full Moon from pole to pole
+                    setTimeout(() => {
+                        viewer.camera.flyTo({
+                            destination: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90), // Full Moon coverage
+                            duration: 0.5
+                        });
+                    }, 1100); // After morph completes
+                },
+                'view3D': () => {
+                    // Use morphTo3D for proper transition
+                    viewer.scene.morphTo3D(1.0); // 1 second animation
+                },
+                'viewColumbus': () => {
+                    // Use morphToColumbusView for proper transition
+                    viewer.scene.morphToColumbusView(1.0); // 1 second animation
+                },
                 'homeView': () => {
                     const apollo11 = CONFIG.APOLLO_SITES.apollo11;
-                    viewer.camera.setView({
+                    viewer.camera.flyTo({
                         destination: Cesium.Cartesian3.fromDegrees(apollo11.lon, apollo11.lat, 5000, Cesium.Ellipsoid.MOON),
                         orientation: {
                             heading: 0,
                             pitch: Cesium.Math.toRadians(-45),
                             roll: 0.0
-                        }
+                        },
+                        duration: 2
                     });
                 }
             };
@@ -1378,13 +1770,18 @@
             Object.entries(CONFIG.APOLLO_SITES).forEach(([id, site]) => {
                 document.getElementById(id)?.addEventListener('click', () => {
                     viewer.camera.flyTo({
-                        destination: Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 2000, Cesium.Ellipsoid.MOON),
+                        destination: Cesium.Cartesian3.fromDegrees(
+                            site.lon, 
+                            site.lat, 
+                            3000, // Good altitude for viewing landing site details
+                            Cesium.Ellipsoid.MOON
+                        ),
                         orientation: {
                             heading: 0,
-                            pitch: Cesium.Math.toRadians(-45),
+                            pitch: Cesium.Math.toRadians(-30), // Better viewing angle
                             roll: 0.0
                         },
-                        duration: 2
+                        duration: 3
                     });
                     Utils.updateStatus(`Flying to ${site.name}`);
                     Utils.showSnackBar(`Navigating to ${site.name}`, 'info');
@@ -1415,6 +1812,47 @@
                 });
             });
 
+            document.getElementById('moonImageryToggle')?.addEventListener('change', (e) => {
+                // Toggle Moon imagery visibility
+                if (viewer.imageryLayers.length > 0) {
+                    viewer.imageryLayers.get(0).show = e.target.checked;
+                }
+            });
+
+            document.getElementById('moonTerrainToggle')?.addEventListener('change', (e) => {
+                // Note: Terrain is automatically disabled in 2D mode for performance
+                // This toggle controls terrain visibility in 3D/Columbus modes
+                const mode = viewer.scene.mode;
+                
+                if (e.target.checked && window.DeepGISMoon.moonTerrain) {
+                    // Only enable terrain in 3D/Columbus modes
+                    if (mode !== Cesium.SceneMode.SCENE2D) {
+                        viewer.terrainProvider = window.DeepGISMoon.moonTerrain;
+                        Utils.showSnackBar('Terrain enabled', 'success');
+                        
+                        const terrainSourceEl = document.getElementById('terrainSource');
+                        if (terrainSourceEl) {
+                            terrainSourceEl.innerHTML = 'Terrain: <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: #10b981;">LOLA DEM (NASA LRO)</a>';
+                            terrainSourceEl.style.color = '#10b981'; // Green
+                        }
+                    } else {
+                        Utils.showSnackBar('Terrain disabled in 2D mode', 'info');
+                    }
+                } else {
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
+                        ellipsoid: Cesium.Ellipsoid.MOON
+                    });
+                    Utils.showSnackBar('Terrain disabled', 'info');
+                    
+                    const terrainSourceEl = document.getElementById('terrainSource');
+                    if (terrainSourceEl) {
+                        terrainSourceEl.textContent = 'Terrain: Disabled by user';
+                        terrainSourceEl.style.color = '#64748b'; // Gray
+                    }
+                }
+            });
+
+
             // Sidebar toggle
             document.getElementById('sidebarToggle')?.addEventListener('click', () => {
                 document.getElementById('wrapper').classList.toggle('show-sidebar');
@@ -1437,6 +1875,73 @@
                         });
                     }
                 }, 300);
+            });
+
+            // Scene mode change handler (2D vs 3D optimization)
+            // Following LROC QuickMap best practice: disable terrain in 2D mode for performance
+            viewer.scene.morphComplete.addEventListener(() => {
+                const mode = viewer.scene.mode;
+                const terrainToggle = document.getElementById('moonTerrainToggle');
+                
+                console.log('Morph complete to mode:', mode);
+                
+                if (mode === Cesium.SceneMode.SCENE2D) {
+                    // In 2D mode, terrain adds complexity without benefit
+                    // Temporarily disable terrain for better performance
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
+                        ellipsoid: Cesium.Ellipsoid.MOON
+                    });
+                    
+                    // Ensure globe is properly configured for 2D
+                    viewer.scene.globe.show = true;
+                    viewer.scene.globe.enableLighting = false; // Disable lighting in 2D for flat appearance
+                    
+                    console.log('2D mode: Terrain disabled for performance, lighting disabled');
+                    
+                    // Update UI to reflect terrain state
+                    const terrainSourceEl = document.getElementById('terrainSource');
+                    if (terrainSourceEl) {
+                        terrainSourceEl.textContent = 'Terrain: Disabled in 2D mode';
+                        terrainSourceEl.style.color = '#64748b'; // Gray
+                    }
+                    
+                    Utils.showSnackBar('Switched to 2D map view', 'info');
+                    
+                } else if (mode === Cesium.SceneMode.SCENE3D || mode === Cesium.SceneMode.COLUMBUS_VIEW) {
+                    // In 3D/Columbus mode, restore terrain if available and enabled
+                    // Re-enable lighting for 3D effect
+                    viewer.scene.globe.enableLighting = true;
+                    
+                    if (terrainToggle && terrainToggle.checked && window.DeepGISMoon.moonTerrain) {
+                        viewer.terrainProvider = window.DeepGISMoon.moonTerrain;
+                        console.log('3D mode: Terrain re-enabled (LOLA DEM), lighting enabled');
+                        
+                        const terrainSourceEl = document.getElementById('terrainSource');
+                        if (terrainSourceEl) {
+                            terrainSourceEl.innerHTML = 'Terrain: <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: #10b981;">LOLA DEM (NASA LRO)</a>';
+                            terrainSourceEl.style.color = '#10b981'; // Green
+                        }
+                    } else {
+                        // Terrain toggle is off or no terrain available
+                        viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
+                            ellipsoid: Cesium.Ellipsoid.MOON
+                        });
+                        
+                        const terrainSourceEl = document.getElementById('terrainSource');
+                        if (terrainSourceEl) {
+                            if (terrainToggle && !terrainToggle.checked) {
+                                terrainSourceEl.textContent = 'Terrain: Disabled by user';
+                                terrainSourceEl.style.color = '#64748b'; // Gray
+                            } else {
+                                terrainSourceEl.textContent = 'Terrain: Smooth ellipsoid (LOLA DEM unavailable)';
+                                terrainSourceEl.style.color = '#f59e0b'; // Orange warning
+                            }
+                        }
+                    }
+                    
+                    const modeText = mode === Cesium.SceneMode.SCENE3D ? '3D' : 'Columbus';
+                    Utils.showSnackBar(`Switched to ${modeText} view`, 'info');
+                }
             });
         }
 

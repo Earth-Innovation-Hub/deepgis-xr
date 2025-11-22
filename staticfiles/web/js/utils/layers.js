@@ -58,6 +58,11 @@ export const LayerUtils = {
           // Test URL validity by replacing template variables with dummy values
           const testUrl = url.replace('{z}', '0').replace('{x}', '0').replace('{y}', '0');
           new URL(testUrl);
+          // Check for double protocol issue (e.g., "https://http://" or "https://https://")
+          if (testUrl.includes('://http://') || testUrl.includes('://https://')) {
+            console.warn(`[LayerUtils] Skipping URL with double protocol: ${url}`);
+            return false;
+          }
           return true;
         } catch {
           console.warn(`[LayerUtils] Skipping malformed tile URL: ${url}`);

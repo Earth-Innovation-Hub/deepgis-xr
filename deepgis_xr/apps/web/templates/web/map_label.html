@@ -1444,8 +1444,22 @@
                                         throw new Error('No valid tile URLs in metadata');
                                     }
 
-                                    // Use the first valid HTTPS URL from metadata, or construct one
-                                    let tileUrl = metadata.tiles.find(url => url.startsWith('https://mbtiles.deepgis.org'));
+                                    // Filter out malformed URLs (double protocols)
+                                    const validUrls = metadata.tiles.filter(url => {
+                                        try {
+                                            // Test URL by replacing template variables
+                                            const testUrl = url.replace('{z}', '0').replace('{x}', '0').replace('{y}', '0');
+                                            new URL(testUrl); // Will throw if malformed
+                                            // Check for double protocol issue
+                                            return !testUrl.includes('://http://') && !testUrl.includes('://https://');
+                                        } catch (e) {
+                                            console.warn('Filtered out malformed tile URL:', url);
+                                            return false;
+                                        }
+                                    });
+                                    
+                                    // Use the first valid HTTPS URL from mbtiles.deepgis.org
+                                    let tileUrl = validUrls.find(url => url.startsWith('https://mbtiles.deepgis.org'));
                                     if (!tileUrl) {
                                         // Construct a URL using the standard format
                                         tileUrl = `https://mbtiles.deepgis.org/data/${mbtilesId}/{z}/{x}/{y}.pbf`;
@@ -1536,8 +1550,22 @@
                                         throw new Error('No valid tile URLs in metadata');
                                     }
 
-                                    // Use the first valid HTTPS URL from metadata, or construct one
-                                    let tileUrl = metadata.tiles.find(url => url.startsWith('https://mbtiles.deepgis.org'));
+                                    // Filter out malformed URLs (double protocols)
+                                    const validUrls = metadata.tiles.filter(url => {
+                                        try {
+                                            // Test URL by replacing template variables
+                                            const testUrl = url.replace('{z}', '0').replace('{x}', '0').replace('{y}', '0');
+                                            new URL(testUrl); // Will throw if malformed
+                                            // Check for double protocol issue
+                                            return !testUrl.includes('://http://') && !testUrl.includes('://https://');
+                                        } catch (e) {
+                                            console.warn('Filtered out malformed tile URL:', url);
+                                            return false;
+                                        }
+                                    });
+                                    
+                                    // Use the first valid HTTPS URL from mbtiles.deepgis.org
+                                    let tileUrl = validUrls.find(url => url.startsWith('https://mbtiles.deepgis.org'));
                                     if (!tileUrl) {
                                         // Construct a URL using the standard format
                                         tileUrl = `https://mbtiles.deepgis.org/data/${mbtilesId}/{z}/{x}/{y}.png`;
