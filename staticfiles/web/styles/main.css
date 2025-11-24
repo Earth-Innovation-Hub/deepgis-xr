@@ -612,6 +612,9 @@
         }
 
         /* Camera pose information */
+        /* Camera Info Panel - Base styles for topology viewer
+         * NOTE: Moon viewer (label_moon_viewer.html) uses same positioning
+         * but with lighter colors for better visibility on lunar gray surface */
         .camera-info {
             position: absolute;
             top: 90px;

@@ -400,5 +400,60 @@
     <!-- Application JavaScript (built by Vite) -->
     {% load static %}
     <script type="module" src="{% static 'web/js/main.js' %}"></script>
+    
+    <!-- GPS Telemetry Path Loader -->
+    <script src="{% static 'web/js/gps-telemetry.js' %}"></script>
+    <script>
+        // Initialize GPS Telemetry Loader when viewer is ready (only once)
+        (function() {
+            let initialized = false; // Prevent duplicate initialization
+            
+            function initGPSTelemetry() {
+                // Prevent multiple initializations
+                if (initialized || window.gpsTelemetryLoader) {
+                    return;
+                }
+                
+                // Try to get viewer from various possible locations
+                let viewer = null;
+                if (window.viewer) {
+                    viewer = window.viewer;
+                } else if (window.DeepGISTopology && window.DeepGISTopology.viewer) {
+                    viewer = window.DeepGISTopology.viewer;
+                } else if (window.Cesium && document.getElementById('cesiumContainer')) {
+                    // Viewer might be initialized later, wait a bit more
+                    setTimeout(initGPSTelemetry, 1000);
+                    return;
+                }
+                
+                if (viewer && window.GPSTelemetryLoader) {
+                    window.gpsTelemetryLoader = new window.GPSTelemetryLoader(viewer);
+                    initialized = true;
+                    console.log('GPS Telemetry Loader initialized');
+                } else if (window.Cesium) {
+                    // Keep trying for up to 10 seconds
+                    let attempts = 0;
+                    const maxAttempts = 20;
+                    const checkInterval = setInterval(() => {
+                        attempts++;
+                        if (window.viewer || (window.DeepGISTopology && window.DeepGISTopology.viewer)) {
+                            clearInterval(checkInterval);
+                            initGPSTelemetry();
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(checkInterval);
+                            console.warn('GPS Telemetry Loader: Could not find Cesium viewer after 10 seconds');
+                        }
+                    }, 500);
+                }
+            }
+            
+            // Try to initialize when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initGPSTelemetry);
+            } else {
+                initGPSTelemetry();
+            }
+        })();
+    </script>
 </body>
 </html> 

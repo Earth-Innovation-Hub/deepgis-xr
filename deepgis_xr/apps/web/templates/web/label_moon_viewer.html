@@ -636,19 +636,32 @@
             border: 1px solid var(--moon-silver);
         }
 
-        /* Attitude Indicator */
-        .attitude-indicator {
+        /* Navigation Widget Group - Grouped heading dial + attitude indicator */
+        .navigation-widget-group {
             position: absolute;
-            top: 310px;
+            top: 90px;
             right: 350px;
             width: 120px;
-            height: 120px;
-            background: radial-gradient(circle, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.95) 100%);
+            z-index: 1000;
+            transition: right 0.3s ease;
+        }
+
+        /* Heading Dial within group */
+        .heading-dial {
+            position: relative;
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 35px auto;
+        }
+
+        /* Attitude Indicator within group */
+        .attitude-indicator {
+            position: relative;
+            width: 90px;
+            height: 90px;
+            margin: 0 auto 15px auto;
             border-radius: 50%;
-            border: 3px solid var(--primary-blue);
             overflow: hidden;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-            transition: right var(--transition-normal);
         }
 
         .attitude-horizon {
@@ -679,7 +692,7 @@
             background: linear-gradient(0deg, #422006 0%, #78350f 100%);
         }
 
-        .attitude-line {
+        .attitude-horizon-line {
             position: absolute;
             top: 50%;
             left: 0;
@@ -687,6 +700,20 @@
             height: 2px;
             background: white;
             box-shadow: 0 0 8px rgba(255, 255, 255, 0.6);
+            z-index: 5;
+        }
+
+        .attitude-center-dot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 4px;
+            height: 4px;
+            background: #f59e0b;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 12;
+            box-shadow: 0 0 6px rgba(245, 158, 11, 0.8);
         }
 
         .attitude-aircraft {
@@ -779,38 +806,196 @@
             font-family: 'Courier New', monospace;
         }
 
+        /* Camera Info Panel - Moon-specific styling (based on main.css patterns) */
+        .camera-info {
+            /* Position in top-left area */
+            position: absolute;
+            top: 90px;
+            left: 10px;
+            
+            /* Lighter styling for better visibility on Moon's gray surface */
+            background: rgba(30, 40, 60, 0.92);
+            border: 2px solid rgba(96, 165, 250, 0.6);
+            border-radius: 8px;
+            padding: 12px;
+            min-width: 200px;
+            max-width: 220px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.75rem;
+            color: white;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(59, 130, 246, 0.3);
+            backdrop-filter: blur(10px);
+            transition: right 0.3s ease;
+            z-index: 1000;
+        }
+
+        .camera-info-title {
+            color: #60a5fa;  /* Brighter blue for Moon visibility */
+            border-bottom: 1px solid #60a5fa;
+            font-weight: bold;
+            margin-bottom: 8px;
+            padding-bottom: 4px;
+            text-transform: uppercase;
+            font-size: 11px;
+            letter-spacing: 0.5px;
+        }
+
+        .camera-info-label {
+            color: #cbd5e1;  /* Light gray for labels */
+            font-size: 11px;
+        }
+
+        .camera-info-value {
+            color: #e0e7ff;  /* Very light for values */
+            font-weight: bold;
+            font-size: 11px;
+        }
+
+        /* Compass/Heading dial labels */
+        .compass-label {
+            position: absolute;
+            font-weight: bold;
+            font-size: 14px;
+            color: #e0e7ff;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+        }
+
+        .compass-label-n {
+            top: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .compass-label-e {
+            top: 50%;
+            right: 8px;
+            transform: translateY(-50%);
+        }
+
+        .compass-label-s {
+            bottom: 8px;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .compass-label-w {
+            top: 50%;
+            left: 8px;
+            transform: translateY(-50%);
+        }
+
+        /* Heading dial and attitude readout styles */
+        .heading-dial-needle {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 3px;
+            height: 35px;
+            background: linear-gradient(to bottom, #ef4444 0%, #dc2626 50%, #f1f5f9 50%, #e2e8f0 100%);
+            transform: translate(-50%, -100%);
+            transform-origin: bottom center;
+            border-radius: 2px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        .heading-dial-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 8px;
+            height: 8px;
+            background: #3b82f6;
+            border: 2px solid #f1f5f9;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .heading-dial-face {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 90px;
+            height: 90px;
+            transform: translate(-50%, -50%);
+            border-radius: 50%;
+        }
+
+        .heading-dial-readout {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .widget-title {
+            color: #f1f5f9;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.9;
+        }
+
+        .attitude-readout {
+            position: absolute;
+            bottom: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: bold;
+            text-align: center;
+            margin-top: -5px;
+            white-space: nowrap;
+        }
+
         /* Responsive adjustments for widgets */
         @media (max-width: 768px) {
-            .compass-widget,
-            .attitude-indicator,
-            .camera-pose-panel {
+            .navigation-widget-group {
                 right: 15px;
+                width: 100px;
+                top: 80px;
             }
 
-            .compass-widget {
-                width: 90px;
-                height: 90px;
-                top: 140px;
+            .camera-info {
+                left: 10px;
+                top: 90px;
+                font-size: 0.7rem;
+                min-width: 180px;
+            }
+
+            .heading-dial {
+                width: 80px;
+                height: 80px;
             }
 
             .attitude-indicator {
-                width: 90px;
-                height: 90px;
-                top: 270px;
-            }
-
-            .camera-pose-panel {
-                top: 400px;
-                width: 100px;
-                font-size: 10px;
+                width: 70px;
+                height: 70px;
             }
         }
 
         @media (max-width: 1024px) and (min-width: 769px) {
-            .compass-widget,
-            .attitude-indicator,
-            .camera-pose-panel {
+            .navigation-widget-group {
                 right: 330px;
+            }
+            
+            .camera-info {
+                left: 10px;
+                top: 90px;
             }
         }
 
@@ -1001,18 +1186,7 @@
                             <div id="cameraInfo">Initializing...</div>
                         </div>
                     </div>
-                    <div class="bg-glass" style="padding: 10px; margin-top: 10px;">
-                        <div style="font-size: 0.8rem; color: var(--slate-300);">
-                            <div><strong>Earth Position:</strong></div>
-                            <div id="earthInfo">Calculating...</div>
-                        </div>
-                    </div>
-                    <div class="bg-glass" style="padding: 10px; margin-top: 10px;">
-                        <div style="font-size: 0.8rem; color: var(--slate-300);">
-                            <div><strong>Sun Position:</strong></div>
-                            <div id="sunInfo">Calculating...</div>
-                        </div>
-                    </div>
+                    <!-- Earth & Sun info moved to Camera Info panel -->
                     
                     <!-- Attribution -->
                     <div class="bg-glass" style="padding: 10px; margin-top: 10px; border-top: 1px solid rgba(192, 192, 208, 0.2);">
@@ -1048,56 +1222,98 @@
         FPS: --
     </div>
 
-    <!-- Compass Widget -->
-    <div class="compass-widget" id="compassWidget">
-        <div class="compass-face">
-            <div class="compass-label compass-label-n">N</div>
-            <div class="compass-label compass-label-e">E</div>
-            <div class="compass-label compass-label-s">S</div>
-            <div class="compass-label compass-label-w">W</div>
-            <div class="compass-needle" id="compassNeedle"></div>
-            <div class="compass-center"></div>
+    <!-- Navigation Widget Group - Optimized for Moon viewer (lighter for gray background) -->
+    <div class="navigation-widget-group" id="navigationWidgetGroup" style="
+        background: rgba(25, 35, 55, 0.92);
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(59, 130, 246, 0.5);
+    ">
+        <div class="widget-title" style="color: #e0e7ff;">Navigation</div>
+        
+        <!-- Heading Dial/Compass Widget -->
+        <div class="heading-dial" id="headingDial">
+            <div class="heading-dial-container" style="
+                background: radial-gradient(circle, rgba(30, 40, 60, 0.98) 0%, rgba(40, 50, 70, 0.95) 100%);
+                border: 3px solid #60a5fa;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 2px 6px rgba(96, 165, 250, 0.3);
+            ">
+                <div class="heading-dial-face" id="headingDialFace">
+                    <div class="compass-label compass-label-n" style="color: #fca5a5; text-shadow: 0 0 8px rgba(252, 165, 165, 0.8);">N</div>
+                    <div class="compass-label compass-label-e" style="color: #e0e7ff;">E</div>
+                    <div class="compass-label compass-label-s" style="color: #e0e7ff;">S</div>
+                    <div class="compass-label compass-label-w" style="color: #e0e7ff;">W</div>
+                    <div class="heading-dial-needle" id="compassNeedle"></div>
+                    <div class="heading-dial-center"></div>
+                </div>
+            </div>
+            <div class="heading-dial-readout" id="compassHeadingDisplay" style="
+                background: rgba(30, 40, 60, 0.95);
+                border: 1px solid rgba(96, 165, 250, 0.6);
+                color: #e0e7ff;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+            ">000°T</div>
         </div>
-        <div class="compass-heading-display" id="compassHeadingDisplay">000°T</div>
+
+        <!-- Attitude Indicator -->
+        <div class="attitude-indicator" id="attitudeIndicator" style="
+            background: radial-gradient(circle, rgba(20, 25, 35, 0.98) 0%, rgba(30, 40, 55, 0.95) 100%);
+            border: 3px solid #60a5fa;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 0, 0, 0.4);
+        ">
+            <div class="attitude-horizon" id="attitudeHorizon">
+                <div class="attitude-sky"></div>
+                <div class="attitude-ground"></div>
+                <div class="attitude-horizon-line"></div>
+            </div>
+            <div class="attitude-aircraft"></div>
+            <div class="attitude-center-dot"></div>
+        </div>
+        
+        <!-- Attitude Readout -->
+        <div class="attitude-readout" id="attitudeDisplay" style="
+            background: rgba(30, 40, 60, 0.95);
+            border: 1px solid rgba(96, 165, 246, 0.6);
+            color: #e0e7ff;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+        ">P:0° R:0°</div>
     </div>
 
-    <!-- Attitude Indicator -->
-    <div class="attitude-indicator" id="attitudeIndicator">
-        <div class="attitude-horizon" id="attitudeHorizon">
-            <div class="attitude-sky"></div>
-            <div class="attitude-line"></div>
-            <div class="attitude-ground"></div>
+    <!-- Camera Info Panel - Aviation-style widget with Moon-optimized styling -->
+    <div class="camera-info" id="cameraInfo">
+        <div class="camera-info-title">Camera Pose</div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Lon:</span>
+            <span class="camera-info-value" id="poseLongitude">--</span>
         </div>
-        <div class="attitude-aircraft"></div>
-        <div class="attitude-display" id="attitudeDisplay">P:0° R:0°</div>
-    </div>
-
-    <!-- Camera Pose Panel -->
-    <div class="camera-pose-panel" id="cameraPosePanel">
-        <div class="camera-pose-title">Camera Pose</div>
-        <div class="camera-pose-item">
-            <span class="camera-pose-label">Lon:</span>
-            <span class="camera-pose-value" id="poseLongitude">--</span>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Lat:</span>
+            <span class="camera-info-value" id="poseLatitude">--</span>
         </div>
-        <div class="camera-pose-item">
-            <span class="camera-pose-label">Lat:</span>
-            <span class="camera-pose-value" id="poseLatitude">--</span>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Alt:</span>
+            <span class="camera-info-value" id="poseAltitude">--</span>
         </div>
-        <div class="camera-pose-item">
-            <span class="camera-pose-label">Alt:</span>
-            <span class="camera-pose-value" id="poseAltitude">--</span>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Hdg:</span>
+            <span class="camera-info-value" id="poseHeading">--</span>
         </div>
-        <div class="camera-pose-item">
-            <span class="camera-pose-label">Hdg:</span>
-            <span class="camera-pose-value" id="poseHeading">--</span>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Pitch:</span>
+            <span class="camera-info-value" id="posePitch">--</span>
         </div>
-        <div class="camera-pose-item">
-            <span class="camera-pose-label">Pitch:</span>
-            <span class="camera-pose-value" id="posePitch">--</span>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Roll:</span>
+            <span class="camera-info-value" id="poseRoll">--</span>
         </div>
-        <div class="camera-pose-item">
-            <span class="camera-pose-label">Roll:</span>
-            <span class="camera-pose-value" id="poseRoll">--</span>
+        
+        <!-- Celestial Bodies Section -->
+        <div class="camera-info-title" style="margin-top: 10px; border-top: 1px solid rgba(96, 165, 250, 0.3); padding-top: 8px;">
+            <i class="fas fa-globe" style="margin-right: 5px;"></i>Earth & Sun
+        </div>
+        <div class="camera-info-item" id="earthInfo">
+            <small class="text-muted">Loading...</small>
+        </div>
+        <div class="camera-info-item" style="margin-top: 8px;" id="sunInfo">
+            <small class="text-muted">Loading...</small>
         </div>
     </div>
 
@@ -1344,6 +1560,14 @@
                 viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#9a9a9a');
                 viewer.scene.globe.showGroundAtmosphere = false;
                 
+                // CRITICAL: Disable ALL water/ocean effects (Moon has no water!)
+                viewer.scene.globe.showWaterEffect = false;
+                
+                // Disable translucency effects that can cause wave-like artifacts
+                if (viewer.scene.globe.translucency) {
+                    viewer.scene.globe.translucency.enabled = false;
+                }
+                
                 // Configure scene mode transition duration (smoother morphing)
                 viewer.scene.morphTime = 1.0; // 1 second transition
                 
@@ -1354,6 +1578,17 @@
                 viewer.scene.skyAtmosphere = undefined;
                 viewer.scene.fog.enabled = false;
                 viewer.scene.backgroundColor = Cesium.Color.BLACK;
+                
+                // Disable high dynamic range (HDR) if it causes artifacts
+                viewer.scene.highDynamicRange = false;
+                
+                // Configure lighting to avoid "wet" or reflective appearance
+                viewer.scene.light = new Cesium.DirectionalLight({
+                    direction: new Cesium.Cartesian3(0.5, 0.5, -0.7) // Sun direction
+                });
+                
+                // Set material appearance to diffuse (not specular/glossy)
+                viewer.scene.globe.material = undefined; // Use default non-reflective material
                 
                 // Use Cesium's built-in starfield skybox
                 viewer.scene.skyBox = new Cesium.SkyBox({
@@ -1376,6 +1611,7 @@
                 // OPTION 1: LROC QuickMap Tile Server (NASA - FREE, Public Access!)
                 // Source: https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{z}/{x}/{y}.jpg
                 // This is the official NASA LROC (Lunar Reconnaissance Orbiter Camera) tile service
+                // NOTE: Uses standard XYZ coordinate system where Y=0 is at north pole
                 //
                 // IMPORTANT: lunar-fulleqc = Full Equirectangular projection
                 // This is the STANDARD projection for 3D globe texture mapping (wraps around sphere)
@@ -1386,39 +1622,55 @@
                     // LROC QuickMap tile configuration
                     // Using lunar-fulleqc (Full Equirectangular) - standard for 3D globe texturing
                     // This projection works for both 2D and 3D modes
+                    // === CRITICAL FIX FOR "CAP" ISSUE ===
+                    // 
+                    // ROOT CAUSE DISCOVERED: lunar-fulleqc projection does NOT cover full globe!
+                    // Analysis shows tiles with Y=3 (southernmost) are only 4.7KB vs 86KB for Y=0 (north)
+                    // This indicates southern hemisphere has minimal/no data
+                    //
+                    // SOLUTION 1: Use standard 2×1 tiling (covers full latitude range per tile)
+                    // This matches how most web map tiles work and how Cesium expects geographic tiles
+                    //
+                    // The 2×2 tiles we verified exist are likely an artifact of how LROC 
+                    // generates tiles, but Cesium should treat them as 2×1 for proper mapping
+                    
                     const lrocProvider = new Cesium.UrlTemplateImageryProvider({
+                        // FIXED: LROC uses standard XYZ coordinate system (NOT TMS)
+                        // Y=0 is at North Pole, Y increases southward
+                        // Verified by observing actual LROC QuickMap network requests
                         url: 'https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{z}/{x}/{y}.jpg',
                         credit: new Cesium.Credit('NASA/GSFC/Arizona State University - LROC QuickMap', true),
                         minimumLevel: 0,
-                        maximumLevel: 18, // Full zoom range - Cesium gracefully handles missing tiles with fallback
-                        // NAC high-res tiles (levels 13-18) exist in specific ROI areas
-                        // Cesium automatically uses lower levels where high-res tiles don't exist
-                        // This matches LROC QuickMap's zoom capabilities
-                        // 
-                        // CRITICAL: Using {reverseY} instead of {y} for TMS tile coordinate system
-                        // LROC tiles use TMS where Y=0 is at bottom (south pole)
-                        // Cesium expects XYZ where Y=0 is at top (north pole)
-                        // {reverseY} automatically inverts the Y coordinate
-                        //
-                        // TESTING: Using STANDARD 2×1 geographic tiling (most common for planetary data)
-                        // Even though LROC may have tiles at 8×8 grid, the tiling SCHEME might still be 2×1
-                        // The tiling scheme defines coordinate system, not necessarily tile availability
+                        maximumLevel: 18,
+                        
+                        // FIXED: LROC uses 2×1 tiling at level 0 (standard equirectangular)
+                        // Level 0: 2 tiles (West hemisphere, East hemisphere)
+                        // Level 1: 4×2 tiles
+                        // Level 2: 8×4 tiles, etc.
+                        // Standard XYZ: Y=0 at North Pole, increases southward
                         tilingScheme: new Cesium.GeographicTilingScheme({
-                            numberOfLevelZeroTilesX: 2,
-                            numberOfLevelZeroTilesY: 1,
+                            numberOfLevelZeroTilesX: 2,  // 2 columns: West (-180° to 0°) and East (0° to +180°)
+                            numberOfLevelZeroTilesY: 1,  // 1 row: Full latitude range (-90° to +90°)
                             ellipsoid: Cesium.Ellipsoid.MOON
                         }),
                         rectangle: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90),
-                        tileWidth: 512,    // TEST: Try 512 instead of default 256 (factor of 2)
-                        tileHeight: 512,   // TEST: Try 512 instead of default 256 (factor of 2)
+                        tileWidth: 512,
+                        tileHeight: 512,
                         hasAlphaChannel: false,
                         enablePick: false
                     });
                     
                     viewer.imageryLayers.addImageryProvider(lrocProvider);
+                    console.log('✓ Successfully loaded LROC QuickMap Moon imagery (equirectangular)');
+                    
+                    // IMPORTANT DISCOVERY from LROC QuickMap analysis:
+                    // LROC QuickMap uses polar-shifted projection for TERRAIN only, NOT for imagery!
+                    // Network analysis shows only lunar-fulleqc imagery tiles are loaded
+                    // Adding a second imagery layer causes mirroring artifacts
+                    // The terrain provider handles polar regions separately
+                    
                     imageryLoaded = true;
                     imagerySource = 'LROC QuickMap (NASA)';
-                    console.log('✓ Successfully loaded LROC QuickMap Moon imagery (equirectangular)');
                     Utils.showSnackBar('Loaded NASA LROC Moon imagery', 'success');
                     
                     const imagerySourceEl = document.getElementById('imagerySource');
@@ -1535,6 +1787,7 @@
                 // IMAGERY: https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{z}/{x}/{y}.jpg
                 //   - WAC (Wide Angle Camera) - 100m/pixel global coverage
                 //   - NAC (Narrow Angle Camera) - 0.5-2m/pixel in specific regions
+                //   - Uses standard XYZ coordinate system (Y=0 at north pole)
                 //
                 // TERRAIN: https://dem-tiles.b-cdn.net/lunar/qts_demstack/lunar-fulleqc/mesh/{z}/{x}/{y}.terrain
                 //   - LOLA DEM (Lunar Orbiter Laser Altimeter) - elevation data
@@ -1732,10 +1985,17 @@
                     
                     // After morph completes, show the full Moon from pole to pole
                     setTimeout(() => {
-                        viewer.camera.flyTo({
-                            destination: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90), // Full Moon coverage
-                            duration: 0.5
+                        // In 2D mode, use setView instead of flyTo for better control
+                        viewer.camera.setView({
+                            destination: Cesium.Rectangle.fromDegrees(-180, -90, 180, 90),
+                            orientation: {
+                                heading: 0.0,
+                                pitch: -Cesium.Math.PI_OVER_TWO, // Look straight down
+                                roll: 0.0
+                            }
                         });
+                        
+                        console.log('2D view: Camera set to full Moon rectangle (-180,-90,180,90)');
                     }, 1100); // After morph completes
                 },
                 'view3D': () => {
@@ -1862,15 +2122,12 @@
                     const isSidebarVisible = document.getElementById('wrapper').classList.contains('show-sidebar');
                     if (window.innerWidth <= 768) {
                         const widgets = [
-                            document.getElementById('compassWidget'),
-                            document.getElementById('attitudeIndicator'),
-                            document.getElementById('cameraPosePanel')
+                            document.getElementById('navigationWidgetGroup'),
+                            document.getElementById('cameraInfo')
                         ];
-                        widgets.forEach((widget, index) => {
+                        widgets.forEach(widget => {
                             if (widget) {
-                                // First two are flex (compass and attitude), last is block (pose panel)
-                                const displayType = index < 2 ? 'flex' : 'block';
-                                widget.style.display = isSidebarVisible ? 'none' : displayType;
+                                widget.style.display = isSidebarVisible ? 'none' : 'block';
                             }
                         });
                     }
