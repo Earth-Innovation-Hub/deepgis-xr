@@ -876,7 +876,7 @@
             bottom: 8px;
             left: 50%;
             transform: translateX(-50%);
-        }
+            }
 
         .compass-label-w {
             top: 50%;
@@ -897,7 +897,7 @@
             border-radius: 2px;
             box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
             z-index: 10;
-        }
+            }
 
         .heading-dial-center {
             position: absolute;
@@ -917,11 +917,11 @@
             position: absolute;
             top: 50%;
             left: 50%;
-            width: 90px;
-            height: 90px;
+                width: 90px;
+                height: 90px;
             transform: translate(-50%, -50%);
             border-radius: 50%;
-        }
+            }
 
         .heading-dial-readout {
             position: absolute;
@@ -930,7 +930,7 @@
             transform: translateX(-50%);
             padding: 3px 6px;
             border-radius: 4px;
-            font-size: 10px;
+                font-size: 10px;
             font-weight: bold;
             font-family: 'Courier New', monospace;
             text-align: center;
@@ -1243,7 +1243,7 @@
                     <div class="compass-label compass-label-w" style="color: #e0e7ff;">W</div>
                     <div class="heading-dial-needle" id="compassNeedle"></div>
                     <div class="heading-dial-center"></div>
-                </div>
+        </div>
             </div>
             <div class="heading-dial-readout" id="compassHeadingDisplay" style="
                 background: rgba(30, 40, 60, 0.95);
@@ -1251,23 +1251,23 @@
                 color: #e0e7ff;
                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
             ">000°T</div>
-        </div>
+    </div>
 
-        <!-- Attitude Indicator -->
+    <!-- Attitude Indicator -->
         <div class="attitude-indicator" id="attitudeIndicator" style="
             background: radial-gradient(circle, rgba(20, 25, 35, 0.98) 0%, rgba(30, 40, 55, 0.95) 100%);
             border: 3px solid #60a5fa;
             box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5), inset 0 0 20px rgba(0, 0, 0, 0.4);
         ">
-            <div class="attitude-horizon" id="attitudeHorizon">
-                <div class="attitude-sky"></div>
-                <div class="attitude-ground"></div>
+        <div class="attitude-horizon" id="attitudeHorizon">
+            <div class="attitude-sky"></div>
+            <div class="attitude-ground"></div>
                 <div class="attitude-horizon-line"></div>
-            </div>
-            <div class="attitude-aircraft"></div>
-            <div class="attitude-center-dot"></div>
         </div>
-        
+        <div class="attitude-aircraft"></div>
+            <div class="attitude-center-dot"></div>
+    </div>
+
         <!-- Attitude Readout -->
         <div class="attitude-readout" id="attitudeDisplay" style="
             background: rgba(30, 40, 60, 0.95);
@@ -1275,7 +1275,7 @@
             color: #e0e7ff;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
         ">P:0° R:0°</div>
-    </div>
+        </div>
 
     <!-- Camera Info Panel - Aviation-style widget with Moon-optimized styling -->
     <div class="camera-info" id="cameraInfo">
@@ -1853,7 +1853,7 @@
                     destination: Cesium.Cartesian3.fromDegrees(
                         apollo11.lon, 
                         apollo11.lat, 
-                        10000, // Higher altitude for initial view
+                        1000000, // 1000 km altitude for initial view
                         Cesium.Ellipsoid.MOON
                     ),
                     orientation: {
