@@ -12,6 +12,9 @@ class WorldSamplerUI {
         this.currentSamples = [];
         this.sampleDataSource = null;
         this.selectedSample = null;
+        this.currentSampleIndex = 0;
+        this.isAutoSurveyActive = false;
+        this.autoSurveyInterval = null;
         
         this.init();
     }
@@ -87,6 +90,31 @@ class WorldSamplerUI {
                     </div>
                     <button class="btn btn-success w-100" id="samplerSampleBtn">
                         <i class="fas fa-map-marker-alt"></i> Sample Locations
+                    </button>
+                </div>
+                
+                <!-- Survey Navigation Section -->
+                <div class="sampler-section" id="surveySection" style="display: none;">
+                    <h4><i class="fas fa-route"></i> Survey Points</h4>
+                    <div class="survey-counter" id="surveyCounter">
+                        Point <span id="currentPointNum">0</span> of <span id="totalPoints">0</span>
+                    </div>
+                    <div class="btn-group w-100 mb-2" role="group">
+                        <button class="btn btn-primary" id="surveyPrev">
+                            <i class="fas fa-chevron-left"></i> Previous
+                        </button>
+                        <button class="btn btn-primary" id="surveyNext">
+                            <i class="fas fa-chevron-right"></i> Next
+                        </button>
+                    </div>
+                    <div class="form-group">
+                        <label>Auto-Survey Speed (seconds):</label>
+                        <input type="range" id="surveySpeed" class="form-range" 
+                               min="2" max="10" step="1" value="5">
+                        <span id="surveySpeedValue">5s</span>
+                    </div>
+                    <button class="btn btn-info w-100" id="surveyAutoToggle">
+                        <i class="fas fa-play"></i> Start Auto-Survey
                     </button>
                 </div>
                 
@@ -443,6 +471,23 @@ class WorldSamplerUI {
                 font-size: 11px;
             }
             
+            .survey-counter {
+                background: #1e293b;
+                padding: 12px;
+                border-radius: 6px;
+                text-align: center;
+                margin-bottom: 12px;
+                font-size: 14px;
+                font-weight: 600;
+                color: #60a5fa;
+                border: 2px solid #3b82f6;
+            }
+            
+            .survey-counter span {
+                color: #fbbf24;
+                font-size: 16px;
+            }
+            
             .mt-2 {
                 margin-top: 8px;
             }
@@ -502,6 +547,31 @@ class WorldSamplerUI {
         // Refresh stats button
         document.getElementById('samplerRefreshStats').addEventListener('click', () => {
             this.updateStatistics();
+        });
+        
+        // Survey navigation buttons
+        document.getElementById('surveyPrev').addEventListener('click', () => {
+            this.navigateToPreviousSample();
+        });
+        
+        document.getElementById('surveyNext').addEventListener('click', () => {
+            this.navigateToNextSample();
+        });
+        
+        // Auto-survey toggle
+        document.getElementById('surveyAutoToggle').addEventListener('click', () => {
+            this.toggleAutoSurvey();
+        });
+        
+        // Survey speed slider
+        document.getElementById('surveySpeed').addEventListener('input', (e) => {
+            document.getElementById('surveySpeedValue').textContent = e.target.value + 's';
+            
+            // If auto-survey is running, restart with new speed
+            if (this.isAutoSurveyActive) {
+                this.stopAutoSurvey();
+                this.startAutoSurvey();
+            }
         });
         
         // Reward slider
@@ -571,6 +641,13 @@ class WorldSamplerUI {
             // Update stats
             document.getElementById('statSamplesShown').textContent = result.samples.length;
             await this.updateStatistics();
+            
+            // Show survey section
+            if (result.samples.length > 0) {
+                document.getElementById('surveySection').style.display = 'block';
+                this.currentSampleIndex = 0;
+                this.updateSurveyCounter();
+            }
             
             this.showNotification(`Sampled ${result.samples.length} locations!`, 'success');
             
@@ -781,14 +858,21 @@ class WorldSamplerUI {
     }
     
     clearSamples() {
+        // Stop auto-survey if running
+        this.stopAutoSurvey();
+        
         if (this.sampleDataSource) {
             this.viewer.dataSources.remove(this.sampleDataSource);
             this.sampleDataSource = null;
         }
         this.currentSamples = [];
         this.selectedSample = null;
+        this.currentSampleIndex = 0;
+        
         document.getElementById('samplerFeedbackBtn').disabled = true;
         document.getElementById('statSamplesShown').textContent = '0';
+        document.getElementById('surveySection').style.display = 'none';
+        
         this.showNotification('Samples cleared', 'info');
     }
     
@@ -821,6 +905,121 @@ class WorldSamplerUI {
         } catch (error) {
             console.error('Failed to update statistics:', error);
         }
+    }
+    
+    navigateToPreviousSample() {
+        if (this.currentSamples.length === 0) return;
+        
+        this.currentSampleIndex = (this.currentSampleIndex - 1 + this.currentSamples.length) % this.currentSamples.length;
+        this.flyToSample(this.currentSampleIndex);
+        this.updateSurveyCounter();
+    }
+    
+    navigateToNextSample() {
+        if (this.currentSamples.length === 0) return;
+        
+        this.currentSampleIndex = (this.currentSampleIndex + 1) % this.currentSamples.length;
+        this.flyToSample(this.currentSampleIndex);
+        this.updateSurveyCounter();
+    }
+    
+    flyToSample(index) {
+        if (!this.sampleDataSource || index >= this.currentSamples.length) return;
+        
+        const entities = this.sampleDataSource.entities.values;
+        if (index >= entities.length) return;
+        
+        const entity = entities[index];
+        const sample = this.currentSamples[index];
+        
+        // Highlight current sample
+        entities.forEach((e, i) => {
+            if (i === index) {
+                e.billboard.scale = 1.3;
+                e.billboard.color = Cesium.Color.CYAN;
+            } else {
+                e.billboard.scale = 1.0;
+                e.billboard.color = Cesium.Color.YELLOW;
+            }
+        });
+        
+        // Fly to sample
+        const position = entity.position.getValue(Cesium.JulianDate.now());
+        const cartographic = Cesium.Cartographic.fromCartesian(position);
+        
+        this.viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromRadians(
+                cartographic.longitude,
+                cartographic.latitude,
+                300  // 300m altitude
+            ),
+            duration: 1.5,
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-45),
+                roll: 0.0
+            }
+        });
+        
+        // Show sample info
+        this.showNotification(
+            `Point ${index + 1}: Lat ${sample.lat.toFixed(3)}°, Lon ${sample.lon.toFixed(3)}°`, 
+            'info'
+        );
+    }
+    
+    updateSurveyCounter() {
+        document.getElementById('currentPointNum').textContent = this.currentSampleIndex + 1;
+        document.getElementById('totalPoints').textContent = this.currentSamples.length;
+    }
+    
+    toggleAutoSurvey() {
+        if (this.isAutoSurveyActive) {
+            this.stopAutoSurvey();
+        } else {
+            this.startAutoSurvey();
+        }
+    }
+    
+    startAutoSurvey() {
+        if (this.currentSamples.length === 0) {
+            this.showNotification('No samples to survey', 'warning');
+            return;
+        }
+        
+        this.isAutoSurveyActive = true;
+        const speed = parseInt(document.getElementById('surveySpeed').value) * 1000;
+        
+        // Update button
+        const btn = document.getElementById('surveyAutoToggle');
+        btn.innerHTML = '<i class="fas fa-pause"></i> Stop Auto-Survey';
+        btn.className = 'btn btn-warning w-100';
+        
+        // Start auto-cycling
+        this.autoSurveyInterval = setInterval(() => {
+            this.navigateToNextSample();
+        }, speed);
+        
+        // Fly to first sample immediately
+        this.flyToSample(this.currentSampleIndex);
+        
+        this.showNotification('Auto-survey started', 'success');
+    }
+    
+    stopAutoSurvey() {
+        this.isAutoSurveyActive = false;
+        
+        if (this.autoSurveyInterval) {
+            clearInterval(this.autoSurveyInterval);
+            this.autoSurveyInterval = null;
+        }
+        
+        // Update button
+        const btn = document.getElementById('surveyAutoToggle');
+        btn.innerHTML = '<i class="fas fa-play"></i> Start Auto-Survey';
+        btn.className = 'btn btn-info w-100';
+        
+        this.showNotification('Auto-survey stopped', 'info');
     }
     
     showNotification(message, type = 'info') {
