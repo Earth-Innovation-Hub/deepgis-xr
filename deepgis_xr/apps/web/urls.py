@@ -1,6 +1,7 @@
 from django.urls import path
 from . import views
 from deepgis_xr.apps.web.views import label_3d_sigma
+from deepgis_xr.apps.web import world_sampler_api
 
 urlpatterns = [
     # Main pages
@@ -12,6 +13,7 @@ urlpatterns = [
     path('label/3d/topology/', views.label_topology_sigma, name='label_topology'),  # Now uses SIGMA (refactored)
     path('label/3d/topology/legacy/', views.label_topology, name='label_topology_legacy'),  # Original version
     path('label/3d/topology/sigma/', views.label_topology_sigma, name='label_topology_sigma'),  # Explicit SIGMA URL
+    path('label/3d/search/', views.label_search, name='label_search'),  # DeepGIS Search viewer
     path('label/3d/moon/', views.label_moon_viewer, name='label_moon_viewer'),  # Moon viewer
     path('stl-viewer/', views.stl_viewer, name='stl_viewer'),
     path('map-label/', views.map_label, name='map_label'),
@@ -46,4 +48,13 @@ urlpatterns = [
     path('label/semi-supervised/api/generate-labels/', views.generate_assisted_labels, name='generate_assisted_labels'),
     path('label/semi-supervised/api/save-labels/', views.save_assisted_labels, name='save_assisted_labels'),
     path('label/semi-supervised/api/get-images/', views.get_label_images, name='get_label_images'),
+    
+    # World Sampler API endpoints
+    path('webclient/sampler/initialize', world_sampler_api.initialize_sampler, name='initialize_sampler'),
+    path('webclient/sampler/sample', world_sampler_api.sample_locations, name='sample_locations'),
+    path('webclient/sampler/update', world_sampler_api.update_distribution, name='update_distribution'),
+    path('webclient/sampler/query', world_sampler_api.query_region, name='query_region'),
+    path('webclient/sampler/statistics', world_sampler_api.get_statistics, name='get_sampler_statistics'),
+    path('webclient/sampler/reset', world_sampler_api.reset_sampler, name='reset_sampler'),
+    path('webclient/sampler/history', world_sampler_api.get_sample_history, name='get_sample_history'),
 ] 

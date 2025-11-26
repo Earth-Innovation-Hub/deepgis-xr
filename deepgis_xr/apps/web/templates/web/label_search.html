@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>DeepGIS Search</title>
+    
+    <!-- CSRF Token for API requests -->
+    {% csrf_token %}
+    
+    <!-- Cesium Dependencies -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    
+    <!-- Additional Dependencies -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+    
+    <!-- Preload disabled due to CORS issues - using Ion Asset ID instead -->
+    <!-- <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb" as="fetch" crossorigin="anonymous"> -->
+    <link rel="dns-prefetch" href="https://cesium.com">
+    
+    <!-- Suppress Cesium source map 404 errors -->
+    <script>
+        // Suppress console errors for missing source maps
+        const originalConsoleError = console.error;
+        console.error = function(...args) {
+            const message = args.join(' ');
+            if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
+                return; // Suppress source map errors
+            }
+            originalConsoleError.apply(console, args);
+        };
+    </script>
+    
+    <!-- Suppress Cesium Ion warnings immediately after Cesium loads -->
+    <script>
+        // Set Cesium Ion access token to enable 3D tiles and terrain
+        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+    </script>
+    
+    <!-- Application Styles -->
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'web/styles/main.css' %}">
+</head>
+
+<body>
+    <button class="mobile-toggle" id="sidebarToggle">
+        <i class="fa fa-bars"></i>
+    </button>
+
+    <div id="wrapper">
+        <div id="sidebar-wrapper">
+            <div class="sidebar-content">
+                <div class="sidebar-header">
+                    <h5><i class="fas fa-search"></i> DeepGIS Search</h5>
+                    <small>Hybrid 2D/3D Viewer</small>
+                </div>
+                
+                <div class="layer-controls">
+                    <!-- Date Selection - HIDDEN (removed as not needed) -->
+                    <div class="layer-group" style="display: none;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-calendar-alt"></i> Available Dates
+                        </div>
+                        <div class="form-group mb-3">
+                            <select class="form-select" id="dateSelect">
+                                <!-- Will be populated dynamically -->
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Base Raster Layer Selection - HIDDEN (removed duplication with overlays) -->
+                    <div class="layer-group" style="display: none;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-image"></i> Base Raster Layer
+                        </div>
+                        <div class="form-group mb-3">
+                            <select class="form-select" id="rasterLayerSelect">
+                                <option value="">Loading layers...</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Raster Overlay Layers -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-layer-group"></i> Raster Overlays
+                        </div>
+                        <div id="overlayLayersList">
+                            <small class="text-muted">Loading layers...</small>
+                        </div>
+                    </div>
+
+                    <!-- Vector Layers -->
+                    <div class="layer-group" style="border: 2px solid #8b5cf6; background: rgba(139, 92, 246, 0.05);">
+                        <div class="layer-group-title">
+                            <i class="fas fa-vector-square"></i> Vector Layers
+                        </div>
+                        <div id="vectorLayersList">
+                            <small class="text-muted">Loading layers...</small>
+                        </div>
+                    </div>
+
+                    <!-- Terrain Toggle -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-mountain"></i> 3D Features
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="terrainToggle">
+                            <label class="form-check-label" for="terrainToggle">
+                                <i class="fas fa-mountain me-2"></i>3D Terrain
+                            </label>
+                        </div>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" id="modelsToggle">
+                            <label class="form-check-label" for="modelsToggle">
+                                <i class="fas fa-cube me-2"></i>3D Models
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- View Controls -->
+                    <div class="layer-group view-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-eye"></i> View Controls
+                        </div>
+                        <button class="btn btn-primary" id="view2D">
+                            <i class="fas fa-map me-2"></i>2D Map View
+                        </button>
+                        <button class="btn btn-primary" id="view3D">
+                            <i class="fas fa-cube me-2"></i>3D Globe View
+                        </button>
+                        <button class="btn btn-primary" id="viewColumbus">
+                            <i class="fas fa-compass me-2"></i>Columbus View
+                        </button>
+                        <button class="btn btn-success" id="homeView">
+                            <i class="fas fa-home me-2"></i>Home View
+                        </button>
+                    </div>
+
+                    <!-- WebXR Controls -->
+                    <div class="layer-group" id="webxrControls" style="background: #7c2d92; border: 1px solid #8b5cf6;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-vr-cardboard"></i> WebXR / VR
+                        </div>
+                        <button class="btn btn-primary" id="checkVRSupport">
+                            <i class="fas fa-search me-2"></i>Check VR Support
+                        </button>
+                        <button class="btn btn-success" id="enterVR" disabled>
+                            <i class="fas fa-vr-cardboard me-2"></i>Enter VR
+                        </button>
+                        <button class="btn btn-danger" id="exitVR" disabled>
+                            <i class="fas fa-times me-2"></i>Exit VR
+                        </button>
+                        <div id="vrStatus" style="color: #cbd5e1; font-size: 0.85rem; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                            VR Status: Not checked
+                        </div>
+                    </div>
+
+                    <!-- Measurement Tools -->
+                    <div class="layer-group measurement-controls">
+                        <div class="layer-group-title">
+                            <i class="fas fa-ruler"></i> Measurement Tools
+                        </div>
+                        <button class="btn btn-warning" id="measureDistance">
+                            <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+                        </button>
+                        <button class="btn btn-warning" id="measureArea">
+                            <i class="fas fa-draw-polygon me-2"></i>Measure Area
+                        </button>
+                        <button class="btn btn-warning" id="measureHeight">
+                            <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+                        </button>
+                        <button class="btn btn-danger" id="clearMeasurements">
+                            <i class="fas fa-trash me-2"></i>Clear All
+                        </button>
+                        
+                        <div class="measurements-list" id="measurementsList">
+                            <small>No measurements yet</small>
+                        </div>
+                    </div>
+
+                    <!-- 3D Model Controls -->
+                    <div class="layer-group" id="modelControls" style="display: none;">
+                        <div class="layer-group-title">
+                            <i class="fas fa-cube"></i> Navagunjara Digital Twin
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label" style="color: #cbd5e1;">3D Model:</label>
+                            <input type="text" class="form-control" id="modelUrl" 
+                                   value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                                   readonly
+                                   style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; cursor: not-allowed;">
+                            <small class="text-muted">
+                                <strong>Navagunjara Reborn Digital Twin</strong> - Propane and Solar Powered Art Installation
+                            </small>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label" style="color: #cbd5e1;">Model Location:</label>
+                            <select class="form-select" id="modelLocation">
+                                <option value="mount_everest">Mount Everest, Nepal/Tibet</option>
+                                <option value="current_view">Current View Location</option>
+                                <option value="custom">Custom Coordinates</option>
+                            </select>
+                        </div>
+                        <div class="form-group mb-3" id="customLocationInputs" style="display: none;">
+                            <div class="row">
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="customLon" 
+                                           placeholder="Longitude" step="0.000001"
+                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="customLat" 
+                                           placeholder="Latitude" step="0.000001"
+                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                </div>
+                                <div class="col-4">
+                                    <input type="number" class="form-control" id="customAlt" 
+                                           placeholder="Altitude (m)" step="1" value="0"
+                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label class="form-label" style="color: #cbd5e1;">Model Scale:</label>
+                            <input type="range" class="form-range" id="modelScale" 
+                                   min="0.1" max="10" step="0.1" value="1.0">
+                            <small class="text-muted" id="scaleValue">Scale: 1.0x</small>
+                        </div>
+                        <button class="btn btn-success" id="loadModel">
+                            <i class="fas fa-download me-2"></i>Load Navagunjara
+                        </button>
+                        <button class="btn btn-danger" id="removeModel">
+                            <i class="fas fa-trash me-2"></i>Remove Model
+                        </button>
+                    </div>
+
+                    <!-- Base Map Selection -->
+                    <div class="layer-group">
+                        <div class="layer-group-title">
+                            <i class="fas fa-map"></i> Base Map
+                        </div>
+                        <div class="form-group">
+                            <select class="form-select" id="baseMapSelect">
+                                <option value="ion_satellite">Ion Satellite</option>
+                                <option value="ion_streets">Ion Streets</option>
+                                <option value="satellite">Bing Satellite</option>
+                                <option value="bing">Bing Streets</option>
+                                <option value="mapbox">Mapbox Streets</option>
+                                <option value="none">None</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics Section -->
+                <div class="statistics-section">
+                    <div class="statistics-title">
+                        <i class="fas fa-chart-bar"></i> Statistics
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="histogram"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="cesiumContainer"></div>
+
+    <!-- Main Heading -->
+    <div class="main-heading">DeepGIS Search</div>
+
+    <!-- Status Indicators -->
+    <div class="status-indicator" id="statusIndicator">
+        Initializing Cesium...
+    </div>
+
+    <div class="performance-indicator" id="performanceIndicator">
+        FPS: --
+    </div>
+
+    <!-- Camera Pose Information -->
+    <div class="camera-info" id="cameraInfo">
+        <div class="camera-info-title">Camera Pose</div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Lon:</span>
+            <span class="camera-info-value" id="cameraLon">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Lat:</span>
+            <span class="camera-info-value" id="cameraLat">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Alt:</span>
+            <span class="camera-info-value" id="cameraAlt">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Zoom:</span>
+            <span class="camera-info-value" id="cameraZoom">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Ground:</span>
+            <span class="camera-info-value" id="cameraGroundHeight">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">AGL:</span>
+            <span class="camera-info-value" id="cameraAGL">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Heading:</span>
+            <span class="camera-info-value" id="cameraHeading">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Pitch:</span>
+            <span class="camera-info-value" id="cameraPitch">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Roll:</span>
+            <span class="camera-info-value" id="cameraRoll">--</span>
+        </div>
+        
+        <!-- Sun and Moon Information -->
+        <div class="camera-info-title" style="margin-top: 10px; border-top: 1px solid #475569; padding-top: 8px;">
+            <i class="fas fa-sun" style="color: #fbbf24; margin-right: 5px;"></i>Sun & Moon
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Sun Az:</span>
+            <span class="camera-info-value" id="sunAzimuth">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Sun El:</span>
+            <span class="camera-info-value" id="sunElevation">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Moon Az:</span>
+            <span class="camera-info-value" id="moonAzimuth">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Moon El:</span>
+            <span class="camera-info-value" id="moonElevation">--</span>
+        </div>
+        <div class="camera-info-item">
+            <span class="camera-info-label">Phase:</span>
+            <span class="camera-info-value" id="moonPhase">--</span>
+        </div>
+    </div>
+
+    <!-- Navigation Widget Group - Contains heading dial and attitude indicator -->
+    <div class="navigation-widget-group" id="navigationWidgetGroup">
+        <div class="widget-title">Navigation</div>
+        
+        <!-- Heading Dial Widget -->
+        <div class="heading-dial" id="headingDial">
+            <div class="heading-dial-container">
+                <div class="heading-dial-face" id="headingDialFace">
+                    <div class="heading-dial-markings" id="headingDialMarkings">
+                        <!-- Markings will be generated by JavaScript -->
+                    </div>
+                    <div class="heading-dial-labels" id="headingDialLabels">
+                        <!-- Labels will be positioned by JavaScript -->
+                    </div>
+                </div>
+                <div class="heading-dial-needle" id="headingDialNeedle"></div>
+                <div class="heading-dial-center"></div>
+            </div>
+            <div class="heading-dial-readout" id="headingDialReadout">000°T</div>
+        </div>
+
+        <!-- Attitude Indicator -->
+        <div class="attitude-indicator" id="attitudeIndicator">
+            <div class="attitude-horizon" id="attitudeHorizon">
+                <div class="attitude-sky"></div>
+                <div class="attitude-ground"></div>
+                <div class="attitude-horizon-line"></div>
+            </div>
+            <div class="attitude-aircraft"></div>
+            <div class="attitude-center-dot"></div>
+        </div>
+        
+        <!-- Attitude Readout -->
+        <div class="attitude-readout" id="attitudeReadout">000°P 000°R</div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <i class="fas fa-globe fa-3x fa-spin" style="color: #3b82f6; margin-bottom: 20px;"></i>
+            <div>Initializing DeepGIS Search...</div>
+            <div class="loading-progress">
+                <div class="loading-bar" id="loadingBar"></div>
+            </div>
+            <div id="loadingStatus">Setting up 3D environment...</div>
+        </div>
+    </div>
+    <!-- Application JavaScript (built by Vite) -->
+    {% load static %}
+    <script type="module" src="{% static 'web/js/main.js' %}"></script>
+    
+    <!-- GPS Telemetry Path Loader -->
+    <script src="{% static 'web/js/gps-telemetry.js' %}"></script>
+    
+    <!-- World Sampler UI -->
+    <script src="{% static 'web/js/world-sampler-ui.js' %}"></script>
+    <script>
+        // Initialize GPS Telemetry Loader when viewer is ready (only once)
+        (function() {
+            let initialized = false; // Prevent duplicate initialization
+            
+            function initGPSTelemetry() {
+                // Prevent multiple initializations
+                if (initialized || window.gpsTelemetryLoader) {
+                    return;
+                }
+                
+                // Try to get viewer from various possible locations
+                let viewer = null;
+                if (window.viewer) {
+                    viewer = window.viewer;
+                } else if (window.DeepGISTopology && window.DeepGISTopology.viewer) {
+                    viewer = window.DeepGISTopology.viewer;
+                } else if (window.Cesium && document.getElementById('cesiumContainer')) {
+                    // Viewer might be initialized later, wait a bit more
+                    setTimeout(initGPSTelemetry, 1000);
+                    return;
+                }
+                
+                if (viewer && window.GPSTelemetryLoader) {
+                    window.gpsTelemetryLoader = new window.GPSTelemetryLoader(viewer);
+                    initialized = true;
+                    console.log('GPS Telemetry Loader initialized');
+                } else if (window.Cesium) {
+                    // Keep trying for up to 10 seconds
+                    let attempts = 0;
+                    const maxAttempts = 20;
+                    const checkInterval = setInterval(() => {
+                        attempts++;
+                        if (window.viewer || (window.DeepGISTopology && window.DeepGISTopology.viewer)) {
+                            clearInterval(checkInterval);
+                            initGPSTelemetry();
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(checkInterval);
+                            console.warn('GPS Telemetry Loader: Could not find Cesium viewer after 10 seconds');
+                        }
+                    }, 500);
+                }
+            }
+            
+            // Try to initialize when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initGPSTelemetry);
+            } else {
+                initGPSTelemetry();
+            }
+        })();
+    </script>
+</body>
+</html>
+

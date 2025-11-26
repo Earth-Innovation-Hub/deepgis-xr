@@ -1075,6 +1075,34 @@ def label_topology(request):
     
     return render(request, 'web/label_topology.html', context)
 
+def label_search(request):
+    """
+    DeepGIS Search - Cesium hybrid 2D/3D viewer for geospatial search.
+    This view provides:
+        - Full Cesium 3D visualization
+        - Search and discovery features
+        - All topology viewer capabilities
+    """
+    context = {}
+    
+    # Add viewer configuration information
+    viewer_info = {
+        'version': 'Search',
+        'engine': 'Cesium.js',
+        'features': [
+            'Geospatial search capabilities',
+            'Multiple view modes (2D/3D/Columbus)',
+            'Interactive measurement tools',
+            '3D models and terrain',
+            'WebXR/VR support',
+            'Real-time statistics'
+        ]
+    }
+    context['viewer_info'] = viewer_info
+    
+    return render(request, 'web/label_search.html', context)
+
+
 def label_topology_sigma(request):
     """
     Refactored Cesium hybrid 2D/3D viewer (SIGMA version) with optimized code structure.
