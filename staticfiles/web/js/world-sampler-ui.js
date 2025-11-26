@@ -612,9 +612,24 @@ class WorldSamplerUI {
                 };
             });
             
-            // Fly to first sample
+            // Fly to first sample with zoom level 20 (approximately 300m altitude)
             if (entities.length > 0) {
-                this.viewer.flyTo(entities[0]);
+                const position = entities[0].position.getValue(Cesium.JulianDate.now());
+                const cartographic = Cesium.Cartographic.fromCartesian(position);
+                
+                this.viewer.camera.flyTo({
+                    destination: Cesium.Cartesian3.fromRadians(
+                        cartographic.longitude,
+                        cartographic.latitude,
+                        300  // Zoom level 20 ≈ 300m altitude
+                    ),
+                    duration: 2.0,
+                    orientation: {
+                        heading: Cesium.Math.toRadians(0),
+                        pitch: Cesium.Math.toRadians(-45),  // 45° downward tilt
+                        roll: 0.0
+                    }
+                });
             }
         });
     }
@@ -658,6 +673,24 @@ class WorldSamplerUI {
         
         const index = entity.properties.index;
         this.showNotification(`Selected sample #${index + 1}`, 'info');
+        
+        // Fly to selected sample with zoom level 20
+        const position = entity.position.getValue(Cesium.JulianDate.now());
+        const cartographic = Cesium.Cartographic.fromCartesian(position);
+        
+        this.viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromRadians(
+                cartographic.longitude,
+                cartographic.latitude,
+                300  // Zoom level 20 ≈ 300m altitude
+            ),
+            duration: 1.5,
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-45),
+                roll: 0.0
+            }
+        });
     }
     
     async submitFeedback() {
