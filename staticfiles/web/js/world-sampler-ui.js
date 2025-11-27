@@ -36,25 +36,42 @@ class WorldSamplerUI {
     
     createUI() {
         // Check if UI already exists
-        if (document.getElementById('worldSamplerPanel')) {
+        if (document.getElementById('worldSamplerSection')) {
             return;
         }
         
-        const panel = document.createElement('div');
-        panel.id = 'worldSamplerPanel';
-        panel.className = 'world-sampler-panel';
-        panel.innerHTML = `
-            <div class="sampler-header">
-                <h3><i class="fas fa-globe-americas"></i> World Sampler</h3>
-                <button class="btn-minimize" id="samplerMinimize">
-                    <i class="fas fa-minus"></i>
-                </button>
-            </div>
-            
-            <div class="sampler-content" id="samplerContent">
+        // Find the sidebar layer-controls container
+        const layerControls = document.querySelector('.layer-controls') || 
+                             document.querySelector('#sidebar-wrapper .sidebar-content') ||
+                             document.querySelector('.sidebar-content');
+        
+        if (!layerControls) {
+            console.warn('[World Sampler] Could not find sidebar container, creating floating widget as fallback');
+            // Fallback to old floating widget behavior
+            return this.createFloatingUI();
+        }
+        
+        // Create World Sampler as an accordion panel within the sidebar
+        const samplerSection = document.createElement('div');
+        samplerSection.id = 'worldSamplerSection';
+        samplerSection.className = 'layer-group accordion-panel';
+        samplerSection.style.border = '2px solid #8b5cf6';
+        samplerSection.style.background = 'rgba(139, 92, 246, 0.05)';
+        samplerSection.innerHTML = `
+                <!-- World Sampler Header (Accordion) -->
+                <div class="layer-group-title accordion-header" data-target="worldSamplerContent">
+                    <span><i class="fas fa-globe-americas"></i> World Sampler</span>
+                    <i class="fas fa-chevron-down accordion-icon"></i>
+                </div>
+                <div class="accordion-content" id="worldSamplerContent">
+                
                 <!-- Initialization Section -->
                 <div class="sampler-section">
-                    <h4><i class="fas fa-cog"></i> Initialize</h4>
+                    <h4 class="accordion-header" data-target="initContent">
+                        <span><i class="fas fa-cog"></i> Initialize</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="initContent">
                     <div class="form-group">
                         <label>Distribution Type:</label>
                         <select id="samplerInitType" class="form-control">
@@ -71,11 +88,16 @@ class WorldSamplerUI {
                     <button class="btn btn-primary w-100" id="samplerInitBtn">
                         <i class="fas fa-sync"></i> Initialize Sampler
                     </button>
+                    </div>
                 </div>
                 
                 <!-- Sampling Section -->
                 <div class="sampler-section">
-                    <h4><i class="fas fa-crosshairs"></i> Sample</h4>
+                    <h4 class="accordion-header" data-target="sampleContent">
+                        <span><i class="fas fa-crosshairs"></i> Sample</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="sampleContent">
                     <div class="form-group">
                         <label>Number of Samples:</label>
                         <input type="number" id="samplerNumSamples" class="form-control" 
@@ -91,11 +113,16 @@ class WorldSamplerUI {
                     <button class="btn btn-success w-100" id="samplerSampleBtn">
                         <i class="fas fa-map-marker-alt"></i> Sample Locations
                     </button>
+                    </div>
                 </div>
                 
                 <!-- Survey Navigation Section -->
                 <div class="sampler-section" id="surveySection" style="display: none;">
-                    <h4><i class="fas fa-route"></i> Survey Points</h4>
+                    <h4 class="accordion-header" data-target="surveyContent">
+                        <span><i class="fas fa-route"></i> Survey Points</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content expanded" id="surveyContent">
                     <div class="survey-counter" id="surveyCounter">
                         Point <span id="currentPointNum">0</span> of <span id="totalPoints">0</span>
                     </div>
@@ -113,14 +140,43 @@ class WorldSamplerUI {
                                min="2" max="10" step="1" value="5">
                         <span id="surveySpeedValue">5s</span>
                     </div>
-                    <button class="btn btn-info w-100" id="surveyAutoToggle">
+                    <button class="btn btn-info w-100 mb-2" id="surveyAutoToggle">
                         <i class="fas fa-play"></i> Start Auto-Survey
                     </button>
+                    
+                    <!-- Drone Fly Mode Section -->
+                    <div class="form-group" style="border-top: 1px solid #475569; padding-top: 12px; margin-top: 12px;">
+                        <h5 style="font-size: 13px; color: #60a5fa; margin-bottom: 8px;">
+                            <i class="fas fa-drone"></i> Drone Fly Mode
+                        </h5>
+                        <div class="form-group">
+                            <label>Fly Distance (meters):</label>
+                            <input type="number" id="droneFlyDistance" class="form-control" 
+                                   value="100" min="10" max="1000" step="10">
+                        </div>
+                        <div class="form-group">
+                            <label>Speed (km/h):</label>
+                            <input type="number" id="droneFlySpeed" class="form-control" 
+                                   value="100" min="25" max="250" step="5">
+                            <small class="text-muted" style="font-size: 10px;">Range: 25-250 km/h</small>
+                        </div>
+                        <button class="btn btn-success w-100" id="droneFlyBtn">
+                            <i class="fas fa-paper-plane"></i> Fly Forward 100m @ 100 km/h
+                        </button>
+                        <small class="text-muted" style="display: block; margin-top: 6px; font-size: 11px;">
+                            Flies along current heading, maintaining altitude & orientation
+                        </small>
+                    </div>
+                    </div>
                 </div>
                 
                 <!-- Feedback Section -->
                 <div class="sampler-section">
-                    <h4><i class="fas fa-thumbs-up"></i> Feedback</h4>
+                    <h4 class="accordion-header" data-target="feedbackContent">
+                        <span><i class="fas fa-thumbs-up"></i> Feedback</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="feedbackContent">
                     <div class="feedback-info">
                         <small>Click on a sample point on the map, then provide feedback:</small>
                     </div>
@@ -142,11 +198,16 @@ class WorldSamplerUI {
                     <button class="btn btn-warning w-100" id="samplerFeedbackBtn" disabled>
                         <i class="fas fa-star"></i> Submit Feedback
                     </button>
+                    </div>
                 </div>
                 
                 <!-- Update Rules Section -->
                 <div class="sampler-section">
-                    <h4><i class="fas fa-sliders-h"></i> Update Strategy</h4>
+                    <h4 class="accordion-header" data-target="updateContent">
+                        <span><i class="fas fa-sliders-h"></i> Update Strategy</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="updateContent">
                     <div class="btn-group w-100" role="group">
                         <button class="btn btn-outline-primary" id="samplerExplore">
                             <i class="fas fa-compass"></i> Explore
@@ -155,11 +216,16 @@ class WorldSamplerUI {
                             <i class="fas fa-bullseye"></i> Concentrate
                         </button>
                     </div>
+                    </div>
                 </div>
                 
-                <!-- Statistics Section -->
+                <!-- Sampler Statistics Section -->
                 <div class="sampler-section">
-                    <h4><i class="fas fa-chart-bar"></i> Statistics</h4>
+                    <h4 class="accordion-header" data-target="statsContent">
+                        <span><i class="fas fa-chart-bar"></i> Sampler Statistics</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="statsContent">
                     <div class="stats-grid" id="samplerStats">
                         <div class="stat-item">
                             <span class="stat-label">Samples Shown:</span>
@@ -181,25 +247,169 @@ class WorldSamplerUI {
                     <button class="btn btn-info btn-sm w-100 mt-2" id="samplerRefreshStats">
                         <i class="fas fa-sync"></i> Refresh Stats
                     </button>
+                    </div>
+                </div>
+                
+                <!-- Feature Statistics Section (Histogram Chart) -->
+                <div class="sampler-section">
+                    <h4 class="accordion-header" data-target="featureStatsContent">
+                        <span><i class="fas fa-chart-line"></i> Feature Statistics</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="featureStatsContent">
+                    <div class="chart-container" style="height: 200px; position: relative;">
+                        <canvas id="histogram"></canvas>
+                    </div>
+                    </div>
+                </div>
+                
+                <!-- GPS Telemetry Section (Vehicle Sampling Paths) -->
+                <div class="sampler-section" id="gpsTelemetrySection">
+                    <h4 class="accordion-header" data-target="gpsTelemetryContent">
+                        <span><i class="fas fa-satellite"></i> GPS Telemetry (Vehicle Paths)</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="gpsTelemetryContent">
+                    <div class="form-group mb-2">
+                        <label class="form-label small">Session:</label>
+                        <select class="form-select form-select-sm" id="gpsSessionSelect">
+                            <option value="">Loading sessions...</option>
+                        </select>
+                    </div>
+                    <div class="btn-group-vertical w-100" role="group">
+                        <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
+                            <i class="fas fa-route"></i> Load Path
+                        </button>
+                        <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
+                            <i class="fas fa-map-marker-alt"></i> Load Points
+                        </button>
+                        <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
+                            <i class="fas fa-plane"></i> Fly To Path
+                        </button>
+                        <button class="btn btn-sm btn-danger" id="clearGPSBtn">
+                            <i class="fas fa-trash"></i> Clear All
+                        </button>
+                    </div>
+                    <div id="gpsSessionInfo" class="mt-2 small text-muted" style="display: none; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px;"></div>
+                    </div>
                 </div>
                 
                 <!-- Actions Section -->
                 <div class="sampler-section">
-                    <h4><i class="fas fa-tools"></i> Actions</h4>
+                    <h4 class="accordion-header" data-target="actionsContent">
+                        <span><i class="fas fa-tools"></i> Actions</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content" id="actionsContent">
                     <button class="btn btn-secondary w-100 mb-2" id="samplerClear">
                         <i class="fas fa-eraser"></i> Clear Samples
                     </button>
                     <button class="btn btn-danger w-100" id="samplerReset">
                         <i class="fas fa-redo"></i> Reset Sampler
                     </button>
+                    </div>
                 </div>
+                </div>
+        `;
+        
+        // Insert into sidebar (before Statistics section if it exists, otherwise at end)
+        const statisticsSection = layerControls.querySelector('.statistics-section');
+        if (statisticsSection) {
+            layerControls.insertBefore(samplerSection, statisticsSection);
+        } else {
+            layerControls.appendChild(samplerSection);
+        }
+        
+        // Add styles first
+        this.addStyles();
+        
+        // Initialize accordion functionality after DOM is ready
+        setTimeout(() => {
+            this.initAccordion();
+            // Initialize GPS Telemetry if viewer is available
+            this.initGPSTelemetry();
+        }, 0);
+    }
+    
+    initGPSTelemetry() {
+        // Initialize GPS Telemetry Loader within World Sampler
+        if (!this.viewer) {
+            console.warn('[World Sampler] Viewer not available for GPS Telemetry');
+            return;
+        }
+        
+        if (!window.GPSTelemetryLoader) {
+            console.warn('[World Sampler] GPSTelemetryLoader not available');
+            return;
+        }
+        
+        // Check if GPS Telemetry UI already exists in World Sampler
+        const gpsSection = document.getElementById('gpsTelemetrySection');
+        if (!gpsSection) {
+            console.warn('[World Sampler] GPS Telemetry section not found in UI');
+            return;
+        }
+        
+        // Check if GPS Telemetry is already initialized
+        if (window.gpsTelemetryLoader && window.gpsTelemetryLoader.initializedInSampler) {
+            return; // Already initialized
+        }
+        
+        // Create GPS Telemetry Loader instance
+        const gpsLoader = new window.GPSTelemetryLoader(this.viewer);
+        
+        // Mark as initialized in sampler to prevent duplicate initialization
+        gpsLoader.initializedInSampler = true;
+        window.gpsTelemetryLoader = gpsLoader;
+        
+        // Override createUI to prevent it from creating its own panel
+        // The UI is already created in World Sampler, so just setup listeners
+        gpsLoader.createUI = function() {
+            // UI already exists in World Sampler, just setup event listeners and load sessions
+            if (document.getElementById('gpsSessionSelect')) {
+                this.setupEventListeners();
+                this.loadSessions();
+            }
+        };
+        
+        // Setup event listeners and load sessions (UI is already in DOM)
+        if (document.getElementById('gpsSessionSelect')) {
+            gpsLoader.setupEventListeners();
+            gpsLoader.loadSessions();
+            console.log('[World Sampler] GPS Telemetry initialized');
+        } else {
+            // Wait a bit for DOM to be ready
+            setTimeout(() => {
+                if (document.getElementById('gpsSessionSelect')) {
+                    gpsLoader.setupEventListeners();
+                    gpsLoader.loadSessions();
+                    console.log('[World Sampler] GPS Telemetry initialized (delayed)');
+                }
+            }, 100);
+        }
+    }
+    
+    createFloatingUI() {
+        // Fallback: Create floating widget (old behavior)
+        const panel = document.createElement('div');
+        panel.id = 'worldSamplerPanel';
+        panel.className = 'world-sampler-panel';
+        panel.innerHTML = `
+            <div class="sampler-header">
+                <h3><i class="fas fa-globe-americas"></i> World Sampler</h3>
+                <button class="btn-minimize" id="samplerMinimize">
+                    <i class="fas fa-minus"></i>
+                </button>
+            </div>
+            
+            <div class="sampler-content" id="samplerContent">
+                <!-- Same content as createUI but wrapped in floating panel -->
             </div>
         `;
         
         document.body.appendChild(panel);
-        
-        // Add styles
         this.addStyles();
+        setTimeout(() => this.initAccordion(), 0);
     }
     
     addStyles() {
@@ -210,6 +420,43 @@ class WorldSamplerUI {
         const style = document.createElement('style');
         style.id = 'worldSamplerStyles';
         style.textContent = `
+            /* World Sampler integrated into sidebar - no floating widget */
+            #worldSamplerSection {
+                margin-bottom: 15px;
+            }
+            
+            /* Nested sampler sections within World Sampler accordion */
+            #worldSamplerSection .sampler-section {
+                margin-bottom: 10px;
+                margin-top: 10px;
+                border: 1px solid rgba(139, 92, 246, 0.3);
+                background: rgba(30, 41, 59, 0.3);
+            }
+            
+            #worldSamplerSection .sampler-section h4 {
+                font-size: 13px;
+                padding: 10px 12px;
+            }
+            
+            #worldSamplerSection .sampler-section-content {
+                padding: 12px;
+            }
+            
+            /* Chart container for Feature Statistics */
+            #worldSamplerSection .chart-container {
+                position: relative;
+                height: 200px;
+                width: 100%;
+                background: rgba(30, 41, 59, 0.3);
+                border-radius: 4px;
+                padding: 8px;
+            }
+            
+            #worldSamplerSection .chart-container canvas {
+                max-height: 200px;
+            }
+            
+            /* Fallback floating widget styles (if sidebar not found) */
             .world-sampler-panel {
                 position: fixed;
                 top: 80px;
@@ -269,21 +516,60 @@ class WorldSamplerUI {
             }
             
             .sampler-section {
-                margin-bottom: 20px;
-                padding-bottom: 15px;
-                border-bottom: 1px solid #475569;
+                margin-bottom: 8px;
+                border-radius: 6px;
+                overflow: hidden;
+                background: rgba(30, 41, 59, 0.5);
+                border: 1px solid #475569;
             }
             
             .sampler-section:last-child {
-                border-bottom: none;
                 margin-bottom: 0;
             }
             
             .sampler-section h4 {
                 font-size: 14px;
-                margin: 0 0 12px 0;
+                margin: 0;
                 color: #60a5fa;
                 font-weight: 600;
+                padding: 12px 15px;
+                cursor: pointer;
+                user-select: none;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                transition: background-color 0.2s ease;
+            }
+            
+            .sampler-section h4:hover {
+                background-color: rgba(59, 130, 246, 0.1);
+            }
+            
+            .sampler-section h4.active {
+                background-color: rgba(59, 130, 246, 0.15);
+            }
+            
+            .sampler-section h4 .accordion-icon {
+                transition: transform 0.3s ease;
+                font-size: 0.85rem;
+                color: #94a3b8;
+            }
+            
+            .sampler-section h4.active .accordion-icon {
+                transform: rotate(180deg);
+            }
+            
+            .sampler-section-content {
+                max-height: 0;
+                overflow: hidden;
+                transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+                padding: 0 15px;
+            }
+            
+            .sampler-section-content.expanded {
+                max-height: 2000px;
+                padding: 15px;
+                transition: max-height 0.4s ease-in, padding 0.3s ease-in;
             }
             
             .form-group {
@@ -500,14 +786,69 @@ class WorldSamplerUI {
         document.head.appendChild(style);
     }
     
-    setupEventListeners() {
-        // Minimize button
-        document.getElementById('samplerMinimize').addEventListener('click', () => {
-            const content = document.getElementById('samplerContent');
-            content.classList.toggle('minimized');
-            const icon = document.querySelector('#samplerMinimize i');
-            icon.className = content.classList.contains('minimized') ? 'fas fa-plus' : 'fas fa-minus';
+    initAccordion() {
+        // Find accordion headers in World Sampler section (either in sidebar or floating panel)
+        const samplerContainer = document.getElementById('worldSamplerSection') || 
+                                document.getElementById('worldSamplerPanel');
+        
+        if (!samplerContainer) {
+            console.warn('[World Sampler] Container not found for accordion initialization');
+            return;
+        }
+        
+        const accordionHeaders = samplerContainer.querySelectorAll('.accordion-header');
+        
+        accordionHeaders.forEach(header => {
+            // Skip if already has event listener
+            if (header.dataset.listenerAttached) return;
+            header.dataset.listenerAttached = 'true';
+            
+            header.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-target');
+                const content = document.getElementById(targetId);
+                if (!content) return;
+                
+                const isExpanded = content.classList.contains('expanded');
+                
+                // Toggle this panel
+                if (isExpanded) {
+                    content.classList.remove('expanded');
+                    this.classList.remove('active');
+                } else {
+                    content.classList.add('expanded');
+                    this.classList.add('active');
+                }
+            });
         });
+        
+        // Expand main World Sampler panel by default
+        const mainHeader = samplerContainer.querySelector('.layer-group-title.accordion-header[data-target="worldSamplerContent"]') ||
+                          samplerContainer.querySelector('.accordion-header[data-target="initContent"]');
+        if (mainHeader) {
+            const mainTarget = mainHeader.getAttribute('data-target');
+            const mainContent = document.getElementById(mainTarget);
+            if (mainContent) {
+                mainContent.classList.add('expanded');
+                mainHeader.classList.add('active');
+            }
+        }
+    }
+    
+    setupEventListeners() {
+        // Minimize button (only exists in floating widget fallback)
+        const minimizeBtn = document.getElementById('samplerMinimize');
+        if (minimizeBtn) {
+            minimizeBtn.addEventListener('click', () => {
+                const content = document.getElementById('samplerContent');
+                if (content) {
+                    content.classList.toggle('minimized');
+                    const icon = document.querySelector('#samplerMinimize i');
+                    if (icon) {
+                        icon.className = content.classList.contains('minimized') ? 'fas fa-plus' : 'fas fa-minus';
+                    }
+                }
+            });
+        }
         
         // Initialize button
         document.getElementById('samplerInitBtn').addEventListener('click', () => {
@@ -573,6 +914,22 @@ class WorldSamplerUI {
                 this.startAutoSurvey();
             }
         });
+        
+        // Drone fly mode button
+        document.getElementById('droneFlyBtn').addEventListener('click', () => {
+            this.flyDroneMode();
+        });
+        
+        // Update drone fly button text when distance or speed changes
+        const updateDroneFlyButton = () => {
+            const distance = document.getElementById('droneFlyDistance').value || 100;
+            const speed = document.getElementById('droneFlySpeed').value || 100;
+            document.getElementById('droneFlyBtn').innerHTML = 
+                `<i class="fas fa-paper-plane"></i> Fly Forward ${distance}m @ ${speed} km/h`;
+        };
+        
+        document.getElementById('droneFlyDistance').addEventListener('input', updateDroneFlyButton);
+        document.getElementById('droneFlySpeed').addEventListener('input', updateDroneFlyButton);
         
         // Reward slider
         document.getElementById('samplerReward').addEventListener('input', (e) => {
@@ -644,7 +1001,15 @@ class WorldSamplerUI {
             
             // Show survey section
             if (result.samples.length > 0) {
-                document.getElementById('surveySection').style.display = 'block';
+                const surveySection = document.getElementById('surveySection');
+                surveySection.style.display = 'block';
+                // Expand survey section when samples are loaded
+                const surveyContent = document.getElementById('surveyContent');
+                const surveyHeader = surveySection.querySelector('.accordion-header');
+                if (surveyContent && surveyHeader) {
+                    surveyContent.classList.add('expanded');
+                    surveyHeader.classList.add('active');
+                }
                 this.currentSampleIndex = 0;
                 this.updateSurveyCounter();
             }
@@ -683,10 +1048,10 @@ class WorldSamplerUI {
                     verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
                     scale: 1.0
                 };
-                entity.properties = {
-                    index: index,
-                    weight: geojson.features[index].properties.weight
-                };
+                // Store metadata as simple properties (not Cesium PropertyBag to avoid circular refs)
+                entity.sampleIndex = index;
+                entity.sampleWeight = geojson.features[index].properties.weight;
+                entity.sampleDbId = geojson.features[index].properties.db_id;
             });
             
             // Fly to first sample with zoom level 20 (approximately 300m altitude)
@@ -748,7 +1113,7 @@ class WorldSamplerUI {
         // Enable feedback button
         document.getElementById('samplerFeedbackBtn').disabled = false;
         
-        const index = entity.properties.index;
+        const index = entity.sampleIndex;
         this.showNotification(`Selected sample #${index + 1}`, 'info');
         
         // Fly to selected sample with zoom level 20
@@ -770,6 +1135,17 @@ class WorldSamplerUI {
         });
     }
     
+    /**
+     * Calculate zoom level from camera altitude
+     * Cesium zoom levels roughly follow: altitude = 40075000 / (2^zoom)
+     */
+    getCameraZoomLevel() {
+        const cameraHeight = this.viewer.camera.positionCartographic.height;
+        if (cameraHeight <= 0) return 28;
+        const zoom = Math.log2(40075000 / cameraHeight);
+        return Math.max(0, Math.min(28, Math.round(zoom)));
+    }
+    
     async submitFeedback() {
         if (!this.selectedSample) {
             this.showNotification('Please select a sample first', 'warning');
@@ -784,16 +1160,24 @@ class WorldSamplerUI {
         
         const reward = parseFloat(document.getElementById('samplerReward').value);
         const learningRate = parseFloat(document.getElementById('samplerLearningRate').value);
+        const zoom = this.getCameraZoomLevel();
         
         try {
             const result = await this.samplerClient.update({
                 rule: 'reward',
-                feedback_points: [{lat, lon, alt, reward}],
+                feedback_points: [{
+                    lat, 
+                    lon, 
+                    alt, 
+                    reward,
+                    zoom,
+                    weight: this.selectedSample.sampleWeight || 1.0
+                }],
                 params: {learning_rate: learningRate, radius: 100000}
             });
             
             console.log('Feedback submitted:', result);
-            this.showNotification('Feedback submitted successfully!', 'success');
+            this.showNotification(`Feedback saved to DB! (zoom: ${zoom})`, 'success');
             
             // Reset selection
             this.selectedSample.billboard.scale = 1.0;
@@ -966,6 +1350,145 @@ class WorldSamplerUI {
             `Point ${index + 1}: Lat ${sample.lat.toFixed(3)}°, Lon ${sample.lon.toFixed(3)}°`, 
             'info'
         );
+    }
+    
+    /**
+     * Drone Fly Mode: Fly forward along current heading for specified distance
+     * Maintains current altitude, pitch, and roll while moving forward
+     */
+    flyDroneMode() {
+        const camera = this.viewer.camera;
+        const ellipsoid = this.viewer.scene.globe.ellipsoid;
+        
+        // Get current camera pose
+        const currentPosition = camera.positionCartographic;
+        const currentLon = Cesium.Math.toDegrees(currentPosition.longitude);
+        const currentLat = Cesium.Math.toDegrees(currentPosition.latitude);
+        const currentAlt = currentPosition.height;
+        const currentHeading = Cesium.Math.toDegrees(camera.heading);
+        const currentPitch = Cesium.Math.toDegrees(camera.pitch);
+        const currentRoll = Cesium.Math.toDegrees(camera.roll);
+        
+        // Get fly distance and speed from UI
+        const flyDistance = parseFloat(document.getElementById('droneFlyDistance').value) || 100;
+        const speedKmh = parseFloat(document.getElementById('droneFlySpeed').value) || 100;
+        
+        // Validate speed range
+        const speed = Math.max(25, Math.min(250, speedKmh));
+        if (speed !== speedKmh) {
+            document.getElementById('droneFlySpeed').value = speed;
+        }
+        
+        // Convert speed from km/h to m/s
+        // 1 km/h = 1000 m / 3600 s = 0.2778 m/s
+        const speedMs = speed * 0.277777778;
+        
+        // Calculate flight duration based on distance and speed
+        // duration = distance / speed
+        const duration = Math.max(0.5, Math.min(30, flyDistance / speedMs)); // Clamp between 0.5s and 30s
+        
+        // Calculate destination point using geodetic calculations
+        // Convert heading to bearing (Cesium heading: 0 = North, clockwise)
+        // Geodetic bearing: 0 = North, clockwise
+        const bearing = currentHeading; // Already in degrees, 0 = North
+        
+        // Calculate destination using haversine formula with altitude consideration
+        const destination = this.calculateDestinationPoint(
+            currentLat,
+            currentLon,
+            currentAlt,
+            bearing,
+            flyDistance
+        );
+        
+        // Convert to Cesium coordinates
+        const destinationCartesian = Cesium.Cartesian3.fromRadians(
+            Cesium.Math.toRadians(destination.longitude),
+            Cesium.Math.toRadians(destination.latitude),
+            destination.altitude
+        );
+        
+        // Fly to destination while maintaining orientation
+        this.viewer.camera.flyTo({
+            destination: destinationCartesian,
+            duration: duration, // Calculated based on distance and speed
+            orientation: {
+                heading: Cesium.Math.toRadians(bearing), // Maintain heading
+                pitch: Cesium.Math.toRadians(currentPitch), // Maintain pitch
+                roll: Cesium.Math.toRadians(currentRoll) // Maintain roll
+            },
+            complete: () => {
+                // Show notification when flight completes
+                this.showNotification(
+                    `Flew ${flyDistance}m forward at ${speed} km/h (heading: ${bearing.toFixed(1)}°)`,
+                    'success'
+                );
+            }
+        });
+        
+        // Show immediate feedback
+        this.showNotification(
+            `Flying ${flyDistance}m forward at ${speed} km/h along heading ${bearing.toFixed(1)}°...`,
+            'info'
+        );
+    }
+    
+    /**
+     * Calculate destination point given start point, bearing, and distance
+     * Uses Cesium's ellipsoid calculations for accuracy
+     * 
+     * @param {number} lat - Starting latitude in degrees
+     * @param {number} lon - Starting longitude in degrees
+     * @param {number} alt - Starting altitude in meters
+     * @param {number} bearing - Bearing in degrees (0 = North, clockwise)
+     * @param {number} distance - Distance in meters
+     * @returns {Object} Destination point {latitude, longitude, altitude}
+     */
+    calculateDestinationPoint(lat, lon, alt, bearing, distance) {
+        const ellipsoid = Cesium.Ellipsoid.WGS84;
+        
+        // Convert to radians
+        const latRad = Cesium.Math.toRadians(lat);
+        const lonRad = Cesium.Math.toRadians(lon);
+        const bearingRad = Cesium.Math.toRadians(bearing);
+        
+        // Get ellipsoid parameters
+        const a = ellipsoid.maximumRadius; // Semi-major axis (meters)
+        const b = ellipsoid.minimumRadius; // Semi-minor axis (meters)
+        const f = (a - b) / a; // Flattening
+        const e2 = f * (2 - f); // First eccentricity squared
+        
+        // Calculate radius of curvature at current latitude
+        const sinLat = Math.sin(latRad);
+        const cosLat = Math.cos(latRad);
+        const N = a / Math.sqrt(1 - e2 * sinLat * sinLat); // Prime vertical radius
+        
+        // Total radius (ellipsoid + altitude)
+        const R = N + alt;
+        
+        // Angular distance in radians
+        const angularDistance = distance / R;
+        
+        // Calculate destination using spherical trigonometry
+        // (Accurate for distances < 100km, which covers all drone flights)
+        const cosAngularDist = Math.cos(angularDistance);
+        const sinAngularDist = Math.sin(angularDistance);
+        
+        const destLat = Math.asin(
+            sinLat * cosAngularDist +
+            cosLat * sinAngularDist * Math.cos(bearingRad)
+        );
+        
+        const destLon = lonRad + Math.atan2(
+            Math.sin(bearingRad) * sinAngularDist * cosLat,
+            cosAngularDist - sinLat * Math.sin(destLat)
+        );
+        
+        return {
+            latitude: Cesium.Math.toDegrees(destLat),
+            longitude: Cesium.Math.toDegrees(destLon),
+            altitude: alt // Maintain altitude
+        };
     }
     
     updateSurveyCounter() {

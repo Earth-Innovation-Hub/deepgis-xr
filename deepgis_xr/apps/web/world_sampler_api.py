@@ -7,10 +7,13 @@ Django views for integrating the world sampler with the DeepGIS Search frontend.
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.utils import timezone
 import json
+import math
 from typing import Optional
 
 from .world_sampler import WorldSampler, SamplePoint
+from .models import SampledLocation, SamplingSession, DistributionUpdate
 
 
 # Global sampler instance (in production, use Django cache or database)
@@ -86,7 +89,8 @@ def sample_locations(request):
     POST /webclient/sampler/sample
     Body: {
         "n": 10,
-        "method": "weighted" | "top_k"
+        "method": "weighted" | "top_k",
+        "session_id": "default" (optional)
     }
     
     Returns: {
@@ -96,7 +100,8 @@ def sample_locations(request):
                 "lat": 28.0,
                 "lon": 86.9,
                 "alt": 5000.0,
-                "weight": 0.001
+                "weight": 0.001,
+                "zoom": 20
             },
             ...
         ],
@@ -109,20 +114,51 @@ def sample_locations(request):
         
         n = data.get('n', 10)
         method = data.get('method', 'weighted')
+        session_id = data.get('session_id', 'default')
+        
+        # Get or create session
+        session, _ = SamplingSession.objects.get_or_create(
+            session_id=session_id,
+            defaults={
+                'num_points': sampler.num_points,
+                'initialization_method': 'gaussian_mixture',
+            }
+        )
         
         samples = sampler.sample(n=n, method=method)
         
-        # Convert to dict
-        samples_data = [
-            {
+        # Save samples to database and convert to dict
+        samples_data = []
+        for s in samples:
+            zoom = altitude_to_zoom_level(s.alt)
+            
+            # Save to database
+            location, _ = SampledLocation.objects.get_or_create(
+                latitude=round(s.lat, 6),
+                longitude=round(s.lon, 6),
+                altitude=round(s.alt, 2),
+                session_id=session_id,
+                defaults={
+                    'zoom_level': zoom,
+                    'score': 0.0,  # No feedback yet
+                    'weight': s.weight,
+                    'metadata': s.metadata or {},
+                }
+            )
+            
+            samples_data.append({
                 'lat': s.lat,
                 'lon': s.lon,
                 'alt': s.alt,
                 'weight': s.weight,
-                'metadata': s.metadata
-            }
-            for s in samples
-        ]
+                'zoom': zoom,
+                'metadata': s.metadata,
+                'db_id': location.id
+            })
+        
+        # Update session stats
+        session.total_samples += len(samples)
+        session.save()
         
         # Create GeoJSON for Cesium
         geojson = {
@@ -136,7 +172,9 @@ def sample_locations(request):
                     },
                     "properties": {
                         "weight": s['weight'],
-                        "metadata": s['metadata']
+                        "zoom": s['zoom'],
+                        "metadata": s['metadata'],
+                        "db_id": s['db_id']
                     }
                 }
                 for s in samples_data
@@ -147,14 +185,28 @@ def sample_locations(request):
             'status': 'success',
             'samples': samples_data,
             'geojson': geojson,
-            'statistics': sampler.get_statistics()
+            'statistics': sampler.get_statistics(),
+            'session_id': session_id
         })
         
     except Exception as e:
+        import traceback
         return JsonResponse({
             'status': 'error',
-            'message': str(e)
+            'message': str(e),
+            'traceback': traceback.format_exc()
         }, status=400)
+
+
+def altitude_to_zoom_level(altitude: float) -> int:
+    """
+    Convert Cesium camera altitude to approximate zoom level.
+    Cesium zoom levels roughly follow: altitude = 40075000 / (2^zoom)
+    """
+    if altitude <= 0:
+        return 28  # Maximum zoom
+    zoom = math.log2(40075000 / altitude)
+    return max(0, min(28, int(round(zoom))))
 
 
 @require_http_methods(["POST"])
@@ -167,14 +219,15 @@ def update_distribution(request):
     Body: {
         "rule": "reward" | "exploration" | "concentration" | "custom",
         "feedback_points": [
-            {"lat": 28.0, "lon": 86.9, "alt": 5000, "reward": 1.0},
+            {"lat": 28.0, "lon": 86.9, "alt": 5000, "reward": 1.0, "zoom": 20},
             ...
         ],
         "params": {
             "learning_rate": 0.1,
             "radius": 100000,
             ...
-        }
+        },
+        "session_id": "default" (optional)
     }
     """
     try:
@@ -184,19 +237,77 @@ def update_distribution(request):
         rule = data.get('rule', 'reward')
         feedback_points = data.get('feedback_points', [])
         params = data.get('params', {})
+        session_id = data.get('session_id', 'default')
         
-        # Convert feedback points to tuples
+        # Get or create session
+        session, _ = SamplingSession.objects.get_or_create(
+            session_id=session_id,
+            defaults={
+                'num_points': sampler.num_points,
+                'initialization_method': 'gaussian_mixture',
+            }
+        )
+        
+        # Save feedback points to database
+        saved_locations = []
+        for fp in feedback_points:
+            lat = fp['lat']
+            lon = fp['lon']
+            alt = fp['alt']
+            reward = fp.get('reward', 1.0)
+            zoom = fp.get('zoom', altitude_to_zoom_level(alt))
+            
+            # Create or update sampled location
+            location, created = SampledLocation.objects.get_or_create(
+                latitude=round(lat, 6),
+                longitude=round(lon, 6),
+                altitude=round(alt, 2),
+                session_id=session_id,
+                defaults={
+                    'zoom_level': zoom,
+                    'score': reward,
+                    'weight': fp.get('weight', 1.0),
+                    'metadata': fp.get('metadata', {}),
+                }
+            )
+            
+            if not created:
+                # Update existing location's score
+                location.score = reward
+                location.scored_at = timezone.now()
+                location.save()
+            else:
+                location.scored_at = timezone.now()
+                location.save()
+            
+            saved_locations.append(location)
+        
+        # Convert feedback points to tuples for sampler
         feedback_tuples = [
             (fp['lat'], fp['lon'], fp['alt'], fp.get('reward', 1.0))
             for fp in feedback_points
         ]
         
-        # Apply update
+        # Apply update to in-memory sampler
         sampler.update_weights(
             rule=rule,
             feedback_points=feedback_tuples if feedback_tuples else None,
             **params
         )
+        
+        # Log the distribution update
+        update = DistributionUpdate.objects.create(
+            session=session,
+            update_rule=rule,
+            learning_rate=params.get('learning_rate', 0.1),
+            radius=params.get('radius'),
+            parameters=params,
+        )
+        update.feedback_locations.set(saved_locations)
+        
+        # Update session stats
+        session.total_updates += 1
+        session.save()
         
         stats = sampler.get_statistics()
         
@@ -204,13 +315,17 @@ def update_distribution(request):
             'status': 'success',
             'message': f'Distribution updated using {rule} rule',
             'statistics': stats,
-            'num_updates': len(sampler.update_history)
+            'num_updates': len(sampler.update_history),
+            'db_saved': len(saved_locations),
+            'session_id': session_id
         })
         
     except Exception as e:
+        import traceback
         return JsonResponse({
             'status': 'error',
-            'message': str(e)
+            'message': str(e),
+            'traceback': traceback.format_exc()
         }, status=400)
 
 
@@ -338,11 +453,12 @@ def get_sample_history(request):
     """
     Get history of sampled locations.
     
-    GET /webclient/sampler/history?limit=100
+    GET /webclient/sampler/history?limit=100&session_id=default
     """
     try:
         sampler = get_or_create_sampler()
         limit = int(request.GET.get('limit', 100))
+        session_id = request.GET.get('session_id', 'default')
         
         history = sampler.sample_history[-limit:]
         
@@ -367,5 +483,63 @@ def get_sample_history(request):
         return JsonResponse({
             'status': 'error',
             'message': str(e)
+        }, status=400)
+
+
+@require_http_methods(["GET"])
+def get_scored_locations(request):
+    """
+    Get scored locations from the database.
+    
+    GET /webclient/sampler/scored?session_id=default&min_score=-10&limit=100
+    """
+    try:
+        session_id = request.GET.get('session_id', 'default')
+        min_score = float(request.GET.get('min_score', -10))
+        limit = int(request.GET.get('limit', 100))
+        
+        locations = SampledLocation.objects.filter(
+            session_id=session_id,
+            scored_at__isnull=False,  # Only locations with feedback
+            score__gte=min_score
+        ).order_by('-score')[:limit]
+        
+        locations_data = [
+            {
+                'id': loc.id,
+                'lat': loc.latitude,
+                'lon': loc.longitude,
+                'alt': loc.altitude,
+                'zoom': loc.zoom_level,
+                'score': loc.score,
+                'weight': loc.weight,
+                'sampled_at': loc.sampled_at.isoformat(),
+                'scored_at': loc.scored_at.isoformat() if loc.scored_at else None,
+                'metadata': loc.metadata
+            }
+            for loc in locations
+        ]
+        
+        # Get session stats
+        total_samples = SampledLocation.objects.filter(session_id=session_id).count()
+        total_scored = SampledLocation.objects.filter(
+            session_id=session_id,
+            scored_at__isnull=False
+        ).count()
+        
+        return JsonResponse({
+            'status': 'success',
+            'locations': locations_data,
+            'total_samples': total_samples,
+            'total_scored': total_scored,
+            'session_id': session_id
+        })
+        
+    except Exception as e:
+        import traceback
+        return JsonResponse({
+            'status': 'error',
+            'message': str(e),
+            'traceback': traceback.format_exc()
         }, status=400)
 

@@ -15,12 +15,16 @@ class GPSTelemetryLoader {
     }
     
     createUI() {
-        // Check if UI already exists to prevent duplicates
+        // Check if UI already exists in World Sampler
         if (document.getElementById('gpsTelemetrySection')) {
-            console.log('GPS Telemetry UI already exists, skipping creation');
+            console.log('GPS Telemetry UI already exists in World Sampler, skipping creation');
+            // UI is already in World Sampler, just setup event listeners
+            this.setupEventListeners();
+            this.loadSessions();
             return;
         }
         
+        // Fallback: Create standalone GPS Telemetry section if not in World Sampler
         // Find the sidebar or create a container
         const sidebar = document.getElementById('sidebar-wrapper') || document.querySelector('.sidebar-content');
         if (!sidebar) {
@@ -31,39 +35,42 @@ class GPSTelemetryLoader {
         // Create GPS Telemetry section
         const gpsSection = document.createElement('div');
         gpsSection.id = 'gpsTelemetrySection'; // Add ID to prevent duplicates
-        gpsSection.className = 'layer-group';
+        gpsSection.className = 'layer-group accordion-panel';
         gpsSection.style.border = '2px solid #10b981';
         gpsSection.style.background = 'rgba(16, 185, 129, 0.05)';
         gpsSection.innerHTML = `
-            <div class="layer-group-title">
-                <i class="fas fa-satellite"></i> GPS Telemetry Paths
+            <div class="layer-group-title accordion-header" data-target="gpsTelemetryContent">
+                <span><i class="fas fa-satellite"></i> GPS Telemetry Paths</span>
+                <i class="fas fa-chevron-down accordion-icon"></i>
             </div>
-            <div class="form-group mb-2">
-                <label class="form-label small">Session:</label>
-                <select class="form-select form-select-sm" id="gpsSessionSelect">
-                    <option value="">Loading sessions...</option>
-                </select>
+            <div class="accordion-content" id="gpsTelemetryContent">
+                <div class="form-group mb-2">
+                    <label class="form-label small">Session:</label>
+                    <select class="form-select form-select-sm" id="gpsSessionSelect">
+                        <option value="">Loading sessions...</option>
+                    </select>
+                </div>
+                <div class="btn-group-vertical w-100" role="group">
+                    <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
+                        <i class="fas fa-route"></i> Load Path
+                    </button>
+                    <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
+                        <i class="fas fa-map-marker-alt"></i> Load Points
+                    </button>
+                    <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
+                        <i class="fas fa-plane"></i> Fly To Path
+                    </button>
+                    <button class="btn btn-sm btn-danger" id="clearGPSBtn">
+                        <i class="fas fa-trash"></i> Clear All
+                    </button>
+                </div>
+                <div id="gpsSessionInfo" class="mt-2 small text-muted" style="display: none; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px;"></div>
             </div>
-            <div class="btn-group-vertical w-100" role="group">
-                <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
-                    <i class="fas fa-route"></i> Load Path
-                </button>
-                <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
-                    <i class="fas fa-map-marker-alt"></i> Load Points
-                </button>
-                <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
-                    <i class="fas fa-plane"></i> Fly To Path
-                </button>
-                <button class="btn btn-sm btn-danger" id="clearGPSBtn">
-                    <i class="fas fa-trash"></i> Clear All
-                </button>
-            </div>
-            <div id="gpsSessionInfo" class="mt-2 small text-muted" style="display: none;"></div>
         `;
         
         // Append to the end of sidebar content (safer than insertBefore)
         // Try to find the sidebar-content div or use sidebar directly
-        const sidebarContent = sidebar.querySelector('.sidebar-content') || sidebar;
+        const sidebarContent = sidebar.querySelector('.layer-controls') || sidebar.querySelector('.sidebar-content') || sidebar;
         sidebarContent.appendChild(gpsSection);
         
         // Setup event listeners

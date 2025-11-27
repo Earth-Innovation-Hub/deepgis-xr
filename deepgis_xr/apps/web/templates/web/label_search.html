@@ -43,6 +43,74 @@
     <!-- Application Styles -->
     {% load static %}
     <link rel="stylesheet" href="{% static 'web/styles/main.css' %}">
+    
+    <!-- Accordion Styles for Flattened Panels -->
+    <style>
+        /* Accordion Panel Styles */
+        .accordion-panel {
+            margin-bottom: 8px;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        
+        .accordion-header {
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 15px;
+            transition: background-color 0.2s ease;
+        }
+        
+        .accordion-header:hover {
+            background-color: rgba(59, 130, 246, 0.1);
+        }
+        
+        .accordion-header.active {
+            background-color: rgba(59, 130, 246, 0.15);
+        }
+        
+        .accordion-icon {
+            transition: transform 0.3s ease;
+            font-size: 0.85rem;
+            color: #94a3b8;
+        }
+        
+        .accordion-header.active .accordion-icon {
+            transform: rotate(180deg);
+        }
+        
+        .accordion-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+            padding: 0 15px;
+        }
+        
+        .accordion-content.expanded {
+            max-height: 2000px; /* Large enough for content */
+            padding: 15px;
+            transition: max-height 0.4s ease-in, padding 0.3s ease-in;
+        }
+        
+        /* Ensure layer-group-title works with accordion */
+        .layer-group-title.accordion-header {
+            margin: 0;
+            border-bottom: none;
+        }
+        
+        /* Chart container styles for Feature Statistics in World Sampler */
+        #worldSamplerSection .chart-container {
+            position: relative;
+            height: 200px;
+            width: 100%;
+        }
+        
+        #worldSamplerSection .chart-container canvas {
+            max-height: 200px;
+        }
+    </style>
 </head>
 
 <body>
@@ -71,199 +139,105 @@
                         </div>
                     </div>
 
-                    <!-- Base Raster Layer Selection - HIDDEN (removed duplication with overlays) -->
-                    <div class="layer-group" style="display: none;">
-                        <div class="layer-group-title">
-                            <i class="fas fa-image"></i> Base Raster Layer
+                    <!-- Consolidated View & Display Controls (Accordion) -->
+                    <div class="layer-group accordion-panel">
+                        <div class="layer-group-title accordion-header" data-target="viewDisplayContent">
+                            <i class="fas fa-eye"></i> View & Display
+                            <i class="fas fa-chevron-down accordion-icon"></i>
                         </div>
-                        <div class="form-group mb-3">
-                            <select class="form-select" id="rasterLayerSelect">
-                                <option value="">Loading layers...</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Raster Overlay Layers -->
-                    <div class="layer-group">
-                        <div class="layer-group-title">
-                            <i class="fas fa-layer-group"></i> Raster Overlays
-                        </div>
-                        <div id="overlayLayersList">
-                            <small class="text-muted">Loading layers...</small>
-                        </div>
-                    </div>
-
-                    <!-- Vector Layers -->
-                    <div class="layer-group" style="border: 2px solid #8b5cf6; background: rgba(139, 92, 246, 0.05);">
-                        <div class="layer-group-title">
-                            <i class="fas fa-vector-square"></i> Vector Layers
-                        </div>
-                        <div id="vectorLayersList">
-                            <small class="text-muted">Loading layers...</small>
-                        </div>
-                    </div>
-
-                    <!-- Terrain Toggle -->
-                    <div class="layer-group">
-                        <div class="layer-group-title">
-                            <i class="fas fa-mountain"></i> 3D Features
-                        </div>
-                        <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="terrainToggle">
-                            <label class="form-check-label" for="terrainToggle">
-                                <i class="fas fa-mountain me-2"></i>3D Terrain
-                            </label>
-                        </div>
-                        <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="modelsToggle">
-                            <label class="form-check-label" for="modelsToggle">
-                                <i class="fas fa-cube me-2"></i>3D Models
-                            </label>
+                        <div class="accordion-content" id="viewDisplayContent">
+                            <div class="form-group mb-3">
+                                <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Base Map:</label>
+                                <select class="form-select" id="baseMapSelect">
+                                    <option value="ion_satellite">Ion Satellite</option>
+                                    <option value="ion_streets">Ion Streets</option>
+                                    <option value="satellite">Bing Satellite</option>
+                                    <option value="bing">Bing Streets</option>
+                                    <option value="mapbox">Mapbox Streets</option>
+                                    <option value="none">None</option>
+                                </select>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="terrainToggle">
+                                <label class="form-check-label" for="terrainToggle">
+                                    <i class="fas fa-mountain me-2"></i>3D Terrain
+                                </label>
+                            </div>
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="modelsToggle">
+                                <label class="form-check-label" for="modelsToggle">
+                                    <i class="fas fa-cube me-2"></i>3D Models
+                                </label>
+                            </div>
+                            <div class="btn-group-vertical w-100 mt-2" role="group">
+                                <button class="btn btn-primary btn-sm mb-1" id="view2D">
+                                    <i class="fas fa-map me-2"></i>2D Map View
+                                </button>
+                                <button class="btn btn-primary btn-sm mb-1" id="view3D">
+                                    <i class="fas fa-cube me-2"></i>3D Globe View
+                                </button>
+                                <button class="btn btn-primary btn-sm mb-1" id="viewColumbus">
+                                    <i class="fas fa-compass me-2"></i>Columbus View
+                                </button>
+                                <button class="btn btn-success btn-sm" id="homeView">
+                                    <i class="fas fa-home me-2"></i>Home View
+                                </button>
+                            </div>
                         </div>
                     </div>
 
-                    <!-- View Controls -->
-                    <div class="layer-group view-controls">
-                        <div class="layer-group-title">
-                            <i class="fas fa-eye"></i> View Controls
-                        </div>
-                        <button class="btn btn-primary" id="view2D">
-                            <i class="fas fa-map me-2"></i>2D Map View
-                        </button>
-                        <button class="btn btn-primary" id="view3D">
-                            <i class="fas fa-cube me-2"></i>3D Globe View
-                        </button>
-                        <button class="btn btn-primary" id="viewColumbus">
-                            <i class="fas fa-compass me-2"></i>Columbus View
-                        </button>
-                        <button class="btn btn-success" id="homeView">
-                            <i class="fas fa-home me-2"></i>Home View
-                        </button>
-                    </div>
-
-                    <!-- WebXR Controls -->
-                    <div class="layer-group" id="webxrControls" style="background: #7c2d92; border: 1px solid #8b5cf6;">
-                        <div class="layer-group-title">
+                    <!-- WebXR / VR Controls (Accordion) -->
+                    <div class="layer-group accordion-panel" id="webxrControls" style="background: #7c2d92; border: 1px solid #8b5cf6;">
+                        <div class="layer-group-title accordion-header" data-target="webxrContent">
                             <i class="fas fa-vr-cardboard"></i> WebXR / VR
+                            <i class="fas fa-chevron-down accordion-icon"></i>
                         </div>
-                        <button class="btn btn-primary" id="checkVRSupport">
-                            <i class="fas fa-search me-2"></i>Check VR Support
-                        </button>
-                        <button class="btn btn-success" id="enterVR" disabled>
-                            <i class="fas fa-vr-cardboard me-2"></i>Enter VR
-                        </button>
-                        <button class="btn btn-danger" id="exitVR" disabled>
-                            <i class="fas fa-times me-2"></i>Exit VR
-                        </button>
-                        <div id="vrStatus" style="color: #cbd5e1; font-size: 0.85rem; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
-                            VR Status: Not checked
-                        </div>
-                    </div>
-
-                    <!-- Measurement Tools -->
-                    <div class="layer-group measurement-controls">
-                        <div class="layer-group-title">
-                            <i class="fas fa-ruler"></i> Measurement Tools
-                        </div>
-                        <button class="btn btn-warning" id="measureDistance">
-                            <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
-                        </button>
-                        <button class="btn btn-warning" id="measureArea">
-                            <i class="fas fa-draw-polygon me-2"></i>Measure Area
-                        </button>
-                        <button class="btn btn-warning" id="measureHeight">
-                            <i class="fas fa-ruler-vertical me-2"></i>Measure Height
-                        </button>
-                        <button class="btn btn-danger" id="clearMeasurements">
-                            <i class="fas fa-trash me-2"></i>Clear All
-                        </button>
-                        
-                        <div class="measurements-list" id="measurementsList">
-                            <small>No measurements yet</small>
+                        <div class="accordion-content" id="webxrContent">
+                            <div class="btn-group-vertical w-100" role="group">
+                                <button class="btn btn-primary btn-sm mb-1" id="checkVRSupport">
+                                    <i class="fas fa-search me-2"></i>Check VR Support
+                                </button>
+                                <button class="btn btn-success btn-sm mb-1" id="enterVR" disabled>
+                                    <i class="fas fa-vr-cardboard me-2"></i>Enter VR
+                                </button>
+                                <button class="btn btn-danger btn-sm" id="exitVR" disabled>
+                                    <i class="fas fa-times me-2"></i>Exit VR
+                                </button>
+                            </div>
+                            <div id="vrStatus" style="color: #cbd5e1; font-size: 0.85rem; margin-top: 8px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                                VR Status: Not checked
+                            </div>
                         </div>
                     </div>
 
-                    <!-- 3D Model Controls -->
-                    <div class="layer-group" id="modelControls" style="display: none;">
-                        <div class="layer-group-title">
-                            <i class="fas fa-cube"></i> Navagunjara Digital Twin
+                    <!-- Consolidated Tools & Features (Accordion) -->
+                    <div class="layer-group accordion-panel">
+                        <div class="layer-group-title accordion-header" data-target="toolsContent">
+                            <i class="fas fa-tools"></i> Tools & Features
+                            <i class="fas fa-chevron-down accordion-icon"></i>
                         </div>
-                        <div class="form-group mb-3">
-                            <label class="form-label" style="color: #cbd5e1;">3D Model:</label>
-                            <input type="text" class="form-control" id="modelUrl" 
-                                   value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
-                                   readonly
-                                   style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; cursor: not-allowed;">
-                            <small class="text-muted">
-                                <strong>Navagunjara Reborn Digital Twin</strong> - Propane and Solar Powered Art Installation
-                            </small>
-                        </div>
-                        <div class="form-group mb-3">
-                            <label class="form-label" style="color: #cbd5e1;">Model Location:</label>
-                            <select class="form-select" id="modelLocation">
-                                <option value="mount_everest">Mount Everest, Nepal/Tibet</option>
-                                <option value="current_view">Current View Location</option>
-                                <option value="custom">Custom Coordinates</option>
-                            </select>
-                        </div>
-                        <div class="form-group mb-3" id="customLocationInputs" style="display: none;">
-                            <div class="row">
-                                <div class="col-4">
-                                    <input type="number" class="form-control" id="customLon" 
-                                           placeholder="Longitude" step="0.000001"
-                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                        <div class="accordion-content" id="toolsContent">
+                            <div class="form-group mb-3">
+                                <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Measurement Tools:</label>
+                                <div class="btn-group-vertical w-100" role="group">
+                                    <button class="btn btn-warning btn-sm mb-1" id="measureDistance">
+                                        <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+                                    </button>
+                                    <button class="btn btn-warning btn-sm mb-1" id="measureArea">
+                                        <i class="fas fa-draw-polygon me-2"></i>Measure Area
+                                    </button>
+                                    <button class="btn btn-warning btn-sm mb-1" id="measureHeight">
+                                        <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+                                    </button>
+                                    <button class="btn btn-danger btn-sm" id="clearMeasurements">
+                                        <i class="fas fa-trash me-2"></i>Clear All
+                                    </button>
                                 </div>
-                                <div class="col-4">
-                                    <input type="number" class="form-control" id="customLat" 
-                                           placeholder="Latitude" step="0.000001"
-                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
-                                </div>
-                                <div class="col-4">
-                                    <input type="number" class="form-control" id="customAlt" 
-                                           placeholder="Altitude (m)" step="1" value="0"
-                                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9;">
+                                <div class="measurements-list mt-2" id="measurementsList" style="background: #1e293b; padding: 8px; border-radius: 4px; min-height: 30px;">
+                                    <small style="color: #94a3b8;">No measurements yet</small>
                                 </div>
                             </div>
                         </div>
-                        <div class="form-group mb-3">
-                            <label class="form-label" style="color: #cbd5e1;">Model Scale:</label>
-                            <input type="range" class="form-range" id="modelScale" 
-                                   min="0.1" max="10" step="0.1" value="1.0">
-                            <small class="text-muted" id="scaleValue">Scale: 1.0x</small>
-                        </div>
-                        <button class="btn btn-success" id="loadModel">
-                            <i class="fas fa-download me-2"></i>Load Navagunjara
-                        </button>
-                        <button class="btn btn-danger" id="removeModel">
-                            <i class="fas fa-trash me-2"></i>Remove Model
-                        </button>
-                    </div>
-
-                    <!-- Base Map Selection -->
-                    <div class="layer-group">
-                        <div class="layer-group-title">
-                            <i class="fas fa-map"></i> Base Map
-                        </div>
-                        <div class="form-group">
-                            <select class="form-select" id="baseMapSelect">
-                                <option value="ion_satellite">Ion Satellite</option>
-                                <option value="ion_streets">Ion Streets</option>
-                                <option value="satellite">Bing Satellite</option>
-                                <option value="bing">Bing Streets</option>
-                                <option value="mapbox">Mapbox Streets</option>
-                                <option value="none">None</option>
-                            </select>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Statistics Section -->
-                <div class="statistics-section">
-                    <div class="statistics-title">
-                        <i class="fas fa-chart-bar"></i> Statistics
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="histogram"></canvas>
                     </div>
                 </div>
             </div>
@@ -402,59 +376,52 @@
     <script type="module" src="{% static 'web/js/main.js' %}"></script>
     
     <!-- GPS Telemetry Path Loader -->
+    <!-- Note: GPS Telemetry is now integrated into World Sampler panel -->
+    <!-- It will be initialized automatically when World Sampler is created -->
     <script src="{% static 'web/js/gps-telemetry.js' %}"></script>
     
     <!-- World Sampler UI -->
     <script src="{% static 'web/js/world-sampler-ui.js' %}"></script>
     <script>
-        // Initialize GPS Telemetry Loader when viewer is ready (only once)
+        // Accordion functionality for flattened panels
         (function() {
-            let initialized = false; // Prevent duplicate initialization
-            
-            function initGPSTelemetry() {
-                // Prevent multiple initializations
-                if (initialized || window.gpsTelemetryLoader) {
-                    return;
-                }
+            function initAccordion() {
+                const accordionHeaders = document.querySelectorAll('.accordion-header');
                 
-                // Try to get viewer from various possible locations
-                let viewer = null;
-                if (window.viewer) {
-                    viewer = window.viewer;
-                } else if (window.DeepGISTopology && window.DeepGISTopology.viewer) {
-                    viewer = window.DeepGISTopology.viewer;
-                } else if (window.Cesium && document.getElementById('cesiumContainer')) {
-                    // Viewer might be initialized later, wait a bit more
-                    setTimeout(initGPSTelemetry, 1000);
-                    return;
-                }
-                
-                if (viewer && window.GPSTelemetryLoader) {
-                    window.gpsTelemetryLoader = new window.GPSTelemetryLoader(viewer);
-                    initialized = true;
-                    console.log('GPS Telemetry Loader initialized');
-                } else if (window.Cesium) {
-                    // Keep trying for up to 10 seconds
-                    let attempts = 0;
-                    const maxAttempts = 20;
-                    const checkInterval = setInterval(() => {
-                        attempts++;
-                        if (window.viewer || (window.DeepGISTopology && window.DeepGISTopology.viewer)) {
-                            clearInterval(checkInterval);
-                            initGPSTelemetry();
-                        } else if (attempts >= maxAttempts) {
-                            clearInterval(checkInterval);
-                            console.warn('GPS Telemetry Loader: Could not find Cesium viewer after 10 seconds');
+                accordionHeaders.forEach(header => {
+                    header.addEventListener('click', function() {
+                        const targetId = this.getAttribute('data-target');
+                        const content = document.getElementById(targetId);
+                        const isExpanded = content.classList.contains('expanded');
+                        
+                        // Toggle this panel
+                        if (isExpanded) {
+                            content.classList.remove('expanded');
+                            this.classList.remove('active');
+                        } else {
+                            content.classList.add('expanded');
+                            this.classList.add('active');
                         }
-                    }, 500);
+                    });
+                });
+                
+                // Expand first panel by default
+                const firstHeader = document.querySelector('.accordion-header');
+                if (firstHeader) {
+                    const firstTarget = firstHeader.getAttribute('data-target');
+                    const firstContent = document.getElementById(firstTarget);
+                    if (firstContent) {
+                        firstContent.classList.add('expanded');
+                        firstHeader.classList.add('active');
+                    }
                 }
             }
             
-            // Try to initialize when DOM is ready
+            // Initialize accordion when DOM is ready
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', initGPSTelemetry);
+                document.addEventListener('DOMContentLoaded', initAccordion);
             } else {
-                initGPSTelemetry();
+                initAccordion();
             }
         })();
     </script>
