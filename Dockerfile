@@ -65,8 +65,11 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install requirements with better error reporting and ensure fiona is installed after GDAL
+# Note: detectron2 is installed separately after torch because its setup.py imports torch
+# Use --no-build-isolation so detectron2 can access the already-installed torch
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir fiona==$(pip show fiona | grep Version | cut -d' ' -f2) --no-binary fiona || \
+    pip install --no-cache-dir fiona==$(pip show fiona | grep Version | cut -d' ' -f2) --no-binary fiona && \
+    pip install --no-cache-dir --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || \
     (echo "Failed to install requirements" && cat /root/.cache/pip/log/*/log && exit 1)
 
 # Copy project

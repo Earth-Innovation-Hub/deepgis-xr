@@ -222,6 +222,7 @@
                                 <select class="form-select" id="analysisTypeSelect">
                                     <option value="sam" selected>Segment Anything (Universal Segmentation)</option>
                                     <option value="zero_shot">Zero-Shot Detection (COCO Objects)</option>
+                                    <option value="mask2former">Mask2Former (COCO - State-of-the-Art)</option>
                                 </select>
                             </div>
                             
@@ -255,6 +256,19 @@
                                 </small>
                             </div>
                             
+                            <!-- Mask2Former specific options -->
+                            <div id="mask2formerOptions" style="display: none;">
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Confidence Threshold:</label>
+                                    <input type="range" class="form-range" id="mask2formerConfidence" 
+                                           min="0" max="100" step="5" value="50">
+                                    <span id="mask2formerConfidenceValue" style="color: #cbd5e1; font-size: 0.85rem;">0.50</span>
+                                </div>
+                                <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
+                                    State-of-the-art detection with 80 COCO categories. More accurate than Zero-Shot.
+                                </small>
+                            </div>
+                            
                             <button class="btn btn-info w-100 mb-2" id="analyzeViewportBtn">
                                 <i class="fas fa-brain me-2"></i>Analyze Viewport
                             </button>
@@ -264,6 +278,9 @@
                             <small class="text-muted" style="display: block; margin-top: 6px; font-size: 0.8rem; color: #94a3b8;">
                                 <span id="analysisDescription">Segments all visible regions in current viewport using Segment Anything Model</span>
                             </small>
+                            <div class="alert alert-info" style="margin-top: 8px; padding: 6px; font-size: 0.75rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 4px;">
+                                <strong>Tip:</strong> SAM = all regions, Zero-Shot/Mask2Former = labeled objects
+                            </div>
                         </div>
                     </div>
 

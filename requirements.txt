@@ -25,6 +25,11 @@ numpy-stl>=2.17.1  # Required for 3D STL model generation and processing
 # Note: This requires torch and torchvision (already included above)
 git+https://github.com/facebookresearch/segment-anything.git
 
+# Detectron2 for Mask2Former (pre-trained COCO models)
+# NOTE: detectron2 must be installed AFTER torch/torchvision because its setup.py imports torch
+# Install detectron2 separately in Dockerfile after torch is installed
+# git+https://github.com/facebookresearch/detectron2.git
+
 # GIS dependencies
 fiona==1.9.1
 geopandas==0.12.0

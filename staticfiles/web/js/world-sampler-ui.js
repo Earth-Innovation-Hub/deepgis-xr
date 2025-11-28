@@ -1878,6 +1878,11 @@ class WorldSamplerUI {
                     const confidence = confidenceSlider ? parseFloat(confidenceSlider.value) / 100 : 0.5;
                     requestBody.confidence_threshold = confidence;
                     statusText.textContent = 'Sending to Zero-Shot Detection...';
+                } else if (analysisType === 'mask2former') {
+                    const confidenceSlider = document.getElementById('mask2formerConfidence');
+                    const confidence = confidenceSlider ? parseFloat(confidenceSlider.value) / 100 : 0.5;
+                    requestBody.confidence_threshold = confidence;
+                    statusText.textContent = 'Sending to Mask2Former for analysis...';
                 }
                 
                 // Send to API
@@ -1907,18 +1912,19 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot') {
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former') {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
                     
-                    // Display zero-shot results
+                    // Display results (zero-shot and mask2former use same display method)
                     this.displayZeroShotResults(result);
                     
                     // Show notification
                     const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+                    const modelName = analysisType === 'mask2former' ? 'Mask2Former' : 'Zero-Shot Detection';
                     this.showNotification(
-                        `Zero-Shot Detection: Found ${numDetections} objects in viewport${deviceNote}`,
+                        `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
                         'success'
                     );
                 } else {
@@ -2652,22 +2658,34 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const analysisTypeSelect = document.getElementById('analysisTypeSelect');
     const samOptions = document.getElementById('samOptions');
     const zeroShotOptions = document.getElementById('zeroShotOptions');
+    const mask2formerOptions = document.getElementById('mask2formerOptions');
     const analysisDescription = document.getElementById('analysisDescription');
-    const confidenceSlider = document.getElementById('zeroShotConfidence');
-    const confidenceValue = document.getElementById('zeroShotConfidenceValue');
+    const zeroShotConfidenceSlider = document.getElementById('zeroShotConfidence');
+    const zeroShotConfidenceValue = document.getElementById('zeroShotConfidenceValue');
+    const mask2formerConfidenceSlider = document.getElementById('mask2formerConfidence');
+    const mask2formerConfidenceValue = document.getElementById('mask2formerConfidenceValue');
     
     if (analysisTypeSelect) {
         analysisTypeSelect.addEventListener('change', (e) => {
             const analysisType = e.target.value;
+            // Hide all options first
+            if (samOptions) samOptions.style.display = 'none';
+            if (zeroShotOptions) zeroShotOptions.style.display = 'none';
+            if (mask2formerOptions) mask2formerOptions.style.display = 'none';
+            
             if (analysisType === 'zero_shot') {
-                if (samOptions) samOptions.style.display = 'none';
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
                 if (analysisDescription) {
-                    analysisDescription.textContent = 'Detects common objects (person, car, bicycle, etc.) using pre-trained COCO model';
+                    analysisDescription.textContent = 'Detects common objects (person, car, bicycle, etc.) using pre-trained COCO Mask R-CNN model';
+                }
+            } else if (analysisType === 'mask2former') {
+                if (mask2formerOptions) mask2formerOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'State-of-the-art object detection with 80 COCO categories using Mask2Former (more accurate than Zero-Shot)';
                 }
             } else {
+                // SAM (default)
                 if (samOptions) samOptions.style.display = 'block';
-                if (zeroShotOptions) zeroShotOptions.style.display = 'none';
                 if (analysisDescription) {
                     analysisDescription.textContent = 'Segments all visible regions in current viewport using Segment Anything Model';
                 }
@@ -2675,11 +2693,18 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         });
     }
     
-    // Setup confidence slider
-    if (confidenceSlider && confidenceValue) {
-        confidenceSlider.addEventListener('input', (e) => {
+    // Setup confidence sliders
+    if (zeroShotConfidenceSlider && zeroShotConfidenceValue) {
+        zeroShotConfidenceSlider.addEventListener('input', (e) => {
             const value = parseFloat(e.target.value) / 100;
-            confidenceValue.textContent = value.toFixed(2);
+            zeroShotConfidenceValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    if (mask2formerConfidenceSlider && mask2formerConfidenceValue) {
+        mask2formerConfidenceSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            mask2formerConfidenceValue.textContent = value.toFixed(2);
         });
     }
     
