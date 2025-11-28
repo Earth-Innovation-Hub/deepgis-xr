@@ -11,6 +11,14 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 
 ---
 
+## ⚠️ Disclaimer
+
+**This software is provided "as is" without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement. In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.**
+
+**Use at your own risk.** This platform is intended for research, educational, and exploratory purposes. The AI models and analysis results should be validated independently for critical applications. The authors make no guarantees regarding the accuracy, reliability, or suitability of the analysis outputs for any specific use case.
+
+---
+
 ## 🌟 Key Features
 
 ### 🤖 AI-Powered Viewport Analysis
@@ -331,5 +339,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Built with ❤️ by the Earth Innovation Hub**
+**Powered by Earth Innovation Hu (Arizona non-profit corporation)**
 
