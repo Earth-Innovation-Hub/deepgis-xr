@@ -200,5 +200,6 @@ VECTOR_LAYER_CAMERA_FIX.md
 VECTOR_LAYER_FIX.md
 VECTOR_LAYER_IMPLEMENTATION.md
 
-# Keep only: COMPLETE_DOCUMENTATION.md (master consolidated document) and README.md
-MOON_VIEWER_COMPLETE_GUIDE.md 
+# Ignore all .md files except README.md
+*.md
+!README.md 
