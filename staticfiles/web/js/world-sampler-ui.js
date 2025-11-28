@@ -63,9 +63,9 @@ class WorldSamplerUI {
                 <div class="layer-group-title accordion-header" data-target="worldSamplerContent">
                     <span><i class="fas fa-globe-americas"></i> World Sampler</span>
                     <i class="fas fa-chevron-down accordion-icon"></i>
-                </div>
+            </div>
                 <div class="accordion-content" id="worldSamplerContent">
-                
+            
                 <!-- Initialization Section -->
                 <div class="sampler-section">
                     <h4 class="accordion-header" data-target="initContent">
@@ -310,7 +310,7 @@ class WorldSamplerUI {
                     </button>
                     </div>
                 </div>
-                </div>
+            </div>
         `;
         
         // Insert into sidebar (before Statistics section if it exists, otherwise at end)
@@ -840,15 +840,15 @@ class WorldSamplerUI {
         const minimizeBtn = document.getElementById('samplerMinimize');
         if (minimizeBtn) {
             minimizeBtn.addEventListener('click', () => {
-                const content = document.getElementById('samplerContent');
+            const content = document.getElementById('samplerContent');
                 if (content) {
-                    content.classList.toggle('minimized');
-                    const icon = document.querySelector('#samplerMinimize i');
+            content.classList.toggle('minimized');
+            const icon = document.querySelector('#samplerMinimize i');
                     if (icon) {
-                        icon.className = content.classList.contains('minimized') ? 'fas fa-plus' : 'fas fa-minus';
+            icon.className = content.classList.contains('minimized') ? 'fas fa-plus' : 'fas fa-minus';
                     }
                 }
-            });
+        });
         }
         
         // Initialize button
@@ -1829,81 +1829,105 @@ class WorldSamplerUI {
                 });
             });
             
-            // Force another render before capture
-            this.viewer.scene.requestRender();
-            this.viewer.scene.render();
-            
-            // Small delay to ensure framebuffer is ready
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            // Capture viewport
-            const viewportData = await this.captureViewportImage();
-            
-            // Get SAM parameters
-            const modelType = document.getElementById('samModelType').value;
-            const minArea = parseInt(document.getElementById('samMinArea').value) || 100;
-            
-            statusText.textContent = 'Sending to SAM for analysis...';
-            
-            // Send to API
-            const response = await fetch('/webclient/sampler/analyze-viewport', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    image: viewportData.image,
-                    location: viewportData.location,
-                    model_type: modelType,
-                    min_area: minArea
-                })
-            });
-            
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.message || `HTTP ${response.status}`);
+            // Temporarily hide SAM result overlays to capture clean viewport
+            let samDataSourceWasVisible = false;
+            if (this.samDataSource && this.viewer.dataSources.contains(this.samDataSource)) {
+                this.viewer.dataSources.remove(this.samDataSource);
+                samDataSourceWasVisible = true;
+                console.log('[SAM] Temporarily hiding SAM overlays for clean viewport capture');
             }
             
-            const result = await response.json();
-            
-            if (result.status !== 'success') {
-                throw new Error(result.message || 'Analysis failed');
-            }
-            
-            // Show device info
-            const deviceInfo = result.device_info || {};
-            const deviceText = deviceInfo.cuda_available 
-                ? `GPU: ${deviceInfo.gpu_name || 'CUDA'}` 
-                : 'CPU';
-            statusText.textContent = `✓ Found ${result.num_segments} segments (${deviceText})`;
-            statusText.style.color = '#10b981';
-            
-            // Display results on map
-            this.displaySAMResults(result);
-            
-            // Show notification with device info
-            const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
-            this.showNotification(
-                `SAM Analysis: Found ${result.num_segments} segments in viewport${deviceNote}`,
-                'success'
-            );
-            
-            // Log device info to console
-            if (deviceInfo.cuda_available) {
-                console.log(`SAM running on GPU: ${deviceInfo.gpu_name || 'CUDA device'}`);
-            } else {
-                console.warn('SAM running on CPU. For faster processing, enable GPU in Docker.');
-            }
-            
-            // Log saved files location
-            if (result.saved_to) {
-                console.log('SAM results saved to:', result.saved_to.session_dir);
-                console.log('Files saved:', {
-                    query_image: result.saved_to.query_image,
-                    visualization: result.saved_to.visualization,
-                    geojson: result.saved_to.geojson,
-                    metadata: result.saved_to.metadata
+            try {
+                // Force another render before capture (without SAM overlays)
+                this.viewer.scene.requestRender();
+                this.viewer.scene.render();
+                
+                // Small delay to ensure framebuffer is ready
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Capture viewport (without SAM overlays)
+                const viewportData = await this.captureViewportImage();
+                
+                // Restore SAM overlays if they were visible
+                if (samDataSourceWasVisible && this.samDataSource) {
+                    this.viewer.dataSources.add(this.samDataSource);
+                    console.log('[SAM] Restored SAM overlays after capture');
+                }
+                
+                // Continue with analysis using clean viewport
+                
+                // Get SAM parameters
+                const modelType = document.getElementById('samModelType').value;
+                const minArea = parseInt(document.getElementById('samMinArea').value) || 100;
+                
+                statusText.textContent = 'Sending to SAM for analysis...';
+                
+                // Send to API
+                const response = await fetch('/webclient/sampler/analyze-viewport', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        image: viewportData.image,
+                        location: viewportData.location,
+                        model_type: modelType,
+                        min_area: minArea
+                    })
                 });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `HTTP ${response.status}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.status !== 'success') {
+                    throw new Error(result.message || 'Analysis failed');
+                }
+                
+                // Show device info
+                const deviceInfo = result.device_info || {};
+                const deviceText = deviceInfo.cuda_available 
+                    ? `GPU: ${deviceInfo.gpu_name || 'CUDA'}` 
+                    : 'CPU';
+                statusText.textContent = `✓ Found ${result.num_segments} segments (${deviceText})`;
+                statusText.style.color = '#10b981';
+                
+                // Display results on map (this will replace any previous SAM results)
+                this.displaySAMResults(result);
+                
+                // Show notification with device info
+                const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+                this.showNotification(
+                    `SAM Analysis: Found ${result.num_segments} segments in viewport${deviceNote}`,
+                    'success'
+                );
+                
+                // Log device info to console
+                if (deviceInfo.cuda_available) {
+                    console.log(`SAM running on GPU: ${deviceInfo.gpu_name || 'CUDA device'}`);
+                } else {
+                    console.warn('SAM running on CPU. For faster processing, enable GPU in Docker.');
+                }
+                
+                // Log saved files location
+                if (result.saved_to) {
+                    console.log('SAM results saved to:', result.saved_to.session_dir);
+                    console.log('Files saved:', {
+                        query_image: result.saved_to.query_image,
+                        visualization: result.saved_to.visualization,
+                        geojson: result.saved_to.geojson,
+                        metadata: result.saved_to.metadata
+                    });
+                }
+            } catch (captureError) {
+                // Restore SAM overlays even if capture fails
+                if (samDataSourceWasVisible && this.samDataSource) {
+                    this.viewer.dataSources.add(this.samDataSource);
+                }
+                throw captureError;
             }
             
         } catch (error) {

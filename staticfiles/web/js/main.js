@@ -44,8 +44,8 @@ const lazyLoaders = {
       try {
         // Import path: go up from js/ to web/, then into features/
         const webxrModule = await import('../features/webxr.js');
-        AppState.features.webxr = webxrModule.default;
-        return webxrModule;
+      AppState.features.webxr = webxrModule.default;
+      return webxrModule;
       } catch (error) {
         console.warn('Failed to load WebXR module:', error);
         // Return a fallback module with error handling
@@ -74,8 +74,8 @@ const lazyLoaders = {
     if (!AppState.features.models) {
       try {
         const modelsModule = await import('../features/models.js');
-        AppState.features.models = modelsModule.default;
-        return modelsModule;
+      AppState.features.models = modelsModule.default;
+      return modelsModule;
       } catch (error) {
         console.warn('Failed to load Models module:', error);
         return {
@@ -91,8 +91,8 @@ const lazyLoaders = {
     if (!AppState.features.measurements) {
       try {
         const measurementsModule = await import('../features/measurements.js');
-        AppState.features.measurements = measurementsModule.default;
-        return measurementsModule;
+      AppState.features.measurements = measurementsModule.default;
+      return measurementsModule;
       } catch (error) {
         console.warn('Failed to load Measurements module:', error);
         return {
@@ -110,8 +110,8 @@ const lazyLoaders = {
     if (!AppState.features.debug) {
       try {
         const debugModule = await import('../features/debug-console.js');
-        AppState.features.debug = debugModule.default;
-        return debugModule;
+      AppState.features.debug = debugModule.default;
+      return debugModule;
       } catch (error) {
         console.warn('Failed to load Debug module:', error);
         return { initializeDebugConsole: () => {} };
@@ -124,8 +124,8 @@ const lazyLoaders = {
     if (!AppState.features.statistics) {
       try {
         const statisticsModule = await import('../features/statistics.js');
-        AppState.features.statistics = statisticsModule.default;
-        return statisticsModule;
+      AppState.features.statistics = statisticsModule.default;
+      return statisticsModule;
       } catch (error) {
         console.warn('Failed to load Statistics module:', error);
         return { initializeHistogram: () => {} };
@@ -137,9 +137,9 @@ const lazyLoaders = {
   navigation: async () => {
     if (!AppState.features.navigation) {
       try {
-        const navigationModule = await import('./widgets/navigation.js');
-        AppState.features.navigation = navigationModule.default;
-        return navigationModule;
+      const navigationModule = await import('./widgets/navigation.js');
+      AppState.features.navigation = navigationModule.default;
+      return navigationModule;
       } catch (error) {
         console.warn('Failed to load Navigation module:', error);
         return { initializeNavigation: () => {} };
@@ -261,7 +261,7 @@ function addLazyEventHandler(elementId, loaderFn, methodName, args = []) {
           statusElement.style.color = '#ef4444';
         }
       } else if (typeof updateStatusIndicator === 'function') {
-        updateStatusIndicator(`Error: ${error.message}`);
+      updateStatusIndicator(`Error: ${error.message}`);
       }
     }
   });

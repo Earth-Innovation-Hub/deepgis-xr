@@ -44,26 +44,26 @@ class GPSTelemetryLoader {
                 <i class="fas fa-chevron-down accordion-icon"></i>
             </div>
             <div class="accordion-content" id="gpsTelemetryContent">
-                <div class="form-group mb-2">
-                    <label class="form-label small">Session:</label>
-                    <select class="form-select form-select-sm" id="gpsSessionSelect">
-                        <option value="">Loading sessions...</option>
-                    </select>
-                </div>
-                <div class="btn-group-vertical w-100" role="group">
-                    <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
-                        <i class="fas fa-route"></i> Load Path
-                    </button>
-                    <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
-                        <i class="fas fa-map-marker-alt"></i> Load Points
-                    </button>
-                    <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
-                        <i class="fas fa-plane"></i> Fly To Path
-                    </button>
-                    <button class="btn btn-sm btn-danger" id="clearGPSBtn">
-                        <i class="fas fa-trash"></i> Clear All
-                    </button>
-                </div>
+            <div class="form-group mb-2">
+                <label class="form-label small">Session:</label>
+                <select class="form-select form-select-sm" id="gpsSessionSelect">
+                    <option value="">Loading sessions...</option>
+                </select>
+            </div>
+            <div class="btn-group-vertical w-100" role="group">
+                <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
+                    <i class="fas fa-route"></i> Load Path
+                </button>
+                <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
+                    <i class="fas fa-map-marker-alt"></i> Load Points
+                </button>
+                <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
+                    <i class="fas fa-plane"></i> Fly To Path
+                </button>
+                <button class="btn btn-sm btn-danger" id="clearGPSBtn">
+                    <i class="fas fa-trash"></i> Clear All
+                </button>
+            </div>
                 <div id="gpsSessionInfo" class="mt-2 small text-muted" style="display: none; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px;"></div>
             </div>
         `;
