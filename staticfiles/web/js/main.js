@@ -41,54 +41,109 @@ AppState.utils = {
 const lazyLoaders = {
   webxr: async () => {
     if (!AppState.features.webxr) {
-      const webxrModule = await import('./features/webxr.js');
-      AppState.features.webxr = webxrModule.default;
-      return webxrModule;
+      try {
+        // Import path: go up from js/ to web/, then into features/
+        const webxrModule = await import('../features/webxr.js');
+        AppState.features.webxr = webxrModule.default;
+        return webxrModule;
+      } catch (error) {
+        console.warn('Failed to load WebXR module:', error);
+        // Return a fallback module with error handling
+        return {
+          checkWebXRSupport: async () => {
+            const statusElement = document.getElementById('vrStatus');
+            if (statusElement) {
+              statusElement.textContent = 'VR Status: WebXR module not available';
+              statusElement.style.color = '#ef4444';
+            }
+            return false;
+          },
+          enterWebXR: async () => {
+            alert('WebXR module not available. Please check the console for details.');
+          },
+          exitWebXR: async () => {
+            // No-op if module not loaded
+          }
+        };
+      }
     }
     return AppState.features.webxr;
   },
   
   models: async () => {
     if (!AppState.features.models) {
-      const modelsModule = await import('./features/models.js');
-      AppState.features.models = modelsModule.default;
-      return modelsModule;
+      try {
+        const modelsModule = await import('../features/models.js');
+        AppState.features.models = modelsModule.default;
+        return modelsModule;
+      } catch (error) {
+        console.warn('Failed to load Models module:', error);
+        return {
+          loadGLTFModel: () => console.warn('Models module not available'),
+          removeModels: () => console.warn('Models module not available')
+        };
+      }
     }
     return AppState.features.models;
   },
   
   measurements: async () => {
     if (!AppState.features.measurements) {
-      const measurementsModule = await import('./features/measurements.js');
-      AppState.features.measurements = measurementsModule.default;
-      return measurementsModule;
+      try {
+        const measurementsModule = await import('../features/measurements.js');
+        AppState.features.measurements = measurementsModule.default;
+        return measurementsModule;
+      } catch (error) {
+        console.warn('Failed to load Measurements module:', error);
+        return {
+          startDistanceMeasurement: () => console.warn('Measurements module not available'),
+          startAreaMeasurement: () => console.warn('Measurements module not available'),
+          startHeightMeasurement: () => console.warn('Measurements module not available'),
+          clearAllMeasurements: () => console.warn('Measurements module not available')
+        };
+      }
     }
     return AppState.features.measurements;
   },
   
   debug: async () => {
     if (!AppState.features.debug) {
-      const debugModule = await import('./features/debug-console.js');
-      AppState.features.debug = debugModule.default;
-      return debugModule;
+      try {
+        const debugModule = await import('../features/debug-console.js');
+        AppState.features.debug = debugModule.default;
+        return debugModule;
+      } catch (error) {
+        console.warn('Failed to load Debug module:', error);
+        return { initializeDebugConsole: () => {} };
+      }
     }
     return AppState.features.debug;
   },
   
   statistics: async () => {
     if (!AppState.features.statistics) {
-      const statisticsModule = await import('./features/statistics.js');
-      AppState.features.statistics = statisticsModule.default;
-      return statisticsModule;
+      try {
+        const statisticsModule = await import('../features/statistics.js');
+        AppState.features.statistics = statisticsModule.default;
+        return statisticsModule;
+      } catch (error) {
+        console.warn('Failed to load Statistics module:', error);
+        return { initializeHistogram: () => {} };
+      }
     }
     return AppState.features.statistics;
   },
   
   navigation: async () => {
     if (!AppState.features.navigation) {
-      const navigationModule = await import('./widgets/navigation.js');
-      AppState.features.navigation = navigationModule.default;
-      return navigationModule;
+      try {
+        const navigationModule = await import('./widgets/navigation.js');
+        AppState.features.navigation = navigationModule.default;
+        return navigationModule;
+      } catch (error) {
+        console.warn('Failed to load Navigation module:', error);
+        return { initializeNavigation: () => {} };
+      }
     }
     return AppState.features.navigation;
   },
@@ -174,17 +229,40 @@ document.addEventListener('DOMContentLoaded', async () => {
  * @param {Array} args - Arguments to pass to the method
  */
 function addLazyEventHandler(elementId, loaderFn, methodName, args = []) {
-  document.getElementById(elementId)?.addEventListener('click', async () => {
+  const element = document.getElementById(elementId);
+  if (!element) {
+    console.warn(`Element ${elementId} not found, skipping event handler`);
+    return;
+  }
+  
+  element.addEventListener('click', async () => {
     try {
       const module = await loaderFn();
-      if (module[methodName] && typeof module[methodName] === 'function') {
-        module[methodName](...args);
+      if (module && module[methodName] && typeof module[methodName] === 'function') {
+        await module[methodName](...args);
       } else {
-        console.warn(`Method ${methodName} not found in lazy-loaded module`);
+        console.warn(`Method ${methodName} not found in lazy-loaded module for ${elementId}`);
+        // Show user-friendly error for WebXR
+        if (elementId === 'checkVRSupport') {
+          const statusElement = document.getElementById('vrStatus');
+          if (statusElement) {
+            statusElement.textContent = 'VR Status: WebXR module not available';
+            statusElement.style.color = '#ef4444';
+          }
+        }
       }
     } catch (error) {
       console.error(`Error loading feature from ${elementId}:`, error);
-      updateStatusIndicator(`Error: ${error.message}`);
+      // Show user-friendly error for WebXR
+      if (elementId === 'checkVRSupport') {
+        const statusElement = document.getElementById('vrStatus');
+        if (statusElement) {
+          statusElement.textContent = 'VR Status: Error loading WebXR module';
+          statusElement.style.color = '#ef4444';
+        }
+      } else if (typeof updateStatusIndicator === 'function') {
+        updateStatusIndicator(`Error: ${error.message}`);
+      }
     }
   });
 }

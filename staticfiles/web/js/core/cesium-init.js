@@ -91,7 +91,11 @@ export async function initializeCesium(updateLoadingStatus) {
       navigationInstructionsInitiallyVisible: false,
       scene3DOnly: false,
       requestRenderMode: true,
-      maximumRenderTimeChange: Infinity
+      maximumRenderTimeChange: Infinity,
+      // Enable preserveDrawingBuffer for screenshot/capture functionality
+      contextOptions: {
+        preserveDrawingBuffer: true
+      }
     });
     
     // Track default base map layer

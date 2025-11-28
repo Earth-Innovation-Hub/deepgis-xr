@@ -1,8 +1,33 @@
 import os
+import sys
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Add dreams_laboratory/scripts to Python path for SAM and other ML scripts
+# Handle both containerized and local environments
+# In container: mounted at /app/dreams_laboratory_scripts
+# Locally: /home/jdas/dreams-lab-website-server/deepgis-xr -> /home/jdas/dreams-lab-website-server/dreams_laboratory/scripts
+WORKSPACE_ROOT = BASE_DIR.parent  # Go up from deepgis-xr/ to dreams-lab-website-server/
+SCRIPTS_DIR = WORKSPACE_ROOT / 'dreams_laboratory' / 'scripts'
+
+# If not found, try container path (when running in Docker)
+if not SCRIPTS_DIR.exists():
+    # In container, scripts are mounted at /app/dreams_laboratory_scripts
+    container_scripts_dir = Path('/app') / 'dreams_laboratory_scripts'
+    if container_scripts_dir.exists():
+        SCRIPTS_DIR = container_scripts_dir
+    else:
+        # Try other common container mount points
+        for mount_point in ['/app/dreams_laboratory/scripts', '/workspace/dreams_laboratory/scripts', '/code/dreams_laboratory/scripts']:
+            alt_scripts_dir = Path(mount_point)
+            if alt_scripts_dir.exists():
+                SCRIPTS_DIR = alt_scripts_dir
+                break
+
+if SCRIPTS_DIR.exists() and str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 # Core Settings
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-your-secret-key-here')

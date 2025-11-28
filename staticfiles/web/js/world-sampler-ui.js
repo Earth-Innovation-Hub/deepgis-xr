@@ -15,6 +15,7 @@ class WorldSamplerUI {
         this.currentSampleIndex = 0;
         this.isAutoSurveyActive = false;
         this.autoSurveyInterval = null;
+        this.samDataSource = null; // For SAM segmentation results
         
         this.init();
     }
@@ -931,6 +932,8 @@ class WorldSamplerUI {
         document.getElementById('droneFlyDistance').addEventListener('input', updateDroneFlyButton);
         document.getElementById('droneFlySpeed').addEventListener('input', updateDroneFlyButton);
         
+        // AI Viewport Analysis button (handled globally, see initialization at bottom of file)
+        
         // Reward slider
         document.getElementById('samplerReward').addEventListener('input', (e) => {
             const value = parseFloat(e.target.value);
@@ -1491,6 +1494,651 @@ class WorldSamplerUI {
         };
     }
     
+    /**
+     * Capture current viewport as image using Cesium's proper method
+     * @returns {Object} {image: base64 string, location: camera pose}
+     */
+    async captureViewportImage() {
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const camera = this.viewer.camera;
+        const context = scene.context;
+        const gl = context._gl;
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        // Force scene to render completely before capture
+        scene.requestRender();
+        scene.render();
+        
+        // Wait for rendering to complete - use multiple frames
+        await new Promise(resolve => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(resolve);
+                });
+            });
+        });
+        
+        let imageData;
+        let lastError;
+        
+        // Method 1: Render to texture approach (works without preserveDrawingBuffer)
+        try {
+            console.log('Attempting Method 1: Render to texture...');
+            
+            // Create a texture to render to
+            const texture = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+            
+            // Create framebuffer
+            const framebuffer = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+            
+            // Check framebuffer status
+            if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) {
+                throw new Error('Framebuffer not complete');
+            }
+            
+            // Copy current framebuffer to our texture using copyTexImage2D
+            gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null); // Read from default framebuffer
+            gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, framebuffer); // Draw to our framebuffer
+            gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.COLOR_BUFFER_BIT, gl.LINEAR);
+            
+            // Read from our framebuffer
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            const pixels = new Uint8Array(width * height * 4);
+            gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+            
+            // Restore default framebuffer
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            
+            // Clean up
+            gl.deleteFramebuffer(framebuffer);
+            gl.deleteTexture(texture);
+            
+            // Check for data
+            let hasData = false;
+            for (let i = 0; i < Math.min(pixels.length, 10000); i += 4) {
+                if (pixels[i] > 10 || pixels[i + 1] > 10 || pixels[i + 2] > 10) {
+                    hasData = true;
+                    break;
+                }
+            }
+            
+            if (hasData) {
+                // Flip vertically
+                const flippedPixels = new Uint8Array(width * height * 4);
+                for (let y = 0; y < height; y++) {
+                    const srcRow = (height - 1 - y) * width * 4;
+                    const dstRow = y * width * 4;
+                    flippedPixels.set(pixels.subarray(srcRow, srcRow + width * 4), dstRow);
+                }
+                
+                // Create canvas and convert
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const ctx = tempCanvas.getContext('2d');
+                const imageDataObj = ctx.createImageData(width, height);
+                imageDataObj.data.set(flippedPixels);
+                ctx.putImageData(imageDataObj, 0, 0);
+                
+                imageData = tempCanvas.toDataURL('image/png');
+                console.log(`✓ Method 1 (Render to texture) succeeded (${width}x${height})`);
+            } else {
+                throw new Error('Render to texture returned blank image');
+            }
+        } catch (method1Error) {
+            console.warn('Method 1 (Render to texture) failed:', method1Error.message);
+            lastError = method1Error;
+            
+            // Method 2: Use postRender event to capture
+            try {
+                console.log('Attempting Method 2: postRender event capture...');
+                
+                imageData = await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        scene.postRender.removeEventListener(captureHandler);
+                        reject(new Error('postRender capture timeout'));
+                    }, 3000);
+                    
+                    const captureHandler = () => {
+                        clearTimeout(timeout);
+                        scene.postRender.removeEventListener(captureHandler);
+                        
+                        try {
+                            // Try toDataURL
+                            const data = canvas.toDataURL('image/png');
+                            if (data && data.length > 100 && data !== 'data:,') {
+                                resolve(data);
+                            } else {
+                                // Try readPixels
+                                const pixels = new Uint8Array(width * height * 4);
+                                gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+                                
+                                let hasData = false;
+                                for (let i = 0; i < Math.min(pixels.length, 10000); i += 4) {
+                                    if (pixels[i] > 10 || pixels[i + 1] > 10 || pixels[i + 2] > 10) {
+                                        hasData = true;
+                                        break;
+                                    }
+                                }
+                                
+                                if (hasData) {
+                                    // Flip and convert
+                                    const flippedPixels = new Uint8Array(width * height * 4);
+                                    for (let y = 0; y < height; y++) {
+                                        const srcRow = (height - 1 - y) * width * 4;
+                                        const dstRow = y * width * 4;
+                                        flippedPixels.set(pixels.subarray(srcRow, srcRow + width * 4), dstRow);
+                                    }
+                                    
+                                    const tempCanvas = document.createElement('canvas');
+                                    tempCanvas.width = width;
+                                    tempCanvas.height = height;
+                                    const ctx = tempCanvas.getContext('2d');
+                                    const imageDataObj = ctx.createImageData(width, height);
+                                    imageDataObj.data.set(flippedPixels);
+                                    ctx.putImageData(imageDataObj, 0, 0);
+                                    resolve(tempCanvas.toDataURL('image/png'));
+                                } else {
+                                    reject(new Error('postRender capture returned blank'));
+                                }
+                            }
+                        } catch (e) {
+                            reject(e);
+                        }
+                    };
+                    
+                    scene.postRender.addEventListener(captureHandler);
+                    scene.requestRender();
+                });
+                
+                console.log(`✓ Method 2 (postRender) succeeded (${width}x${height})`);
+            } catch (method2Error) {
+                console.warn('Method 2 (postRender) failed:', method2Error.message);
+                lastError = method2Error;
+                
+                // Method 3: Copy framebuffer using copyTexImage2D
+                try {
+                    console.log('Attempting Method 3: copyTexImage2D...');
+                    
+                    // Create texture
+                    const texture = gl.createTexture();
+                    gl.bindTexture(gl.TEXTURE_2D, texture);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                    
+                    // Copy current framebuffer to texture
+                    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                    gl.copyTexImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 0, 0, width, height, 0);
+                    
+                    // Read from texture
+                    const pixels = new Uint8Array(width * height * 4);
+                    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+                    
+                    // Check for data
+                    let hasData = false;
+                    for (let i = 0; i < Math.min(pixels.length, 10000); i += 4) {
+                        if (pixels[i] > 10 || pixels[i + 1] > 10 || pixels[i + 2] > 10) {
+                            hasData = true;
+                            break;
+                        }
+                    }
+                    
+                    if (hasData) {
+                        // Flip and convert
+                        const flippedPixels = new Uint8Array(width * height * 4);
+                        for (let y = 0; y < height; y++) {
+                            const srcRow = (height - 1 - y) * width * 4;
+                            const dstRow = y * width * 4;
+                            flippedPixels.set(pixels.subarray(srcRow, srcRow + width * 4), dstRow);
+                        }
+                        
+                        const tempCanvas = document.createElement('canvas');
+                        tempCanvas.width = width;
+                        tempCanvas.height = height;
+                        const ctx = tempCanvas.getContext('2d');
+                        const imageDataObj = ctx.createImageData(width, height);
+                        imageDataObj.data.set(flippedPixels);
+                        ctx.putImageData(imageDataObj, 0, 0);
+                        
+                        imageData = tempCanvas.toDataURL('image/png');
+                        console.log(`✓ Method 3 (copyTexImage2D) succeeded (${width}x${height})`);
+                    } else {
+                        throw new Error('copyTexImage2D returned blank');
+                    }
+                    
+                    gl.deleteTexture(texture);
+                } catch (method3Error) {
+                    console.warn('Method 3 (copyTexImage2D) failed:', method3Error.message);
+                    lastError = method3Error;
+                    
+                    // Method 4: Simple toDataURL (if preserveDrawingBuffer is enabled)
+                    try {
+                        console.log('Attempting Method 4: toDataURL...');
+                        imageData = canvas.toDataURL('image/png');
+                        
+                        if (!imageData || imageData.length < 100 || imageData === 'data:,') {
+                            throw new Error('toDataURL returned invalid image');
+                        }
+                        
+                        console.log(`✓ Method 4 (toDataURL) succeeded (${width}x${height})`);
+                    } catch (method4Error) {
+                        console.error('All capture methods failed');
+                        throw new Error(`All viewport capture methods failed. Last error: ${lastError?.message || method4Error.message}. Please refresh the page to enable preserveDrawingBuffer.`);
+                    }
+                }
+            }
+        }
+        
+        // Validate the captured image
+        if (imageData) {
+            const testImg = new Image();
+            testImg.src = imageData;
+            
+            await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Image validation timeout'));
+                }, 2000);
+                
+                testImg.onload = () => {
+                    clearTimeout(timeout);
+                    const testCanvas = document.createElement('canvas');
+                    testCanvas.width = Math.min(200, testImg.width);
+                    testCanvas.height = Math.min(200, testImg.height);
+                    const ctx = testCanvas.getContext('2d');
+                    ctx.drawImage(testImg, 0, 0, testCanvas.width, testCanvas.height);
+                    const sample = ctx.getImageData(0, 0, testCanvas.width, testCanvas.height);
+                    
+                    let nonBlack = 0;
+                    const totalPixels = sample.data.length / 4;
+                    for (let i = 0; i < sample.data.length; i += 4) {
+                        const r = sample.data[i];
+                        const g = sample.data[i + 1];
+                        const b = sample.data[i + 2];
+                        if (r > 10 || g > 10 || b > 10) {
+                            nonBlack++;
+                        }
+                    }
+                    
+                    const nonBlackRatio = nonBlack / totalPixels;
+                    console.log(`Image validation: ${(nonBlackRatio * 100).toFixed(2)}% non-black pixels`);
+                    
+                    if (nonBlackRatio < 0.01) {
+                        reject(new Error(`Captured image is blank/black (${(nonBlackRatio * 100).toFixed(2)}% non-black)`));
+                    } else {
+                        resolve();
+                    }
+                };
+                
+                testImg.onerror = () => {
+                    clearTimeout(timeout);
+                    reject(new Error('Failed to decode captured image'));
+                };
+            });
+        }
+        
+        // Get camera pose
+        const position = camera.positionCartographic;
+        const location = {
+            lon: Cesium.Math.toDegrees(position.longitude),
+            lat: Cesium.Math.toDegrees(position.latitude),
+            alt: position.height,
+            heading: Cesium.Math.toDegrees(camera.heading),
+            pitch: Cesium.Math.toDegrees(camera.pitch),
+            roll: Cesium.Math.toDegrees(camera.roll)
+        };
+        
+        return {
+            image: imageData,
+            location: location
+        };
+    }
+    
+    /**
+     * Analyze viewport using Segment Anything Model (SAM)
+     */
+    async analyzeViewportWithSAM() {
+        const statusDiv = document.getElementById('samAnalysisStatus');
+        const statusText = document.getElementById('samStatusText');
+        const analyzeBtn = document.getElementById('analyzeViewportBtn');
+        
+        // Show status
+        statusDiv.style.display = 'block';
+        statusText.textContent = 'Capturing viewport...';
+        analyzeBtn.disabled = true;
+        
+        try {
+            // Ensure scene is fully rendered before capturing
+            // Force a render and wait for it to complete
+            this.viewer.scene.requestRender();
+            this.viewer.scene.render();
+            
+            // Wait multiple frames to ensure WebGL context is ready
+            await new Promise(resolve => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        requestAnimationFrame(resolve); // Triple frame for safety
+                    });
+                });
+            });
+            
+            // Force another render before capture
+            this.viewer.scene.requestRender();
+            this.viewer.scene.render();
+            
+            // Small delay to ensure framebuffer is ready
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Capture viewport
+            const viewportData = await this.captureViewportImage();
+            
+            // Get SAM parameters
+            const modelType = document.getElementById('samModelType').value;
+            const minArea = parseInt(document.getElementById('samMinArea').value) || 100;
+            
+            statusText.textContent = 'Sending to SAM for analysis...';
+            
+            // Send to API
+            const response = await fetch('/webclient/sampler/analyze-viewport', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    image: viewportData.image,
+                    location: viewportData.location,
+                    model_type: modelType,
+                    min_area: minArea
+                })
+            });
+            
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || `HTTP ${response.status}`);
+            }
+            
+            const result = await response.json();
+            
+            if (result.status !== 'success') {
+                throw new Error(result.message || 'Analysis failed');
+            }
+            
+            // Show device info
+            const deviceInfo = result.device_info || {};
+            const deviceText = deviceInfo.cuda_available 
+                ? `GPU: ${deviceInfo.gpu_name || 'CUDA'}` 
+                : 'CPU';
+            statusText.textContent = `✓ Found ${result.num_segments} segments (${deviceText})`;
+            statusText.style.color = '#10b981';
+            
+            // Display results on map
+            this.displaySAMResults(result);
+            
+            // Show notification with device info
+            const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+            this.showNotification(
+                `SAM Analysis: Found ${result.num_segments} segments in viewport${deviceNote}`,
+                'success'
+            );
+            
+            // Log device info to console
+            if (deviceInfo.cuda_available) {
+                console.log(`SAM running on GPU: ${deviceInfo.gpu_name || 'CUDA device'}`);
+            } else {
+                console.warn('SAM running on CPU. For faster processing, enable GPU in Docker.');
+            }
+            
+            // Log saved files location
+            if (result.saved_to) {
+                console.log('SAM results saved to:', result.saved_to.session_dir);
+                console.log('Files saved:', {
+                    query_image: result.saved_to.query_image,
+                    visualization: result.saved_to.visualization,
+                    geojson: result.saved_to.geojson,
+                    metadata: result.saved_to.metadata
+                });
+            }
+            
+        } catch (error) {
+            console.error('SAM analysis error:', error);
+            statusText.textContent = `Error: ${error.message}`;
+            statusText.style.color = '#ef4444';
+            this.showNotification(`SAM Analysis failed: ${error.message}`, 'error');
+        } finally {
+            analyzeBtn.disabled = false;
+        }
+    }
+    
+    /**
+     * Display SAM segmentation results on Cesium map
+     * @param {Object} result - SAM analysis result
+     */
+    displaySAMResults(result) {
+        if (!result.geojson || !result.geojson.features) {
+            console.warn('No GeoJSON features in SAM results');
+            return;
+        }
+        
+        // Remove previous SAM results if any
+        if (this.samDataSource) {
+            this.viewer.dataSources.remove(this.samDataSource);
+        }
+        
+        const camera = this.viewer.camera;
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const viewportWidth = canvas.width;
+        const viewportHeight = canvas.height;
+        
+        // Get camera position and orientation
+        const position = camera.positionCartographic;
+        const centerLon = Cesium.Math.toDegrees(position.longitude);
+        const centerLat = Cesium.Math.toDegrees(position.latitude);
+        const height = position.height;
+        
+        // Use Cesium's screen-to-world conversion for accurate mapping
+        // Get the four corners of the viewport in world coordinates
+        const corners = [
+            new Cesium.Cartesian2(0, 0),                    // Top-left
+            new Cesium.Cartesian2(viewportWidth, 0),       // Top-right
+            new Cesium.Cartesian2(viewportWidth, viewportHeight), // Bottom-right
+            new Cesium.Cartesian2(0, viewportHeight)       // Bottom-left
+        ];
+        
+        // Convert screen corners to world coordinates
+        const worldCorners = corners.map(screenPos => {
+            const cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            if (cartesian) {
+                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+                return {
+                    lon: Cesium.Math.toDegrees(cartographic.longitude),
+                    lat: Cesium.Math.toDegrees(cartographic.latitude)
+                };
+            }
+            return null;
+        }).filter(c => c !== null);
+        
+        if (worldCorners.length < 2) {
+            console.warn('Could not determine viewport bounds, using approximate conversion');
+            // Fallback to approximate method
+            this.displaySAMResultsApproximate(result);
+            return;
+        }
+        
+        // Calculate viewport bounds
+        const lons = worldCorners.map(c => c.lon);
+        const lats = worldCorners.map(c => c.lat);
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        
+        const lonRange = maxLon - minLon;
+        const latRange = maxLat - minLat;
+        
+        // Create data source for SAM segments
+        this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
+        
+        // Convert normalized [0,1] coordinates to geographic coordinates
+        const features = result.geojson.features.map((feature, index) => {
+            const props = feature.properties;
+            const coords = feature.geometry.coordinates[0]; // Polygon coordinates
+            
+            // Convert normalized [0,1] coordinates to geographic
+            // Map [0,1] x to [minLon, maxLon] and [0,1] y to [maxLat, minLat] (y is inverted)
+            const geographicCoords = coords.map(([x_norm, y_norm]) => {
+                const lon = minLon + (x_norm * lonRange);
+                const lat = maxLat - (y_norm * latRange); // Invert Y axis
+                return [lon, lat];
+            });
+            
+            return {
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [geographicCoords]
+                },
+                properties: {
+                    segment_id: props.segment_id || index + 1,
+                    area: props.area || 0,
+                    predicted_iou: props.iou || props.predicted_iou || 0,
+                    stability_score: props.stability || props.stability_score || 0
+                }
+            };
+        });
+        
+        const convertedGeoJSON = {
+            type: 'FeatureCollection',
+            features: features
+        };
+        
+        // Load and style
+        this.samDataSource.load(convertedGeoJSON).then(() => {
+            const entities = this.samDataSource.entities.values;
+            
+            entities.forEach((entity, index) => {
+                const props = entity.properties;
+                const segmentId = props.segment_id?.getValue() || index + 1;
+                const area = props.area?.getValue() || 0;
+                const iou = props.predicted_iou?.getValue() || 0;
+                
+                // Color based on segment ID (for variety)
+                const hue = (segmentId * 137.508) % 360; // Golden angle for color distribution
+                const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4); // More visible opacity
+                
+                if (entity.polygon) {
+                    entity.polygon.material = color;
+                    entity.polygon.outline = true;
+                    entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
+                    entity.polygon.outlineWidth = 2;
+                    entity.polygon.extrudedHeight = 0; // Flat on ground
+                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                }
+                
+                // Add description with segment info
+                entity.description = `
+                    <table class="table table-sm" style="color: white;">
+                        <tr><td><strong>Segment ID:</strong></td><td>${segmentId}</td></tr>
+                        <tr><td><strong>Area:</strong></td><td>${area} pixels</td></tr>
+                        <tr><td><strong>Quality (IoU):</strong></td><td>${iou.toFixed(3)}</td></tr>
+                        <tr><td><strong>Stability:</strong></td><td>${(props.stability_score?.getValue() || 0).toFixed(3)}</td></tr>
+                    </table>
+                `;
+            });
+            
+            // Add to viewer
+            this.viewer.dataSources.add(this.samDataSource);
+            
+            console.log(`Displayed ${entities.length} SAM segments on map`);
+            console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
+            
+            // Show summary
+            const avgIoU = features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length;
+            this.showNotification(
+                `SAM: ${result.num_segments} segments displayed (avg quality: ${avgIoU.toFixed(2)})`,
+                'success'
+            );
+        }).catch(error => {
+            console.error('Error loading SAM GeoJSON:', error);
+            this.showNotification('Error displaying SAM results on map', 'error');
+        });
+    }
+    
+    /**
+     * Fallback method using approximate coordinate conversion
+     */
+    displaySAMResultsApproximate(result) {
+        const camera = this.viewer.camera;
+        const position = camera.positionCartographic;
+        const centerLon = Cesium.Math.toDegrees(position.longitude);
+        const centerLat = Cesium.Math.toDegrees(position.latitude);
+        
+        const canvas = this.viewer.scene.canvas;
+        const viewportWidth = canvas.width;
+        const viewportHeight = canvas.height;
+        const height = position.height;
+        const metersPerPixel = height / Math.max(viewportHeight, viewportWidth);
+        const degreesPerMeter = 1.0 / 111320.0;
+        const degreesPerPixel = metersPerPixel * degreesPerMeter;
+        
+        this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
+        
+        const features = result.geojson.features.map((feature, index) => {
+            const props = feature.properties;
+            const coords = feature.geometry.coordinates[0];
+            const geographicCoords = coords.map(([x_norm, y_norm]) => {
+                const pixelX = (x_norm - 0.5) * viewportWidth;
+                const pixelY = (y_norm - 0.5) * viewportHeight;
+                const lonOffset = pixelX * degreesPerPixel;
+                const latOffset = -pixelY * degreesPerPixel;
+                return [centerLon + lonOffset, centerLat + latOffset];
+            });
+            
+            return {
+                type: 'Feature',
+                geometry: { type: 'Polygon', coordinates: [geographicCoords] },
+                properties: {
+                    segment_id: props.segment_id || index + 1,
+                    area: props.area || 0,
+                    predicted_iou: props.iou || props.predicted_iou || 0,
+                    stability_score: props.stability || props.stability_score || 0
+                }
+            };
+        });
+        
+        const convertedGeoJSON = { type: 'FeatureCollection', features: features };
+        
+        this.samDataSource.load(convertedGeoJSON).then(() => {
+            const entities = this.samDataSource.entities.values;
+            entities.forEach((entity, index) => {
+                const props = entity.properties;
+                const segmentId = props.segment_id?.getValue() || index + 1;
+                const hue = (segmentId * 137.508) % 360;
+                const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4);
+                
+                if (entity.polygon) {
+                    entity.polygon.material = color;
+                    entity.polygon.outline = true;
+                    entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
+                    entity.polygon.outlineWidth = 2;
+                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                }
+            });
+            
+            this.viewer.dataSources.add(this.samDataSource);
+            console.log(`Displayed ${entities.length} SAM segments (approximate method)`);
+        }).catch(error => {
+            console.error('Error loading SAM GeoJSON (approximate):', error);
+        });
+    }
+    
     updateSurveyCounter() {
         document.getElementById('currentPointNum').textContent = this.currentSampleIndex + 1;
         document.getElementById('totalPoints').textContent = this.currentSamples.length;
@@ -1679,6 +2327,44 @@ class SamplerAPIClient {
     }
 }
 
+/**
+ * Initialize SAM button handler globally (works independently of World Sampler)
+ * This allows viewport analysis from anywhere in the application
+ */
+function initializeSAMButtonHandler(viewer, worldSamplerUI) {
+    const analyzeBtn = document.getElementById('analyzeViewportBtn');
+    if (!analyzeBtn) {
+        console.warn('[SAM] Analyze button not found, SAM functionality may not work');
+        return;
+    }
+    
+    // Remove any existing listeners by cloning
+    const newBtn = analyzeBtn.cloneNode(true);
+    analyzeBtn.parentNode.replaceChild(newBtn, analyzeBtn);
+    
+    // Add click handler
+    newBtn.addEventListener('click', async () => {
+        // Use worldSamplerUI if available
+        if (worldSamplerUI) {
+            worldSamplerUI.analyzeViewportWithSAM();
+        } else {
+            // Fallback: show error
+            console.warn('[SAM] WorldSamplerUI not available');
+            const statusDiv = document.getElementById('samAnalysisStatus');
+            const statusText = document.getElementById('samStatusText');
+            const btn = document.getElementById('analyzeViewportBtn');
+            
+            if (statusDiv) statusDiv.style.display = 'block';
+            if (statusText) {
+                statusText.textContent = 'Error: World Sampler not initialized';
+                statusText.style.color = '#ef4444';
+            }
+            if (btn) btn.disabled = false;
+        }
+    });
+    
+    console.log('[SAM] ✅ SAM button handler initialized');
+}
 
 // Auto-initialize when viewer is ready
 (function() {
@@ -1709,6 +2395,10 @@ class SamplerAPIClient {
             try {
                 window.worldSamplerUI = new WorldSamplerUI(viewer);
                 console.log('[World Sampler] ✅ World Sampler UI initialized successfully!');
+                
+                // Initialize SAM button handler globally (works independently of World Sampler)
+                initializeSAMButtonHandler(viewer, window.worldSamplerUI);
+                
                 return; // Success, stop trying
             } catch (error) {
                 console.error('[World Sampler] ❌ Failed to initialize:', error);

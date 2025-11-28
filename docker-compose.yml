@@ -7,11 +7,28 @@ services:
     environment:
       - DEBUG=True
       - DJANGO_SETTINGS_MODULE=deepgis_xr.settings
+      # GPU support
+      - NVIDIA_VISIBLE_DEVICES=all
     volumes:
       - .:/app
       - media_volume:/app/media
+      # Mount dreams_laboratory/scripts for SAM and ML scripts
+      - ../dreams_laboratory/scripts:/app/dreams_laboratory_scripts:ro
+      # Mount deepgis_results for SAM analysis results (shared with host)
+      - ./deepgis_results:/app/deepgis_results
     ports:
       - "8060:8090"
+    # Enable GPU access (uncomment one of the following methods)
+    # Method 1: Using deploy.resources (Docker Compose v3.2+)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Method 2: Using runtime (older method, uncomment if Method 1 doesn't work)
+    # runtime: nvidia
     command: >
       bash -c "
         python manage.py migrate &&

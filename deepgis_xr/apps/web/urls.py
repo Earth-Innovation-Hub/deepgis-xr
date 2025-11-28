@@ -58,4 +58,5 @@ urlpatterns = [
     path('webclient/sampler/reset', world_sampler_api.reset_sampler, name='reset_sampler'),
     path('webclient/sampler/history', world_sampler_api.get_sample_history, name='get_sample_history'),
     path('webclient/sampler/scored', world_sampler_api.get_scored_locations, name='get_scored_locations'),
+    path('webclient/sampler/analyze-viewport', world_sampler_api.analyze_viewport, name='analyze_viewport'),
 ] 
