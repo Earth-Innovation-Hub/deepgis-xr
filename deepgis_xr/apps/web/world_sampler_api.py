@@ -815,6 +815,9 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
         session_dir = sam_results_dir / folder_name
         session_dir.mkdir(parents=True, exist_ok=True)
         
+        # Extract session ID for report URL (use folder name as session identifier)
+        session_id = folder_name
+        
         # Save original query image
         query_image_path = session_dir / 'query_image.png'
         image.save(query_image_path)
@@ -942,6 +945,9 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
                     # Individual mask images are saved to disk in individual_masks/ folder if needed
                 })
             
+            # Extract session ID for report URL (use folder name as session identifier)
+            session_id = folder_name
+            
             return JsonResponse({
                 'status': 'success',
                 'num_segments': len(filtered_masks),
@@ -958,7 +964,8 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
                     'geojson': str(geojson_path.relative_to('/app/deepgis_results')),
                     'metadata': str(metadata_path.relative_to('/app/deepgis_results')),
                     'host_path': str(session_dir).replace('/app/deepgis_results', './deepgis_results')
-                }
+                },
+                'report_url': f'/label/ai-analysis/report/{session_id}/'
             })
             
         finally:
@@ -1101,7 +1108,8 @@ def _analyze_viewport_zero_shot(image, location, confidence_threshold, scripts_d
                     'geojson': str(geojson_path.relative_to('/app/deepgis_results')),
                     'metadata': str(metadata_path.relative_to('/app/deepgis_results')),
                     'host_path': str(session_dir).replace('/app/deepgis_results', './deepgis_results')
-                }
+                },
+                'report_url': f'/label/ai-analysis/report/{session_id}/'
             })
             
         finally:
@@ -1167,6 +1175,9 @@ def _analyze_viewport_mask2former(image, location, confidence_threshold, scripts
         folder_name = f"mask2former_{timestamp}_lat{lat_str}_lon{lon_str}_alt{alt_str}_conf{confidence_threshold:.2f}"
         session_dir = mask2former_results_dir / folder_name
         session_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Extract session ID for report URL
+        session_id = folder_name
         
         # Save query image
         query_image_path = session_dir / 'query_image.png'
@@ -1276,7 +1287,8 @@ def _analyze_viewport_mask2former(image, location, confidence_threshold, scripts
                     'geojson': str(geojson_path.relative_to('/app/deepgis_results')),
                     'metadata': str(metadata_path.relative_to('/app/deepgis_results')),
                     'host_path': str(session_dir).replace('/app/deepgis_results', './deepgis_results')
-                }
+                },
+                'report_url': f'/label/ai-analysis/report/{session_id}/'
             })
             
         finally:

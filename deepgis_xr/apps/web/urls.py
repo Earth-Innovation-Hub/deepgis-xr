@@ -59,4 +59,8 @@ urlpatterns = [
     path('webclient/sampler/history', world_sampler_api.get_sample_history, name='get_sample_history'),
     path('webclient/sampler/scored', world_sampler_api.get_scored_locations, name='get_scored_locations'),
     path('webclient/sampler/analyze-viewport', world_sampler_api.analyze_viewport, name='analyze_viewport'),
+    
+    # AI Analysis Report
+    path('label/ai-analysis/report/<str:session_id>/', views.ai_analysis_report, name='ai_analysis_report'),
+    path('label/ai-analysis/image/<str:session_id>/<str:image_type>/', views.serve_analysis_image, name='serve_analysis_image'),
 ] 
