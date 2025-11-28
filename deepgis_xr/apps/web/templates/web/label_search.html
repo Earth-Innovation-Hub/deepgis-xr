@@ -210,34 +210,59 @@
                         </div>
                     </div>
 
-                    <!-- AI Viewport Analysis (SAM) - Root Level Panel -->
+                    <!-- AI Viewport Analysis - Root Level Panel -->
                     <div class="layer-group accordion-panel" style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981;">
                         <div class="layer-group-title accordion-header" data-target="samAnalysisContent">
-                            <i class="fas fa-brain"></i> AI Viewport Analysis (SAM)
+                            <i class="fas fa-brain"></i> AI Viewport Analysis
                             <i class="fas fa-chevron-down accordion-icon"></i>
                         </div>
                         <div class="accordion-content" id="samAnalysisContent">
                             <div class="form-group mb-3">
-                                <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Model Size:</label>
-                                <select class="form-select" id="samModelType">
-                                    <option value="vit_b" selected>Base (Fast, 375MB)</option>
-                                    <option value="vit_l">Large (Balanced, 1.2GB)</option>
-                                    <option value="vit_h">Huge (Best Quality, 2.4GB)</option>
+                                <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Analysis Type:</label>
+                                <select class="form-select" id="analysisTypeSelect">
+                                    <option value="sam" selected>Segment Anything (Universal Segmentation)</option>
+                                    <option value="zero_shot">Zero-Shot Detection (COCO Objects)</option>
                                 </select>
-                        </div>
-                        <div class="form-group mb-3">
-                                <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Min Segment Area (pixels):</label>
-                                <input type="number" class="form-control" id="samMinArea" 
-                                       value="100" min="10" max="10000" step="10">
                             </div>
+                            
+                            <!-- SAM-specific options -->
+                            <div id="samOptions">
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Model Size:</label>
+                                    <select class="form-select" id="samModelType">
+                                        <option value="vit_b" selected>Base (Fast, 375MB)</option>
+                                        <option value="vit_l">Large (Balanced, 1.2GB)</option>
+                                        <option value="vit_h">Huge (Best Quality, 2.4GB)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Min Segment Area (pixels):</label>
+                                    <input type="number" class="form-control" id="samMinArea" 
+                                           value="100" min="10" max="10000" step="10">
+                                </div>
+                            </div>
+                            
+                            <!-- Zero-Shot specific options -->
+                            <div id="zeroShotOptions" style="display: none;">
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Confidence Threshold:</label>
+                                    <input type="range" class="form-range" id="zeroShotConfidence" 
+                                           min="0" max="100" step="5" value="50">
+                                    <span id="zeroShotConfidenceValue" style="color: #cbd5e1; font-size: 0.85rem;">0.50</span>
+                                </div>
+                                <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
+                                    Detects 80 COCO categories: person, car, bicycle, etc.
+                                </small>
+                            </div>
+                            
                             <button class="btn btn-info w-100 mb-2" id="analyzeViewportBtn">
-                                <i class="fas fa-brain me-2"></i>Analyze Viewport with SAM
+                                <i class="fas fa-brain me-2"></i>Analyze Viewport
                             </button>
                             <div id="samAnalysisStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(16, 185, 129, 0.15); border-radius: 4px; font-size: 0.85rem;">
                                 <span id="samStatusText">Processing...</span>
                             </div>
                             <small class="text-muted" style="display: block; margin-top: 6px; font-size: 0.8rem; color: #94a3b8;">
-                                Segments all visible regions in current viewport using Segment Anything Model
+                                <span id="analysisDescription">Segments all visible regions in current viewport using Segment Anything Model</span>
                             </small>
                         </div>
                     </div>

@@ -1802,12 +1802,16 @@ class WorldSamplerUI {
     }
     
     /**
-     * Analyze viewport using Segment Anything Model (SAM)
+     * Analyze viewport using AI models (SAM or Zero-Shot Detection)
      */
     async analyzeViewportWithSAM() {
         const statusDiv = document.getElementById('samAnalysisStatus');
         const statusText = document.getElementById('samStatusText');
         const analyzeBtn = document.getElementById('analyzeViewportBtn');
+        const analysisTypeSelect = document.getElementById('analysisTypeSelect');
+        
+        // Get analysis type
+        const analysisType = analysisTypeSelect ? analysisTypeSelect.value : 'sam';
         
         // Show status
         statusDiv.style.display = 'block';
@@ -1856,11 +1860,25 @@ class WorldSamplerUI {
                 
                 // Continue with analysis using clean viewport
                 
-                // Get SAM parameters
-                const modelType = document.getElementById('samModelType').value;
-                const minArea = parseInt(document.getElementById('samMinArea').value) || 100;
+                // Get parameters based on analysis type
+                let requestBody = {
+                    image: viewportData.image,
+                    location: viewportData.location,
+                    model_type: analysisType
+                };
                 
-                statusText.textContent = 'Sending to SAM for analysis...';
+                if (analysisType === 'sam') {
+                    const samModel = document.getElementById('samModelType').value;
+                    const minArea = parseInt(document.getElementById('samMinArea').value) || 100;
+                    requestBody.sam_model = samModel;
+                    requestBody.min_area = minArea;
+                    statusText.textContent = 'Sending to SAM for analysis...';
+                } else if (analysisType === 'zero_shot') {
+                    const confidenceSlider = document.getElementById('zeroShotConfidence');
+                    const confidence = confidenceSlider ? parseFloat(confidenceSlider.value) / 100 : 0.5;
+                    requestBody.confidence_threshold = confidence;
+                    statusText.textContent = 'Sending to Zero-Shot Detection...';
+                }
                 
                 // Send to API
                 const response = await fetch('/webclient/sampler/analyze-viewport', {
@@ -1868,12 +1886,7 @@ class WorldSamplerUI {
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        image: viewportData.image,
-                        location: viewportData.location,
-                        model_type: modelType,
-                        min_area: minArea
-                    })
+                    body: JSON.stringify(requestBody)
                 });
                 
                 if (!response.ok) {
@@ -1892,18 +1905,38 @@ class WorldSamplerUI {
                 const deviceText = deviceInfo.cuda_available 
                     ? `GPU: ${deviceInfo.gpu_name || 'CUDA'}` 
                     : 'CPU';
-                statusText.textContent = `✓ Found ${result.num_segments} segments (${deviceText})`;
-                statusText.style.color = '#10b981';
                 
-                // Display results on map (this will replace any previous SAM results)
-                this.displaySAMResults(result);
-                
-                // Show notification with device info
-                const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
-                this.showNotification(
-                    `SAM Analysis: Found ${result.num_segments} segments in viewport${deviceNote}`,
-                    'success'
-                );
+                // Handle results based on analysis type
+                if (analysisType === 'zero_shot') {
+                    const numDetections = result.num_detections || 0;
+                    statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
+                    statusText.style.color = '#10b981';
+                    
+                    // Display zero-shot results
+                    this.displayZeroShotResults(result);
+                    
+                    // Show notification
+                    const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+                    this.showNotification(
+                        `Zero-Shot Detection: Found ${numDetections} objects in viewport${deviceNote}`,
+                        'success'
+                    );
+                } else {
+                    // SAM results
+                    const numSegments = result.num_segments || 0;
+                    statusText.textContent = `✓ Found ${numSegments} segments (${deviceText})`;
+                    statusText.style.color = '#10b981';
+                    
+                    // Display SAM results
+                    this.displaySAMResults(result);
+                    
+                    // Show notification
+                    const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+                    this.showNotification(
+                        `SAM Analysis: Found ${numSegments} segments in viewport${deviceNote}`,
+                        'success'
+                    );
+                }
                 
                 // Log device info to console
                 if (deviceInfo.cuda_available) {
@@ -2163,6 +2196,255 @@ class WorldSamplerUI {
         });
     }
     
+    /**
+     * Display Zero-Shot Detection results on Cesium map
+     * @param {Object} result - Zero-shot detection result
+     */
+    displayZeroShotResults(result) {
+        if (!result.geojson || !result.geojson.features) {
+            console.warn('No GeoJSON features in Zero-Shot results');
+            return;
+        }
+        
+        // Remove previous SAM/Zero-Shot results if any
+        if (this.samDataSource) {
+            this.viewer.dataSources.remove(this.samDataSource);
+        }
+        
+        const camera = this.viewer.camera;
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const viewportWidth = canvas.width;
+        const viewportHeight = canvas.height;
+        
+        // Get camera position
+        const position = camera.positionCartographic;
+        const centerLon = Cesium.Math.toDegrees(position.longitude);
+        const centerLat = Cesium.Math.toDegrees(position.latitude);
+        const height = position.height;
+        
+        // Get viewport bounds
+        const corners = [
+            new Cesium.Cartesian2(0, 0),
+            new Cesium.Cartesian2(viewportWidth, 0),
+            new Cesium.Cartesian2(viewportWidth, viewportHeight),
+            new Cesium.Cartesian2(0, viewportHeight)
+        ];
+        
+        const worldCorners = corners.map(screenPos => {
+            const cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            if (cartesian) {
+                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+                return {
+                    lon: Cesium.Math.toDegrees(cartographic.longitude),
+                    lat: Cesium.Math.toDegrees(cartographic.latitude)
+                };
+            }
+            return null;
+        }).filter(c => c !== null);
+        
+        if (worldCorners.length < 2) {
+            console.warn('Could not determine viewport bounds for Zero-Shot, using approximate');
+            this.displayZeroShotResultsApproximate(result);
+            return;
+        }
+        
+        // Calculate viewport bounds
+        const lons = worldCorners.map(c => c.lon);
+        const lats = worldCorners.map(c => c.lat);
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        
+        const lonRange = maxLon - minLon;
+        const latRange = maxLat - minLat;
+        
+        // Create data source for detections
+        this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
+        
+        // Convert normalized [0,1] coordinates to geographic coordinates
+        const features = result.geojson.features.map((feature, index) => {
+            const props = feature.properties;
+            const coords = feature.geometry.coordinates[0];
+            
+            // Convert normalized coordinates to geographic
+            const geographicCoords = coords.map(([x_norm, y_norm]) => {
+                const lon = minLon + (x_norm * lonRange);
+                const lat = minLat + ((1 - y_norm) * latRange); // Flip Y (image origin is top-left)
+                return [lon, lat];
+            });
+            
+            return {
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [geographicCoords]
+                },
+                properties: {
+                    ...props,
+                    detection_id: props.class_id || index + 1,
+                    class_name: props.category || 'unknown',
+                    confidence: props.confidence || 0.0
+                }
+            };
+        });
+        
+        const convertedGeoJSON = {
+            type: 'FeatureCollection',
+            features: features
+        };
+        
+        // Load and style
+        this.samDataSource.load(convertedGeoJSON).then(() => {
+            const entities = this.samDataSource.entities.values;
+            
+            // Color map for different object classes
+            const classColors = {
+                'person': Cesium.Color.RED,
+                'car': Cesium.Color.BLUE,
+                'bicycle': Cesium.Color.GREEN,
+                'truck': Cesium.Color.ORANGE,
+                'bus': Cesium.Color.YELLOW,
+                'motorcycle': Cesium.Color.CYAN,
+                'bird': Cesium.Color.MAGENTA,
+                'cat': Cesium.Color.PINK,
+                'dog': Cesium.Color.LIME
+            };
+            
+            entities.forEach((entity, index) => {
+                const props = entity.properties;
+                const className = props.class_name?.getValue() || 'unknown';
+                const confidence = props.confidence?.getValue() || 0.0;
+                
+                // Get color for class or use default
+                const baseColor = classColors[className.toLowerCase()] || Cesium.Color.fromHsl(
+                    (index * 137.508) % 360 / 360, 0.7, 0.5
+                );
+                
+                // Adjust opacity based on confidence
+                const opacity = 0.3 + (confidence * 0.4); // 0.3 to 0.7
+                const color = baseColor.withAlpha(opacity);
+                
+                // Style polygon
+                if (entity.polygon) {
+                    entity.polygon.material = color;
+                    entity.polygon.outline = true;
+                    entity.polygon.outlineColor = baseColor;
+                    entity.polygon.outlineWidth = 2;
+                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                }
+                
+                // Add label with class name and confidence
+                entity.label = {
+                    text: `${className} (${(confidence * 100).toFixed(0)}%)`,
+                    font: '12px sans-serif',
+                    fillColor: Cesium.Color.WHITE,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2,
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    pixelOffset: new Cesium.Cartesian2(0, -10)
+                };
+                
+                // Add description for info box
+                entity.description = `
+                    <table style="width: 100%;">
+                        <tr><td><strong>Class:</strong></td><td>${className}</td></tr>
+                        <tr><td><strong>Confidence:</strong></td><td>${(confidence * 100).toFixed(1)}%</td></tr>
+                        <tr><td><strong>Detection ID:</strong></td><td>${props.detection_id?.getValue() || index + 1}</td></tr>
+                    </table>
+                `;
+            });
+            
+            // Add to viewer
+            this.viewer.dataSources.add(this.samDataSource);
+            
+            console.log(`Displayed ${entities.length} Zero-Shot detections on map`);
+            console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
+        }).catch(error => {
+            console.error('Error loading Zero-Shot GeoJSON:', error);
+        });
+    }
+    
+    /**
+     * Display Zero-Shot results using approximate conversion (fallback)
+     */
+    displayZeroShotResultsApproximate(result) {
+        const camera = this.viewer.camera;
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const viewportWidth = canvas.width;
+        const viewportHeight = canvas.height;
+        
+        const position = camera.positionCartographic;
+        const height = position.height;
+        const metersPerPixel = height / Math.max(viewportHeight, viewportWidth);
+        const degreesPerMeter = 1.0 / 111320.0;
+        const degreesPerPixel = metersPerPixel * degreesPerMeter;
+        
+        this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
+        
+        const features = result.geojson.features.map((feature, index) => {
+            const props = feature.properties;
+            const coords = feature.geometry.coordinates[0];
+            const geographicCoords = coords.map(([x_norm, y_norm]) => {
+                const lon = Cesium.Math.toDegrees(position.longitude) + (x_norm - 0.5) * viewportWidth * degreesPerPixel;
+                const lat = Cesium.Math.toDegrees(position.latitude) + (0.5 - y_norm) * viewportHeight * degreesPerPixel;
+                return [lon, lat];
+            });
+            
+            return {
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [geographicCoords]
+                },
+                properties: {
+                    ...props,
+                    detection_id: props.class_id || index + 1,
+                    class_name: props.category || 'unknown',
+                    confidence: props.confidence || 0.0
+                }
+            };
+        });
+        
+        const convertedGeoJSON = { type: 'FeatureCollection', features: features };
+        
+        this.samDataSource.load(convertedGeoJSON).then(() => {
+            const entities = this.samDataSource.entities.values;
+            entities.forEach((entity, index) => {
+                const props = entity.properties;
+                const className = props.class_name?.getValue() || 'unknown';
+                const confidence = props.confidence?.getValue() || 0.0;
+                
+                const hue = (index * 137.508) % 360;
+                const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4);
+                
+                if (entity.polygon) {
+                    entity.polygon.material = color;
+                    entity.polygon.outline = true;
+                    entity.polygon.outlineColor = Cesium.Color.WHITE;
+                    entity.polygon.outlineWidth = 2;
+                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                }
+                
+                entity.label = {
+                    text: `${className} (${(confidence * 100).toFixed(0)}%)`,
+                    font: '12px sans-serif',
+                    fillColor: Cesium.Color.WHITE,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2
+                };
+            });
+            
+            this.viewer.dataSources.add(this.samDataSource);
+            console.log(`Displayed ${entities.length} Zero-Shot detections (approximate method)`);
+        }).catch(error => {
+            console.error('Error loading Zero-Shot GeoJSON (approximate):', error);
+        });
+    }
+    
     updateSurveyCounter() {
         document.getElementById('currentPointNum').textContent = this.currentSampleIndex + 1;
         document.getElementById('totalPoints').textContent = this.currentSamples.length;
@@ -2358,13 +2640,48 @@ class SamplerAPIClient {
 function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const analyzeBtn = document.getElementById('analyzeViewportBtn');
     if (!analyzeBtn) {
-        console.warn('[SAM] Analyze button not found, SAM functionality may not work');
+        console.warn('[AI Analysis] Analyze button not found, AI functionality may not work');
         return;
     }
     
     // Remove any existing listeners by cloning
     const newBtn = analyzeBtn.cloneNode(true);
     analyzeBtn.parentNode.replaceChild(newBtn, analyzeBtn);
+    
+    // Setup model selector toggle
+    const analysisTypeSelect = document.getElementById('analysisTypeSelect');
+    const samOptions = document.getElementById('samOptions');
+    const zeroShotOptions = document.getElementById('zeroShotOptions');
+    const analysisDescription = document.getElementById('analysisDescription');
+    const confidenceSlider = document.getElementById('zeroShotConfidence');
+    const confidenceValue = document.getElementById('zeroShotConfidenceValue');
+    
+    if (analysisTypeSelect) {
+        analysisTypeSelect.addEventListener('change', (e) => {
+            const analysisType = e.target.value;
+            if (analysisType === 'zero_shot') {
+                if (samOptions) samOptions.style.display = 'none';
+                if (zeroShotOptions) zeroShotOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'Detects common objects (person, car, bicycle, etc.) using pre-trained COCO model';
+                }
+            } else {
+                if (samOptions) samOptions.style.display = 'block';
+                if (zeroShotOptions) zeroShotOptions.style.display = 'none';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'Segments all visible regions in current viewport using Segment Anything Model';
+                }
+            }
+        });
+    }
+    
+    // Setup confidence slider
+    if (confidenceSlider && confidenceValue) {
+        confidenceSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            confidenceValue.textContent = value.toFixed(2);
+        });
+    }
     
     // Add click handler
     newBtn.addEventListener('click', async () => {
@@ -2373,7 +2690,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             worldSamplerUI.analyzeViewportWithSAM();
         } else {
             // Fallback: show error
-            console.warn('[SAM] WorldSamplerUI not available');
+            console.warn('[AI Analysis] WorldSamplerUI not available');
             const statusDiv = document.getElementById('samAnalysisStatus');
             const statusText = document.getElementById('samStatusText');
             const btn = document.getElementById('analyzeViewportBtn');
