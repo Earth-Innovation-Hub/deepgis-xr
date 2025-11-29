@@ -975,10 +975,14 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
         
     except Exception as e:
         import traceback
+        error_traceback = traceback.format_exc()
+        print(f"\n❌ SAM Analysis Error:")
+        print(f"Error message: {str(e)}")
+        print(f"Traceback:\n{error_traceback}")
         return JsonResponse({
             'status': 'error',
             'message': str(e),
-            'traceback': traceback.format_exc()
+            'traceback': error_traceback
         }, status=500)
 
 
