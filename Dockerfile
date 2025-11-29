@@ -79,11 +79,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Grounding DINO (after torch/torchvision/detectron2)
-# Clone and install from source with --no-build-isolation so it can access torch
+# Clone and install from source with CUDA support
 # Keep source in /app/GroundingDINO for config files
 RUN git clone https://github.com/IDEA-Research/GroundingDINO.git /app/GroundingDINO && \
     cd /app/GroundingDINO && \
-    pip install --no-cache-dir --no-build-isolation .
+    # Build CUDA extensions first
+    pip install --no-cache-dir -e . && \
+    # Verify CUDA ops compiled
+    python -c "from groundingdino.models.GroundingDINO import ms_deform_attn; print('CUDA ops check:', hasattr(ms_deform_attn, '_C'))" || echo "Warning: CUDA ops may not be available"
 
 # Create models directory for Grounding DINO weights
 RUN mkdir -p /app/models

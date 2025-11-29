@@ -1359,7 +1359,7 @@ def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold
         else:
             device_info['device'] = 'cpu'
         
-        # Initialize detector
+        # Initialize detector with CUDA if available
         try:
             device = 'cuda' if cuda_available else 'cpu'
             detector = GroundingDINODetector(model_type='swin_t', device=device)
