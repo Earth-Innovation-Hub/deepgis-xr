@@ -619,15 +619,17 @@
             position: absolute;
             top: 90px;
             left: 10px;
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.6);
             color: white;
             padding: 10px;
             border-radius: 5px;
             font-family: 'Courier New', monospace;
             font-size: 0.75rem;
             z-index: 1000;
-            min-width: 200px;
-            backdrop-filter: blur(5px);
+            min-width: 160px;
+            max-width: 180px;
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
         }
 
         .camera-info-title {

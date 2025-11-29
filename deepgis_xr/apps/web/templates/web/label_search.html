@@ -110,6 +110,100 @@
         #worldSamplerSection .chart-container canvas {
             max-height: 200px;
         }
+        
+        /* Perspective Views Widget - HUD Style */
+        .perspective-views-widget {
+            position: absolute;
+            top: 420px; /* Position below navigation widget */
+            right: 350px;
+            width: 120px;
+            z-index: 1000;
+            transition: right 0.3s ease;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 12px;
+            padding: 10px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(8px);
+        }
+        
+        .perspective-views-widget .widget-title {
+            color: #f1f5f9;
+            font-size: 11px;
+            font-weight: bold;
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .perspective-compass-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 4px;
+            width: 100%;
+            aspect-ratio: 1;
+        }
+        
+        .perspective-btn-hud {
+            aspect-ratio: 1;
+            padding: 6px 4px;
+            font-size: 0.7rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            border-radius: 6px;
+            color: #60a5fa;
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+        
+        .perspective-btn-hud:hover {
+            background-color: rgba(59, 130, 246, 0.25);
+            border-color: #3b82f6;
+            color: #93c5fd;
+            transform: scale(1.05);
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+        }
+        
+        .perspective-btn-hud:active {
+            transform: scale(0.95);
+        }
+        
+        .perspective-btn-hud i {
+            font-size: 0.9rem;
+            margin-bottom: 2px;
+        }
+        
+        .perspective-btn-hud small {
+            font-size: 0.65rem;
+            font-weight: 600;
+        }
+        
+        /* Position buttons in compass pattern: N top, S bottom, E right, W left */
+        .perspective-compass-grid #viewNorth {
+            grid-column: 2;
+            grid-row: 1;
+        }
+        
+        .perspective-compass-grid #viewEast {
+            grid-column: 3;
+            grid-row: 2;
+        }
+        
+        .perspective-compass-grid #viewSouth {
+            grid-column: 2;
+            grid-row: 3;
+        }
+        
+        .perspective-compass-grid #viewWest {
+            grid-column: 1;
+            grid-row: 2;
+        }
     </style>
 </head>
 
@@ -169,20 +263,22 @@
                                 <i class="fas fa-cube me-2"></i>3D Models
                             </label>
                         </div>
-                            <div class="btn-group-vertical w-100 mt-2" role="group">
+                            <!-- Main View Modes -->
+                            <div class="btn-group-vertical w-100 mt-2 mb-3" role="group">
                                 <button class="btn btn-primary btn-sm mb-1" id="view2D">
-                            <i class="fas fa-map me-2"></i>2D Map View
-                        </button>
+                                    <i class="fas fa-map me-2"></i>2D Map View
+                                </button>
                                 <button class="btn btn-primary btn-sm mb-1" id="view3D">
-                            <i class="fas fa-cube me-2"></i>3D Globe View
-                        </button>
+                                    <i class="fas fa-cube me-2"></i>3D Globe View
+                                </button>
                                 <button class="btn btn-primary btn-sm mb-1" id="viewColumbus">
-                            <i class="fas fa-compass me-2"></i>Columbus View
-                        </button>
+                                    <i class="fas fa-compass me-2"></i>Columbus View
+                                </button>
                                 <button class="btn btn-success btn-sm" id="homeView">
-                            <i class="fas fa-home me-2"></i>Home View
-                        </button>
+                                    <i class="fas fa-home me-2"></i>Home View
+                                </button>
                             </div>
+                            
                         </div>
                     </div>
 
@@ -436,6 +532,25 @@
         
         <!-- Attitude Readout -->
         <div class="attitude-readout" id="attitudeReadout">000°P 000°R</div>
+    </div>
+
+    <!-- Perspective Views Widget - HUD Style -->
+    <div class="perspective-views-widget" id="perspectiveViewsWidget">
+        <div class="widget-title">Perspective Views</div>
+        <div class="perspective-compass-grid">
+            <button class="perspective-btn-hud" id="viewNorth" title="North">
+                <i class="fas fa-arrow-up"></i><br><small>N</small>
+            </button>
+            <button class="perspective-btn-hud" id="viewWest" title="West">
+                <i class="fas fa-arrow-left"></i><br><small>W</small>
+            </button>
+            <button class="perspective-btn-hud" id="viewEast" title="East">
+                <i class="fas fa-arrow-right"></i><br><small>E</small>
+            </button>
+            <button class="perspective-btn-hud" id="viewSouth" title="South">
+                <i class="fas fa-arrow-down"></i><br><small>S</small>
+            </button>
+        </div>
     </div>
 
     <!-- Loading Overlay -->

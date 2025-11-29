@@ -267,6 +267,79 @@ function addLazyEventHandler(elementId, loaderFn, methodName, args = []) {
   });
 }
 
+// Set perspective view (N/S/E/W) with angled view at 5km altitude
+function setPerspectiveView(viewer, headingDegrees, direction) {
+  try {
+    if (!viewer || !viewer.camera) {
+      console.error('Viewer or camera not available');
+      return;
+    }
+    
+    // First, switch to 3D globe view mode
+    CameraUtils.setViewMode(viewer, '3D', () => {});
+    
+    // Get current viewport center (what's visible in the center of the screen)
+    // This maintains the same lat/lon that the user is currently viewing
+    let longitude, latitude;
+    
+    // Get the center of the viewport by picking the ellipsoid at screen center
+    const centerX = viewer.canvas.clientWidth / 2;
+    const centerY = viewer.canvas.clientHeight / 2;
+    const centerCartesian = viewer.camera.pickEllipsoid(new Cesium.Cartesian2(centerX, centerY));
+    
+    if (centerCartesian) {
+      // Use the viewport center point - this is what the user is actually looking at
+      const cartographic = Cesium.Cartographic.fromCartesian(centerCartesian);
+      longitude = cartographic.longitude;
+      latitude = cartographic.latitude;
+    } else {
+      // Fallback: use camera position if pickEllipsoid fails (e.g., in 2D mode)
+      const currentPosition = viewer.camera.position;
+      if (currentPosition) {
+        const cartographic = Cesium.Cartographic.fromCartesian(currentPosition);
+        longitude = cartographic.longitude;
+        latitude = cartographic.latitude;
+      } else if (viewer.camera.positionCartographic) {
+        longitude = viewer.camera.positionCartographic.longitude;
+        latitude = viewer.camera.positionCartographic.latitude;
+      } else {
+        console.warn('Could not determine viewport center, using fallback');
+        // Last resort: use camera's current cartographic position
+        const cartographic = Cesium.Cartographic.fromCartesian(viewer.camera.position);
+        longitude = cartographic.longitude;
+        latitude = cartographic.latitude;
+      }
+    }
+    
+    // Set altitude similar to example view (~1640m) for natural perspective
+    const altitude = 1640;
+    
+    // Set pitch similar to example view (~-8.9°) for natural viewing angle
+    const pitch = Cesium.Math.toRadians(-8.9);
+    
+    // Fly to the new position with perspective angle
+    // Keep the same lat/lon (viewport center), just change heading and altitude
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromRadians(
+        longitude,
+        latitude,
+        altitude
+      ),
+      orientation: {
+        heading: Cesium.Math.toRadians(headingDegrees),
+        pitch: pitch,
+        roll: 0.0
+      },
+      duration: 1.5
+    });
+    
+    updateStatusIndicator(`View: ${direction} (${headingDegrees}°) at 1.6km`);
+  } catch (error) {
+    console.error('Error setting perspective view:', error);
+    updateStatusIndicator(`Error: Could not set ${direction} view`);
+  }
+}
+
 // Set up event handlers
 function setupEventHandlers(viewer) {
   // View mode controls - using shared utility function
@@ -289,6 +362,23 @@ function setupEventHandlers(viewer) {
     
     viewer.camera.setView({ destination });
     updateStatusIndicator(statusMessage);
+  });
+
+  // Perspective view controls (N/S/E/W)
+  document.getElementById('viewNorth')?.addEventListener('click', () => {
+    setPerspectiveView(viewer, 0, 'North');
+  });
+
+  document.getElementById('viewSouth')?.addEventListener('click', () => {
+    setPerspectiveView(viewer, 180, 'South');
+  });
+
+  document.getElementById('viewEast')?.addEventListener('click', () => {
+    setPerspectiveView(viewer, 90, 'East');
+  });
+
+  document.getElementById('viewWest')?.addEventListener('click', () => {
+    setPerspectiveView(viewer, 270, 'West');
   });
 
   // Layer toggles
