@@ -5,7 +5,8 @@ from django.utils.html import format_html
 from .models import (
     Image, ImageLabel, ImageSourceType, CategoryType, ImageFilter,
     Color, TiledGISLabel, RasterImage, CategoryLabel, Labeler,
-    TrainingDataset, TrainingLabel, ModelVersion
+    TrainingDataset, TrainingLabel, ModelVersion,
+    Mission, MissionWaypoint
 )
 
 admin.site.register(Image)
@@ -168,3 +169,47 @@ class ModelVersionAdmin(admin.ModelAdmin):
             'fields': ('status', 'trained_by', 'trained_at', 'deployed_at', 'is_deployed')
         }),
     ]
+
+
+class MissionWaypointInline(admin.TabularInline):
+    model = MissionWaypoint
+    fields = ('sequence', 'latitude', 'longitude', 'altitude', 'waypoint_type', 'command', 'speed', 'yaw')
+    extra = 0
+    show_change_link = True
+    can_delete = True
+    ordering = ['sequence']
+
+
+@admin.register(Mission)
+class MissionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'mission_type', 'status', 'vehicle', 'num_waypoints', 'created_by', 'created_at')
+    list_filter = ('status', 'mission_type', 'created_at')
+    search_fields = ('name', 'description', 'vehicle__name')
+    readonly_fields = ('num_waypoints', 'total_distance', 'created_at', 'updated_at', 'uploaded_at', 'started_at', 'completed_at')
+    inlines = [MissionWaypointInline]
+    
+    fieldsets = [
+        ('Basic Information', {
+            'fields': ('name', 'description', 'mission_type', 'status', 'vehicle')
+        }),
+        ('Mission Parameters', {
+            'fields': ('default_altitude', 'default_speed', 'return_to_home', 'waypoints')
+        }),
+        ('Statistics', {
+            'fields': ('num_waypoints', 'total_distance'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'uploaded_at', 'started_at', 'completed_at'),
+            'classes': ('collapse',)
+        }),
+    ]
+
+
+@admin.register(MissionWaypoint)
+class MissionWaypointAdmin(admin.ModelAdmin):
+    list_display = ('mission', 'sequence', 'latitude', 'longitude', 'altitude', 'waypoint_type', 'command')
+    list_filter = ('waypoint_type', 'mission__status', 'mission__mission_type')
+    search_fields = ('mission__name',)
+    readonly_fields = ('created_at',)
+    ordering = ['mission', 'sequence']

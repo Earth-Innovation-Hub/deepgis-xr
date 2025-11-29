@@ -454,6 +454,173 @@ class VehicleAlert(models.Model):
         return f'{self.vehicle.name}: {self.title} ({self.get_severity_display()})' 
 
 
+# ===== MISSION PLANNING MODELS =====
+
+class Mission(models.Model):
+    """Mission planning for autonomous vehicles"""
+    MISSION_TYPES = [
+        ('SURVEY', 'Survey'),
+        ('PATROL', 'Patrol'),
+        ('DATA_CAPTURE', 'Data Capture'),
+        ('INSPECTION', 'Inspection'),
+        ('MAPPING', 'Mapping'),
+        ('CUSTOM', 'Custom'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('DRAFT', 'Draft'),
+        ('READY', 'Ready'),
+        ('UPLOADED', 'Uploaded to Vehicle'),
+        ('ACTIVE', 'Active'),
+        ('PAUSED', 'Paused'),
+        ('COMPLETED', 'Completed'),
+        ('CANCELLED', 'Cancelled'),
+    ]
+    
+    # Basic Information
+    name = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    mission_type = models.CharField(max_length=50, choices=MISSION_TYPES, default='CUSTOM')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
+    
+    # Vehicle Association
+    vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name='missions', null=True, blank=True)
+    
+    # Mission Data (GeoJSON format)
+    waypoints = models.JSONField(default=list, help_text="GeoJSON FeatureCollection of waypoints")
+    
+    # Mission Parameters
+    default_altitude = models.FloatField(default=50.0, help_text="Default altitude in meters")
+    default_speed = models.FloatField(null=True, blank=True, help_text="Default speed in m/s")
+    return_to_home = models.BooleanField(default=True, help_text="Return to home after mission")
+    
+    # Metadata
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_missions')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    uploaded_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['vehicle', '-created_at']),
+            models.Index(fields=['status']),
+            models.Index(fields=['created_by', '-created_at']),
+        ]
+        verbose_name = 'Mission'
+        verbose_name_plural = 'Missions'
+    
+    def __str__(self):
+        return f'{self.name} ({self.get_status_display()})'
+    
+    @property
+    def num_waypoints(self):
+        """Get number of waypoints in mission"""
+        if isinstance(self.waypoints, dict) and 'features' in self.waypoints:
+            return len(self.waypoints['features'])
+        elif isinstance(self.waypoints, list):
+            return len(self.waypoints)
+        return 0
+    
+    @property
+    def total_distance(self):
+        """Calculate total mission distance in meters"""
+        # TODO: Implement distance calculation from waypoints
+        return 0.0
+    
+    def to_geojson(self):
+        """Convert mission to GeoJSON format"""
+        return {
+            'type': 'FeatureCollection',
+            'properties': {
+                'name': self.name,
+                'mission_type': self.mission_type,
+                'status': self.status,
+                'default_altitude': self.default_altitude,
+                'default_speed': self.default_speed,
+                'return_to_home': self.return_to_home,
+            },
+            'features': self.waypoints.get('features', []) if isinstance(self.waypoints, dict) else self.waypoints
+        }
+
+
+class MissionWaypoint(models.Model):
+    """Individual waypoint in a mission"""
+    WAYPOINT_TYPES = [
+        ('WAYPOINT', 'Waypoint'),
+        ('TAKEOFF', 'Takeoff'),
+        ('LAND', 'Land'),
+        ('RETURN_TO_LAUNCH', 'Return to Launch'),
+        ('LOITER', 'Loiter'),
+        ('LOITER_TIME', 'Loiter Time'),
+        ('LOITER_TURNS', 'Loiter Turns'),
+        ('LOITER_UNLIM', 'Loiter Unlimited'),
+    ]
+    
+    mission = models.ForeignKey(Mission, on_delete=models.CASCADE, related_name='waypoint_items')
+    
+    # Sequence number (order in mission)
+    sequence = models.PositiveIntegerField()
+    
+    # Position
+    latitude = models.DecimalField(max_digits=17, decimal_places=14)
+    longitude = models.DecimalField(max_digits=17, decimal_places=14)
+    altitude = models.FloatField(help_text="Altitude in meters")
+    
+    # Waypoint Type
+    waypoint_type = models.CharField(max_length=50, choices=WAYPOINT_TYPES, default='WAYPOINT')
+    
+    # MAVLink Command Parameters
+    command = models.IntegerField(default=16, help_text="MAVLink command ID (16=WAYPOINT)")
+    param1 = models.FloatField(default=0.0, help_text="MAVLink parameter 1")
+    param2 = models.FloatField(default=0.0, help_text="MAVLink parameter 2")
+    param3 = models.FloatField(default=0.0, help_text="MAVLink parameter 3")
+    param4 = models.FloatField(default=0.0, help_text="MAVLink parameter 4")
+    
+    # Additional Parameters
+    speed = models.FloatField(null=True, blank=True, help_text="Speed at this waypoint (m/s)")
+    yaw = models.FloatField(null=True, blank=True, help_text="Yaw angle at waypoint (degrees)")
+    
+    # Metadata
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['mission', 'sequence']
+        unique_together = ('mission', 'sequence')
+        indexes = [
+            models.Index(fields=['mission', 'sequence']),
+        ]
+        verbose_name = 'Mission Waypoint'
+        verbose_name_plural = 'Mission Waypoints'
+    
+    def __str__(self):
+        return f'{self.mission.name} - WP{self.sequence} ({self.latitude:.4f}, {self.longitude:.4f})'
+    
+    def to_geojson(self):
+        """Convert waypoint to GeoJSON Feature"""
+        return {
+            'type': 'Feature',
+            'geometry': {
+                'type': 'Point',
+                'coordinates': [float(self.longitude), float(self.latitude), float(self.altitude)]
+            },
+            'properties': {
+                'id': self.id,  # Database ID for deletion
+                'sequence': self.sequence,
+                'waypoint_type': self.waypoint_type,
+                'command': self.command,
+                'param1': self.param1,
+                'param2': self.param2,
+                'param3': self.param3,
+                'param4': self.param4,
+                'speed': self.speed,
+                'yaw': self.yaw,
+            }
+        }
+
+
 # ===== MASK2FORMER TRAINING MODELS =====
 
 class TrainingDataset(models.Model):
