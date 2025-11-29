@@ -452,3 +452,117 @@ class VehicleAlert(models.Model):
     
     def __str__(self):
         return f'{self.vehicle.name}: {self.title} ({self.get_severity_display()})' 
+
+
+# ===== MASK2FORMER TRAINING MODELS =====
+
+class TrainingDataset(models.Model):
+    """Metadata for organizing labels into training datasets"""
+    name = models.CharField(max_length=200, unique=True)
+    description = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    status = models.CharField(max_length=20, choices=[
+        ('draft', 'Draft'),
+        ('ready', 'Ready for Training'),
+        ('training', 'Training in Progress'),
+        ('completed', 'Training Completed'),
+    ], default='draft')
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Training Dataset'
+        verbose_name_plural = 'Training Datasets'
+    
+    def __str__(self):
+        return self.name
+    
+    @property
+    def num_annotations(self):
+        """Get count of annotations in this dataset"""
+        return self.training_labels.count()
+    
+    @property
+    def num_images(self):
+        """Get count of unique images in this dataset"""
+        return self.training_labels.values('image_label__image').distinct().count()
+
+
+class TrainingLabel(models.Model):
+    """Links existing ImageLabels to training datasets"""
+    dataset = models.ForeignKey(TrainingDataset, on_delete=models.CASCADE, related_name='training_labels')
+    image_label = models.ForeignKey(ImageLabel, on_delete=models.CASCADE, related_name='training_datasets')
+    
+    # Metadata
+    source_prediction_id = models.CharField(max_length=200, blank=True, null=True, 
+                                          help_text="Original Mask2Former session_id")
+    corrections_made = models.JSONField(default=dict, blank=True, 
+                                       help_text="Track what corrections were made")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        unique_together = ('dataset', 'image_label')
+        ordering = ['-created_at']
+        verbose_name = 'Training Label'
+        verbose_name_plural = 'Training Labels'
+        indexes = [
+            models.Index(fields=['dataset', '-created_at']),
+            models.Index(fields=['source_prediction_id']),
+        ]
+    
+    def __str__(self):
+        return f"{self.dataset.name} - {self.image_label}"
+
+
+class ModelVersion(models.Model):
+    """Trained model versions"""
+    name = models.CharField(max_length=200, help_text="Model name (e.g., 'Custom Mask2Former')")
+    version = models.CharField(max_length=50, help_text="Version string (e.g., '1.0', '2.1')")
+    description = models.TextField(blank=True)
+    
+    training_dataset = models.ForeignKey(TrainingDataset, on_delete=models.SET_NULL, null=True, blank=True,
+                                       related_name='model_versions')
+    base_model = models.CharField(max_length=100, default='mask2former_coco',
+                                help_text="Base model used for fine-tuning")
+    
+    model_path = models.CharField(max_length=500, help_text="Path to trained model .pth file")
+    config_path = models.CharField(max_length=500, blank=True, help_text="Path to model config file")
+    
+    # Training metrics
+    training_loss = models.FloatField(null=True, blank=True)
+    validation_loss = models.FloatField(null=True, blank=True)
+    mAP_score = models.FloatField(null=True, blank=True, help_text="Mean Average Precision")
+    
+    status = models.CharField(max_length=20, choices=[
+        ('training', 'Training'),
+        ('completed', 'Completed'),
+        ('deployed', 'Deployed'),
+        ('archived', 'Archived'),
+    ], default='training')
+    
+    trained_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='trained_models')
+    trained_at = models.DateTimeField(auto_now_add=True)
+    deployed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ('name', 'version')
+        ordering = ['-trained_at']
+        verbose_name = 'Model Version'
+        verbose_name_plural = 'Model Versions'
+        indexes = [
+            models.Index(fields=['name', 'version']),
+            models.Index(fields=['status']),
+            models.Index(fields=['-trained_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+    
+    @property
+    def is_deployed(self):
+        """Check if this model version is currently deployed"""
+        return self.status == 'deployed'

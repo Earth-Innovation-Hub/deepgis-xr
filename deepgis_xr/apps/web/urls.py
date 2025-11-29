@@ -49,6 +49,12 @@ urlpatterns = [
     path('label/semi-supervised/api/save-labels/', views.save_assisted_labels, name='save_assisted_labels'),
     path('label/semi-supervised/api/get-images/', views.get_label_images, name='get_label_images'),
     
+    # Training dataset management
+    path('api/training/datasets/', views.list_training_datasets, name='list_training_datasets'),
+    path('api/training/datasets/create/', views.create_training_dataset, name='create_training_dataset'),
+    path('api/training/datasets/<int:dataset_id>/', views.get_dataset_details, name='get_dataset_details'),
+    path('api/training/datasets/add-label/', views.add_label_to_dataset, name='add_label_to_dataset'),
+    
     # World Sampler API endpoints
     path('webclient/sampler/initialize', world_sampler_api.initialize_sampler, name='initialize_sampler'),
     path('webclient/sampler/sample', world_sampler_api.sample_locations, name='sample_locations'),
@@ -63,4 +69,5 @@ urlpatterns = [
     # AI Analysis Report
     path('label/ai-analysis/report/<str:session_id>/', views.ai_analysis_report, name='ai_analysis_report'),
     path('label/ai-analysis/image/<str:session_id>/<str:image_type>/', views.serve_analysis_image, name='serve_analysis_image'),
+    path('label/ai-analysis/geojson/<str:session_id>/', views.serve_analysis_geojson, name='serve_analysis_geojson'),
 ] 

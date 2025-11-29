@@ -1,0 +1,527 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Analysis Report - DeepGIS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+        }
+        .report-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: rgba(30, 41, 59, 0.8);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        .report-header {
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }
+        .report-header h1 {
+            color: #60a5fa;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        .report-header .badge {
+            font-size: 0.9rem;
+            padding: 8px 16px;
+        }
+        .image-section {
+            margin-bottom: 40px;
+        }
+        .image-card {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+        .image-card h3 {
+            color: #60a5fa;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+        .image-card img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+        }
+        .metadata-section {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+        .metadata-section h3 {
+            color: #60a5fa;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+        }
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+        .metadata-item {
+            background: rgba(30, 41, 59, 0.5);
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 3px solid #3b82f6;
+        }
+        .metadata-item label {
+            color: #94a3b8;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+            display: block;
+        }
+        .metadata-item .value {
+            color: #e2e8f0;
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+        .summary-section {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+        .summary-section h3 {
+            color: #60a5fa;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+        .summary-text {
+            color: #cbd5e1;
+            line-height: 1.8;
+            white-space: pre-line;
+            font-size: 1rem;
+        }
+        .summary-text strong {
+            color: #60a5fa;
+        }
+        .action-buttons {
+            margin-top: 30px;
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .btn-report {
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s;
+        }
+        .btn-report:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+        }
+        .btn-primary-report {
+            background: #3b82f6;
+            color: white;
+        }
+        .btn-secondary-report {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+            border: 1px solid #3b82f6;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(59, 130, 246, 0.05) 100%);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+        .stat-card .stat-value {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #60a5fa;
+            margin-bottom: 5px;
+        }
+        .stat-card .stat-label {
+            color: #94a3b8;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .model-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        .badge-sam { background: #10b981; color: white; }
+        .badge-zero-shot { background: #3b82f6; color: white; }
+        .badge-mask2former { background: #8b5cf6; color: white; }
+    </style>
+</head>
+<body>
+    <div class="report-container">
+        <!-- Header -->
+        <div class="report-header">
+            <h1>
+                <i class="fas fa-brain"></i> AI Analysis Report
+                {% if model_type == 'sam' %}
+                    <span class="model-badge badge-sam">SAM</span>
+                {% elif model_type == 'zero_shot' %}
+                    <span class="model-badge badge-zero-shot">Zero-Shot</span>
+                {% elif model_type == 'mask2former' %}
+                    <span class="model-badge badge-mask2former">Mask2Former</span>
+                {% endif %}
+            </h1>
+            <p class="text-muted">Session ID: {{ session_id }}</p>
+        </div>
+
+        <!-- Statistics -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value">{{ num_features }}</div>
+                <div class="stat-label">
+                    {% if model_type == 'sam' %}Segments{% else %}Objects{% endif %}
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">
+                    {% if metadata.image_size %}{{ metadata.image_size.0 }}×{{ metadata.image_size.1 }}{% else %}N/A{% endif %}
+                </div>
+                <div class="stat-label">Image Size (px)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value">
+                    {% if metadata.device_info.cuda_available %}
+                        <i class="fas fa-microchip"></i> GPU
+                    {% else %}
+                        <i class="fas fa-server"></i> CPU
+                    {% endif %}
+                </div>
+                <div class="stat-label">Processing Device</div>
+            </div>
+        </div>
+
+        <!-- Images Section -->
+        <div class="image-section">
+            <div class="row">
+                <!-- Query Image -->
+                {% if has_query_image %}
+                <div class="col-md-6">
+                    <div class="image-card">
+                        <h3><i class="fas fa-camera"></i> Query Image</h3>
+                        <img src="{% url 'serve_analysis_image' session_id 'query' %}" 
+                             alt="Query Image" 
+                             class="img-fluid">
+                        <p class="text-muted mt-2" style="font-size: 0.85rem;">
+                            Original viewport capture from Cesium
+                        </p>
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Visualization -->
+                {% if has_visualization %}
+                <div class="col-md-6">
+                    <div class="image-card">
+                        <h3><i class="fas fa-project-diagram"></i> Analysis Results</h3>
+                        <img src="{% url 'serve_analysis_image' session_id 'visualization' %}" 
+                             alt="Analysis Visualization" 
+                             class="img-fluid">
+                        <p class="text-muted mt-2" style="font-size: 0.85rem;">
+                            {% if model_type == 'sam' %}
+                                Segmented regions with colored masks
+                            {% else %}
+                                Detected objects with bounding boxes and labels
+                            {% endif %}
+                        </p>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Summary Section -->
+        <div class="summary-section">
+            <h3><i class="fas fa-file-alt"></i> Analysis Summary</h3>
+            <div class="summary-text">{{ summary|linebreaks }}</div>
+        </div>
+
+        <!-- Metadata Section -->
+        <div class="metadata-section">
+            <h3><i class="fas fa-info-circle"></i> Detailed Metadata</h3>
+            <div class="metadata-grid">
+                <!-- Location -->
+                {% if metadata.location %}
+                <div class="metadata-item">
+                    <label><i class="fas fa-map-marker-alt"></i> Location</label>
+                    <div class="value">
+                        {{ metadata.location.lat|floatformat:6 }}°, {{ metadata.location.lon|floatformat:6 }}°
+                    </div>
+                    <div style="color: #94a3b8; font-size: 0.9rem; margin-top: 5px;">
+                        Altitude: {{ metadata.location.alt|floatformat:1 }} m
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Model Info -->
+                <div class="metadata-item">
+                    <label><i class="fas fa-robot"></i> Model</label>
+                    <div class="value">
+                        {% if model_type == 'sam' %}
+                            SAM {{ metadata.model_type|upper }}
+                        {% elif model_type == 'zero_shot' %}
+                            Mask R-CNN (COCO)
+                        {% elif model_type == 'mask2former' %}
+                            Mask2Former (COCO)
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Device Info -->
+                {% if metadata.device_info %}
+                <div class="metadata-item">
+                    <label><i class="fas fa-microchip"></i> Device</label>
+                    <div class="value">
+                        {% if metadata.device_info.cuda_available %}
+                            {{ metadata.device_info.gpu_name|default:"CUDA GPU" }}
+                        {% else %}
+                            CPU
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Timestamp -->
+                {% if metadata.timestamp %}
+                <div class="metadata-item">
+                    <label><i class="fas fa-clock"></i> Analysis Date</label>
+                    <div class="value">{{ metadata.timestamp }}</div>
+                </div>
+                {% endif %}
+
+                <!-- Parameters -->
+                {% if model_type == 'sam' %}
+                <div class="metadata-item">
+                    <label><i class="fas fa-sliders-h"></i> Parameters</label>
+                    <div class="value">
+                        Min Area: {{ metadata.min_area }} px
+                    </div>
+                </div>
+                {% else %}
+                <div class="metadata-item">
+                    <label><i class="fas fa-sliders-h"></i> Parameters</label>
+                    <div class="value">
+                        Confidence: {{ metadata.confidence_threshold|floatformat:2 }}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <a href="{% url 'label_search' %}" class="btn-report btn-primary-report">
+                <i class="fas fa-arrow-left"></i> Back to Search
+            </a>
+            {% if has_geojson %}
+            <a href="{% url 'serve_analysis_image' session_id 'visualization' %}" 
+               download 
+               class="btn-report btn-secondary-report">
+                <i class="fas fa-download"></i> Download Visualization
+            </a>
+            {% endif %}
+            {% if model_type == 'mask2former' %}
+            <button class="btn-report btn-secondary-report" onclick="openCorrectionInterface('{{ session_id }}')">
+                <i class="fas fa-edit"></i> Correct Predictions & Add to Training Dataset
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    {% if model_type == 'mask2former' %}
+    <!-- Cesium Dependencies (for correction interface) -->
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <script>
+        // Set Cesium Ion access token
+        if (typeof Cesium !== 'undefined') {
+            Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+        }
+    </script>
+    
+    <!-- Mask2Former Corrector -->
+    <link rel="stylesheet" href="{% static 'web/css/mask2former-corrector.css' %}">
+    <script src="{% static 'web/js/mask2former-corrector.js' %}"></script>
+    
+    <!-- Pass GeoJSON data to JavaScript -->
+    <script>
+        // Make prediction data available to correction interface
+        window.mask2formerPredictionData = {
+            sessionId: '{{ session_id }}',
+            geojson: {{ geojson_json|safe }},
+            metadata: {{ metadata_json|safe }},
+            imageSize: {% if metadata.image_size %}[{{ metadata.image_size.0 }}, {{ metadata.image_size.1 }}]{% else %}null{% endif %}
+        };
+    </script>
+    
+    <script>
+        // Create or get Cesium viewer for correction interface
+        let correctionViewer = null;
+        
+        async function createCorrectionViewer() {
+            if (correctionViewer) {
+                return correctionViewer;
+            }
+            
+            // Check if viewer already exists
+            if (window.viewer) {
+                correctionViewer = window.viewer;
+                return correctionViewer;
+            }
+            if (window.cesiumViewer) {
+                correctionViewer = window.cesiumViewer;
+                return correctionViewer;
+            }
+            
+            // Create a hidden container for the viewer (we'll show it in the correction panel)
+            let container = document.getElementById('cesium-correction-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'cesium-correction-container';
+                container.style.position = 'absolute';
+                container.style.top = '0';
+                container.style.left = '0';
+                container.style.width = '100%';
+                container.style.height = '100%';
+                container.style.zIndex = '9999';
+                container.style.display = 'none';
+                document.body.appendChild(container);
+            }
+            
+            // Create Cesium viewer (without terrain first, we'll set it after)
+            correctionViewer = new Cesium.Viewer(container, {
+                animation: false,
+                baseLayerPicker: false,
+                fullscreenButton: true,
+                geocoder: false,
+                homeButton: true,
+                infoBox: false,
+                sceneModePicker: true,
+                selectionIndicator: false,
+                timeline: false,
+                navigationHelpButton: false,
+                scene3DOnly: false
+            });
+            
+            // Configure terrain with proper fallback (same pattern as label_topology_refactored.html)
+            try {
+                if (typeof Cesium.createWorldTerrainAsync === 'function') {
+                    correctionViewer.terrainProvider = await Cesium.createWorldTerrainAsync();
+                } else if (typeof Cesium.createWorldTerrain === 'function') {
+                    correctionViewer.terrainProvider = Cesium.createWorldTerrain();
+                } else {
+                    correctionViewer.terrainProvider = new Cesium.CesiumTerrainProvider({
+                        url: Cesium.IonResource.fromAssetId(1)
+                    });
+                }
+            } catch (error) {
+                console.warn('Failed to load Ion terrain:', error);
+                correctionViewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+            }
+            
+            // Set initial view from metadata if available
+            {% if metadata.location %}
+            const lat = {{ metadata.location.lat }};
+            const lon = {{ metadata.location.lon }};
+            const alt = {{ metadata.location.alt|default:100 }};
+            
+            correctionViewer.camera.setView({
+                destination: Cesium.Cartesian3.fromDegrees(lon, lat, alt * 10),
+                orientation: {
+                    heading: Cesium.Math.toRadians({{ metadata.location.heading|default:0 }}),
+                    pitch: Cesium.Math.toRadians({{ metadata.location.pitch|default:-90 }}),
+                    roll: 0.0
+                }
+            });
+            {% endif %}
+            
+            window.cesiumViewer = correctionViewer; // Make globally available
+            return correctionViewer;
+        }
+        
+        // Initialize corrector when correction interface is opened
+        async function openCorrectionInterface(sessionId) {
+            try {
+                // Show loading message
+                const loadingMsg = document.createElement('div');
+                loadingMsg.id = 'correction-loading';
+                loadingMsg.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:white;padding:20px;border-radius:8px;z-index:10001;';
+                loadingMsg.innerHTML = '<div>Initializing correction interface...</div>';
+                document.body.appendChild(loadingMsg);
+                
+                // Create or get viewer
+                const viewer = await createCorrectionViewer();
+                
+                // Show the viewer container
+                const container = document.getElementById('cesium-correction-container');
+                if (container) {
+                    container.style.display = 'block';
+                }
+                
+                // Initialize corrector if not already done
+                if (!corrector) {
+                    corrector = new Mask2FormerCorrector(viewer);
+                }
+                
+                // Remove loading message
+                if (loadingMsg.parentNode) {
+                    loadingMsg.parentNode.removeChild(loadingMsg);
+                }
+                
+                // Load prediction and show correction interface
+                await corrector.loadPrediction(sessionId);
+                
+            } catch (error) {
+                console.error('Error opening correction interface:', error);
+                alert('Error initializing correction interface: ' + error.message);
+                
+                // Remove loading message
+                const loadingMsg = document.getElementById('correction-loading');
+                if (loadingMsg && loadingMsg.parentNode) {
+                    loadingMsg.parentNode.removeChild(loadingMsg);
+                }
+            }
+        }
+        
+        // Make function globally available
+        window.openCorrectionInterface = openCorrectionInterface;
+    </script>
+    {% endif %}
+</body>
+</html>
+

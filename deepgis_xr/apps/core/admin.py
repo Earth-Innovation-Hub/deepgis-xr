@@ -4,7 +4,8 @@ from django.utils.html import format_html
 
 from .models import (
     Image, ImageLabel, ImageSourceType, CategoryType, ImageFilter,
-    Color, TiledGISLabel, RasterImage, CategoryLabel, Labeler
+    Color, TiledGISLabel, RasterImage, CategoryLabel, Labeler,
+    TrainingDataset, TrainingLabel, ModelVersion
 )
 
 admin.site.register(Image)
@@ -98,3 +99,72 @@ class ImageLabelAdmin(admin.ModelAdmin):
 
     def overlay_image(self, obj):
         return format_html('<img src="/api/v1/image-labels/{}/overlay" alt="Rendered Label">', obj.id)
+
+
+class TrainingLabelInline(admin.TabularInline):
+    model = TrainingLabel
+    fields = ('image_label', 'source_prediction_id', 'corrections_made', 'created_at')
+    readonly_fields = ('created_at',)
+    extra = 0
+    show_change_link = True
+    can_delete = True
+    ordering = ['-created_at']
+
+
+@admin.register(TrainingDataset)
+class TrainingDatasetAdmin(admin.ModelAdmin):
+    list_display = ('name', 'created_by', 'status', 'num_annotations', 'num_images', 'created_at')
+    list_filter = ('status', 'created_at')
+    search_fields = ('name', 'description')
+    readonly_fields = ('num_annotations', 'num_images', 'created_at', 'updated_at')
+    inlines = [TrainingLabelInline]
+    
+    fieldsets = [
+        ('Basic Information', {
+            'fields': ('name', 'description', 'created_by', 'status')
+        }),
+        ('Statistics', {
+            'fields': ('num_annotations', 'num_images', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    ]
+
+
+@admin.register(TrainingLabel)
+class TrainingLabelAdmin(admin.ModelAdmin):
+    list_display = ('dataset', 'image_label', 'source_prediction_id', 'created_at')
+    list_filter = ('dataset', 'created_at')
+    search_fields = ('dataset__name', 'source_prediction_id', 'image_label__image__name')
+    readonly_fields = ('created_at',)
+    
+    fieldsets = [
+        ('Relationships', {
+            'fields': ('dataset', 'image_label')
+        }),
+        ('Metadata', {
+            'fields': ('source_prediction_id', 'corrections_made', 'created_at')
+        }),
+    ]
+
+
+@admin.register(ModelVersion)
+class ModelVersionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'version', 'status', 'base_model', 'mAP_score', 'trained_by', 'trained_at')
+    list_filter = ('status', 'base_model', 'trained_at')
+    search_fields = ('name', 'version', 'description')
+    readonly_fields = ('trained_at', 'is_deployed')
+    
+    fieldsets = [
+        ('Basic Information', {
+            'fields': ('name', 'version', 'description', 'training_dataset', 'base_model')
+        }),
+        ('Model Files', {
+            'fields': ('model_path', 'config_path')
+        }),
+        ('Training Metrics', {
+            'fields': ('training_loss', 'validation_loss', 'mAP_score')
+        }),
+        ('Status', {
+            'fields': ('status', 'trained_by', 'trained_at', 'deployed_at', 'is_deployed')
+        }),
+    ]

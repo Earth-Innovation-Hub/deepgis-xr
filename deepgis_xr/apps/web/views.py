@@ -22,7 +22,10 @@ import time
 import hashlib
 from django.conf import settings
 
-from deepgis_xr.apps.core.models import Image, CategoryType, ImageLabel, RasterImage, Labeler, CategoryLabel
+from deepgis_xr.apps.core.models import (
+    Image, CategoryType, ImageLabel, RasterImage, Labeler, CategoryLabel,
+    TrainingDataset, TrainingLabel, ModelVersion
+)
 
 
 class BaseView(LoginRequiredMixin, TemplateView):
@@ -1389,15 +1392,21 @@ def generate_assisted_labels(request):
 @csrf_exempt
 def save_assisted_labels(request):
     """
-    API endpoint to save refined labels.
+    API endpoint to save refined labels - EXTENDED for training dataset support.
     
     POST data:
     - image_id: ID of image
-    - labels: GeoJSON with refined labels
+    - labels: GeoJSON FeatureCollection with refined labels
     - user_id: ID of user (labeler)
+    - training_dataset_id: (NEW) Optional - add to training dataset
+    - source_prediction_id: (NEW) Original Mask2Former session_id
+    - corrections: (NEW) List of corrections made
+    - time_taken: Optional time taken for labeling
     
     Returns:
     - success status
+    - image_label_id: ID of created ImageLabel
+    - training_dataset_linked: Whether label was linked to training dataset
     """
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
@@ -1408,47 +1417,292 @@ def save_assisted_labels(request):
         labels_geojson = data.get('labels')
         user_id = data.get('user_id', 'anonymous')
         
+        # NEW: Training dataset fields
+        training_dataset_id = data.get('training_dataset_id')
+        source_prediction_id = data.get('source_prediction_id')
+        corrections = data.get('corrections', [])
+        
         if not image_id or not labels_geojson:
             return JsonResponse({'error': 'image_id and labels required'}, status=400)
         
         # Get image
-        image = Image.objects.get(id=image_id)
+        try:
+            image = Image.objects.get(id=image_id)
+        except Image.DoesNotExist:
+            return JsonResponse({'error': f'Image {image_id} not found'}, status=404)
         
         # Get or create labeler
-        labeler, _ = Labeler.objects.get_or_create(
-            name=user_id,
-            defaults={'email': f'{user_id}@assisted-labeling.local'}
+        labeler = None
+        if request.user.is_authenticated:
+            labeler, _ = Labeler.objects.get_or_create(user=request.user)
+        else:
+            # For anonymous users, try to find by user_id string
+            try:
+                from django.contrib.auth.models import User
+                user = User.objects.get(username=user_id)
+                labeler, _ = Labeler.objects.get_or_create(user=user)
+            except User.DoesNotExist:
+                pass  # No labeler for anonymous users
+        
+        # Create ImageLabel with combined_label_shapes (matching save_labels pattern)
+        image_label = ImageLabel.objects.create(
+            image=image,
+            combined_label_shapes=json.dumps(labels_geojson),
+            labeler=labeler,
+            time_taken=data.get('time_taken')
         )
         
-        # Save each label
-        saved_count = 0
+        # Create CategoryLabel records for each category (matching save_labels pattern)
+        categories_by_name = {}
         for feature in labels_geojson.get('features', []):
             category_name = feature['properties'].get('category')
-            geometry = feature['geometry']
-            
-            try:
-                category = CategoryType.objects.get(name=category_name)
-                
-                # Create ImageLabel
-                ImageLabel.objects.create(
-                    image=image,
-                    category=category,
-                    labeler=labeler,
-                    geometry=json.dumps(geometry),
-                    confidence=feature['properties'].get('confidence', 1.0),
-                    auto_generated=feature['properties'].get('auto_generated', False)
-                )
-                saved_count += 1
-            except CategoryType.DoesNotExist:
-                print(f"Category {category_name} not found")
+            if not category_name:
                 continue
+            
+            # Get or create category
+            if category_name not in categories_by_name:
+                try:
+                    category = CategoryType.objects.get(category_name=category_name)
+                except CategoryType.DoesNotExist:
+                    # Create category if it doesn't exist
+                    color_hex = feature['properties'].get('color', '#FF0000')
+                    color_hex = color_hex.lstrip('#')
+                    rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+                    
+                    from deepgis_xr.apps.core.models import Color
+                    color, _ = Color.objects.get_or_create(
+                        red=rgb[0],
+                        green=rgb[1],
+                        blue=rgb[2]
+                    )
+                    
+                    category = CategoryType.objects.create(
+                        category_name=category_name,
+                        color=color,
+                        label_type='P'  # Polygon by default
+                    )
+                
+                categories_by_name[category_name] = {
+                    'category': category,
+                    'features': []
+                }
+            
+            categories_by_name[category_name]['features'].append(feature)
+        
+        # Create CategoryLabel for each category
+        saved_count = 0
+        for category_name, cat_data in categories_by_name.items():
+            feature_collection = {
+                'type': 'FeatureCollection',
+                'features': cat_data['features']
+            }
+            
+            CategoryLabel.objects.create(
+                category=cat_data['category'],
+                label_shapes=json.dumps(feature_collection),
+                parent_label=image_label
+            )
+            saved_count += 1
+        
+        # NEW: Link to training dataset if provided
+        training_dataset_linked = False
+        if training_dataset_id:
+            try:
+                dataset = TrainingDataset.objects.get(id=training_dataset_id, created_by=request.user)
+                
+                # Convert to COCO format and cache (if utility exists)
+                try:
+                    from deepgis_xr.apps.core.utils.training import convert_geojson_to_coco
+                    coco_annotation = convert_geojson_to_coco(labels_geojson, image)
+                    # Note: We'll add coco_annotation_json field to ImageLabel in a future migration
+                    # For now, we'll store it in TrainingLabel
+                except ImportError:
+                    coco_annotation = None
+                
+                # Create training label link
+                TrainingLabel.objects.create(
+                    dataset=dataset,
+                    image_label=image_label,
+                    source_prediction_id=source_prediction_id,
+                    corrections_made={'corrections': corrections}
+                )
+                
+                training_dataset_linked = True
+            except TrainingDataset.DoesNotExist:
+                pass  # Dataset doesn't exist or user doesn't have access
         
         return JsonResponse({
             'success': True,
+            'image_label_id': image_label.id,
             'saved_count': saved_count,
-            'image_id': image_id
+            'training_dataset_linked': training_dataset_linked
         })
         
+    except Exception as e:
+        import traceback
+        return JsonResponse({
+            'error': str(e),
+            'traceback': traceback.format_exc()
+        }, status=500)
+
+
+# ===== TRAINING DATASET MANAGEMENT API =====
+
+@csrf_exempt
+@login_required
+def create_training_dataset(request):
+    """Create a new training dataset"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        name = data.get('name')
+        description = data.get('description', '')
+        
+        if not name:
+            return JsonResponse({'error': 'name is required'}, status=400)
+        
+        # Check if dataset with this name already exists
+        if TrainingDataset.objects.filter(name=name, created_by=request.user).exists():
+            return JsonResponse({'error': 'Dataset with this name already exists'}, status=400)
+        
+        dataset = TrainingDataset.objects.create(
+            name=name,
+            description=description,
+            created_by=request.user
+        )
+        
+        return JsonResponse({
+            'status': 'success',
+            'dataset_id': dataset.id,
+            'dataset_name': dataset.name
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@login_required
+def list_training_datasets(request):
+    """List all training datasets for the current user"""
+    if request.method != 'GET':
+        return JsonResponse({'error': 'GET required'}, status=405)
+    
+    try:
+        datasets = TrainingDataset.objects.filter(created_by=request.user)
+        
+        return JsonResponse({
+            'status': 'success',
+            'datasets': [
+                {
+                    'id': d.id,
+                    'name': d.name,
+                    'description': d.description,
+                    'num_annotations': d.num_annotations,
+                    'num_images': d.num_images,
+                    'status': d.status,
+                    'created_at': d.created_at.isoformat(),
+                    'updated_at': d.updated_at.isoformat()
+                }
+                for d in datasets
+            ]
+        })
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@login_required
+def get_dataset_details(request, dataset_id):
+    """Get dataset details with annotations"""
+    if request.method != 'GET':
+        return JsonResponse({'error': 'GET required'}, status=405)
+    
+    try:
+        dataset = TrainingDataset.objects.get(id=dataset_id, created_by=request.user)
+        training_labels = dataset.training_labels.select_related(
+            'image_label', 'image_label__image'
+        ).all()
+        
+        annotations = []
+        for tl in training_labels:
+            il = tl.image_label
+            annotations.append({
+                'id': il.id,
+                'image_id': il.image.id,
+                'image_name': il.image.name,
+                'image_path': il.image.path,
+                'source_prediction_id': tl.source_prediction_id,
+                'corrections': tl.corrections_made,
+                'created_at': tl.created_at.isoformat()
+            })
+        
+        return JsonResponse({
+            'status': 'success',
+            'dataset': {
+                'id': dataset.id,
+                'name': dataset.name,
+                'description': dataset.description,
+                'status': dataset.status,
+                'num_annotations': dataset.num_annotations,
+                'num_images': dataset.num_images,
+                'created_at': dataset.created_at.isoformat(),
+                'updated_at': dataset.updated_at.isoformat()
+            },
+            'annotations': annotations
+        })
+        
+    except TrainingDataset.DoesNotExist:
+        return JsonResponse({'error': 'Dataset not found'}, status=404)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+
+@csrf_exempt
+@login_required
+def add_label_to_dataset(request):
+    """Add existing ImageLabel to training dataset"""
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    
+    try:
+        data = json.loads(request.body)
+        dataset_id = data.get('dataset_id')
+        image_label_id = data.get('image_label_id')
+        
+        if not dataset_id or not image_label_id:
+            return JsonResponse({'error': 'dataset_id and image_label_id required'}, status=400)
+        
+        dataset = TrainingDataset.objects.get(id=dataset_id, created_by=request.user)
+        image_label = ImageLabel.objects.get(id=image_label_id)
+        
+        # Check if already in dataset
+        if TrainingLabel.objects.filter(dataset=dataset, image_label=image_label).exists():
+            return JsonResponse({
+                'status': 'error',
+                'message': 'Label already in dataset'
+            }, status=400)
+        
+        # Create training label link
+        training_label = TrainingLabel.objects.create(
+            dataset=dataset,
+            image_label=image_label,
+            source_prediction_id=data.get('source_prediction_id'),
+            corrections_made=data.get('corrections', {})
+        )
+        
+        return JsonResponse({
+            'status': 'success',
+            'training_label_id': training_label.id
+        })
+        
+    except TrainingDataset.DoesNotExist:
+        return JsonResponse({'error': 'Dataset not found'}, status=404)
+    except ImageLabel.DoesNotExist:
+        return JsonResponse({'error': 'ImageLabel not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=500)
 
@@ -1603,20 +1857,72 @@ def ai_analysis_report(request, session_id):
     # Generate summary text
     summary = generate_analysis_summary(metadata, geojson_data, model_type)
     
+    # Serialize GeoJSON and metadata for JavaScript (safe JSON)
+    geojson_json = json.dumps(geojson_data) if geojson_data else 'null'
+    metadata_json = json.dumps(metadata)
+    
     context = {
         'session_id': session_id,
         'session_dir': str(session_dir),
         'metadata': metadata,
+        'metadata_json': metadata_json,  # JSON string for JavaScript
         'model_type': model_type,
         'summary': summary,
         'has_query_image': query_image_path.exists(),
         'has_visualization': visualization_path is not None,
         'has_geojson': geojson_path.exists(),
         'num_features': len(geojson_data.get('features', [])) if geojson_data else 0,
-        'geojson_data': geojson_data
+        'geojson_data': geojson_data,
+        'geojson_json': geojson_json  # JSON string for JavaScript
     }
     
     return render(request, 'web/ai_analysis_report.html', context)
+
+
+def serve_analysis_geojson(request, session_id):
+    """
+    Serve GeoJSON data for a specific analysis session.
+    
+    URL: /label/ai-analysis/geojson/<session_id>/
+    """
+    from pathlib import Path
+    import json
+    from django.http import Http404, JsonResponse
+    
+    # Base results directory
+    results_base = Path('/app/deepgis_results')
+    
+    # Try to find the session directory
+    session_dir = None
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results']:
+        results_dir = results_base / subdir
+        if results_dir.exists():
+            session_path = results_dir / session_id
+            if session_path.exists() and session_path.is_dir():
+                session_dir = session_path
+                break
+    
+    if not session_dir or not session_dir.exists():
+        raise Http404(f"Analysis session not found: {session_id}")
+    
+    # Find GeoJSON file
+    geojson_path = session_dir / 'segments.geojson'
+    if not geojson_path.exists():
+        geojson_path = session_dir / 'detections.geojson'
+    
+    if not geojson_path.exists():
+        raise Http404(f"GeoJSON file not found for session: {session_id}")
+    
+    # Load and return GeoJSON
+    try:
+        with open(geojson_path, 'r') as f:
+            geojson_data = json.load(f)
+        
+        return JsonResponse(geojson_data, safe=False)
+    except Exception as e:
+        return JsonResponse({
+            'error': str(e)
+        }, status=500)
 
 
 def serve_analysis_image(request, session_id, image_type):
