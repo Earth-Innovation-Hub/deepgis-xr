@@ -2,8 +2,8 @@
  * 3D Model Loading Feature Module
  * Lazy loaded when model functionality is needed
  */
-import { AppState } from '../state.js';
-import { CONFIG } from '../config.js';
+import { AppState } from '../js/state.js';
+import { CONFIG } from '../js/config.js';
 
 /**
  * Load GLTF/GLB model
@@ -165,6 +165,112 @@ export async function loadGLTFModel(viewer) {
 }
 
 /**
+ * Quick load model at current camera location with true scale
+ * Optimized for fastest loading with minimal configuration
+ */
+export async function quickLoadAtCurrentLocation(viewer, modelUrl = null) {
+  // Use provided URL or get from input field
+  const url = modelUrl || document.getElementById('modelUrl')?.value?.trim();
+  
+  if (!url) {
+    if (typeof window.updateStatusIndicator === 'function') {
+      window.updateStatusIndicator('Model URL not available');
+    }
+    return;
+  }
+
+  if (typeof window.updateStatusIndicator === 'function') {
+    window.updateStatusIndicator('Quick loading model at current location...');
+  }
+
+  try {
+    // Get current camera position
+    const cameraPosition = viewer.camera.positionCartographic;
+    const modelPosition = Cesium.Cartesian3.fromRadians(
+      cameraPosition.longitude,
+      cameraPosition.latitude,
+      0  // Place on ground
+    );
+
+    // Check if it's an Ion Asset ID
+    if (/^\d+$/.test(url)) {
+      const ionAssetId = parseInt(url);
+      const tileset = await Cesium.Cesium3DTileset.fromIonAssetId(ionAssetId);
+      
+      const transform = Cesium.Transforms.eastNorthUpToFixedFrame(modelPosition);
+      tileset.modelMatrix = transform;  // True scale (1:1)
+      
+      viewer.scene.primitives.add(tileset);
+      AppState.currentLayers.models.push(tileset);
+      
+      viewer.zoomTo(tileset);
+      
+      if (typeof window.updateStatusIndicator === 'function') {
+        window.updateStatusIndicator(`Ion 3D Tileset ${ionAssetId} loaded at current location (1:1 scale)`);
+      }
+      if (typeof window.showSnackBar === 'function') {
+        window.showSnackBar(`3D Tileset loaded from Cesium Ion at current location`, 'success');
+      }
+      
+    } else {
+      // Load as regular GLTF/GLB model with optimized settings for speed
+      const entity = viewer.entities.add({
+        name: 'Quick Load Model',
+        position: modelPosition,
+        model: {
+          uri: url,
+          scale: 1.0,  // True scale (1:1)
+          minimumPixelSize: 64,
+          maximumScale: 10000,
+          runAnimations: true,
+          heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+          show: true,
+          incrementallyLoadTextures: true,  // Fast progressive loading
+          backFaceCulling: false,
+          shadows: Cesium.ShadowMode.ENABLED
+        }
+      });
+
+      // Wait for model to be ready
+      await entity.model.readyPromise;
+      
+      AppState.currentLayers.models.push(entity);
+      
+      // Quick zoom to model
+      viewer.zoomTo(entity, new Cesium.HeadingPitchRange(0, -45, 200));
+      
+      if (typeof window.updateStatusIndicator === 'function') {
+        window.updateStatusIndicator('Model loaded at current location (1:1 scale)');
+      }
+      if (typeof window.showSnackBar === 'function') {
+        window.showSnackBar('3D model quick-loaded successfully at current location', 'success');
+      }
+    }
+
+  } catch (error) {
+    console.error('Error quick loading model:', error);
+    
+    let errorMessage = 'Unknown error occurred';
+    if (error.message.includes('CORS')) {
+      errorMessage = 'CORS policy blocked the model loading';
+    } else if (error.message.includes('404')) {
+      errorMessage = 'Model file not found (404)';
+    } else if (error.message.includes('timeout')) {
+      errorMessage = 'Model loading timed out';
+    } else {
+      errorMessage = error.message;
+    }
+    
+    if (typeof window.updateStatusIndicator === 'function') {
+      window.updateStatusIndicator(`Error: ${errorMessage}`);
+    }
+    if (typeof window.showSnackBar === 'function') {
+      window.showSnackBar(`Failed to load 3D model: ${errorMessage}`, 'error');
+    }
+  }
+}
+
+/**
  * Remove all models
  */
 export function removeModels(viewer) {
@@ -185,6 +291,7 @@ export function removeModels(viewer) {
 // Export default object for lazy loading
 export default {
   loadGLTFModel,
+  quickLoadAtCurrentLocation,
   removeModels
 };
 

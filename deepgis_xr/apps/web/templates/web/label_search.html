@@ -263,6 +263,49 @@
                                 <i class="fas fa-cube me-2"></i>3D Models
                             </label>
                         </div>
+                        
+                        <!-- 3D Model Controls -->
+                        <div class="layer-group mt-3" id="modelControls" style="display: none; background: rgba(59, 130, 246, 0.1); padding: 12px; border-radius: 6px;">
+                            <div class="form-group mb-3">
+                                <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">3D Model URL or Ion Asset ID:</label>
+                                <input type="text" class="form-control form-control-sm" id="modelUrl" 
+                                       value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                                       placeholder="Enter glTF/GLB URL or Cesium Ion Asset ID"
+                                       style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.85rem;">
+                                <small class="text-muted d-block mb-2" style="font-size: 0.75rem;">
+                                    Quick presets:
+                                </small>
+                                <div class="btn-group btn-group-sm d-flex mb-2" role="group">
+                                    <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                                            data-url="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                                            style="font-size: 0.7rem; padding: 4px;"
+                                            title="140MB Navagunjara sculpture">
+                                        Navagunjara
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                                            data-url="75343"
+                                            style="font-size: 0.7rem; padding: 4px;"
+                                            title="Cesium Ion Asset - Milk Truck">
+                                        Milk Truck
+                                    </button>
+                                    <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                                            data-url="https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb"
+                                            style="font-size: 0.7rem; padding: 4px;"
+                                            title="Classic glTF duck model">
+                                        Duck
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="d-grid gap-2">
+                                <button class="btn btn-primary btn-sm" id="quickLoadModel" title="Instantly load at camera position with 1:1 scale">
+                                    <i class="fas fa-bolt me-2"></i>Quick Load Here (1:1)
+                                </button>
+                                <button class="btn btn-danger btn-sm" id="removeModel">
+                                    <i class="fas fa-trash me-2"></i>Remove Models
+                                </button>
+                            </div>
+                        </div>
+                        
                             <!-- Main View Modes -->
                             <div class="btn-group-vertical w-100 mt-2 mb-3" role="group">
                                 <button class="btn btn-primary btn-sm mb-1" id="view2D">

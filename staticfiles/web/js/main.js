@@ -180,6 +180,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize Cesium
     const viewer = await initializeCesium(updateLoadingStatus);
     
+    // Store viewer globally for other modules
+    window.viewer = viewer;
+    AppState.viewer = viewer;
+    
     updateLoadingStatus('Loading available data...', 90);
     
     // Initialize available layers
@@ -212,6 +216,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Start performance monitoring
     startPerformanceMonitoring(viewer);
+    
+    // Initialize Mission Planner if available
+    if (typeof MissionPlanner !== 'undefined') {
+      try {
+        window.missionPlanner = new MissionPlanner(viewer);
+        console.log('Mission Planner initialized');
+      } catch (error) {
+        console.warn('Failed to initialize Mission Planner:', error);
+      }
+    }
     
   } catch (error) {
     console.error('Failed to initialize application:', error);
@@ -400,6 +414,7 @@ function setupEventHandlers(viewer) {
 
   // Model controls - using helper function to reduce duplication
   addLazyEventHandler('loadModel', lazyLoaders.models, 'loadGLTFModel', [viewer]);
+  addLazyEventHandler('quickLoadModel', lazyLoaders.models, 'quickLoadAtCurrentLocation', [viewer]);
   addLazyEventHandler('removeModel', lazyLoaders.models, 'removeModels', [viewer]);
 
   // Model location selection
@@ -416,6 +431,23 @@ function setupEventHandlers(viewer) {
     if (scaleValue) {
       scaleValue.textContent = `Scale: ${e.target.value}x`;
     }
+  });
+
+  // Preset model buttons
+  document.querySelectorAll('.preset-model-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const url = e.currentTarget.dataset.url;
+      const modelUrlInput = document.getElementById('modelUrl');
+      if (modelUrlInput && url) {
+        modelUrlInput.value = url;
+        // Visual feedback
+        e.currentTarget.classList.add('active');
+        setTimeout(() => e.currentTarget.classList.remove('active'), 200);
+        if (typeof window.showSnackBar === 'function') {
+          window.showSnackBar(`Model preset selected: ${e.currentTarget.textContent.trim()}`, 'info');
+        }
+      }
+    });
   });
 
   // Base map selection
