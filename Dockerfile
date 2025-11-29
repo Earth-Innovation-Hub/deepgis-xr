@@ -80,12 +80,10 @@ RUN apt-get update && apt-get install -y \
 
 # Install Grounding DINO (after torch/torchvision/detectron2)
 # Clone and install from source with --no-build-isolation so it can access torch
-# Use regular install (not editable) so we can delete the source after
-RUN git clone https://github.com/IDEA-Research/GroundingDINO.git /tmp/GroundingDINO && \
-    cd /tmp/GroundingDINO && \
-    pip install --no-cache-dir --no-build-isolation . && \
-    cd / && \
-    rm -rf /tmp/GroundingDINO
+# Keep source in /app/GroundingDINO for config files
+RUN git clone https://github.com/IDEA-Research/GroundingDINO.git /app/GroundingDINO && \
+    cd /app/GroundingDINO && \
+    pip install --no-cache-dir --no-build-isolation .
 
 # Create models directory for Grounding DINO weights
 RUN mkdir -p /app/models
