@@ -2,7 +2,7 @@
  * Debug Console Feature Module
  * Lazy loaded when debug functionality is needed
  */
-import { AppState } from '../state.js';
+import { AppState } from '../js/state.js';
 
 let debugConsoleLogs = [];
 let debugConsoleVisible = false;

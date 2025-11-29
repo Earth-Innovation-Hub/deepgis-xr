@@ -2,7 +2,7 @@
  * Statistics Feature Module
  * Lazy loaded when statistics functionality is needed
  */
-import { AppState } from '../state.js';
+import { AppState } from '../js/state.js';
 
 let histogramChart = null;
 

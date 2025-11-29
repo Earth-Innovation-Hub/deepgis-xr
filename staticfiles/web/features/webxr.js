@@ -2,7 +2,7 @@
  * WebXR/VR Feature Module
  * Lazy loaded when VR functionality is needed
  */
-import { AppState } from '../state.js';
+import { AppState } from '../js/state.js';
 
 /**
  * Check WebXR support

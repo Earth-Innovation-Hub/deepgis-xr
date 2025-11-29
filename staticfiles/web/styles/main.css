@@ -1405,6 +1405,29 @@
         }
 
         /* Additional fullscreen styles for when document is in fullscreen */
+        /* Mission Planning Styles */
+        #toggleWaypointPlacement.active {
+            background-color: #10b981 !important;
+            border-color: #059669 !important;
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+        
+        #missionInfo {
+            font-size: 0.85rem;
+            line-height: 1.5;
+        }
+        
+        #missionInfo strong {
+            color: #60a5fa;
+            font-size: 0.95rem;
+        }
+        
+        #missionInfo small {
+            color: #94a3b8;
+            display: block;
+            margin-top: 4px;
+        }
+        
         :fullscreen #cesiumContainer,
         :-webkit-full-screen #cesiumContainer,
         :-moz-full-screen #cesiumContainer,
