@@ -908,6 +908,24 @@ class WorldSamplerUI {
         document.getElementById('droneFlyDistance').addEventListener('input', updateDroneFlyButton);
         document.getElementById('droneFlySpeed').addEventListener('input', updateDroneFlyButton);
         
+        // Drone orbit mode button
+        document.getElementById('droneOrbitBtn').addEventListener('click', () => {
+            this.orbitDroneMode();
+        });
+        
+        // Update drone orbit button text when radius or speed changes
+        const updateDroneOrbitButton = () => {
+            const radius = document.getElementById('droneOrbitRadius').value || 100;
+            const speed = document.getElementById('droneOrbitSpeed').value || 50;
+            document.getElementById('droneOrbitBtn').innerHTML = 
+                `<i class="fas fa-circle-notch"></i> Orbit ${radius}m radius @ ${speed} km/h`;
+        };
+        
+        document.getElementById('droneOrbitRadius').addEventListener('input', updateDroneOrbitButton);
+        document.getElementById('droneOrbitSpeed').addEventListener('input', updateDroneOrbitButton);
+        document.getElementById('droneOrbitAltitude').addEventListener('input', updateDroneOrbitButton);
+        document.getElementById('droneOrbitRevolutions').addEventListener('input', updateDroneOrbitButton);
+        
         // AI Viewport Analysis button (handled globally, see initialization at bottom of file)
         
         // Reward slider
@@ -1431,6 +1449,164 @@ class WorldSamplerUI {
             `Flying ${flyDistance}m forward at ${speed} km/h along heading ${bearing.toFixed(1)}°...`,
             'info'
         );
+    }
+    
+    /**
+     * Drone Orbit Mode: Orbit around a center point at specified radius and altitude
+     * Similar to PX4/QGC orbit mode - camera always faces the center point
+     */
+    async orbitDroneMode() {
+        const camera = this.viewer.camera;
+        const scene = this.viewer.scene;
+        const ellipsoid = scene.globe.ellipsoid;
+        
+        // Get orbit parameters from UI
+        const orbitRadius = parseFloat(document.getElementById('droneOrbitRadius').value) || 100;
+        const altitudeAGL = parseFloat(document.getElementById('droneOrbitAltitude').value) || 100;
+        const speedKmh = parseFloat(document.getElementById('droneOrbitSpeed').value) || 50;
+        const revolutions = parseFloat(document.getElementById('droneOrbitRevolutions').value) || 1;
+        
+        // Validate parameters
+        const radius = Math.max(20, Math.min(500, orbitRadius));
+        const altitude = Math.max(20, Math.min(500, altitudeAGL));
+        const speed = Math.max(10, Math.min(100, speedKmh));
+        const revs = Math.max(0.25, Math.min(3, revolutions));
+        
+        // Get current camera position
+        const currentPosition = camera.positionCartographic;
+        const currentLon = Cesium.Math.toDegrees(currentPosition.longitude);
+        const currentLat = Cesium.Math.toDegrees(currentPosition.latitude);
+        const currentPitch = Cesium.Math.toDegrees(camera.pitch);
+        
+        // Get terrain height at current location
+        const centerCartographic = Cesium.Cartographic.fromDegrees(currentLon, currentLat);
+        const terrainProvider = scene.terrainProvider;
+        
+        let terrainHeight = 0;
+        try {
+            const positions = await Cesium.sampleTerrainMostDetailed(terrainProvider, [centerCartographic]);
+            terrainHeight = positions[0].height || 0;
+        } catch (e) {
+            console.warn('Could not sample terrain, using ellipsoid height:', e);
+        }
+        
+        // Calculate orbit center point (the point we're orbiting around)
+        // This is typically the point the camera is looking at, or current position
+        const centerLon = currentLon;
+        const centerLat = currentLat;
+        const centerAltitude = terrainHeight + altitude;
+        
+        // Calculate total distance to travel (circumference * revolutions)
+        const circumference = 2 * Math.PI * radius;
+        const totalDistance = circumference * revs;
+        
+        // Calculate duration based on speed
+        const speedMs = speed * 0.277777778; // km/h to m/s
+        const duration = totalDistance / speedMs;
+        
+        // Get current heading to determine starting angle
+        const currentHeading = Cesium.Math.toDegrees(camera.heading);
+        
+        // Calculate starting position (offset from center by radius)
+        // Start from current heading direction
+        const startAngle = currentHeading;
+        
+        // Create orbit path with keyframes
+        const numKeyframes = Math.ceil(revs * 36); // 36 points per revolution (10° intervals)
+        const angleStep = (360 * revs) / numKeyframes;
+        
+        // Build the orbit path
+        const orbitPath = [];
+        for (let i = 0; i <= numKeyframes; i++) {
+            const angle = startAngle + (i * angleStep);
+            const bearing = angle % 360;
+            
+            // Calculate position at this angle
+            const pos = this.calculateDestinationPoint(
+                centerLat,
+                centerLon,
+                centerAltitude,
+                bearing,
+                radius
+            );
+            
+            // Calculate heading to face center (inward)
+            // Heading is opposite to the bearing from center
+            const headingToCenter = (bearing + 180) % 360;
+            
+            orbitPath.push({
+                position: Cesium.Cartesian3.fromDegrees(
+                    pos.longitude,
+                    pos.latitude,
+                    pos.altitude
+                ),
+                orientation: {
+                    heading: Cesium.Math.toRadians(headingToCenter),
+                    pitch: Cesium.Math.toRadians(currentPitch), // Maintain pitch angle
+                    roll: 0
+                },
+                time: (i / numKeyframes) * duration
+            });
+        }
+        
+        // Show notification
+        this.showNotification(
+            `Starting ${revs} revolution orbit: ${radius}m radius @ ${speed} km/h (${duration.toFixed(1)}s)`,
+            'info'
+        );
+        
+        // Execute the orbit using camera path animation
+        let currentKeyframe = 0;
+        const startTime = Date.now();
+        
+        const animateOrbit = () => {
+            const elapsed = (Date.now() - startTime) / 1000; // seconds
+            
+            // Find current keyframe based on elapsed time
+            while (currentKeyframe < orbitPath.length - 1 && 
+                   orbitPath[currentKeyframe + 1].time <= elapsed) {
+                currentKeyframe++;
+            }
+            
+            if (currentKeyframe >= orbitPath.length - 1) {
+                // Orbit complete
+                this.showNotification(
+                    `Orbit complete: ${revs} revolutions around ${radius}m radius`,
+                    'success'
+                );
+                return;
+            }
+            
+            // Interpolate between current and next keyframe
+            const current = orbitPath[currentKeyframe];
+            const next = orbitPath[currentKeyframe + 1];
+            const t = (elapsed - current.time) / (next.time - current.time);
+            
+            // Linear interpolation of position
+            const position = new Cesium.Cartesian3();
+            Cesium.Cartesian3.lerp(current.position, next.position, t, position);
+            
+            // Spherical interpolation of orientation
+            const heading = Cesium.Math.lerp(current.orientation.heading, next.orientation.heading, t);
+            const pitch = Cesium.Math.lerp(current.orientation.pitch, next.orientation.pitch, t);
+            const roll = Cesium.Math.lerp(current.orientation.roll, next.orientation.roll, t);
+            
+            // Update camera
+            camera.setView({
+                destination: position,
+                orientation: {
+                    heading: heading,
+                    pitch: pitch,
+                    roll: roll
+                }
+            });
+            
+            // Continue animation
+            requestAnimationFrame(animateOrbit);
+        };
+        
+        // Start the orbit animation
+        requestAnimationFrame(animateOrbit);
     }
     
     /**
