@@ -55,6 +55,15 @@ urlpatterns = [
     path('api/training/datasets/<int:dataset_id>/', views.get_dataset_details, name='get_dataset_details'),
     path('api/training/datasets/add-label/', views.add_label_to_dataset, name='add_label_to_dataset'),
     
+    # Mission planning API endpoints
+    path('label/api/missions/', views.list_missions, name='list_missions'),
+    path('label/api/missions/create/', views.create_mission, name='create_mission'),
+    path('label/api/missions/<int:mission_id>/', views.get_mission, name='get_mission'),
+    path('label/api/missions/<int:mission_id>/update/', views.update_mission, name='update_mission'),
+    path('label/api/missions/<int:mission_id>/delete/', views.delete_mission, name='delete_mission'),
+    path('label/api/missions/<int:mission_id>/waypoints/add/', views.add_waypoint, name='add_waypoint'),
+    path('label/api/missions/<int:mission_id>/waypoints/<int:waypoint_id>/remove/', views.remove_waypoint, name='remove_waypoint'),
+    
     # World Sampler API endpoints
     path('webclient/sampler/initialize', world_sampler_api.initialize_sampler, name='initialize_sampler'),
     path('webclient/sampler/sample', world_sampler_api.sample_locations, name='sample_locations'),
@@ -70,4 +79,9 @@ urlpatterns = [
     path('label/ai-analysis/report/<str:session_id>/', views.ai_analysis_report, name='ai_analysis_report'),
     path('label/ai-analysis/image/<str:session_id>/<str:image_type>/', views.serve_analysis_image, name='serve_analysis_image'),
     path('label/ai-analysis/geojson/<str:session_id>/', views.serve_analysis_geojson, name='serve_analysis_geojson'),
+    
+    # Authentication API endpoints (AJAX)
+    path('api/auth/status/', views.check_auth_status, name='check_auth_status'),
+    path('api/auth/login/', views.ajax_phone_login, name='ajax_phone_login'),
+    path('api/auth/logout/', views.ajax_logout, name='ajax_logout'),
 ] 

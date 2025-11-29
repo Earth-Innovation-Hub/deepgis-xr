@@ -266,17 +266,17 @@
                             <!-- Main View Modes -->
                             <div class="btn-group-vertical w-100 mt-2 mb-3" role="group">
                                 <button class="btn btn-primary btn-sm mb-1" id="view2D">
-                                    <i class="fas fa-map me-2"></i>2D Map View
-                                </button>
+                            <i class="fas fa-map me-2"></i>2D Map View
+                        </button>
                                 <button class="btn btn-primary btn-sm mb-1" id="view3D">
-                                    <i class="fas fa-cube me-2"></i>3D Globe View
-                                </button>
+                            <i class="fas fa-cube me-2"></i>3D Globe View
+                        </button>
                                 <button class="btn btn-primary btn-sm mb-1" id="viewColumbus">
-                                    <i class="fas fa-compass me-2"></i>Columbus View
-                                </button>
+                            <i class="fas fa-compass me-2"></i>Columbus View
+                        </button>
                                 <button class="btn btn-success btn-sm" id="homeView">
-                                    <i class="fas fa-home me-2"></i>Home View
-                                </button>
+                            <i class="fas fa-home me-2"></i>Home View
+                        </button>
                             </div>
                             
                         </div>
@@ -405,6 +405,91 @@
                                 </div>
                                 <div class="measurements-list mt-2" id="measurementsList" style="background: #1e293b; padding: 8px; border-radius: 4px; min-height: 30px;">
                                     <small style="color: #94a3b8;">No measurements yet</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mission Planning (Accordion) -->
+                    <div class="layer-group accordion-panel" style="background: #1e3a5f; border: 1px solid #3b82f6;">
+                        <div class="layer-group-title accordion-header" data-target="missionPlanningContent">
+                            <i class="fas fa-route"></i> Mission Planning
+                            <i class="fas fa-chevron-down accordion-icon"></i>
+                        </div>
+                        <div class="accordion-content" id="missionPlanningContent">
+                            <!-- Login Required Panel -->
+                            <div id="missionLoginPanel" style="display: none;">
+                                <div style="background: #1e293b; padding: 15px; border-radius: 8px; margin-bottom: 10px; text-align: center;">
+                                    <i class="fas fa-lock" style="font-size: 2rem; color: #64748b; margin-bottom: 10px;"></i>
+                                    <p style="color: #94a3b8; margin-bottom: 15px; font-size: 0.9rem;">
+                                        Login required to create and manage missions
+                                    </p>
+                                    
+                                    <!-- Phone Login Form -->
+                                    <div id="phoneLoginForm">
+                                        <div class="form-group mb-3">
+                                            <input type="tel" class="form-control" id="phoneNumberInput" 
+                                                   placeholder="Phone number (e.g., +1234567890)"
+                                                   style="background: #0f172a; border: 1px solid #334155; color: #e2e8f0;">
+                                        </div>
+                                        <button class="btn btn-primary btn-sm w-100" id="phoneLoginBtn">
+                                            <i class="fas fa-sign-in-alt me-2"></i>Login with Phone
+                                        </button>
+                                        <div id="loginError" style="color: #ef4444; font-size: 0.8rem; margin-top: 8px; display: none;"></div>
+                                        <div id="loginSuccess" style="color: #22c55e; font-size: 0.8rem; margin-top: 8px; display: none;"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Mission Controls (shown when logged in) -->
+                            <div id="missionControlsPanel">
+                                <!-- User Info -->
+                                <div id="userInfoBar" style="background: #065f46; padding: 8px 12px; border-radius: 4px; margin-bottom: 10px; display: none;">
+                                    <small style="color: #a7f3d0;">
+                                        <i class="fas fa-user-check me-1"></i>
+                                        <span id="loggedInUser">Logged in</span>
+                                    </small>
+                                    <button class="btn btn-link btn-sm float-end p-0" id="logoutBtn" style="color: #fca5a5; text-decoration: none;">
+                                        <i class="fas fa-sign-out-alt"></i> Logout
+                                    </button>
+                                </div>
+
+                                <!-- Mission Selection -->
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Mission:</label>
+                                    <select class="form-select mb-2" id="missionSelect">
+                                        <option value="">-- Select Mission --</option>
+                                    </select>
+                                    <button class="btn btn-primary btn-sm w-100" id="createMissionBtn">
+                                        <i class="fas fa-plus me-2"></i>Create New Mission
+                                    </button>
+                                </div>
+
+                                <!-- Mission Info -->
+                                <div id="missionInfo" style="background: #1e293b; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                                    <small style="color: #94a3b8;">No mission selected</small>
+                                </div>
+
+                                <!-- Mission Controls -->
+                                <div class="btn-group-vertical w-100 mb-3" role="group">
+                                    <button class="btn btn-success btn-sm mb-1" id="toggleWaypointPlacement">
+                                        <i class="fas fa-map-marker-alt me-2"></i>Add Waypoint
+                                    </button>
+                                    <button class="btn btn-warning btn-sm mb-1" id="saveMissionBtn">
+                                        <i class="fas fa-save me-2"></i>Save Mission
+                                    </button>
+                                    <button class="btn btn-danger btn-sm mb-1" id="clearWaypointsBtn">
+                                        <i class="fas fa-trash me-2"></i>Clear Waypoints
+                                    </button>
+                                    <button class="btn btn-danger btn-sm" id="deleteMissionBtn">
+                                        <i class="fas fa-trash-alt me-2"></i>Delete Mission
+                                    </button>
+                                </div>
+
+                                <!-- Mission Parameters -->
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Default Altitude (m):</label>
+                                    <input type="number" class="form-control" id="defaultAltitude" value="50" min="0" step="1">
                                 </div>
                             </div>
                         </div>
@@ -575,6 +660,7 @@
     
     <!-- World Sampler UI -->
     <script src="{% static 'web/js/world-sampler-ui.js' %}"></script>
+    <script src="{% static 'web/js/mission-planner.js' %}"></script>
     <script>
         // Accordion functionality for flattened panels
         (function() {
