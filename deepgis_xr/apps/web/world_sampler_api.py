@@ -1373,9 +1373,9 @@ def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold
         
         # Create organized directory structure for saving results
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        lat_str = f"lat{location['latitude']:.6f}".replace('.', 'p').replace('-', 'n')
-        lon_str = f"lon{location['longitude']:.6f}".replace('.', 'p').replace('-', 'n')
-        alt_str = f"alt{int(location['altitude'])}m"
+        lat_str = f"lat{location.get('lat', 0):.6f}".replace('.', 'p').replace('-', 'n')
+        lon_str = f"lon{location.get('lon', 0):.6f}".replace('.', 'p').replace('-', 'n')
+        alt_str = f"alt{int(location.get('alt', 0))}m"
         
         grounding_dino_results_dir = Path('/app/deepgis_results') / 'grounding_dino_results'
         grounding_dino_results_dir.mkdir(parents=True, exist_ok=True)
