@@ -704,6 +704,7 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
         from datetime import datetime
         import importlib
         import torch
+        from PIL import Image
         from django.conf import settings
         
         # Check if SAM library is available FIRST (before importing the wrapper)
