@@ -1039,7 +1039,7 @@ class WorldSamplerUI {
                 let sumLon = 0, sumLat = 0;
                 entities.forEach(entity => {
                     const position = entity.position.getValue(Cesium.JulianDate.now());
-                    const cartographic = Cesium.Cartographic.fromCartesian(position);
+                const cartographic = Cesium.Cartographic.fromCartesian(position);
                     sumLon += cartographic.longitude;
                     sumLat += cartographic.latitude;
                 });
@@ -1892,14 +1892,37 @@ class WorldSamplerUI {
                 });
                 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.message || `HTTP ${response.status}`);
+                    // Handle error response - check if body is JSON
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const contentType = response.headers.get('content-type');
+                        if (contentType && contentType.includes('application/json')) {
+                            const errorData = await response.json();
+                            errorMessage = errorData.message || errorMessage;
+                        } else {
+                            // Try to get text response for non-JSON errors
+                            const errorText = await response.text();
+                            if (errorText) {
+                                errorMessage = errorText.substring(0, 200); // Limit error text length
+                            }
+                        }
+                    } catch (parseError) {
+                        // If parsing fails, use default error message
+                        console.warn('Could not parse error response:', parseError);
+                    }
+                    throw new Error(errorMessage);
                 }
                 
-                const result = await response.json();
+                // Parse successful response
+                let result;
+                try {
+                    result = await response.json();
+                } catch (jsonError) {
+                    throw new Error(`Failed to parse response: ${jsonError.message}`);
+                }
                 
-                if (result.status !== 'success') {
-                    throw new Error(result.message || 'Analysis failed');
+                if (!result || result.status !== 'success') {
+                    throw new Error(result?.message || 'Analysis failed');
                 }
                 
                 // Show device info
