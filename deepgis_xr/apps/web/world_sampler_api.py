@@ -681,6 +681,12 @@ def analyze_viewport(request):
         elif analysis_type == 'mask2former':
             # Mask2Former path (pre-trained COCO)
             return _analyze_viewport_mask2former(image, location, confidence_threshold, scripts_dir)
+        elif analysis_type == 'grounding_dino':
+            # Grounding DINO path (text-based detection)
+            text_prompt = data.get('text_prompt', 'vehicle . building . tree')
+            box_threshold = data.get('box_threshold', 0.35)
+            text_threshold = data.get('text_threshold', 0.25)
+            return _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold, text_threshold, scripts_dir)
         else:
             # SAM path (default)
             return _analyze_viewport_sam(image, location, sam_model, min_area, scripts_dir)
@@ -1307,4 +1313,186 @@ def _analyze_viewport_mask2former(image, location, confidence_threshold, scripts
             'status': 'error',
             'message': str(e),
             'traceback': traceback.format_exc()
+        }, status=500)
+
+
+def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold, text_threshold, scripts_dir):
+    """Internal function to handle Grounding DINO (text-based detection) analysis."""
+    try:
+        import sys
+        from pathlib import Path
+        import numpy as np
+        import json
+        from datetime import datetime
+        import importlib
+        import torch
+        from PIL import Image
+        from django.conf import settings
+        
+        # Ensure scripts directory is in path
+        if str(scripts_dir) not in sys.path:
+            sys.path.insert(0, str(scripts_dir))
+        
+        # Import the Grounding DINO wrapper
+        try:
+            from grounding_dino_detection import GroundingDINODetector
+        except ImportError as e:
+            return JsonResponse({
+                'status': 'error',
+                'message': f'Grounding DINO script not found: {str(e)}',
+                'suggestion': 'Install Grounding DINO: pip install groundingdino-py',
+                'debug': {
+                    'scripts_dir': str(scripts_dir),
+                    'sys_path': sys.path[:5],
+                    'grounding_dino_exists': (scripts_dir / 'grounding_dino_detection.py').exists() if scripts_dir.exists() else False
+                }
+            }, status=500)
+        
+        # Check GPU availability
+        cuda_available = torch.cuda.is_available()
+        device_info = {'cuda_available': cuda_available}
+        
+        if cuda_available:
+            device_info['device'] = 'cuda'
+            device_info['gpu_name'] = torch.cuda.get_device_name(0)
+            device_info['gpu_memory'] = f'{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB'
+        else:
+            device_info['device'] = 'cpu'
+        
+        # Initialize detector
+        try:
+            device = 'cuda' if cuda_available else 'cpu'
+            detector = GroundingDINODetector(model_type='swin_t', device=device)
+        except Exception as e:
+            return JsonResponse({
+                'status': 'error',
+                'message': f'Failed to initialize Grounding DINO: {str(e)}',
+                'suggestion': 'Make sure Grounding DINO is properly installed',
+                'device_info': device_info
+            }, status=500)
+        
+        # Create organized directory structure for saving results
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        lat_str = f"lat{location['latitude']:.6f}".replace('.', 'p').replace('-', 'n')
+        lon_str = f"lon{location['longitude']:.6f}".replace('.', 'p').replace('-', 'n')
+        alt_str = f"alt{int(location['altitude'])}m"
+        
+        grounding_dino_results_dir = Path('/app/deepgis_results') / 'grounding_dino_results'
+        grounding_dino_results_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create session folder
+        folder_name = f"grounding_dino_{timestamp}_{lat_str}_{lon_str}_{alt_str}"
+        session_dir = grounding_dino_results_dir / folder_name
+        session_dir.mkdir(exist_ok=True)
+        
+        # Save query image
+        query_image_path = session_dir / 'query_image.png'
+        image.save(query_image_path, format='PNG')
+        
+        # Save a temporary file for processing
+        tmp_path = session_dir / 'tmp_image.png'
+        image.save(tmp_path, format='PNG')
+        
+        try:
+            print(f"🔍 Running Grounding DINO detection...")
+            print(f"   Text prompt: '{text_prompt}'")
+            print(f"   Box threshold: {box_threshold}")
+            print(f"   Text threshold: {text_threshold}")
+            
+            # Run detection
+            detections = detector.detect(
+                image,
+                text_prompt=text_prompt,
+                box_threshold=box_threshold,
+                text_threshold=text_threshold
+            )
+            
+            num_detections = detections['num_detections']
+            print(f"✓ Found {num_detections} objects")
+            
+            # Convert to GeoJSON
+            geojson = detector.to_geojson(
+                detections,
+                image.width,
+                image.height,
+                viewport_bounds=None
+            )
+            
+            # Save visualization
+            visualization_path = None
+            try:
+                visualization = detector.visualize(image, detections)
+                visualization_path = session_dir / 'detection_visualization.jpg'
+                visualization.save(visualization_path, quality=95)
+            except Exception as viz_error:
+                print(f"Warning: Could not save visualization: {viz_error}")
+            
+            # Save GeoJSON
+            geojson_path = session_dir / 'detections.geojson'
+            with open(geojson_path, 'w') as f:
+                json.dump(geojson, f, indent=2)
+            
+            # Save metadata
+            metadata = {
+                'timestamp': timestamp,
+                'location': location,
+                'text_prompt': text_prompt,
+                'box_threshold': box_threshold,
+                'text_threshold': text_threshold,
+                'image_size': [image.width, image.height],
+                'num_detections': num_detections,
+                'device_info': device_info,
+                'session_dir': str(session_dir.relative_to('/app/deepgis_results'))
+            }
+            metadata_path = session_dir / 'metadata.json'
+            with open(metadata_path, 'w') as f:
+                json.dump(metadata, f, indent=2)
+            
+            # Prepare response with detection data
+            detections_data = []
+            for i, (box, score, phrase) in enumerate(zip(detections['boxes'], detections['logits'], detections['phrases'])):
+                detections_data.append({
+                    "detection_id": i + 1,
+                    "class": phrase,
+                    "confidence": float(score),
+                    "bbox": [float(x) for x in box]
+                })
+            
+            session_id = folder_name
+            
+            return JsonResponse({
+                'status': 'success',
+                'num_detections': num_detections,
+                'detections': detections_data,
+                'geojson': geojson,
+                'location': location,
+                'image_size': [image.width, image.height],
+                'text_prompt': text_prompt,
+                'device_info': device_info,
+                'saved_to': {
+                    'session_dir': str(session_dir.relative_to('/app/deepgis_results')),
+                    'query_image': str(query_image_path.relative_to('/app/deepgis_results')),
+                    'visualization': str(visualization_path.relative_to('/app/deepgis_results')) if visualization_path else None,
+                    'geojson': str(geojson_path.relative_to('/app/deepgis_results')),
+                    'metadata': str(metadata_path.relative_to('/app/deepgis_results')),
+                    'host_path': str(session_dir).replace('/app/deepgis_results', './deepgis_results')
+                },
+                'report_url': f'/label/ai-analysis/report/{session_id}/'
+            })
+            
+        finally:
+            # Clean up temporary file
+            if tmp_path.exists():
+                tmp_path.unlink()
+        
+    except Exception as e:
+        import traceback
+        error_traceback = traceback.format_exc()
+        print(f"\n❌ Grounding DINO Analysis Error:")
+        print(f"Error message: {str(e)}")
+        print(f"Traceback:\n{error_traceback}")
+        return JsonResponse({
+            'status': 'error',
+            'message': str(e),
+            'traceback': error_traceback
         }, status=500)

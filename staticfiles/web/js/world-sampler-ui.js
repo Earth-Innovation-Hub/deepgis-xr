@@ -2132,6 +2132,15 @@ class WorldSamplerUI {
                     const confidence = confidenceSlider ? parseFloat(confidenceSlider.value) / 100 : 0.5;
                     requestBody.confidence_threshold = confidence;
                     statusText.textContent = 'Sending to Mask2Former for analysis...';
+                } else if (analysisType === 'grounding_dino') {
+                    const promptInput = document.getElementById('groundingDinoPrompt');
+                    const textPrompt = promptInput ? promptInput.value.trim() : 'vehicle . building';
+                    const boxThresh = groundingDinoBoxThreshold ? parseFloat(groundingDinoBoxThreshold.value) / 100 : 0.35;
+                    const textThresh = groundingDinoTextThreshold ? parseFloat(groundingDinoTextThreshold.value) / 100 : 0.25;
+                    requestBody.text_prompt = textPrompt;
+                    requestBody.box_threshold = boxThresh;
+                    requestBody.text_threshold = textThresh;
+                    statusText.textContent = `Searching for: "${textPrompt}"...`;
                 }
                 
                 // Send to API
@@ -2184,17 +2193,22 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot' || analysisType === 'mask2former') {
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'grounding_dino') {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
                     
-                    // Display results (zero-shot and mask2former use same display method)
+                    // Display results (all detection models use same display method)
                     this.displayZeroShotResults(result);
                     
                     // Show notification
                     const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
-                    const modelName = analysisType === 'mask2former' ? 'Mask2Former' : 'Zero-Shot Detection';
+                    let modelName = 'Zero-Shot Detection';
+                    if (analysisType === 'mask2former') modelName = 'Mask2Former';
+                    if (analysisType === 'grounding_dino') {
+                        const prompt = result.text_prompt || 'objects';
+                        modelName = `Grounding DINO: "${prompt}"`;
+                    }
                     this.showNotification(
                         `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
                         'success'
@@ -2942,11 +2956,16 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const samOptions = document.getElementById('samOptions');
     const zeroShotOptions = document.getElementById('zeroShotOptions');
     const mask2formerOptions = document.getElementById('mask2formerOptions');
+    const groundingDinoOptions = document.getElementById('groundingDinoOptions');
     const analysisDescription = document.getElementById('analysisDescription');
     const zeroShotConfidenceSlider = document.getElementById('zeroShotConfidence');
     const zeroShotConfidenceValue = document.getElementById('zeroShotConfidenceValue');
     const mask2formerConfidenceSlider = document.getElementById('mask2formerConfidence');
     const mask2formerConfidenceValue = document.getElementById('mask2formerConfidenceValue');
+    const groundingDinoBoxThreshold = document.getElementById('groundingDinoBoxThreshold');
+    const groundingDinoTextThreshold = document.getElementById('groundingDinoTextThreshold');
+    const boxThresholdValue = document.getElementById('boxThresholdValue');
+    const textThresholdValue = document.getElementById('textThresholdValue');
     
     if (analysisTypeSelect) {
         analysisTypeSelect.addEventListener('change', (e) => {
@@ -2955,6 +2974,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             if (samOptions) samOptions.style.display = 'none';
             if (zeroShotOptions) zeroShotOptions.style.display = 'none';
             if (mask2formerOptions) mask2formerOptions.style.display = 'none';
+            if (groundingDinoOptions) groundingDinoOptions.style.display = 'none';
             
             if (analysisType === 'zero_shot') {
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
@@ -2966,6 +2986,11 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 if (analysisDescription) {
                     analysisDescription.textContent = 'State-of-the-art object detection with 80 COCO categories using Mask2Former (more accurate than Zero-Shot)';
                 }
+            } else if (analysisType === 'grounding_dino') {
+                if (groundingDinoOptions) groundingDinoOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'Detect ANY object by describing it in text - most flexible detection method!';
+                }
             } else {
                 // SAM (default)
                 if (samOptions) samOptions.style.display = 'block';
@@ -2973,6 +2998,18 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                     analysisDescription.textContent = 'Segments all visible regions in current viewport using Segment Anything Model';
                 }
             }
+        });
+    }
+    
+    // Setup Grounding DINO threshold sliders
+    if (groundingDinoBoxThreshold && boxThresholdValue) {
+        groundingDinoBoxThreshold.addEventListener('input', (e) => {
+            boxThresholdValue.textContent = `${e.target.value}%`;
+        });
+    }
+    if (groundingDinoTextThreshold && textThresholdValue) {
+        groundingDinoTextThreshold.addEventListener('input', (e) => {
+            textThresholdValue.textContent = `${e.target.value}%`;
         });
     }
     

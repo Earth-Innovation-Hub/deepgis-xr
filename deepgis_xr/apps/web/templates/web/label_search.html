@@ -395,6 +395,60 @@
                                 </small>
                             </div>
                             
+                            <!-- Grounding DINO specific options -->
+                            <div id="groundingDinoOptions" style="display: none;">
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Text Prompt:</label>
+                                    <input type="text" class="form-control" id="groundingDinoPrompt" 
+                                           placeholder="vehicle . building . tree . solar panel"
+                                           value="vehicle . building"
+                                           style="background: #374151; border: 1px solid #64748b; color: #f1f5f9;">
+                                    <small class="text-muted" style="display: block; margin-top: 4px; font-size: 0.75rem; color: #94a3b8;">
+                                        Separate objects with " . " (dot with spaces). Examples: "car . truck", "damaged roof . crack"
+                                    </small>
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Box Confidence: <span id="boxThresholdValue">35%</span></label>
+                                    <input type="range" class="form-range" id="groundingDinoBoxThreshold" 
+                                           min="10" max="80" step="5" value="35">
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Text Match: <span id="textThresholdValue">25%</span></label>
+                                    <input type="range" class="form-range" id="groundingDinoTextThreshold" 
+                                           min="10" max="50" step="5" value="25">
+                                </div>
+                                <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
+                                    Detects ANY object you describe in text. No predefined classes!
+                                </small>
+                            </div>
+                            
+                            <!-- Grounding DINO specific options -->
+                            <div id="groundingDinoOptions" style="display: none;">
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Text Prompt (describe what to find):</label>
+                                    <input type="text" class="form-control" id="groundingDinoPrompt" 
+                                           placeholder="vehicle . building . tree . solar panel"
+                                           value="vehicle . building"
+                                           style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.9rem;">
+                                    <small class="text-muted" style="display: block; margin-top: 4px; font-size: 0.75rem; color: #94a3b8;">
+                                        Separate objects with " . " (dot with spaces). Examples: "car . truck", "damaged roof . crack"
+                                    </small>
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Box Confidence: <span id="boxThresholdValue">35%</span></label>
+                                    <input type="range" class="form-range" id="groundingDinoBoxThreshold" 
+                                           min="10" max="80" step="5" value="35">
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Text Match: <span id="textThresholdValue">25%</span></label>
+                                    <input type="range" class="form-range" id="groundingDinoTextThreshold" 
+                                           min="10" max="50" step="5" value="25">
+                                </div>
+                                <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
+                                    🎯 Detects ANY object you describe in text. No predefined classes!
+                                </small>
+                            </div>
+                            
                             <!-- Mask2Former specific options -->
                             <div id="mask2formerOptions" style="display: none;">
                                 <div class="form-group mb-3">
