@@ -1,0 +1,25 @@
+{
+  "timestamp": "20251128_042557",
+  "location": {
+    "lon": 81.39020383830888,
+    "lat": 36.32319871996177,
+    "alt": 9724.67961321433,
+    "heading": 359.99999950911877,
+    "pitch": -90,
+    "roll": 0
+  },
+  "model_type": "vit_b",
+  "min_area": 100,
+  "image_size": [
+    1534,
+    964
+  ],
+  "num_segments": 10,
+  "device_info": {
+    "cuda_available": true,
+    "device": "cuda",
+    "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+    "gpu_count": 1
+  },
+  "session_dir": "sam_results/sam_20251128_042557_lat36p323199_lon81p390204_alt9725m_modelvit_b"
+}

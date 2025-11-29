@@ -17,6 +17,11 @@ class WorldSamplerUI {
         this.autoSurveyInterval = null;
         this.samDataSource = null; // For SAM segmentation results
         
+        // Orbit mode state
+        this.orbitActive = false;
+        this.orbitCancelled = false;
+        this.orbitEscHandler = null;
+        
         this.init();
     }
     
@@ -926,6 +931,17 @@ class WorldSamplerUI {
         document.getElementById('droneOrbitAltitude').addEventListener('input', updateDroneOrbitButton);
         document.getElementById('droneOrbitRevolutions').addEventListener('input', updateDroneOrbitButton);
         
+        // Update orbit pitch display
+        document.getElementById('droneOrbitPitch').addEventListener('input', (e) => {
+            const pitch = e.target.value;
+            document.getElementById('orbitPitchValue').textContent = `${pitch}°`;
+        });
+        
+        // Stop orbit button
+        document.getElementById('stopOrbitBtn').addEventListener('click', () => {
+            this.stopOrbitMode();
+        });
+        
         // AI Viewport Analysis button (handled globally, see initialization at bottom of file)
         
         // Reward slider
@@ -1456,6 +1472,12 @@ class WorldSamplerUI {
      * Similar to PX4/QGC orbit mode - camera always faces the center point
      */
     async orbitDroneMode() {
+        // Check if orbit is already active
+        if (this.orbitActive) {
+            this.showNotification('Orbit already in progress. Press ESC or Stop button to cancel.', 'warning');
+            return;
+        }
+        
         const camera = this.viewer.camera;
         const scene = this.viewer.scene;
         const ellipsoid = scene.globe.ellipsoid;
@@ -1465,18 +1487,19 @@ class WorldSamplerUI {
         const altitudeAGL = parseFloat(document.getElementById('droneOrbitAltitude').value) || 100;
         const speedKmh = parseFloat(document.getElementById('droneOrbitSpeed').value) || 50;
         const revolutions = parseFloat(document.getElementById('droneOrbitRevolutions').value) || 1;
+        const pitchAngle = parseFloat(document.getElementById('droneOrbitPitch').value) || -45;
         
         // Validate parameters
         const radius = Math.max(20, Math.min(500, orbitRadius));
         const altitude = Math.max(20, Math.min(500, altitudeAGL));
         const speed = Math.max(10, Math.min(100, speedKmh));
         const revs = Math.max(0.25, Math.min(3, revolutions));
+        const pitch = Math.max(-90, Math.min(0, pitchAngle));
         
         // Get current camera position
         const currentPosition = camera.positionCartographic;
         const currentLon = Cesium.Math.toDegrees(currentPosition.longitude);
         const currentLat = Cesium.Math.toDegrees(currentPosition.latitude);
-        const currentPitch = Cesium.Math.toDegrees(camera.pitch);
         
         // Get terrain height at current location
         const centerCartographic = Cesium.Cartographic.fromDegrees(currentLon, currentLat);
@@ -1542,16 +1565,33 @@ class WorldSamplerUI {
                 ),
                 orientation: {
                     heading: Cesium.Math.toRadians(headingToCenter),
-                    pitch: Cesium.Math.toRadians(currentPitch), // Maintain pitch angle
+                    pitch: Cesium.Math.toRadians(pitch), // Use pitch from slider
                     roll: 0
                 },
                 time: (i / numKeyframes) * duration
             });
         }
         
+        // Set orbit as active
+        this.orbitActive = true;
+        this.orbitCancelled = false;
+        
+        // Show stop button, hide start button
+        document.getElementById('stopOrbitContainer').style.display = 'block';
+        document.getElementById('droneOrbitBtn').disabled = true;
+        
+        // Add ESC key handler
+        const escHandler = (e) => {
+            if (e.key === 'Escape' && this.orbitActive) {
+                this.stopOrbitMode();
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+        this.orbitEscHandler = escHandler;
+        
         // Show notification
         this.showNotification(
-            `Starting ${revs} revolution orbit: ${radius}m radius @ ${speed} km/h (${duration.toFixed(1)}s)`,
+            `Starting ${revs} revolution orbit: ${radius}m radius @ ${speed} km/h (${duration.toFixed(1)}s) - Press ESC to cancel`,
             'info'
         );
         
@@ -1560,6 +1600,13 @@ class WorldSamplerUI {
         const startTime = Date.now();
         
         const animateOrbit = () => {
+            // Check if orbit was cancelled
+            if (this.orbitCancelled || !this.orbitActive) {
+                this.cleanupOrbit();
+                this.showNotification('Orbit cancelled', 'info');
+                return;
+            }
+            
             const elapsed = (Date.now() - startTime) / 1000; // seconds
             
             // Find current keyframe based on elapsed time
@@ -1570,6 +1617,7 @@ class WorldSamplerUI {
             
             if (currentKeyframe >= orbitPath.length - 1) {
                 // Orbit complete
+                this.cleanupOrbit();
                 this.showNotification(
                     `Orbit complete: ${revs} revolutions around ${radius}m radius`,
                     'success'
@@ -1588,7 +1636,7 @@ class WorldSamplerUI {
             
             // Spherical interpolation of orientation
             const heading = Cesium.Math.lerp(current.orientation.heading, next.orientation.heading, t);
-            const pitch = Cesium.Math.lerp(current.orientation.pitch, next.orientation.pitch, t);
+            const pitchInterp = Cesium.Math.lerp(current.orientation.pitch, next.orientation.pitch, t);
             const roll = Cesium.Math.lerp(current.orientation.roll, next.orientation.roll, t);
             
             // Update camera
@@ -1596,7 +1644,7 @@ class WorldSamplerUI {
                 destination: position,
                 orientation: {
                     heading: heading,
-                    pitch: pitch,
+                    pitch: pitchInterp,
                     roll: roll
                 }
             });
@@ -1607,6 +1655,34 @@ class WorldSamplerUI {
         
         // Start the orbit animation
         requestAnimationFrame(animateOrbit);
+    }
+    
+    /**
+     * Stop the active orbit mode
+     */
+    stopOrbitMode() {
+        if (this.orbitActive) {
+            this.orbitCancelled = true;
+            this.orbitActive = false;
+        }
+    }
+    
+    /**
+     * Cleanup orbit mode state
+     */
+    cleanupOrbit() {
+        this.orbitActive = false;
+        this.orbitCancelled = false;
+        
+        // Hide stop button, enable start button
+        document.getElementById('stopOrbitContainer').style.display = 'none';
+        document.getElementById('droneOrbitBtn').disabled = false;
+        
+        // Remove ESC handler
+        if (this.orbitEscHandler) {
+            document.removeEventListener('keydown', this.orbitEscHandler);
+            this.orbitEscHandler = null;
+        }
     }
     
     /**

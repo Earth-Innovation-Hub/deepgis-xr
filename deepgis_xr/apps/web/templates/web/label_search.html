@@ -655,15 +655,28 @@
                    value="1" min="0.25" max="3" step="0.25">
             <small style="font-size: 9px; color: #94a3b8; margin-top: 2px;">0.25 = 90°, 0.5 = 180°, 1 = 360°</small>
         </div>
+        <div class="camera-info-item" style="flex-direction: column; align-items: flex-start; margin-bottom: 6px;">
+            <label style="font-size: 11px; color: #cbd5e1; margin-bottom: 4px;">Camera Pitch (degrees): <span id="orbitPitchValue">-45°</span></label>
+            <input type="range" id="droneOrbitPitch" 
+                   style="width: 100%;"
+                   value="-45" min="-90" max="0" step="5">
+            <small style="font-size: 9px; color: #94a3b8; margin-top: 2px;">-90° = straight down, -45° = 45° angle, 0° = horizon</small>
+        </div>
         <div class="camera-info-item" style="margin-top: 8px;">
             <button class="btn btn-primary" id="droneOrbitBtn" 
                     style="width: 100%; padding: 8px; font-size: 11px; background: #3b82f6; border: none; border-radius: 4px; color: white; cursor: pointer;">
                 <i class="fas fa-circle-notch"></i> Orbit 100m radius @ 50 km/h
             </button>
         </div>
+        <div class="camera-info-item" style="margin-top: 4px; display: none;" id="stopOrbitContainer">
+            <button class="btn btn-danger" id="stopOrbitBtn" 
+                    style="width: 100%; padding: 8px; font-size: 11px; background: #ef4444; border: none; border-radius: 4px; color: white; cursor: pointer;">
+                <i class="fas fa-stop"></i> Stop Orbit (ESC)
+            </button>
+        </div>
         <div class="camera-info-item" style="margin-top: 4px;">
             <small style="font-size: 9px; color: #94a3b8; display: block; text-align: center;">
-                Orbits around center point, camera always faces inward
+                Orbits around center point, camera faces inward. Press ESC to cancel.
             </small>
         </div>
     </div>

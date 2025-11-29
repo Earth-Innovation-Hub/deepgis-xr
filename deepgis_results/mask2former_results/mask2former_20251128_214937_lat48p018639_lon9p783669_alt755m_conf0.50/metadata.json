@@ -1,0 +1,25 @@
+{
+  "timestamp": "20251128_214937",
+  "location": {
+    "lon": 9.783668708343743,
+    "lat": 48.01863903282036,
+    "alt": 755.04365092673,
+    "heading": 14.756404226749405,
+    "pitch": -7.194490826429239,
+    "roll": 0.0011595679074551722
+  },
+  "model_type": "mask2former_coco",
+  "confidence_threshold": 0.5,
+  "image_size": [
+    2119,
+    1323
+  ],
+  "num_detections": 0,
+  "device_info": {
+    "cuda_available": true,
+    "device": "cuda",
+    "gpu_name": "NVIDIA GeForce RTX 2080 Ti",
+    "gpu_count": 1
+  },
+  "session_dir": "mask2former_results/mask2former_20251128_214937_lat48p018639_lon9p783669_alt755m_conf0.50"
+}

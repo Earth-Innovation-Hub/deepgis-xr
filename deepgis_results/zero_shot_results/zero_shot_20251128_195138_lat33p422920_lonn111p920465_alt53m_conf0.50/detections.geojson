@@ -1,0 +1,51 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              0.2626461250143744,
+              0.0
+            ],
+            [
+              0.9482374708917893,
+              0.0
+            ],
+            [
+              0.9482374708917893,
+              0.9731996324327257
+            ],
+            [
+              0.2626461250143744,
+              0.9731996324327257
+            ],
+            [
+              0.2626461250143744,
+              0.0
+            ]
+          ]
+        ]
+      },
+      "properties": {
+        "category": "train",
+        "confidence": 0.5028657913208008,
+        "class_id": 7,
+        "bbox": [
+          570.99267578125,
+          0.0,
+          2061.46826171875,
+          980.9852294921875
+        ]
+      }
+    }
+  ],
+  "metadata": {
+    "model": "zero_shot_coco",
+    "num_detections": 1,
+    "image_path": "/tmp/tmpu7dyv19f.png"
+  }
+}
