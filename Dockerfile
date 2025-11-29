@@ -72,6 +72,24 @@ RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || \
     (echo "Failed to install requirements" && cat /root/.cache/pip/log/*/log && exit 1)
 
+# Install Grounding DINO dependencies
+RUN apt-get update && apt-get install -y \
+    ninja-build \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Grounding DINO (after torch/torchvision/detectron2)
+# Clone and install from source with --no-build-isolation so it can access torch
+# Use regular install (not editable) so we can delete the source after
+RUN git clone https://github.com/IDEA-Research/GroundingDINO.git /tmp/GroundingDINO && \
+    cd /tmp/GroundingDINO && \
+    pip install --no-cache-dir --no-build-isolation . && \
+    cd / && \
+    rm -rf /tmp/GroundingDINO
+
+# Create models directory for Grounding DINO weights
+RUN mkdir -p /app/models
+
 # Copy project
 COPY . .
 

@@ -35,3 +35,7 @@ fiona==1.9.1
 geopandas==0.12.0
 pyproj==3.5.0
 rtree==1.0.1
+# Grounding DINO - Text-based object detection
+# Note: Install after other requirements
+# git+https://github.com/IDEA-Research/GroundingDINO.git
+# or: pip install groundingdino-py
