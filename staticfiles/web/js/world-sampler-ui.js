@@ -144,30 +144,6 @@ class WorldSamplerUI {
                     <button class="btn btn-info w-100 mb-2" id="surveyAutoToggle">
                         <i class="fas fa-play"></i> Start Auto-Survey
                     </button>
-                    
-                    <!-- Drone Fly Mode Section -->
-                    <div class="form-group" style="border-top: 1px solid #475569; padding-top: 12px; margin-top: 12px;">
-                        <h5 style="font-size: 13px; color: #60a5fa; margin-bottom: 8px;">
-                            <i class="fas fa-drone"></i> Drone Fly Mode
-                        </h5>
-                        <div class="form-group">
-                            <label>Fly Distance (meters):</label>
-                            <input type="number" id="droneFlyDistance" class="form-control" 
-                                   value="100" min="10" max="1000" step="10">
-                        </div>
-                        <div class="form-group">
-                            <label>Speed (km/h):</label>
-                            <input type="number" id="droneFlySpeed" class="form-control" 
-                                   value="100" min="25" max="250" step="5">
-                            <small class="text-muted" style="font-size: 10px;">Range: 25-250 km/h</small>
-                        </div>
-                        <button class="btn btn-success w-100" id="droneFlyBtn">
-                            <i class="fas fa-paper-plane"></i> Fly Forward 100m @ 100 km/h
-                        </button>
-                        <small class="text-muted" style="display: block; margin-top: 6px; font-size: 11px;">
-                            Flies along current heading, maintaining altitude & orientation
-                        </small>
-                    </div>
                     </div>
                 </div>
                 
@@ -1057,21 +1033,33 @@ class WorldSamplerUI {
                 entity.sampleDbId = geojson.features[index].properties.db_id;
             });
             
-            // Fly to first sample with zoom level 20 (approximately 300m altitude)
+            // Zoom to show all samples at lowest zoom level (highest altitude)
             if (entities.length > 0) {
-                const position = entities[0].position.getValue(Cesium.JulianDate.now());
-                const cartographic = Cesium.Cartographic.fromCartesian(position);
+                // Calculate center point of all samples
+                let sumLon = 0, sumLat = 0;
+                entities.forEach(entity => {
+                    const position = entity.position.getValue(Cesium.JulianDate.now());
+                    const cartographic = Cesium.Cartographic.fromCartesian(position);
+                    sumLon += cartographic.longitude;
+                    sumLat += cartographic.latitude;
+                });
+                const centerLon = sumLon / entities.length;
+                const centerLat = sumLat / entities.length;
+                
+                // Set to very high altitude (lowest zoom level) - 20,000 km for global view
+                // This ensures all samples are visible at once
+                const targetHeight = 20000000; // 20,000 km altitude
                 
                 this.viewer.camera.flyTo({
                     destination: Cesium.Cartesian3.fromRadians(
-                        cartographic.longitude,
-                        cartographic.latitude,
-                        300  // Zoom level 20 ≈ 300m altitude
+                        centerLon,
+                        centerLat,
+                        targetHeight
                     ),
                     duration: 2.0,
                     orientation: {
                         heading: Cesium.Math.toRadians(0),
-                        pitch: Cesium.Math.toRadians(-45),  // 45° downward tilt
+                        pitch: Cesium.Math.toRadians(-90),  // Top-down view for best overview
                         roll: 0.0
                     }
                 });
@@ -1119,15 +1107,19 @@ class WorldSamplerUI {
         const index = entity.sampleIndex;
         this.showNotification(`Selected sample #${index + 1}`, 'info');
         
-        // Fly to selected sample with zoom level 20
+        // Fly to selected sample with zoom level 14
         const position = entity.position.getValue(Cesium.JulianDate.now());
         const cartographic = Cesium.Cartographic.fromCartesian(position);
+        
+        // Calculate altitude for zoom level 14: altitude = 40075000 / (2^zoom)
+        const zoomLevel = 14;
+        const altitudeForZoom14 = 40075000 / Math.pow(2, zoomLevel);
         
         this.viewer.camera.flyTo({
             destination: Cesium.Cartesian3.fromRadians(
                 cartographic.longitude,
                 cartographic.latitude,
-                300  // Zoom level 20 ≈ 300m altitude
+                altitudeForZoom14  // Zoom level 14
             ),
             duration: 1.5,
             orientation: {
@@ -1334,11 +1326,16 @@ class WorldSamplerUI {
         const position = entity.position.getValue(Cesium.JulianDate.now());
         const cartographic = Cesium.Cartographic.fromCartesian(position);
         
+        // Calculate altitude for zoom level 14: altitude = 40075000 / (2^zoom)
+        // Zoom level 14 ≈ 2445m altitude
+        const zoomLevel = 14;
+        const altitudeForZoom14 = 40075000 / Math.pow(2, zoomLevel);
+        
         this.viewer.camera.flyTo({
             destination: Cesium.Cartesian3.fromRadians(
                 cartographic.longitude,
                 cartographic.latitude,
-                300  // 300m altitude
+                altitudeForZoom14  // Zoom level 14
             ),
             duration: 1.5,
             orientation: {
@@ -1953,13 +1950,24 @@ class WorldSamplerUI {
                 
                 // Log saved files location
                 if (result.saved_to) {
-                    console.log('SAM results saved to:', result.saved_to.session_dir);
+                    console.log('AI analysis results saved to:', result.saved_to.session_dir);
                     console.log('Files saved:', {
                         query_image: result.saved_to.query_image,
                         visualization: result.saved_to.visualization,
                         geojson: result.saved_to.geojson,
                         metadata: result.saved_to.metadata
                     });
+                }
+                
+                // Show link to detailed report page
+                if (result.report_url) {
+                    const reportLink = document.createElement('a');
+                    reportLink.href = result.report_url;
+                    reportLink.target = '_blank';
+                    reportLink.className = 'btn btn-sm btn-info mt-2';
+                    reportLink.style.cssText = 'display: block; text-align: center; margin-top: 8px;';
+                    reportLink.innerHTML = '<i class="fas fa-file-alt me-2"></i>View Detailed Report';
+                    statusDiv.appendChild(reportLink);
                 }
             } catch (captureError) {
                 // Restore SAM overlays even if capture fails
