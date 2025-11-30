@@ -405,13 +405,6 @@ function setupEventHandlers(viewer) {
     }
   });
 
-  document.getElementById('modelsToggle')?.addEventListener('change', (e) => {
-    const modelControls = document.getElementById('modelControls');
-    if (modelControls) {
-      modelControls.style.display = e.target.checked ? 'block' : 'none';
-    }
-  });
-
   // Model controls - using helper function to reduce duplication
   addLazyEventHandler('loadModel', lazyLoaders.models, 'loadGLTFModel', [viewer]);
   addLazyEventHandler('quickLoadModel', lazyLoaders.models, 'quickLoadAtCurrentLocation', [viewer]);

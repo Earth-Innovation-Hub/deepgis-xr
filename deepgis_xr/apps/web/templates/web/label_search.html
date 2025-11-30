@@ -424,6 +424,10 @@
             <i class="fas fa-globe"></i>
             <span>Sampler</span>
         </button>
+        <button class="hud-btn" id="hudModelsBtn" data-panel="modelsPanel">
+            <i class="fas fa-cube"></i>
+            <span>Models</span>
+        </button>
         <button class="hud-btn hud-vr" id="hudVrBtn" data-panel="vrPanel">
             <i class="fas fa-vr-cardboard"></i>
             <span>VR</span>
@@ -449,16 +453,10 @@
                 <option value="none">None</option>
             </select>
         </div>
-        <div class="form-check mb-2">
+        <div class="form-check mb-3">
             <input class="form-check-input" type="checkbox" id="terrainToggle">
             <label class="form-check-label" for="terrainToggle" style="color: #cbd5e1; font-size: 0.85rem;">
                 <i class="fas fa-mountain me-2"></i>3D Terrain
-            </label>
-        </div>
-        <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" id="modelsToggle">
-            <label class="form-check-label" for="modelsToggle" style="color: #cbd5e1; font-size: 0.85rem;">
-                <i class="fas fa-cube me-2"></i>3D Models
             </label>
         </div>
         <div class="btn-group w-100 mb-2" role="group">
@@ -566,6 +564,85 @@
         </div>
         <div id="measurementsList" style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; min-height: 40px; font-size: 0.8rem; color: #94a3b8;">
             No measurements yet
+        </div>
+    </div>
+    
+    <!-- Models Panel -->
+    <div class="hud-panel" id="modelsPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-cube"></i> 3D Models</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('modelsPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Model URL or Ion Asset ID:</label>
+            <input type="text" class="form-control form-control-sm" id="modelUrl" 
+                   value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                   placeholder="Enter glTF/GLB URL or Cesium Ion Asset ID"
+                   style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.8rem;">
+            <small class="text-muted d-block mt-1 mb-2" style="font-size: 0.75rem;">
+                Quick presets:
+            </small>
+            <div class="btn-group btn-group-sm d-flex mb-3" role="group">
+                <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                        data-url="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"
+                        title="140MB Navagunjara sculpture">
+                    Navagunjara
+                </button>
+                <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                        data-url="75343"
+                        title="Cesium Ion Asset - Milk Truck">
+                    Milk Truck
+                </button>
+                <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                        data-url="https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/Duck/glTF-Binary/Duck.glb"
+                        title="Classic glTF duck model">
+                    Duck
+                </button>
+            </div>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Model Location:</label>
+            <select class="form-select form-select-sm" id="modelLocation">
+                <option value="current_view" selected>Current View Location</option>
+                <option value="mount_everest">Mount Everest, Nepal/Tibet</option>
+                <option value="custom">Custom Coordinates</option>
+            </select>
+        </div>
+        <div class="form-group mb-3" id="customLocationInputs" style="display: none;">
+            <div class="row g-2">
+                <div class="col-4">
+                    <input type="number" class="form-control form-control-sm" id="customLon" 
+                           placeholder="Lon" step="0.000001"
+                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.8rem;">
+                </div>
+                <div class="col-4">
+                    <input type="number" class="form-control form-control-sm" id="customLat" 
+                           placeholder="Lat" step="0.000001"
+                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.8rem;">
+                </div>
+                <div class="col-4">
+                    <input type="number" class="form-control form-control-sm" id="customAlt" 
+                           placeholder="Alt (m)" step="1" value="0"
+                           style="background: #475569; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.8rem;">
+                </div>
+            </div>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Model Scale:</label>
+            <input type="range" class="form-range" id="modelScale" 
+                   min="0.1" max="10" step="0.1" value="1.0">
+            <small class="text-muted" id="scaleValue" style="font-size: 0.75rem;">Scale: 1.0x</small>
+        </div>
+        <div class="btn-group-vertical w-100 mb-2" role="group">
+            <button class="btn btn-primary btn-sm mb-1" id="quickLoadModel" title="Instantly load at camera position with 1:1 scale">
+                <i class="fas fa-bolt me-2"></i>Quick Load Here (1:1)
+            </button>
+            <button class="btn btn-success btn-sm mb-1" id="loadModel">
+                <i class="fas fa-download me-2"></i>Load with Settings
+            </button>
+            <button class="btn btn-danger btn-sm" id="removeModel">
+                <i class="fas fa-trash me-2"></i>Remove All Models
+            </button>
         </div>
     </div>
     
