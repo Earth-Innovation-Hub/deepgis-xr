@@ -360,9 +360,9 @@
                                 <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Analysis Type:</label>
                                 <select class="form-select" id="analysisTypeSelect">
                                     <option value="sam" selected>Segment Anything (Universal Segmentation)</option>
+                                    <option value="yolov8">YOLOv8 (Fast Object Detection) ⚡</option>
                                     <option value="zero_shot">Zero-Shot Detection (COCO Objects)</option>
                                     <option value="mask2former">Mask2Former (COCO - State-of-the-Art)</option>
-                                    <option value="grounding_dino">Grounding DINO (Text-Based Detection) ⭐</option>
                                 </select>
                             </div>
                             
@@ -383,6 +383,37 @@
                                 </div>
                             </div>
                             
+                            <!-- YOLOv8 specific options -->
+                            <div id="yolov8Options" style="display: none;">
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Model Size:</label>
+                                    <select class="form-select" id="yolov8ModelType">
+                                        <option value="yolov8n" selected>Nano (Fastest, 3.2M params)</option>
+                                        <option value="yolov8s">Small (Fast, 11.2M params)</option>
+                                        <option value="yolov8m">Medium (Balanced, 25.9M params)</option>
+                                        <option value="yolov8l">Large (Accurate, 43.7M params)</option>
+                                        <option value="yolov8x">XLarge (Best, 68.2M params)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Confidence: <span id="yolov8ConfidenceValue">25%</span></label>
+                                    <input type="range" class="form-range" id="yolov8Confidence" 
+                                           min="10" max="90" step="5" value="25">
+                                </div>
+                                <div class="form-group mb-3">
+                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Filter Classes (optional):</label>
+                                    <input type="text" class="form-control" id="yolov8Classes" 
+                                           placeholder="person, car, truck (leave empty for all)"
+                                           style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.85rem;">
+                                    <small class="text-muted" style="display: block; margin-top: 4px; font-size: 0.75rem; color: #94a3b8;">
+                                        Comma-separated. 80 COCO classes: person, car, truck, bus, bicycle, etc.
+                                    </small>
+                                </div>
+                                <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
+                                    ⚡ Ultra-fast real-time detection. Best for vehicles, people, common objects.
+                                </small>
+                            </div>
+                            
                             <!-- Zero-Shot specific options -->
                             <div id="zeroShotOptions" style="display: none;">
                                 <div class="form-group mb-3">
@@ -393,33 +424,6 @@
                                 </div>
                                 <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
                                     Detects 80 COCO categories: person, car, bicycle, etc.
-                                </small>
-                            </div>
-                            
-                            <!-- Grounding DINO specific options -->
-                            <div id="groundingDinoOptions" style="display: none;">
-                                <div class="form-group mb-3">
-                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">🎯 Text Prompt (describe what to find):</label>
-                                    <input type="text" class="form-control" id="groundingDinoPrompt" 
-                                           placeholder="vehicle . building . tree . solar panel"
-                                           value="vehicle . building"
-                                           style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.9rem;">
-                                    <small class="text-muted" style="display: block; margin-top: 4px; font-size: 0.75rem; color: #94a3b8;">
-                                        Separate objects with " . " (dot with spaces). Examples: "car . truck", "damaged roof . crack"
-                                    </small>
-                                </div>
-                                <div class="form-group mb-3">
-                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Box Confidence: <span id="boxThresholdValue">35%</span></label>
-                                    <input type="range" class="form-range" id="groundingDinoBoxThreshold" 
-                                           min="10" max="80" step="5" value="35">
-                                </div>
-                                <div class="form-group mb-3">
-                                    <label class="form-label" style="color: #cbd5e1; font-size: 0.9rem;">Text Match: <span id="textThresholdValue">25%</span></label>
-                                    <input type="range" class="form-range" id="groundingDinoTextThreshold" 
-                                           min="10" max="50" step="5" value="25">
-                                </div>
-                                <small class="text-muted" style="display: block; margin-bottom: 8px; font-size: 0.75rem; color: #94a3b8;">
-                                    ⭐ Detects ANY object you describe in text. No predefined classes! Most flexible detection method.
                                 </small>
                             </div>
                             
@@ -446,7 +450,7 @@
                                 <span id="analysisDescription">Segments all visible regions in current viewport using Segment Anything Model</span>
                             </small>
                             <div class="alert alert-info" style="margin-top: 8px; padding: 6px; font-size: 0.75rem; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 4px;">
-                                <strong>Tip:</strong> SAM = all regions, Zero-Shot/Mask2Former = labeled objects
+                                <strong>Tip:</strong> SAM = all regions, YOLOv8 = fast objects, Mask2Former = accurate objects
                             </div>
                         </div>
                     </div>

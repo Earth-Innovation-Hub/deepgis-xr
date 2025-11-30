@@ -1,7 +1,16 @@
-FROM ubuntu:20.04
+# DeepGIS XR Docker image with YOLOv8 support
+# YOLOv8 (Ultralytics) is a pure Python package - no custom CUDA compilation needed
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+
+# Set CUDA environment variables
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=${CUDA_HOME}/bin:${PATH}
+ENV LD_LIBRARY_PATH=${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 # Add UbuntuGIS PPA for latest GDAL
 RUN apt-get update && apt-get install -y software-properties-common
@@ -34,6 +43,8 @@ RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libgtk2.0-dev \
     pkg-config \
+    # Font for visualization
+    fonts-dejavu-core \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -64,32 +75,20 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install requirements with better error reporting and ensure fiona is installed after GDAL
+# Install PyTorch with CUDA support from PyTorch index, then other requirements
 # Note: detectron2 is installed separately after torch because its setup.py imports torch
-# Use --no-build-isolation so detectron2 can access the already-installed torch
-RUN pip install --no-cache-dir -r requirements.txt && \
+RUN pip install --no-cache-dir torch torchvision \
+        --index-url https://download.pytorch.org/whl/cu121 && \
+    pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir fiona==$(pip show fiona | grep Version | cut -d' ' -f2) --no-binary fiona && \
     pip install --no-cache-dir --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || \
-    (echo "Failed to install requirements" && cat /root/.cache/pip/log/*/log && exit 1)
+    (echo "Failed to install requirements" && exit 1)
 
-# Install Grounding DINO dependencies
-RUN apt-get update && apt-get install -y \
-    ninja-build \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Grounding DINO (after torch/torchvision/detectron2)
-# Clone and install from source with CUDA support
-# Keep source in /app/GroundingDINO for config files
-RUN git clone https://github.com/IDEA-Research/GroundingDINO.git /app/GroundingDINO && \
-    cd /app/GroundingDINO && \
-    # Build CUDA extensions first
-    pip install --no-cache-dir -e . && \
-    # Verify CUDA ops compiled
-    python -c "from groundingdino.models.GroundingDINO import ms_deform_attn; print('CUDA ops check:', hasattr(ms_deform_attn, '_C'))" || echo "Warning: CUDA ops may not be available"
-
-# Create models directory for Grounding DINO weights
+# Create models directory for YOLO weights (auto-downloaded on first use)
 RUN mkdir -p /app/models
+
+# Verify YOLOv8 installation
+RUN python -c "from ultralytics import YOLO; print('✓ YOLOv8 installed successfully')"
 
 # Copy project
 COPY . .
@@ -101,4 +100,4 @@ RUN chmod +x manage.py
 EXPOSE 8090
 
 # Run the application
-CMD ["python3.9", "manage.py", "runserver", "0.0.0.0:8090"] 
+CMD ["python3.9", "manage.py", "runserver", "0.0.0.0:8090"]

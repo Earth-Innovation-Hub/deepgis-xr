@@ -11,8 +11,7 @@ gunicorn>=20.1.0
 whitenoise>=5.3.0
 rasterio==1.3.0
 shapely==1.8.0
-torch>=1.9.0
-torchvision>=0.10.0
+# NOTE: torch/torchvision are installed in Dockerfile with --index-url for CUDA wheels
 scikit-image>=0.19.0
 twilio>=8.10.0
 django-phonenumber-field>=7.3.0
@@ -30,12 +29,13 @@ git+https://github.com/facebookresearch/segment-anything.git
 # Install detectron2 separately in Dockerfile after torch is installed
 # git+https://github.com/facebookresearch/detectron2.git
 
+# YOLOv8 - Object Detection (Ultralytics)
+# Fast, accurate, easy to use - no custom CUDA compilation needed
+# Supports detection, segmentation, classification, pose estimation
+ultralytics>=8.0.0
+
 # GIS dependencies
 fiona==1.9.1
 geopandas==0.12.0
 pyproj==3.5.0
 rtree==1.0.1
-# Grounding DINO - Text-based object detection
-# Note: Install after other requirements
-# git+https://github.com/IDEA-Research/GroundingDINO.git
-# or: pip install groundingdino-py

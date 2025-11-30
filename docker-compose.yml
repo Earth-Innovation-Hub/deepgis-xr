@@ -16,10 +16,11 @@ services:
       - ../dreams_laboratory/scripts:/app/dreams_laboratory_scripts:ro
       # Mount deepgis_results for SAM analysis results (shared with host)
       - ./deepgis_results:/app/deepgis_results
+      # Named volume for YOLO models (auto-downloaded on first use)
+      - yolo_models_volume:/app/models
     ports:
       - "8060:8090"
-    # Enable GPU access (uncomment one of the following methods)
-    # Method 1: Using deploy.resources (Docker Compose v3.2+)
+    # Enable GPU access
     deploy:
       resources:
         reservations:
@@ -27,8 +28,6 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
-    # Method 2: Using runtime (older method, uncomment if Method 1 doesn't work)
-    # runtime: nvidia
     command: >
       bash -c "
         python manage.py migrate &&
@@ -47,4 +46,5 @@ services:
     command: ["-p", "80", "--verbose"]
 
 volumes:
-  media_volume: 
+  media_volume:
+  yolo_models_volume:
