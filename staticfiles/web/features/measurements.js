@@ -35,13 +35,29 @@ function formatDistance(meters) {
 
 /**
  * Format area with appropriate units
+ * Consistent formatting for both viewport labels and widget list
  */
 function formatArea(squareMeters) {
+  // Handle invalid/NaN values
+  if (!isFinite(squareMeters) || squareMeters < 0) {
+    return '0.00 m²';
+  }
+  
   if (squareMeters >= 1000000) {
-    return `${(squareMeters / 1000000).toFixed(4)} km²`;
-  } else if (squareMeters >= 10000) {
-    return `${(squareMeters / 10000).toFixed(4)} ha`;
+    // >= 1 km², show in km²
+    const km2 = squareMeters / 1000000;
+    // For large areas (>= 10 km²), use 2 decimals; for smaller, use 4 decimals
+    return km2 >= 10 
+      ? `${km2.toFixed(2)} km²` 
+      : `${km2.toFixed(4)} km²`;
+  } else if (squareMeters >= 100000) {
+    // >= 10 ha, show in hectares with 2 decimals
+    return `${(squareMeters / 10000).toFixed(2)} ha`;
+  } else if (squareMeters >= 1000) {
+    // >= 1000 m², show with comma separator and 1 decimal
+    return `${squareMeters.toLocaleString('en-US', { maximumFractionDigits: 1 })} m²`;
   } else {
+    // < 1000 m², show with 2 decimals
     return `${squareMeters.toFixed(2)} m²`;
   }
 }
@@ -466,72 +482,65 @@ function updateMeasurementsList() {
         break;
     }
     return `<div class="measurement-item" style="padding: 4px 8px; margin: 2px 0; background: rgba(0,0,0,0.3); border-radius: 4px; font-size: 0.85rem;">
-      <span style="margin-right: 6px;">${icon}</span>${index + 1}. ${text}
+      <span style="margin-right: 6px;">${icon}</span><span style="margin-right: 4px;">${index + 1}</span>${text}
     </div>`;
   }).join('');
 }
 
 /**
- * Calculate spherical polygon area using spherical excess formula
- * This is more accurate than planar approximation for large polygons
+ * Calculate polygon area using simple planar approximation
+ * Projects lat/lon to local tangent plane and uses Shoelace formula
  */
 function calculateSphericalPolygonArea(positions, ellipsoid) {
   if (positions.length < 3) return 0;
   
-  const cartographics = positions.map(pos => Cesium.Cartographic.fromCartesian(pos, ellipsoid));
+  // Convert to cartographic (lat/lon in radians)
+  const cartographics = positions.map(pos => 
+    Cesium.Cartographic.fromCartesian(pos, ellipsoid)
+  );
   
-  // Use the Girard formula for spherical excess
-  // Area = R² * |spherical excess|
-  // For a spherical polygon, the spherical excess is the sum of angles - (n-2)*π
-  
-  const n = cartographics.length;
-  let sphericalExcess = 0;
-  
-  // Calculate using the shoelace-like formula for spherical coordinates
-  // This uses a more accurate method based on the cross-track distance
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    const k = (i + 2) % n;
-    
-    const lat1 = cartographics[i].latitude;
-    const lon1 = cartographics[i].longitude;
-    const lat2 = cartographics[j].latitude;
-    const lon2 = cartographics[j].longitude;
-    const lat3 = cartographics[k].latitude;
-    const lon3 = cartographics[k].longitude;
-    
-    // Calculate the angle at vertex j
-    const bearing1 = calculateBearing(lat2, lon2, lat1, lon1);
-    const bearing2 = calculateBearing(lat2, lon2, lat3, lon3);
-    
-    let angle = bearing2 - bearing1;
-    while (angle < 0) angle += 2 * Math.PI;
-    while (angle > 2 * Math.PI) angle -= 2 * Math.PI;
-    
-    if (angle > Math.PI) angle = 2 * Math.PI - angle;
-    
-    sphericalExcess += angle;
+  // Remove duplicate last point if closed
+  if (cartographics.length > 0) {
+    const first = cartographics[0];
+    const last = cartographics[cartographics.length - 1];
+    if (Math.abs(first.longitude - last.longitude) < 1e-10 && 
+        Math.abs(first.latitude - last.latitude) < 1e-10) {
+      cartographics.pop();
+    }
   }
   
-  // Spherical excess = sum of angles - (n-2) * π
-  sphericalExcess = Math.abs(sphericalExcess - (n - 2) * Math.PI);
+  if (cartographics.length < 3) return 0;
   
-  // Area = R² * spherical excess
-  // Use the semi-major axis of the ellipsoid
-  const radius = ellipsoid.maximumRadius;
-  const area = radius * radius * sphericalExcess;
+  // Use first point as origin for projection (simpler and more stable)
+  const origin = cartographics[0];
+  const R = ellipsoid.maximumRadius;
+  const cosLat = Math.cos(origin.latitude);
   
-  return area;
-}
-
-/**
- * Calculate bearing between two points in radians
- */
-function calculateBearing(lat1, lon1, lat2, lon2) {
-  const dLon = lon2 - lon1;
-  const y = Math.sin(dLon) * Math.cos(lat2);
-  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-  return Math.atan2(y, x);
+  // Project to local tangent plane: x = R * Δlon * cos(lat), y = R * Δlat
+  // All in meters
+  const points2D = cartographics.map(c => ({
+    x: R * (c.longitude - origin.longitude) * cosLat,
+    y: R * (c.latitude - origin.latitude)
+  }));
+  
+  // Shoelace formula: Area = 0.5 * |Σ(x_i * y_{i+1} - x_{i+1} * y_i)|
+  let area = 0;
+  const n = points2D.length;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    area += points2D[i].x * points2D[j].y;
+    area -= points2D[j].x * points2D[i].y;
+  }
+  
+  const calculatedArea = Math.abs(area) / 2;
+  
+  // Sanity check: return 0 if area is clearly wrong
+  if (!isFinite(calculatedArea) || calculatedArea <= 0 || calculatedArea > 1000000000000) {
+    console.warn('[Measurements] Invalid area:', calculatedArea, 'm²');
+    return 0;
+  }
+  
+  return calculatedArea;
 }
 
 /**
