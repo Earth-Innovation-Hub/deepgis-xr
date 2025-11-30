@@ -44,81 +44,203 @@
     {% load static %}
     <link rel="stylesheet" href="{% static 'web/styles/main.css' %}">
     
-    <!-- Accordion Styles for Flattened Panels -->
+    <!-- HUD Style Layout -->
     <style>
-        /* Accordion Panel Styles */
-        .accordion-panel {
-            margin-bottom: 8px;
-            border-radius: 6px;
-            overflow: hidden;
+        /* ========== HUD BOTTOM TOOLBAR ========== */
+        .hud-toolbar {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            padding: 8px 16px;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-bottom: none;
+            border-radius: 12px 12px 0 0;
+            z-index: 2000;
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
         }
         
-        .accordion-header {
+        .hud-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 14px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            color: #94a3b8;
             cursor: pointer;
-            user-select: none;
+            transition: all 0.2s ease;
+            min-width: 60px;
+        }
+        
+        .hud-btn:hover {
+            background: rgba(59, 130, 246, 0.25);
+            color: #60a5fa;
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+        }
+        
+        .hud-btn.active {
+            background: rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+            border-color: #3b82f6;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+        }
+        
+        .hud-btn i {
+            font-size: 1.1rem;
+            margin-bottom: 2px;
+        }
+        
+        .hud-btn span {
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* Special colored buttons */
+        .hud-btn.hud-ai { border-color: rgba(16, 185, 129, 0.5); }
+        .hud-btn.hud-ai:hover, .hud-btn.hud-ai.active { 
+            background: rgba(16, 185, 129, 0.3); 
+            border-color: #10b981;
+            color: #34d399;
+        }
+        
+        .hud-btn.hud-vr { border-color: rgba(139, 92, 246, 0.5); }
+        .hud-btn.hud-vr:hover, .hud-btn.hud-vr.active { 
+            background: rgba(139, 92, 246, 0.3); 
+            border-color: #8b5cf6;
+            color: #a78bfa;
+        }
+        
+        .hud-btn.hud-mission { border-color: rgba(59, 130, 246, 0.5); }
+        .hud-btn.hud-mission:hover, .hud-btn.hud-mission.active { 
+            background: rgba(59, 130, 246, 0.3); 
+            border-color: #3b82f6;
+            color: #60a5fa;
+        }
+        
+        .hud-btn.hud-sampler { border-color: rgba(245, 158, 11, 0.5); }
+        .hud-btn.hud-sampler:hover, .hud-btn.hud-sampler.active { 
+            background: rgba(245, 158, 11, 0.3); 
+            border-color: #f59e0b;
+            color: #fbbf24;
+        }
+        
+        /* ========== HUD FLOATING PANELS ========== */
+        .hud-panel {
+            position: fixed;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            width: 380px;
+            max-height: 60vh;
+            overflow-y: auto;
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            z-index: 1999;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.25s ease;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        
+        .hud-panel.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
+        
+        .hud-panel-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 15px;
-            transition: background-color 0.2s ease;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
         }
         
-        .accordion-header:hover {
-            background-color: rgba(59, 130, 246, 0.1);
+        .hud-panel-title {
+            color: #f1f5f9;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         
-        .accordion-header.active {
-            background-color: rgba(59, 130, 246, 0.15);
+        .hud-panel-close {
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
         }
         
-        .accordion-icon {
-            transition: transform 0.3s ease;
-            font-size: 0.85rem;
-            color: #94a3b8;
+        .hud-panel-close:hover {
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
         }
         
-        .accordion-header.active .accordion-icon {
-            transform: rotate(180deg);
+        /* Custom scrollbar for panels */
+        .hud-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        .hud-panel::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+        .hud-panel::-webkit-scrollbar-thumb {
+            background: rgba(59, 130, 246, 0.4);
+            border-radius: 3px;
         }
         
-        .accordion-content {
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-out, padding 0.3s ease-out;
-            padding: 0 15px;
+        /* ========== HIDE OLD SIDEBAR & FULL-WIDTH MAP ========== */
+        #sidebar-wrapper {
+            display: none !important;
+            width: 0 !important;
         }
         
-        .accordion-content.expanded {
-            max-height: 2000px; /* Large enough for content */
-            padding: 15px;
-            transition: max-height 0.4s ease-in, padding 0.3s ease-in;
+        #wrapper {
+            padding-left: 0 !important;
+            padding-right: 0 !important;
         }
         
-        /* Ensure layer-group-title works with accordion */
-        .layer-group-title.accordion-header {
-            margin: 0;
-            border-bottom: none;
+        .mobile-toggle {
+            display: none !important;
         }
         
-        /* Chart container styles for Feature Statistics in World Sampler */
-        #worldSamplerSection .chart-container {
-            position: relative;
-            height: 200px;
-            width: 100%;
+        /* Make cesium container full width */
+        #cesiumContainer {
+            right: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
         }
         
-        #worldSamplerSection .chart-container canvas {
-            max-height: 200px;
+        /* Hide the old status indicator (sidebar mode messages) */
+        .status-indicator {
+            display: none !important;
         }
         
-        /* Perspective Views Widget - HUD Style */
+        /* ========== ADJUST EXISTING HUD ELEMENTS ========== */
         .perspective-views-widget {
             position: absolute;
-            top: 420px; /* Position below navigation widget */
-            right: 350px;
+            top: 420px;
+            right: 20px;
             width: 120px;
             z-index: 1000;
-            transition: right 0.3s ease;
             background: rgba(15, 23, 42, 0.8);
             border-radius: 12px;
             padding: 10px;
@@ -167,42 +289,73 @@
             border-color: #3b82f6;
             color: #93c5fd;
             transform: scale(1.05);
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
         }
         
-        .perspective-btn-hud:active {
-            transform: scale(0.95);
+        .perspective-btn-hud i { font-size: 0.9rem; margin-bottom: 2px; }
+        .perspective-btn-hud small { font-size: 0.65rem; font-weight: 600; }
+        
+        .perspective-compass-grid #viewNorth { grid-column: 2; grid-row: 1; }
+        .perspective-compass-grid #viewEast { grid-column: 3; grid-row: 2; }
+        .perspective-compass-grid #viewSouth { grid-column: 2; grid-row: 3; }
+        .perspective-compass-grid #viewWest { grid-column: 1; grid-row: 2; }
+        
+        /* Navigation widget adjustment */
+        .navigation-widget-group {
+            right: 20px !important;
         }
         
-        .perspective-btn-hud i {
-            font-size: 0.9rem;
-            margin-bottom: 2px;
+        /* ========== QUICK VIEW BUTTONS (Top Right) ========== */
+        .hud-quick-views {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 1500;
         }
         
-        .perspective-btn-hud small {
-            font-size: 0.65rem;
-            font-weight: 600;
+        .hud-quick-btn {
+            padding: 8px 12px;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
         }
         
-        /* Position buttons in compass pattern: N top, S bottom, E right, W left */
-        .perspective-compass-grid #viewNorth {
-            grid-column: 2;
-            grid-row: 1;
+        .hud-quick-btn:hover {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+            border-color: #3b82f6;
         }
         
-        .perspective-compass-grid #viewEast {
-            grid-column: 3;
-            grid-row: 2;
+        .hud-quick-btn.active {
+            background: rgba(59, 130, 246, 0.3);
+            color: #93c5fd;
         }
         
-        .perspective-compass-grid #viewSouth {
-            grid-column: 2;
-            grid-row: 3;
+        /* Hide keyboard shortcut hint */
+        .hud-toolbar::after {
+            content: 'Press H to toggle HUD';
+            position: absolute;
+            top: -24px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.7rem;
+            color: #475569;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
         
-        .perspective-compass-grid #viewWest {
-            grid-column: 1;
-            grid-row: 2;
+        .hud-toolbar:hover::after {
+            opacity: 1;
         }
     </style>
 </head>
@@ -576,6 +729,259 @@
 
     <div id="cesiumContainer"></div>
 
+    <!-- ========== HUD BOTTOM TOOLBAR ========== -->
+    <div class="hud-toolbar" id="hudToolbar">
+        <button class="hud-btn" id="hudViewBtn" data-panel="viewPanel">
+            <i class="fas fa-eye"></i>
+            <span>View</span>
+        </button>
+        <button class="hud-btn hud-ai" id="hudAiBtn" data-panel="aiPanel">
+            <i class="fas fa-brain"></i>
+            <span>AI</span>
+        </button>
+        <button class="hud-btn" id="hudToolsBtn" data-panel="toolsPanel">
+            <i class="fas fa-tools"></i>
+            <span>Tools</span>
+        </button>
+        <button class="hud-btn hud-mission" id="hudMissionBtn" data-panel="missionPanel">
+            <i class="fas fa-route"></i>
+            <span>Mission</span>
+        </button>
+        <button class="hud-btn hud-sampler" id="hudSamplerBtn" data-panel="samplerPanel">
+            <i class="fas fa-globe"></i>
+            <span>Sampler</span>
+        </button>
+        <button class="hud-btn hud-vr" id="hudVrBtn" data-panel="vrPanel">
+            <i class="fas fa-vr-cardboard"></i>
+            <span>VR</span>
+        </button>
+    </div>
+
+    <!-- ========== HUD FLOATING PANELS ========== -->
+    
+    <!-- View Panel -->
+    <div class="hud-panel" id="viewPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-eye"></i> View & Display</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('viewPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Base Map:</label>
+            <select class="form-select form-select-sm" id="baseMapSelect">
+                <option value="ion_satellite">Ion Satellite</option>
+                <option value="ion_streets">Ion Streets</option>
+                <option value="satellite">Bing Satellite</option>
+                <option value="bing">Bing Streets</option>
+                <option value="mapbox">Mapbox Streets</option>
+                <option value="none">None</option>
+            </select>
+        </div>
+        <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="terrainToggle">
+            <label class="form-check-label" for="terrainToggle" style="color: #cbd5e1; font-size: 0.85rem;">
+                <i class="fas fa-mountain me-2"></i>3D Terrain
+            </label>
+        </div>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="modelsToggle">
+            <label class="form-check-label" for="modelsToggle" style="color: #cbd5e1; font-size: 0.85rem;">
+                <i class="fas fa-cube me-2"></i>3D Models
+            </label>
+        </div>
+        <div class="btn-group w-100 mb-2" role="group">
+            <button class="btn btn-outline-primary btn-sm" id="view2D"><i class="fas fa-map"></i> 2D</button>
+            <button class="btn btn-outline-primary btn-sm" id="view3D"><i class="fas fa-cube"></i> 3D</button>
+            <button class="btn btn-outline-primary btn-sm" id="viewColumbus"><i class="fas fa-compass"></i> Columbus</button>
+        </div>
+        <button class="btn btn-success btn-sm w-100" id="homeView"><i class="fas fa-home me-2"></i>Home View</button>
+    </div>
+    
+    <!-- AI Analysis Panel -->
+    <div class="hud-panel" id="aiPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-brain" style="color: #10b981;"></i> AI Viewport Analysis</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('aiPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Analysis Type:</label>
+            <select class="form-select form-select-sm" id="analysisTypeSelect">
+                <option value="sam" selected>SAM (Universal Segmentation)</option>
+                <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
+                <option value="zero_shot">Zero-Shot (COCO)</option>
+                <option value="mask2former">Mask2Former (Accurate)</option>
+            </select>
+        </div>
+        <!-- SAM Options -->
+        <div id="samOptions">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model:</label>
+                <select class="form-select form-select-sm" id="samModelType">
+                    <option value="vit_b" selected>Base (Fast)</option>
+                    <option value="vit_l">Large (Balanced)</option>
+                    <option value="vit_h">Huge (Best)</option>
+                </select>
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Min Area (px):</label>
+                <input type="number" class="form-control form-control-sm" id="samMinArea" value="100" min="10" max="10000" step="10">
+            </div>
+        </div>
+        <!-- YOLOv8 Options -->
+        <div id="yolov8Options" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model Size:</label>
+                <select class="form-select form-select-sm" id="yolov8ModelType">
+                    <option value="yolov8n" selected>Nano (Fastest)</option>
+                    <option value="yolov8s">Small</option>
+                    <option value="yolov8m">Medium</option>
+                    <option value="yolov8l">Large</option>
+                    <option value="yolov8x">XLarge (Best)</option>
+                </select>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="yolov8ConfidenceValue">25%</span></label>
+                <input type="range" class="form-range" id="yolov8Confidence" min="10" max="90" step="5" value="25">
+            </div>
+            <div class="form-group mb-3">
+                <input type="text" class="form-control form-control-sm" id="yolov8Classes" placeholder="Filter: person, car, truck...">
+            </div>
+        </div>
+        <!-- Zero-Shot Options -->
+        <div id="zeroShotOptions" style="display: none;">
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="zeroShotConfidenceValue">0.50</span></label>
+                <input type="range" class="form-range" id="zeroShotConfidence" min="0" max="100" step="5" value="50">
+            </div>
+        </div>
+        <!-- Mask2Former Options -->
+        <div id="mask2formerOptions" style="display: none;">
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="mask2formerConfidenceValue">0.50</span></label>
+                <input type="range" class="form-range" id="mask2formerConfidence" min="0" max="100" step="5" value="50">
+            </div>
+        </div>
+        <button class="btn btn-success w-100" id="analyzeViewportBtn">
+            <i class="fas fa-brain me-2"></i>Analyze Viewport
+        </button>
+        <div id="samAnalysisStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(16, 185, 129, 0.15); border-radius: 4px; font-size: 0.8rem;">
+            <span id="samStatusText">Processing...</span>
+        </div>
+        <small id="analysisDescription" style="display: block; margin-top: 6px; font-size: 0.75rem; color: #64748b;">
+            Segments all visible regions using Segment Anything Model
+        </small>
+    </div>
+    
+    <!-- Tools Panel -->
+    <div class="hud-panel" id="toolsPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-tools"></i> Measurement Tools</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('toolsPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="btn-group-vertical w-100 mb-3" role="group">
+            <button class="btn btn-warning btn-sm mb-1" id="measureDistance">
+                <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+            </button>
+            <button class="btn btn-warning btn-sm mb-1" id="measureArea">
+                <i class="fas fa-draw-polygon me-2"></i>Measure Area
+            </button>
+            <button class="btn btn-warning btn-sm mb-1" id="measureHeight">
+                <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+            </button>
+            <button class="btn btn-danger btn-sm" id="clearMeasurements">
+                <i class="fas fa-trash me-2"></i>Clear All
+            </button>
+        </div>
+        <div id="measurementsList" style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; min-height: 40px; font-size: 0.8rem; color: #94a3b8;">
+            No measurements yet
+        </div>
+    </div>
+    
+    <!-- Mission Panel -->
+    <div class="hud-panel" id="missionPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-route" style="color: #3b82f6;"></i> Mission Planning</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('missionPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="missionLoginPanel" style="display: none;">
+            <div style="text-align: center; padding: 20px;">
+                <i class="fas fa-lock" style="font-size: 2rem; color: #64748b; margin-bottom: 10px;"></i>
+                <p style="color: #94a3b8; font-size: 0.85rem;">Login required</p>
+                <input type="tel" class="form-control form-control-sm mb-2" id="phoneNumberInput" placeholder="Phone number">
+                <button class="btn btn-primary btn-sm w-100" id="phoneLoginBtn">
+                    <i class="fas fa-sign-in-alt me-2"></i>Login
+                </button>
+                <div id="loginError" style="color: #ef4444; font-size: 0.8rem; margin-top: 8px; display: none;"></div>
+            </div>
+        </div>
+        <div id="missionControlsPanel">
+            <div id="userInfoBar" style="background: #065f46; padding: 6px 10px; border-radius: 4px; margin-bottom: 10px; display: none; font-size: 0.8rem;">
+                <small style="color: #a7f3d0;"><i class="fas fa-user-check me-1"></i><span id="loggedInUser">Logged in</span></small>
+                <button class="btn btn-link btn-sm float-end p-0" id="logoutBtn" style="color: #fca5a5; text-decoration: none; font-size: 0.75rem;">Logout</button>
+            </div>
+            <div class="form-group mb-2">
+                <select class="form-select form-select-sm" id="missionSelect">
+                    <option value="">-- Select Mission --</option>
+                </select>
+            </div>
+            <button class="btn btn-primary btn-sm w-100 mb-2" id="createMissionBtn">
+                <i class="fas fa-plus me-2"></i>Create Mission
+            </button>
+            <div id="missionInfo" style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; margin-bottom: 10px; font-size: 0.8rem; color: #94a3b8;">
+                No mission selected
+            </div>
+            <div class="btn-group w-100 mb-2" role="group">
+                <button class="btn btn-success btn-sm" id="toggleWaypointPlacement"><i class="fas fa-map-marker-alt"></i></button>
+                <button class="btn btn-warning btn-sm" id="saveMissionBtn"><i class="fas fa-save"></i></button>
+                <button class="btn btn-danger btn-sm" id="clearWaypointsBtn"><i class="fas fa-trash"></i></button>
+                <button class="btn btn-danger btn-sm" id="deleteMissionBtn"><i class="fas fa-trash-alt"></i></button>
+            </div>
+            <div class="form-group">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Default Altitude (m):</label>
+                <input type="number" class="form-control form-control-sm" id="defaultAltitude" value="50" min="0" step="1">
+            </div>
+        </div>
+    </div>
+    
+    <!-- World Sampler Panel -->
+    <div class="hud-panel" id="samplerPanel" style="width: 420px;">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-globe" style="color: #f59e0b;"></i> World Sampler</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('samplerPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="hudSamplerContainer">
+            <!-- World Sampler content will be moved here -->
+        </div>
+    </div>
+    
+    <!-- VR Panel -->
+    <div class="hud-panel" id="vrPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-vr-cardboard" style="color: #8b5cf6;"></i> WebXR / VR</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('vrPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="btn-group-vertical w-100 mb-3" role="group">
+            <button class="btn btn-primary btn-sm mb-1" id="checkVRSupport">
+                <i class="fas fa-search me-2"></i>Check VR Support
+            </button>
+            <button class="btn btn-success btn-sm mb-1" id="enterVR" disabled>
+                <i class="fas fa-vr-cardboard me-2"></i>Enter VR
+            </button>
+            <button class="btn btn-danger btn-sm" id="exitVR" disabled>
+                <i class="fas fa-times me-2"></i>Exit VR
+            </button>
+        </div>
+        <div id="vrStatus" style="color: #94a3b8; font-size: 0.8rem; padding: 8px; background: rgba(0,0,0,0.3); border-radius: 4px;">
+            VR Status: Not checked
+        </div>
+    </div>
+
+    <!-- Quick View Buttons (Top Right) -->
+    <div class="hud-quick-views">
+        <button class="hud-quick-btn" id="quickView2D"><i class="fas fa-map"></i> 2D</button>
+        <button class="hud-quick-btn" id="quickView3D"><i class="fas fa-cube"></i> 3D</button>
+        <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
+    </div>
+
     <!-- Main Heading -->
     <div class="main-heading">DeepGIS Search</div>
 
@@ -792,46 +1198,196 @@
     <script src="{% static 'web/js/world-sampler-ui.js' %}"></script>
     <script src="{% static 'web/js/mission-planner.js' %}"></script>
     <script>
-        // Accordion functionality for flattened panels
+        // HUD Panel Management
         (function() {
-            function initAccordion() {
-                const accordionHeaders = document.querySelectorAll('.accordion-header');
+            let activePanel = null;
+            
+            function closeHudPanel(panelId) {
+                const panel = document.getElementById(panelId);
+                if (panel) {
+                    panel.classList.remove('visible');
+                    const btn = document.querySelector(`[data-panel="${panelId}"]`);
+                    if (btn) btn.classList.remove('active');
+                    if (activePanel === panelId) activePanel = null;
+                }
+            }
+            window.closeHudPanel = closeHudPanel; // Make globally accessible
+            
+            function toggleHudPanel(panelId) {
+                const panel = document.getElementById(panelId);
+                const btn = document.querySelector(`[data-panel="${panelId}"]`);
                 
-                accordionHeaders.forEach(header => {
-                    header.addEventListener('click', function() {
-                        const targetId = this.getAttribute('data-target');
-                        const content = document.getElementById(targetId);
-                        const isExpanded = content.classList.contains('expanded');
-                        
-                        // Toggle this panel
-                        if (isExpanded) {
-                            content.classList.remove('expanded');
-                            this.classList.remove('active');
-                        } else {
-                            content.classList.add('expanded');
-                            this.classList.add('active');
-                        }
-                    });
-                });
+                // Close any open panel
+                if (activePanel && activePanel !== panelId) {
+                    closeHudPanel(activePanel);
+                }
                 
-                // Expand first panel by default
-                const firstHeader = document.querySelector('.accordion-header');
-                if (firstHeader) {
-                    const firstTarget = firstHeader.getAttribute('data-target');
-                    const firstContent = document.getElementById(firstTarget);
-                    if (firstContent) {
-                        firstContent.classList.add('expanded');
-                        firstHeader.classList.add('active');
-                        }
+                if (panel.classList.contains('visible')) {
+                    panel.classList.remove('visible');
+                    if (btn) btn.classList.remove('active');
+                    activePanel = null;
+                } else {
+                    panel.classList.add('visible');
+                    if (btn) btn.classList.add('active');
+                    activePanel = panelId;
                 }
             }
             
-            // Initialize accordion when DOM is ready
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', initAccordion);
-            } else {
-                initAccordion();
+            function initHUD() {
+                // Setup toolbar button clicks
+                document.querySelectorAll('.hud-btn[data-panel]').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const panelId = btn.getAttribute('data-panel');
+                        toggleHudPanel(panelId);
+                    });
+                });
+                
+                // Quick view buttons
+                document.getElementById('quickView2D')?.addEventListener('click', () => {
+                    document.getElementById('view2D')?.click();
+                });
+                document.getElementById('quickView3D')?.addEventListener('click', () => {
+                    document.getElementById('view3D')?.click();
+                });
+                document.getElementById('quickHome')?.addEventListener('click', () => {
+                    document.getElementById('homeView')?.click();
+                });
+                
+                // Close panel when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (activePanel) {
+                        const panel = document.getElementById(activePanel);
+                        const toolbar = document.getElementById('hudToolbar');
+                        if (panel && !panel.contains(e.target) && !toolbar.contains(e.target)) {
+                            closeHudPanel(activePanel);
+                        }
+                    }
+                });
+                
+                // H key to toggle HUD visibility
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'h' || e.key === 'H') {
+                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+                        const toolbar = document.getElementById('hudToolbar');
+                        if (toolbar) {
+                            toolbar.style.display = toolbar.style.display === 'none' ? 'flex' : 'none';
+                        }
+                    }
+                    // Escape to close active panel
+                    if (e.key === 'Escape' && activePanel) {
+                        closeHudPanel(activePanel);
+                    }
+                });
+                
+                // Analysis type toggle (for AI panel)
+                const analysisSelect = document.getElementById('analysisTypeSelect');
+                if (analysisSelect) {
+                    analysisSelect.addEventListener('change', (e) => {
+                        const type = e.target.value;
+                        document.getElementById('samOptions').style.display = type === 'sam' ? 'block' : 'none';
+                        document.getElementById('yolov8Options').style.display = type === 'yolov8' ? 'block' : 'none';
+                        document.getElementById('zeroShotOptions').style.display = type === 'zero_shot' ? 'block' : 'none';
+                        document.getElementById('mask2formerOptions').style.display = type === 'mask2former' ? 'block' : 'none';
+                        
+                        const desc = document.getElementById('analysisDescription');
+                        if (desc) {
+                            const descriptions = {
+                                'sam': 'Segments all visible regions using Segment Anything Model',
+                                'yolov8': 'Ultra-fast detection with 80 COCO classes',
+                                'zero_shot': 'Detects common objects (person, car, etc.)',
+                                'mask2former': 'State-of-the-art detection with 80 COCO categories'
+                            };
+                            desc.textContent = descriptions[type] || '';
+                        }
+                    });
+                }
+                
+                // YOLOv8 confidence slider
+                const yoloConf = document.getElementById('yolov8Confidence');
+                const yoloConfVal = document.getElementById('yolov8ConfidenceValue');
+                if (yoloConf && yoloConfVal) {
+                    yoloConf.addEventListener('input', (e) => {
+                        yoloConfVal.textContent = e.target.value + '%';
+                    });
+                }
+                
+                // Zero-shot confidence slider
+                const zsConf = document.getElementById('zeroShotConfidence');
+                const zsConfVal = document.getElementById('zeroShotConfidenceValue');
+                if (zsConf && zsConfVal) {
+                    zsConf.addEventListener('input', (e) => {
+                        zsConfVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+                
+                // Mask2former confidence slider
+                const m2fConf = document.getElementById('mask2formerConfidence');
+                const m2fConfVal = document.getElementById('mask2formerConfidenceValue');
+                if (m2fConf && m2fConfVal) {
+                    m2fConf.addEventListener('input', (e) => {
+                        m2fConfVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+                
+                console.log('[HUD] Initialized - Press H to toggle toolbar');
             }
+            
+            // Force full-width cesium container (override main.js settings)
+            function enforceFullWidthMap() {
+                const cesium = document.getElementById('cesiumContainer');
+                if (cesium) {
+                    cesium.style.setProperty('right', '0', 'important');
+                    cesium.style.setProperty('left', '0', 'important');
+                    cesium.style.setProperty('width', '100%', 'important');
+                }
+                const sidebar = document.getElementById('sidebar-wrapper');
+                if (sidebar) {
+                    sidebar.style.setProperty('display', 'none', 'important');
+                }
+            }
+            
+            // Initialize when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    initHUD();
+                    enforceFullWidthMap();
+                });
+            } else {
+                initHUD();
+                enforceFullWidthMap();
+            }
+            
+            // Re-enforce on resize (to override main.js resize handler)
+            window.addEventListener('resize', enforceFullWidthMap);
+            
+            // Also enforce after a short delay to catch late initializations
+            setTimeout(enforceFullWidthMap, 500);
+            setTimeout(enforceFullWidthMap, 1500);
+            
+            // Style World Sampler when it appears in HUD container
+            function styleWorldSamplerInHUD() {
+                const worldSampler = document.getElementById('worldSamplerSection');
+                const hudContainer = document.getElementById('hudSamplerContainer');
+                if (worldSampler && hudContainer && hudContainer.contains(worldSampler)) {
+                    // Hide the accordion header since HUD panel already has one
+                    const header = worldSampler.querySelector('.layer-group-title.accordion-header');
+                    if (header) header.style.display = 'none';
+                    // Ensure content is expanded
+                    const content = worldSampler.querySelector('.accordion-content');
+                    if (content) {
+                        content.classList.add('expanded');
+                        content.style.maxHeight = 'none';
+                    }
+                    worldSampler.style.border = 'none';
+                    worldSampler.style.background = 'transparent';
+                    console.log('[HUD] World Sampler styled for HUD');
+                }
+            }
+            
+            // Check periodically until World Sampler is created
+            setTimeout(styleWorldSamplerInHUD, 1000);
+            setTimeout(styleWorldSamplerInHUD, 2000);
+            setTimeout(styleWorldSamplerInHUD, 4000);
         })();
     </script>
 </body>

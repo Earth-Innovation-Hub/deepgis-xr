@@ -46,13 +46,15 @@ class WorldSamplerUI {
             return;
         }
         
-        // Find the sidebar layer-controls container
-        const layerControls = document.querySelector('.layer-controls') || 
+        // Find container: HUD panel first, then sidebar
+        const hudContainer = document.getElementById('hudSamplerContainer');
+        const layerControls = hudContainer || 
+                             document.querySelector('.layer-controls') || 
                              document.querySelector('#sidebar-wrapper .sidebar-content') ||
                              document.querySelector('.sidebar-content');
         
         if (!layerControls) {
-            console.warn('[World Sampler] Could not find sidebar container, creating floating widget as fallback');
+            console.warn('[World Sampler] Could not find container, creating floating widget as fallback');
             // Fallback to old floating widget behavior
             return this.createFloatingUI();
         }
@@ -69,7 +71,7 @@ class WorldSamplerUI {
                     <span><i class="fas fa-globe-americas"></i> World Sampler</span>
                     <i class="fas fa-chevron-down accordion-icon"></i>
             </div>
-                <div class="accordion-content" id="worldSamplerContent">
+                <div class="accordion-content expanded" id="worldSamplerContent">
             
                 <!-- Initialization Section -->
                 <div class="sampler-section">
@@ -77,7 +79,7 @@ class WorldSamplerUI {
                         <span><i class="fas fa-cog"></i> Initialize</span>
                         <i class="fas fa-chevron-down accordion-icon"></i>
                     </h4>
-                    <div class="sampler-section-content" id="initContent">
+                    <div class="sampler-section-content expanded" id="initContent">
                     <div class="form-group">
                         <label>Distribution Type:</label>
                         <select id="samplerInitType" class="form-control">
@@ -103,7 +105,7 @@ class WorldSamplerUI {
                         <span><i class="fas fa-crosshairs"></i> Sample</span>
                         <i class="fas fa-chevron-down accordion-icon"></i>
                     </h4>
-                    <div class="sampler-section-content" id="sampleContent">
+                    <div class="sampler-section-content expanded" id="sampleContent">
                     <div class="form-group">
                         <label>Number of Samples:</label>
                         <input type="number" id="samplerNumSamples" class="form-control" 
@@ -817,6 +819,12 @@ class WorldSamplerUI {
     }
     
     setupEventListeners() {
+        // Safe event listener helper - won't throw if element doesn't exist
+        const safeAddListener = (id, event, handler) => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener(event, handler);
+        };
+        
         // Minimize button (only exists in floating widget fallback)
         const minimizeBtn = document.getElementById('samplerMinimize');
         if (minimizeBtn) {
@@ -833,62 +841,40 @@ class WorldSamplerUI {
         }
         
         // Initialize button
-        document.getElementById('samplerInitBtn').addEventListener('click', () => {
-            this.initializeSampler();
-        });
+        safeAddListener('samplerInitBtn', 'click', () => this.initializeSampler());
         
         // Sample button
-        document.getElementById('samplerSampleBtn').addEventListener('click', () => {
-            this.sampleLocations();
-        });
+        safeAddListener('samplerSampleBtn', 'click', () => this.sampleLocations());
         
         // Feedback button
-        document.getElementById('samplerFeedbackBtn').addEventListener('click', () => {
-            this.submitFeedback();
-        });
+        safeAddListener('samplerFeedbackBtn', 'click', () => this.submitFeedback());
         
         // Explore button
-        document.getElementById('samplerExplore').addEventListener('click', () => {
-            this.updateExploration();
-        });
+        safeAddListener('samplerExplore', 'click', () => this.updateExploration());
         
         // Concentrate button
-        document.getElementById('samplerConcentrate').addEventListener('click', () => {
-            this.updateConcentration();
-        });
+        safeAddListener('samplerConcentrate', 'click', () => this.updateConcentration());
         
         // Clear button
-        document.getElementById('samplerClear').addEventListener('click', () => {
-            this.clearSamples();
-        });
+        safeAddListener('samplerClear', 'click', () => this.clearSamples());
         
         // Reset button
-        document.getElementById('samplerReset').addEventListener('click', () => {
-            this.resetSampler();
-        });
+        safeAddListener('samplerReset', 'click', () => this.resetSampler());
         
         // Refresh stats button
-        document.getElementById('samplerRefreshStats').addEventListener('click', () => {
-            this.updateStatistics();
-        });
+        safeAddListener('samplerRefreshStats', 'click', () => this.updateStatistics());
         
         // Survey navigation buttons
-        document.getElementById('surveyPrev').addEventListener('click', () => {
-            this.navigateToPreviousSample();
-        });
-        
-        document.getElementById('surveyNext').addEventListener('click', () => {
-            this.navigateToNextSample();
-        });
+        safeAddListener('surveyPrev', 'click', () => this.navigateToPreviousSample());
+        safeAddListener('surveyNext', 'click', () => this.navigateToNextSample());
         
         // Auto-survey toggle
-        document.getElementById('surveyAutoToggle').addEventListener('click', () => {
-            this.toggleAutoSurvey();
-        });
+        safeAddListener('surveyAutoToggle', 'click', () => this.toggleAutoSurvey());
         
         // Survey speed slider
-        document.getElementById('surveySpeed').addEventListener('input', (e) => {
-            document.getElementById('surveySpeedValue').textContent = e.target.value + 's';
+        safeAddListener('surveySpeed', 'input', (e) => {
+            const speedValue = document.getElementById('surveySpeedValue');
+            if (speedValue) speedValue.textContent = e.target.value + 's';
             
             // If auto-survey is running, restart with new speed
             if (this.isAutoSurveyActive) {
@@ -898,56 +884,60 @@ class WorldSamplerUI {
         });
         
         // Drone fly mode button
-        document.getElementById('droneFlyBtn').addEventListener('click', () => {
-            this.flyDroneMode();
-        });
+        safeAddListener('droneFlyBtn', 'click', () => this.flyDroneMode());
         
         // Update drone fly button text when distance or speed changes
         const updateDroneFlyButton = () => {
-            const distance = document.getElementById('droneFlyDistance').value || 100;
-            const speed = document.getElementById('droneFlySpeed').value || 100;
-            document.getElementById('droneFlyBtn').innerHTML = 
-                `<i class="fas fa-paper-plane"></i> Fly Forward ${distance}m @ ${speed} km/h`;
+            const distEl = document.getElementById('droneFlyDistance');
+            const speedEl = document.getElementById('droneFlySpeed');
+            const btnEl = document.getElementById('droneFlyBtn');
+            if (distEl && speedEl && btnEl) {
+                const distance = distEl.value || 100;
+                const speed = speedEl.value || 100;
+                btnEl.innerHTML = `<i class="fas fa-paper-plane"></i> Fly Forward ${distance}m @ ${speed} km/h`;
+            }
         };
         
-        document.getElementById('droneFlyDistance').addEventListener('input', updateDroneFlyButton);
-        document.getElementById('droneFlySpeed').addEventListener('input', updateDroneFlyButton);
+        safeAddListener('droneFlyDistance', 'input', updateDroneFlyButton);
+        safeAddListener('droneFlySpeed', 'input', updateDroneFlyButton);
         
         // Drone orbit mode button
-        document.getElementById('droneOrbitBtn').addEventListener('click', () => {
-            this.orbitDroneMode();
-        });
+        safeAddListener('droneOrbitBtn', 'click', () => this.orbitDroneMode());
         
         // Update drone orbit button text when radius or speed changes
         const updateDroneOrbitButton = () => {
-            const radius = document.getElementById('droneOrbitRadius').value || 100;
-            const speed = document.getElementById('droneOrbitSpeed').value || 50;
-            document.getElementById('droneOrbitBtn').innerHTML = 
-                `<i class="fas fa-circle-notch"></i> Orbit ${radius}m radius @ ${speed} km/h`;
+            const radiusEl = document.getElementById('droneOrbitRadius');
+            const speedEl = document.getElementById('droneOrbitSpeed');
+            const btnEl = document.getElementById('droneOrbitBtn');
+            if (radiusEl && speedEl && btnEl) {
+                const radius = radiusEl.value || 100;
+                const speed = speedEl.value || 50;
+                btnEl.innerHTML = `<i class="fas fa-circle-notch"></i> Orbit ${radius}m radius @ ${speed} km/h`;
+            }
         };
         
-        document.getElementById('droneOrbitRadius').addEventListener('input', updateDroneOrbitButton);
-        document.getElementById('droneOrbitSpeed').addEventListener('input', updateDroneOrbitButton);
-        document.getElementById('droneOrbitAltitude').addEventListener('input', updateDroneOrbitButton);
-        document.getElementById('droneOrbitRevolutions').addEventListener('input', updateDroneOrbitButton);
+        safeAddListener('droneOrbitRadius', 'input', updateDroneOrbitButton);
+        safeAddListener('droneOrbitSpeed', 'input', updateDroneOrbitButton);
+        safeAddListener('droneOrbitAltitude', 'input', updateDroneOrbitButton);
+        safeAddListener('droneOrbitRevolutions', 'input', updateDroneOrbitButton);
         
         // Update orbit pitch display
-        document.getElementById('droneOrbitPitch').addEventListener('input', (e) => {
-            const pitch = e.target.value;
-            document.getElementById('orbitPitchValue').textContent = `${pitch}°`;
+        safeAddListener('droneOrbitPitch', 'input', (e) => {
+            const pitchVal = document.getElementById('orbitPitchValue');
+            if (pitchVal) pitchVal.textContent = `${e.target.value}°`;
         });
         
         // Stop orbit button
-        document.getElementById('stopOrbitBtn').addEventListener('click', () => {
-            this.stopOrbitMode();
-        });
+        safeAddListener('stopOrbitBtn', 'click', () => this.stopOrbitMode());
         
         // AI Viewport Analysis button (handled globally, see initialization at bottom of file)
         
         // Reward slider
-        document.getElementById('samplerReward').addEventListener('input', (e) => {
+        safeAddListener('samplerReward', 'input', (e) => {
             const value = parseFloat(e.target.value);
-            document.getElementById('samplerRewardValue').textContent = value.toFixed(1);
+            const rewardVal = document.getElementById('samplerRewardValue');
+            const rewardLabel = document.getElementById('samplerRewardLabel');
+            if (rewardVal) rewardVal.textContent = value.toFixed(1);
             
             // Update label
             let label = 'Neutral';
@@ -957,12 +947,13 @@ class WorldSamplerUI {
             else if (value > -0.7) label = 'Not Interesting';
             else label = 'Avoid';
             
-            document.getElementById('samplerRewardLabel').textContent = label;
+            if (rewardLabel) rewardLabel.textContent = label;
         });
         
         // Learning rate slider
-        document.getElementById('samplerLearningRate').addEventListener('input', (e) => {
-            document.getElementById('samplerLearningRateValue').textContent = e.target.value;
+        safeAddListener('samplerLearningRate', 'input', (e) => {
+            const lrVal = document.getElementById('samplerLearningRateValue');
+            if (lrVal) lrVal.textContent = e.target.value;
         });
         
         // Cesium click handler for selecting samples
@@ -976,8 +967,16 @@ class WorldSamplerUI {
     }
     
     async initializeSampler() {
-        const initType = document.getElementById('samplerInitType').value;
-        const numPoints = parseInt(document.getElementById('samplerNumPoints').value);
+        const initTypeEl = document.getElementById('samplerInitType');
+        const numPointsEl = document.getElementById('samplerNumPoints');
+        
+        // Handle missing elements gracefully
+        if (!initTypeEl || !numPointsEl) {
+            console.warn('[World Sampler] UI elements not found, using defaults');
+        }
+        
+        const initType = initTypeEl ? initTypeEl.value : 'gaussian_mixture';
+        const numPoints = numPointsEl ? parseInt(numPointsEl.value) : 1000;
         
         try {
             const result = await this.samplerClient.initialize({
@@ -996,8 +995,10 @@ class WorldSamplerUI {
     }
     
     async sampleLocations() {
-        const n = parseInt(document.getElementById('samplerNumSamples').value);
-        const method = document.getElementById('samplerMethod').value;
+        const numSamplesEl = document.getElementById('samplerNumSamples');
+        const methodEl = document.getElementById('samplerMethod');
+        const n = numSamplesEl ? parseInt(numSamplesEl.value) : 10;
+        const method = methodEl ? methodEl.value : 'weighted';
         
         try {
             const result = await this.samplerClient.sample(n, method);
