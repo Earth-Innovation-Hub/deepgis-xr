@@ -95,7 +95,10 @@ export async function initializeCesium(updateLoadingStatus) {
       // Enable preserveDrawingBuffer for screenshot/capture functionality
       contextOptions: {
         preserveDrawingBuffer: true
-      }
+      },
+      // Set resolution scale for high-DPI displays (prevents blurry rendering)
+      // Use devicePixelRatio for crisp rendering on Retina/4K displays
+      resolutionScale: window.devicePixelRatio || 1.0
     });
     
     // Track default base map layer
@@ -112,9 +115,13 @@ export async function initializeCesium(updateLoadingStatus) {
       if (viewer.scene.globe._surface) {
         viewer.scene.globe._surface._tileLoadQueueHigh.length = 0;
       }
+      
+      // Set initial screen space error (will be overridden by mode-specific settings)
+      // Only set if not in 2D mode to avoid overriding 2D quality settings
+      if (viewer.scene.mode !== Cesium.SceneMode.SCENE2D) {
+        viewer.scene.globe.maximumScreenSpaceError = CONFIG.MEMORY.MAX_SCREEN_SPACE_ERROR;
+      }
     }
-    
-    viewer.scene.globe.maximumScreenSpaceError = CONFIG.MEMORY.MAX_SCREEN_SPACE_ERROR;
     
     if (viewer.scene.globe.terrainProvider) {
       viewer.scene.globe.terrainProvider.errorEvent.addEventListener((error) => {
@@ -251,7 +258,8 @@ export async function initializeCesium(updateLoadingStatus) {
         viewer.scene.globe.depthTestAgainstTerrain = false;
         
         // Optimize screen space error for better quality in 2D
-        viewer.scene.globe.maximumScreenSpaceError = 4;
+        // Lower value = higher quality (sharper tiles)
+        viewer.scene.globe.maximumScreenSpaceError = 2; // Reduced from 4 for sharper rendering
         
         // Disable preload siblings (2D panning is predictable, no need to preload)
         viewer.scene.globe.preloadSiblings = false;
@@ -259,12 +267,23 @@ export async function initializeCesium(updateLoadingStatus) {
         // Disable preload ancestors (not needed in flat view)
         viewer.scene.globe.preloadAncestors = false;
         
+        // Ensure resolution scale is set for crisp rendering on high-DPI displays
+        if (viewer.scene && viewer.scene.globe) {
+          // Force high-resolution rendering for 2D mode
+          const pixelRatio = window.devicePixelRatio || 1.0;
+          if (pixelRatio > 1.0 && viewer.resolutionScale !== pixelRatio) {
+            viewer.resolutionScale = pixelRatio;
+            console.log(`Set resolution scale to ${pixelRatio} for high-DPI display`);
+          }
+        }
+        
         console.log('Applied 2D mode optimizations:', {
           tileCacheSize: 150,
           depthTestAgainstTerrain: false,
-          maximumScreenSpaceError: 4,
+          maximumScreenSpaceError: 2,
           preloadSiblings: false,
-          preloadAncestors: false
+          preloadAncestors: false,
+          resolutionScale: viewer.resolutionScale
         });
       }
       
