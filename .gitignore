@@ -212,4 +212,8 @@ VECTOR_LAYER_IMPLEMENTATION.md
 
 # Exclude docs folders (may contain sensitive information)
 docs/
-**/docs/ 
+**/docs/
+
+# Exclude commits.csv (may contain sensitive commit information)
+commits.csv
+**/commits.csv 
