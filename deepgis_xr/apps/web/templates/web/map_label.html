@@ -473,6 +473,85 @@
             color: #8b5cf6;
         }
         
+        /* ========== AI SESSION CONTEXT BAR ========== */
+        .ai-session-bar {
+            position: fixed;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            background: linear-gradient(135deg, rgba(59, 130, 246, 0.95) 0%, rgba(139, 92, 246, 0.95) 100%);
+            backdrop-filter: blur(12px);
+            padding: 10px 20px;
+            border-radius: 30px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1);
+            z-index: 1500;
+            animation: slideDown 0.3s ease-out;
+        }
+        
+        @keyframes slideDown {
+            from { transform: translateX(-50%) translateY(-100%); opacity: 0; }
+            to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+        
+        .ai-session-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: white;
+            font-size: 0.9rem;
+        }
+        
+        .ai-session-info i {
+            font-size: 1.2rem;
+        }
+        
+        .ai-session-info strong {
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.85rem;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+        
+        .ai-session-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .ai-session-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 20px;
+            color: white;
+            font-size: 0.85rem;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+        
+        .ai-session-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            color: white;
+            transform: translateY(-1px);
+        }
+        
+        .ai-session-btn.ai-session-save {
+            background: rgba(16, 185, 129, 0.8);
+            border-color: rgba(16, 185, 129, 0.9);
+        }
+        
+        .ai-session-btn.ai-session-save:hover {
+            background: rgba(16, 185, 129, 1);
+        }
+        
         /* HUD Panel form styling */
         .hud-panel .form-select,
         .hud-panel .form-control {
@@ -714,14 +793,7 @@
                     </div>
                 </div>
 
-                <div class="statistics-section">
-                    <div class="statistics-title">
-                        <i class="fas fa-chart-bar"></i> Statistics
-                    </div>
-                    <div class="chart-container">
-                        <canvas id="histogram"></canvas>
-                    </div>
-                </div>
+                <!-- Statistics moved to HUD Stats Panel -->
             </div>
         </div>
     </div>
@@ -735,6 +807,25 @@
         <a href="{% url 'label_search' %}" class="hud-quick-btn" id="quickView3D" title="Open 3D Viewer" onclick="return syncLocationTo3D()">
             <i class="fas fa-cube"></i> 3D View
         </a>
+    </div>
+    
+    <!-- AI Session Context Bar (shown when editing AI analysis results) -->
+    <div class="ai-session-bar" id="aiSessionBar" style="display: none;">
+        <div class="ai-session-info">
+            <i class="fas fa-brain"></i>
+            <span>Editing AI Analysis: <strong id="aiSessionIdDisplay"></strong></span>
+        </div>
+        <div class="ai-session-actions">
+            <a href="#" id="aiSessionReport" class="ai-session-btn" title="Back to AI Report">
+                <i class="fas fa-file-alt"></i> Report
+            </a>
+            <a href="#" id="aiSession3D" class="ai-session-btn" title="View in 3D" onclick="return syncLocationTo3D()">
+                <i class="fas fa-cube"></i> 3D View
+            </a>
+            <button class="ai-session-btn ai-session-save" id="aiSessionSave" title="Save changes to training dataset">
+                <i class="fas fa-save"></i> Save to Dataset
+            </button>
+        </div>
     </div>
     
     <!-- ========== HUD BOTTOM TOOLBAR ========== -->
@@ -1051,6 +1142,113 @@
             return lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90;
         }
         
+        // Show AI session context bar with navigation buttons
+        function showAISessionBar(sessionId, urlParams) {
+            const bar = document.getElementById('aiSessionBar');
+            const idDisplay = document.getElementById('aiSessionIdDisplay');
+            const reportBtn = document.getElementById('aiSessionReport');
+            const view3DBtn = document.getElementById('aiSession3D');
+            const saveBtn = document.getElementById('aiSessionSave');
+            
+            if (!bar) return;
+            
+            // Show truncated session ID
+            const shortId = sessionId.length > 20 ? sessionId.substring(0, 20) + '...' : sessionId;
+            idDisplay.textContent = shortId;
+            idDisplay.title = sessionId;
+            
+            // Set up report link
+            reportBtn.href = `/ai-analysis/report/${sessionId}/`;
+            
+            // Store session info for 3D sync
+            window.globals.aiSessionId = sessionId;
+            window.globals.aiSessionLat = parseFloat(urlParams.get('lat'));
+            window.globals.aiSessionLon = parseFloat(urlParams.get('lon'));
+            window.globals.aiSessionAlt = parseFloat(urlParams.get('alt')) || 1000;
+            
+            // Set up 3D view link with location sync
+            view3DBtn.href = "{% url 'label_search' %}";
+            view3DBtn.onclick = function(e) {
+                e.preventDefault();
+                syncLocationTo3D();
+            };
+            
+            // Set up save button
+            saveBtn.onclick = function() {
+                saveAISessionToDataset(sessionId);
+            };
+            
+            bar.style.display = 'flex';
+        }
+        
+        // Save AI session features to training dataset
+        async function saveAISessionToDataset(sessionId) {
+            try {
+                const drawnItems = window.globals.drawnItems;
+                if (!drawnItems || drawnItems.getLayers().length === 0) {
+                    showSnackBar('No features to save');
+                    return;
+                }
+                
+                showSnackBar('Saving features to training dataset...');
+                
+                // Collect all features as GeoJSON
+                const features = [];
+                drawnItems.eachLayer(layer => {
+                    if (layer.toGeoJSON) {
+                        const geojson = layer.toGeoJSON();
+                        // Preserve AI session metadata
+                        geojson.properties = {
+                            ...geojson.properties,
+                            ai_session_id: sessionId,
+                            edited: true,
+                            saved_at: new Date().toISOString()
+                        };
+                        features.push(geojson);
+                    }
+                });
+                
+                const geojsonData = {
+                    type: 'FeatureCollection',
+                    features: features,
+                    properties: {
+                        ai_session_id: sessionId,
+                        total_features: features.length,
+                        saved_from: 'map_label_editor'
+                    }
+                };
+                
+                // Save to server
+                const response = await fetch('/label/save-training-data/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': getCsrfToken()
+                    },
+                    body: JSON.stringify(geojsonData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    showSnackBar(`Saved ${features.length} features to training dataset!`);
+                } else {
+                    throw new Error(`Save failed: ${response.statusText}`);
+                }
+            } catch (error) {
+                console.error('Error saving to dataset:', error);
+                showSnackBar('Error saving to dataset: ' + error.message);
+            }
+        }
+        
+        // Get CSRF token for POST requests
+        function getCsrfToken() {
+            const cookieValue = document.cookie
+                .split('; ')
+                .find(row => row.startsWith('csrftoken='))
+                ?.split('=')[1];
+            return cookieValue || '';
+        }
+        
         // Load AI analysis session GeoJSON and display on map
         async function loadAIAnalysisSession(sessionId) {
             try {
@@ -1256,43 +1454,8 @@
             }
         }
         
-        // Initialize histogram chart
-        function initializeHistogram() {
-            const ctx = document.getElementById('histogram').getContext('2d');
-            window.globals.histogram_chart = new Chart(ctx, {
-                type: 'bar',
-                data: {
-                    labels: [],
-                    datasets: [{
-                        label: 'Vector Shape Areas',
-                        data: [],
-                        backgroundColor: 'rgba(255, 99, 132, 0.5)',
-                        borderColor: 'rgba(255, 99, 132, 1)',
-                        borderWidth: 1
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            title: {
-                                display: true,
-                                text: 'Count'
-                            }
-                        },
-                        x: {
-                            title: {
-                                display: true,
-                                text: 'Area (m²)'
-                            }
-                        }
-                    }
-                }
-            });
-        }
-
+        // Histogram initialization is now handled by map_label.js
+        
         // Get number of bins for histogram
         function getBinsValue() {
             // Default to 10 bins, can be adjusted based on data distribution
@@ -1752,41 +1915,29 @@
                 // Wait for dependencies
                 await waitForDependencies();
 
-                // map_label.js handles map initialization, so we just need to ensure globals.map is set
-                // Wait a bit for map_label.js to initialize if it hasn't yet
-                let mapInitialized = false;
-                for (let i = 0; i < 10; i++) {
-                    if (window.globals && window.globals.map && window.globals.map._container) {
-                        mapInitialized = true;
-                        console.log('Map already initialized by map_label.js');
-                        break;
+                // map_label.js handles map and histogram initialization
+                // Just wait for it to be ready
+                const waitForMapReady = async () => {
+                    for (let i = 0; i < 50; i++) {
+                        if (window.globals && window.globals.map && window.globals.map._container) {
+                            console.log('Map ready from map_label.js');
+                            return true;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 100));
                     }
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                }
+                    console.error('Map failed to initialize within timeout');
+                    return false;
+                };
                 
-                if (!mapInitialized) {
-                    console.warn('Map not initialized by map_label.js, initializing fallback...');
-                    window.globals.map = L.map('map', {
-                        zoomControl: true,
-                        attributionControl: true,
-                        zoom: 22,
-                        maxZoom: 24,
-                        preferCanvas: true
-                    }).setView([33.78202, -111.26536], 22);
-                }
-
-                // Initialize histogram
-                initializeHistogram();
-                
-                // Load categories for drawing
-                if (typeof updateCategoryProperties === 'function') {
-                    updateCategoryProperties();
-                }
+                await waitForMapReady();
                 
                 // Check for AI analysis session to load
                 const urlParams = new URLSearchParams(window.location.search);
                 const aiSessionId = urlParams.get('ai_session');
                 if (aiSessionId) {
+                    // Show AI session context bar
+                    showAISessionBar(aiSessionId, urlParams);
+                    // Load the AI analysis features
                     loadAIAnalysisSession(aiSessionId);
                 }
 
@@ -2090,18 +2241,17 @@
                             dateSelect.appendChild(option);
                         });
 
-                        // Initialize with OpenStreetMap and Google Satellite
+                        // Initialize with OpenStreetMap and ESRI Satellite (CORS-friendly)
                         const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                             attribution: '© OpenStreetMap contributors'
                         });
 
-                        const googleSatellite = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-                            maxZoom: 24,
-                            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-                            attribution: '© Google Maps',
+                        const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                            maxZoom: 23,
+                            attribution: '© Esri, Maxar, Earthstar Geographics',
                             zIndex: -1
                         }).addTo(window.globals.map);
-                        googleSatellite.bringToBack();
+                        satellite.bringToBack();
 
                         // Set up layer toggles
                         const rasterLayerToggle = document.getElementById('rasterLayerToggle');
@@ -2366,10 +2516,10 @@
 
                         baseMapToggle.addEventListener('change', (e) => {
                             if (e.target.checked) {
-                                window.globals.map.removeLayer(googleSatellite);
+                                window.globals.map.removeLayer(satellite);
                             } else {
-                                googleSatellite.addTo(window.globals.map);
-                                googleSatellite.bringToBack();
+                                satellite.addTo(window.globals.map);
+                                satellite.bringToBack();
                             }
                         });
 

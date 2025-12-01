@@ -343,21 +343,28 @@
 
         <!-- Action Buttons -->
         <div class="action-buttons">
+            {% if metadata.location %}
+            <a href="{% url 'label_search' %}#{{ metadata.location.lat }}/{{ metadata.location.lon }}/{{ metadata.location.alt|default:1000 }}" 
+               class="btn-report btn-primary-report"
+               title="Return to 3D viewer at analysis location">
+                <i class="fas fa-cube"></i> View in 3D
+            </a>
+            {% else %}
             <a href="{% url 'label_search' %}" class="btn-report btn-primary-report">
                 <i class="fas fa-arrow-left"></i> Back to Search
             </a>
+            {% endif %}
             {% if has_geojson %}
+            <a href="{% url 'map_label' %}?ai_session={{ session_id }}{% if metadata.location %}&lat={{ metadata.location.lat }}&lon={{ metadata.location.lon }}&alt={{ metadata.location.alt|default:1000 }}{% endif %}" 
+               class="btn-report btn-secondary-report"
+               title="Edit analysis features in 2D map editor">
+                <i class="fas fa-edit"></i> Edit in 2D
+            </a>
             <a href="{% url 'serve_analysis_image' session_id 'visualization' %}" 
                download 
                class="btn-report btn-secondary-report">
                 <i class="fas fa-download"></i> Download Visualization
             </a>
-            <a href="{% url 'map_label' %}?ai_session={{ session_id }}{% if metadata.location %}&lat={{ metadata.location.lat }}&lon={{ metadata.location.lon }}&alt={{ metadata.location.alt|default:1000 }}{% endif %}" 
-               class="btn-report btn-secondary-report">
-                <i class="fas fa-edit"></i> Edit in Map Editor
-            </a>
-            {% endif %}
-            {% if has_geojson %}
             <a href="{% url 'serve_analysis_geojson' session_id %}" 
                download="{{ session_id }}.geojson"
                class="btn-report btn-secondary-report">

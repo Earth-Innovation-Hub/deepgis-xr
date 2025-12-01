@@ -1198,6 +1198,52 @@
             setTimeout(enforceFullWidthMap, 500);
             setTimeout(enforceFullWidthMap, 1500);
             
+            // Check for incoming location from URL hash (from map_label or ai_analysis_report)
+            function checkIncomingLocation() {
+                const hash = window.location.hash;
+                if (hash) {
+                    // Hash format: #lat/lng/alt
+                    const parts = hash.substring(1).split('/');
+                    if (parts.length >= 3) {
+                        const lat = parseFloat(parts[0]);
+                        const lng = parseFloat(parts[1]);
+                        const alt = parseFloat(parts[2]);
+                        
+                        if (!isNaN(lat) && !isNaN(lng) && !isNaN(alt)) {
+                            console.log(`Incoming location from hash: lat=${lat}, lng=${lng}, alt=${alt}`);
+                            
+                            // Wait for viewer to be ready
+                            const tryFlyTo = () => {
+                                const viewer = window.AppState?.viewer || window.viewer;
+                                if (viewer && viewer.camera) {
+                                    viewer.camera.flyTo({
+                                        destination: Cesium.Cartesian3.fromDegrees(lng, lat, alt),
+                                        orientation: {
+                                            heading: Cesium.Math.toRadians(0),
+                                            pitch: Cesium.Math.toRadians(-45),
+                                            roll: 0.0
+                                        },
+                                        duration: 2.0
+                                    });
+                                    console.log('Camera flying to incoming location');
+                                    // Clear the hash after navigation
+                                    history.replaceState(null, null, window.location.pathname + window.location.search);
+                                } else {
+                                    console.log('Viewer not ready, retrying...');
+                                    setTimeout(tryFlyTo, 500);
+                                }
+                            };
+                            
+                            // Start trying after a delay to ensure viewer initialization
+                            setTimeout(tryFlyTo, 1000);
+                        }
+                    }
+                }
+            }
+            
+            // Check for incoming location on page load
+            checkIncomingLocation();
+            
             // Style World Sampler when it appears in HUD container
             function styleWorldSamplerInHUD() {
                 const worldSampler = document.getElementById('worldSamplerSection');

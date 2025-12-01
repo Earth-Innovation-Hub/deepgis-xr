@@ -3,7 +3,7 @@ window.globals = {
     rasters: [],
     layers: {},
     active_layer: "",
-    drawnItems: new L.FeatureGroup(),
+    drawnItems: null,  // Will be initialized when map is created
     categoryColor: {},
     histogram_chart: null,
     chart: null,
@@ -71,6 +71,11 @@ function initializeMap() {
         // Set up map event handlers
         setupMapHandlers(map);
         
+        // Add map controls (home button, scale)
+        if (typeof addMapControls === 'function') {
+            addMapControls(map);
+        }
+        
         // Trigger map ready event after a short delay to ensure map is fully initialized
         setTimeout(() => {
             if (typeof window.onMapReady === 'function') {
@@ -84,7 +89,10 @@ function initializeMap() {
 
 // Set up map event handlers
 function setupMapHandlers(mapInstance) {
-    if (!mapInstance) return;
+    if (!mapInstance) {
+        console.error('setupMapHandlers called with null mapInstance');
+        return;
+    }
     
     // Update URL hash when map moves
     mapInstance.on('moveend', function() {
@@ -98,7 +106,10 @@ function setupMapHandlers(mapInstance) {
         }
     });
     
-    // Add feature group to map first
+    // Create and add feature group for drawn items
+    if (!window.globals.drawnItems) {
+        window.globals.drawnItems = new L.FeatureGroup();
+    }
     mapInstance.addLayer(window.globals.drawnItems);
 
     // Initialize draw control with the properly initialized feature group
@@ -150,10 +161,10 @@ function setupMapHandlers(mapInstance) {
         attribution: '© OpenStreetMap contributors'
     });
 
-window.globals.layers["Google Satellite"] = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-    maxZoom: 24,
-    subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
-    attribution: '© Google'
+// Use ESRI World Imagery (CORS-friendly alternative to Google Satellite)
+window.globals.layers["Satellite"] = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 23,
+    attribution: '© Esri, Maxar, Earthstar Geographics'
 });
 
     // Add default layer
@@ -162,7 +173,7 @@ window.globals.layers["Google Satellite"] = L.tileLayer('https://{s}.google.com/
     // Create additional layers object without conflicting with rasterBaseLayers
     var additionalLayers = {
         "OpenStreetMap": window.globals.layers["OpenStreetMap"],
-        "Google Satellite": window.globals.layers["Google Satellite"]
+        "Satellite": window.globals.layers["Satellite"]
     };
 
     // Create empty overlays object for additional layers
@@ -408,42 +419,62 @@ var HomeControl = L.Control.extend({
     }
 });
 
-// Add controls to map
-new HomeControl().addTo(map);
+// Controls will be added after map initialization via addMapControls function
+function addMapControls(mapInstance) {
+    if (!mapInstance) {
+        console.warn('Cannot add controls: map not initialized');
+        return;
+    }
+    
+    // Add home control
+    new HomeControl().addTo(mapInstance);
+    
+    // Add scale control
+    L.control.scale({
+        position: 'bottomleft',
+        imperial: false
+    }).addTo(mapInstance);
+}
 
-// Add scale control
-L.control.scale({
-    position: 'bottomleft',
-    imperial: false
-}).addTo(map);
-
-// Initialize histogram chart
-window.globals.chart = $("#histogram").get(0).getContext("2d");
-
-var histogram_data = {
-    labels: [0, 1, 2, 3, 4, 5, 6, 7],
-    datasets: [
-        {
-            label: "Rock area count",
-            borderColor: "#ff0000",
-            pointBorderColor: "#ff0000",
-            pointBackgroundColor: "#ff0000",
-            pointHoverBackgroundColor: "#ff0000",
-            pointHoverBorderColor: "#ff0000",
-            pointBorderWidth: 1,
-            pointHoverRadius: 1,
-            pointHoverBorderWidth: 1,
-            pointRadius: 2,
-            fill: true,
-            borderWidth: 1,
-            data: [0, 0, 0, 0, 0, 0, 0],
+// Initialize histogram chart (only if not already initialized)
+if (!window.globals.histogram_chart) {
+    const histogramCanvas = document.getElementById("histogram");
+    if (!histogramCanvas) {
+        console.warn('Histogram canvas not found, skipping chart initialization');
+    } else {
+        // Destroy any existing chart on this canvas
+        const existingChart = Chart.getChart(histogramCanvas);
+        if (existingChart) {
+            console.log('Destroying existing chart before reinitializing');
+            existingChart.destroy();
         }
-    ]
-};
+        
+        window.globals.chart = histogramCanvas.getContext("2d");
+        
+        var histogram_data = {
+            labels: [0, 1, 2, 3, 4, 5, 6, 7],
+            datasets: [
+                {
+                    label: "Rock area count",
+                    borderColor: "#ff0000",
+                    pointBorderColor: "#ff0000",
+                    pointBackgroundColor: "#ff0000",
+                    pointHoverBackgroundColor: "#ff0000",
+                    pointHoverBorderColor: "#ff0000",
+                    pointBorderWidth: 1,
+                    pointHoverRadius: 1,
+                    pointHoverBorderWidth: 1,
+                    pointRadius: 2,
+                    fill: true,
+                    borderWidth: 1,
+                    data: [0, 0, 0, 0, 0, 0, 0],
+                }
+            ]
+        };
 
-window.globals.histogram_chart = new Chart(window.globals.chart, {
-    type: 'bar',
-    data: histogram_data,
+        window.globals.histogram_chart = new Chart(window.globals.chart, {
+            type: 'bar',
+            data: histogram_data,
     options: {
         showLines: true,
         responsive: true,
@@ -486,7 +517,11 @@ window.globals.histogram_chart = new Chart(window.globals.chart, {
             }
         }
     }
-});
+        });
+    }
+} else {
+    console.log('Histogram chart already initialized, skipping');
+}
 
 // HistogramControl removed - histogram now in HUD panel in template
 
