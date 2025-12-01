@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
 [![Django](https://img.shields.io/badge/django-4.0+-green.svg)](https://www.djangoproject.com/)
-[![Cesium](https://img.shields.io/badge/cesium-1.95+-orange.svg)](https://cesium.com/)
+[![Cesium](https://img.shields.io/badge/cesium-1.111+-orange.svg)](https://cesium.com/)
 
 DeepGIS-XR is a comprehensive geospatial visualization and analysis platform that combines advanced 3D mapping, AI-powered image analysis, and adaptive sampling systems for Earth and lunar exploration.
 
@@ -42,12 +42,22 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 - **LOLA Terrain**: High-resolution lunar elevation data
 - **Lunar Digital Twin**: Navigational decision support system
 
+### 🌤️ Weather Stations Integration
+- **NWS Weather Stations**: Real-time weather data from National Weather Service API
+- **Multi-State Support**: Quick load stations from California, Arizona, Colorado, and Nevada
+- **Interactive Display**: Temperature labels, weather icons, and detailed popups
+- **Auto-Update**: Automatic refresh every 15 minutes for current conditions
+- **HUD Integration**: Weather stations accessible via bottom toolbar layer button
+- **21 Default Stations**: Pre-configured stations across four western US states
+
 ### 🗺️ Advanced Geospatial Features
 - **3D Globe Visualization**: CesiumJS-powered Earth and Moon globes
 - **Multi-Layer Support**: Raster and vector layer management
 - **Tile Server Integration**: Custom tile server for large datasets
 - **3D Model Support**: GLB/GLTF model loading and visualization
 - **Coordinate Systems**: Support for multiple projections and ellipsoids
+- **Drone Navigation**: Fly mode and orbit mode for automated camera movement
+- **Measurement Tools**: Distance, area, and height measurement capabilities
 
 ---
 
@@ -104,6 +114,9 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 ### Feature-Specific Guides
 - **[AI Integration Plan](WORLD_SAMPLER_AI_INTEGRATION_PLAN.md)**: AI/ML feature roadmap
 - **[Drone Fly Mode](DRONE_FLY_MODE_IMPLEMENTATION.md)**: Automated navigation features
+- **[Weather Stations](WEATHER_STATIONS_IMPLEMENTATION.md)**: Weather data integration guide
+- **[Weather Data Summary](WEATHER_DATA_SUMMARY.md)**: Weather data sources and API documentation
+- **[Sentinel-2 Quickstart](SENTINEL2_QUICKSTART.md)**: Satellite imagery integration
 - **[Testing Guide](TESTING_GUIDE.md)**: Testing and debugging procedures
 
 ---
@@ -149,8 +162,12 @@ deepgis-xr/
 ├── staticfiles/             # Static assets
 │   └── web/
 │       └── js/
-│           ├── world-sampler-ui.js  # Main UI logic
-│           └── cesium-init.js      # Cesium setup
+│           ├── main.js              # Main application entry
+│           ├── world-sampler-ui.js  # World sampler UI logic
+│           ├── widgets/
+│           │   └── weather-stations.js  # Weather stations widget
+│           └── utils/
+│               └── nws-weather-stations.js  # NWS API integration
 ├── docker-compose.yml       # Docker configuration
 ├── requirements.txt        # Python dependencies
 └── README.md              # This file
@@ -221,6 +238,17 @@ deepgis-xr/
 4. **Use navigation widgets** for precise control
 5. **Adjust camera** with aviation-style controls
 
+### Weather Stations
+
+1. **Navigate to DeepGIS Search** (`/label/3d/search/`)
+2. **Click "Weather" button** in the bottom HUD toolbar
+3. **Toggle "Show Weather Stations"** to enable
+4. **Load stations**:
+   - Click "All States" to load all 21 stations (CA, AZ, CO, NV)
+   - Or click individual state buttons (CA, AZ, CO, NV) for specific regions
+5. **View weather data**: Click on station markers for detailed information
+6. **Auto-update**: Stations refresh every 15 minutes automatically
+
 ---
 
 ## 🔧 Configuration
@@ -251,10 +279,26 @@ To enable GPU for AI features:
 
 ---
 
-## 📊 Recent Updates (November 2025)
+## 📊 Recent Updates (January 2025)
+
+### Weather Stations Integration
+- ✅ **NWS Weather Stations**: Real-time weather data from National Weather Service API
+- ✅ **Multi-State Support**: Added stations for California, Arizona, Colorado, and Nevada (21 stations total)
+- ✅ **HUD Integration**: Weather stations accessible via bottom toolbar as a layer button
+- ✅ **Quick Load Buttons**: Individual state buttons (CA, AZ, CO, NV) for easy station loading
+- ✅ **Error Handling**: Fixed duplicate entity errors and null value handling
+- ✅ **GeoJSON Support**: Proper coordinate extraction from NWS API GeoJSON format
+
+### UI/UX Improvements
+- ✅ **HUD Toolbar**: Bottom-center toolbar with layer buttons (View, AI, Tools, Mission, Sampler, Models, Weather, VR)
+- ✅ **Floating Panels**: Modern HUD-style panels for all major features
+- ✅ **Navigation Widgets**: Aviation-style heading dial and attitude indicator
+- ✅ **Drone Controls**: Fly mode and orbit mode widgets for automated navigation
 
 ### AI/ML Integration
 - ✅ **Zero-Shot Detection**: Added COCO object detection alongside SAM
+- ✅ **YOLOv8 Integration**: Fast object detection with 80 COCO classes
+- ✅ **Mask2Former**: Advanced segmentation model support
 - ✅ **SAM Optimization**: Response size optimization, polygon simplification
 - ✅ **Clean Viewport Capture**: Hide overlays during capture for accurate analysis
 
@@ -268,10 +312,11 @@ To enable GPU for AI features:
 - ✅ **Default Altitude**: 1000 km on load
 - ✅ **Lunar Digital Twin**: Navigational decision support
 
-### Performance
+### Performance & Stability
 - ✅ **Memory Optimization**: Fixed Cesium memory issues
 - ✅ **Large File Management**: Removed 158MB-1.2GB models from git
 - ✅ **Raster Layer Optimization**: Improved 2D layer performance
+- ✅ **Error Handling**: Improved null value checks and duplicate entity prevention
 
 ---
 
@@ -330,6 +375,9 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [x] SAM viewport analysis
 - [x] World Sampler adaptive sampling
 - [x] Moon viewer with navigation widgets
+- [x] Weather stations integration
+- [x] HUD toolbar and panel system
+- [x] Multi-state weather station support
 
 ---
 
