@@ -204,9 +204,11 @@ VECTOR_LAYER_CAMERA_FIX.md
 VECTOR_LAYER_FIX.md
 VECTOR_LAYER_IMPLEMENTATION.md
 
-# Documentation - exclude all .md files except README.md
+# Documentation - exclude all .md files except README.md and LICENSE
 *.md
 !README.md
+!LICENSE
+!**/LICENSE
 
 # Exclude docs folders (may contain sensitive information)
 docs/
