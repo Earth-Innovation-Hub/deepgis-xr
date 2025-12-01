@@ -1975,10 +1975,29 @@ def serve_analysis_geojson(request, session_id):
     if not geojson_path.exists():
         raise Http404(f"GeoJSON file not found for session: {session_id}")
     
-    # Load and return GeoJSON
+    # Load and return GeoJSON with image metadata
     try:
         with open(geojson_path, 'r') as f:
             geojson_data = json.load(f)
+        
+        # Try to get image dimensions from query image
+        query_image_path = session_dir / 'query_image.png'
+        image_width = 996  # Default
+        image_height = 996  # Default
+        
+        if query_image_path.exists():
+            try:
+                from PIL import Image as PILImage
+                with PILImage.open(query_image_path) as img:
+                    image_width, image_height = img.size
+            except Exception as e:
+                print(f"Warning: Could not read image dimensions: {e}")
+        
+        # Add image dimensions to GeoJSON metadata
+        if 'metadata' not in geojson_data:
+            geojson_data['metadata'] = {}
+        geojson_data['metadata']['image_width'] = image_width
+        geojson_data['metadata']['image_height'] = image_height
         
         return JsonResponse(geojson_data, safe=False)
     except Exception as e:

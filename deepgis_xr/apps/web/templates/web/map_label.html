@@ -877,20 +877,20 @@
                 </label>
             </div>
             <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" id="terrainLayerToggle">
-                <label class="form-check-label" for="terrainLayerToggle">
+                <input class="form-check-input" type="checkbox" id="terrainLayerToggleHud">
+                <label class="form-check-label" for="terrainLayerToggleHud">
                     <i class="fas fa-mountain me-2"></i>Terrain/DEM
                 </label>
             </div>
             <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" id="hillshadeLayerToggle">
-                <label class="form-check-label" for="hillshadeLayerToggle">
+                <input class="form-check-input" type="checkbox" id="hillshadeLayerToggleHud">
+                <label class="form-check-label" for="hillshadeLayerToggleHud">
                     <i class="fas fa-chess-board me-2"></i>Hillshade
                 </label>
             </div>
             <div class="form-check mb-2">
-                <input class="form-check-input" type="checkbox" id="contourLayerToggle">
-                <label class="form-check-label" for="contourLayerToggle">
+                <input class="form-check-input" type="checkbox" id="contourLayerToggleHud">
+                <label class="form-check-label" for="contourLayerToggleHud">
                     <i class="fas fa-project-diagram me-2"></i>Contour Lines
                 </label>
             </div>
@@ -905,10 +905,10 @@
             </div>
         </div>
         <!-- Terrain Controls (shown when terrain is active) -->
-        <div id="terrainControls" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(59, 130, 246, 0.2);">
+        <div id="terrainControlsHud" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(59, 130, 246, 0.2);">
             <div class="form-group mb-3">
                 <label class="form-label"><i class="fas fa-palette me-2"></i>Color Scheme</label>
-                <select class="form-select form-select-sm" id="elevationColorScheme">
+                <select class="form-select form-select-sm" id="elevationColorSchemeHud">
                     <option value="terrain">🏔️ Terrain</option>
                     <option value="rainbow">🌈 Rainbow</option>
                     <option value="grayscale">⚫ Grayscale</option>
@@ -916,8 +916,8 @@
                 </select>
             </div>
             <div class="form-group mb-3">
-                <label class="form-label"><i class="fas fa-adjust me-2"></i>Opacity: <span id="opacityValue">70%</span></label>
-                <input type="range" class="form-range" id="terrainOpacity" min="0" max="100" value="70">
+                <label class="form-label"><i class="fas fa-adjust me-2"></i>Opacity: <span id="opacityValueHud">70%</span></label>
+                <input type="range" class="form-range" id="terrainOpacityHud" min="0" max="100" value="70">
             </div>
         </div>
     </div>
@@ -1135,11 +1135,33 @@
         }
         
         // Check if coordinates are in geographic range (valid lat/lon)
+        // Also rejects normalized/pixel coordinates that are too small
         function isGeographicCoordinate(coord) {
             // GeoJSON is [lng, lat]
             const lng = coord[0];
             const lat = coord[1];
-            return lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90;
+            
+            // Basic range check
+            if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+                return false;
+            }
+            
+            // Heuristic: if both coordinates are very small (< 10), 
+            // they're likely pixel/normalized coordinates, not geographic
+            // Very few real locations would have both lat and lon in range [-10, 10]
+            // (This covers: near 0,0 in Gulf of Guinea, some Atlantic islands)
+            // But SAM pixel coords are often in 0-1 range or 0-1000 range
+            if (Math.abs(lng) < 10 && Math.abs(lat) < 10) {
+                // Additional check: if they look like normalized coords (0-1 range)
+                if (Math.abs(lng) <= 1 && Math.abs(lat) <= 1) {
+                    console.log('[Coord Check] Detected normalized coordinates:', coord);
+                    return false;
+                }
+                // Log warning for ambiguous coordinates near 0,0
+                console.warn('[Coord Check] Ambiguous coordinates near 0,0:', coord);
+            }
+            
+            return true;
         }
         
         // Show AI session context bar with navigation buttons
@@ -1256,9 +1278,17 @@
                 
                 // Get location from URL params (passed from ai_analysis_report)
                 const urlParams = new URLSearchParams(window.location.search);
-                const lat = parseFloat(urlParams.get('lat'));
-                const lon = parseFloat(urlParams.get('lon'));
-                const alt = parseFloat(urlParams.get('alt')) || 1000;
+                const latParam = urlParams.get('lat');
+                const lonParam = urlParams.get('lon');
+                const altParam = urlParams.get('alt');
+                
+                console.log('[AI Session] Raw URL params:', { latParam, lonParam, altParam });
+                
+                const lat = parseFloat(latParam);
+                const lon = parseFloat(lonParam);
+                const alt = parseFloat(altParam) || 1000;
+                
+                console.log('[AI Session] Parsed coordinates:', { lat, lon, alt, isLatValid: !isNaN(lat), isLonValid: !isNaN(lon) });
                 
                 const response = await fetch(`/label/ai-analysis/geojson/${sessionId}/`);
                 if (!response.ok) {
@@ -1318,42 +1348,168 @@
                     }
                 }
                 
-                // If pixel coordinates, show warning and just center map on location
+                // If pixel coordinates, transform to geographic and render on map
                 if (isPixelCoords) {
-                    showSnackBar('AI analysis contains pixel coordinates - centering on analysis location');
-                    if (!isNaN(lat) && !isNaN(lon)) {
-                        const zoom = altitudeToZoom(alt);
-                        map.setView([lat, lon], zoom);
-                        
-                        // Add a marker at the analysis location
-                        const marker = L.marker([lat, lon], {
-                            icon: L.divIcon({
-                                className: 'ai-analysis-marker',
-                                html: '<div style="background: rgba(59, 130, 246, 0.8); color: white; padding: 8px 12px; border-radius: 8px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"><i class="fas fa-brain"></i> AI Analysis Location</div>',
-                                iconSize: null,
-                                iconAnchor: [75, 15]
-                            })
-                        }).addTo(map);
-                        
-                        marker.bindPopup(`
-                            <div style="min-width: 200px;">
-                                <h6><i class="fas fa-brain"></i> AI Analysis Session</h6>
-                                <p><b>Session ID:</b> ${sessionId}</p>
-                                <p><b>Features:</b> ${geojson.features.length}</p>
-                                <p><b>Location:</b> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>
-                                <p><b>Altitude:</b> ${alt.toFixed(0)}m</p>
-                                <hr>
-                                <p style="font-size: 0.9em; color: #666;">
-                                    <i class="fas fa-info-circle"></i> Features are in pixel coordinates.<br>
-                                    Use the visualization image from the report for reference.
-                                </p>
-                            </div>
-                        `);
+                    console.log('[AI Session] Pixel coordinates detected, transforming to geographic');
+                    
+                    if (isNaN(lat) || isNaN(lon)) {
+                        showSnackBar('Cannot display pixel coordinates without location reference');
+                        return;
                     }
                     
-                    setTimeout(() => {
-                        showSnackBar(`${geojson.features.length} features detected (pixel coordinates)`);
-                    }, 2000);
+                    // Get image dimensions from metadata or estimate from coordinate ranges
+                    let imageWidth = geojson.metadata?.image_width || 996;
+                    let imageHeight = geojson.metadata?.image_height || 996;
+                    
+                    // If no metadata, estimate from max coordinates in features
+                    if (!geojson.metadata?.image_width) {
+                        let maxX = 0, maxY = 0;
+                        geojson.features.forEach(f => {
+                            if (f.geometry.type === 'Polygon') {
+                                f.geometry.coordinates[0].forEach(coord => {
+                                    maxX = Math.max(maxX, coord[0]);
+                                    maxY = Math.max(maxY, coord[1]);
+                                });
+                            }
+                        });
+                        // Round up to nearest power of 2 or common sizes
+                        if (maxX > 0) imageWidth = Math.max(imageWidth, Math.ceil(maxX / 100) * 100);
+                        if (maxY > 0) imageHeight = Math.max(imageHeight, Math.ceil(maxY / 100) * 100);
+                    }
+                    
+                    console.log('[AI Session] Image dimensions:', { imageWidth, imageHeight });
+                    
+                    // Calculate geographic bounds based on altitude
+                    // Approximate field of view based on altitude
+                    // At ground level, 1 degree latitude ≈ 111km
+                    // Camera FOV creates a viewing area proportional to altitude
+                    const metersPerDegLat = 111320;
+                    const metersPerDegLon = 111320 * Math.cos(lat * Math.PI / 180);
+                    
+                    // Estimate ground coverage based on altitude (assuming ~60° FOV camera)
+                    // tan(30°) ≈ 0.577, so half-width = altitude * 0.577
+                    const halfWidthMeters = alt * 0.6;  // Approximate ground coverage
+                    const halfHeightMeters = halfWidthMeters * (imageHeight / imageWidth);
+                    
+                    const deltaLon = halfWidthMeters / metersPerDegLon;
+                    const deltaLat = halfHeightMeters / metersPerDegLat;
+                    
+                    // Create bounds: [minLat, minLon] to [maxLat, maxLon]
+                    const bounds = {
+                        minLat: lat - deltaLat,
+                        maxLat: lat + deltaLat,
+                        minLon: lon - deltaLon,
+                        maxLon: lon + deltaLon
+                    };
+                    
+                    console.log('[AI Session] Geographic bounds:', bounds);
+                    
+                    // Transform pixel coordinate to geographic
+                    function pixelToGeo(pixelX, pixelY) {
+                        // Pixel (0,0) is top-left, map to geographic bounds
+                        // X increases right (lon increases), Y increases down (lat decreases)
+                        const lonRange = bounds.maxLon - bounds.minLon;
+                        const latRange = bounds.maxLat - bounds.minLat;
+                        
+                        const geoLon = bounds.minLon + (pixelX / imageWidth) * lonRange;
+                        const geoLat = bounds.maxLat - (pixelY / imageHeight) * latRange; // Y inverted
+                        
+                        return [geoLat, geoLon];
+                    }
+                    
+                    // Set map view to the calculated bounds
+                    const zoom = altitudeToZoom(alt);
+                    map.setView([lat, lon], zoom);
+                    
+                    // Add features with transformed coordinates
+                    const geoBounds = L.latLngBounds();
+                    let featuresAdded = 0;
+                    
+                    // Use custom segmentation pane
+                    const paneOption = map.getPane('segmentationPane') ? { pane: 'segmentationPane' } : {};
+                    
+                    // Generate colors for segments
+                    function getSegmentColor(index) {
+                        const colors = [
+                            '#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231',
+                            '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe',
+                            '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000',
+                            '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080'
+                        ];
+                        return colors[index % colors.length];
+                    }
+                    
+                    geojson.features.forEach((feature, index) => {
+                        try {
+                            const geometry = feature.geometry;
+                            const properties = feature.properties || {};
+                            const color = properties.color || getSegmentColor(index);
+                            
+                            let layer;
+                            
+                            if (geometry.type === 'Polygon') {
+                                // Transform pixel coordinates to geographic
+                                const geoCoords = geometry.coordinates[0].map(coord => 
+                                    pixelToGeo(coord[0], coord[1])
+                                );
+                                
+                                layer = L.polygon(geoCoords, {
+                                    color: color,
+                                    weight: 1,
+                                    opacity: 0.8,
+                                    fillOpacity: 0.4,
+                                    ...paneOption
+                                });
+                                geoBounds.extend(layer.getBounds());
+                            } else if (geometry.type === 'MultiPolygon') {
+                                const multiGeoCoords = geometry.coordinates.map(polygon =>
+                                    polygon[0].map(coord => pixelToGeo(coord[0], coord[1]))
+                                );
+                                layer = L.polygon(multiGeoCoords, {
+                                    color: color,
+                                    weight: 1,
+                                    opacity: 0.8,
+                                    fillOpacity: 0.4,
+                                    ...paneOption
+                                });
+                                geoBounds.extend(layer.getBounds());
+                            }
+                            
+                            if (layer) {
+                                // Add popup with segment info
+                                const label = properties.label || properties.class_name || `Segment ${index + 1}`;
+                                const popupContent = `
+                                    <div style="min-width: 120px;">
+                                        <b>${label}</b><br>
+                                        ${properties.score ? `Score: ${(properties.score * 100).toFixed(1)}%<br>` : ''}
+                                        ${properties.area ? `Area: ${properties.area.toFixed(0)} px<br>` : ''}
+                                        <small style="color: #666;">Segment ${index + 1} of ${geojson.features.length}</small>
+                                    </div>
+                                `;
+                                layer.bindPopup(popupContent);
+                                layer.feature = feature;
+                                layer.aiSessionId = sessionId;
+                                
+                                drawnItems.addLayer(layer);
+                                featuresAdded++;
+                            }
+                        } catch (err) {
+                            console.warn(`Error adding pixel feature ${index}:`, err);
+                        }
+                    });
+                    
+                    // Fit to bounds if valid
+                    if (geoBounds.isValid()) {
+                        map.fitBounds(geoBounds, { padding: [20, 20], maxZoom: 20 });
+                    }
+                    
+                    // Ensure features stay on top
+                    if (drawnItems) {
+                        drawnItems.bringToFront();
+                    }
+                    
+                    showSnackBar(`Loaded ${featuresAdded} AI segmentation features`);
+                    console.log('[AI Session] Added', featuresAdded, 'pixel-transformed features');
                     return;
                 }
                 
@@ -1378,6 +1534,9 @@
                         
                         let layer;
                         
+                        // Use custom segmentation pane to ensure features stay on top
+                        const paneOption = map.getPane('segmentationPane') ? { pane: 'segmentationPane' } : {};
+                        
                         if (geometry.type === 'Polygon') {
                             // GeoJSON is [lng, lat], Leaflet needs [lat, lng]
                             const coords = geometry.coordinates[0].map(coord => [coord[1], coord[0]]);
@@ -1385,7 +1544,8 @@
                                 color: color,
                                 weight: 2,
                                 opacity: 0.8,
-                                fillOpacity: 0.3
+                                fillOpacity: 0.3,
+                                ...paneOption
                             });
                             bounds.extend(layer.getBounds());
                         } else if (geometry.type === 'MultiPolygon') {
@@ -1396,7 +1556,8 @@
                                 color: color,
                                 weight: 2,
                                 opacity: 0.8,
-                                fillOpacity: 0.3
+                                fillOpacity: 0.3,
+                                ...paneOption
                             });
                             bounds.extend(layer.getBounds());
                         } else if (geometry.type === 'Point') {
@@ -1405,6 +1566,7 @@
                                 radius: 8,
                                 color: color,
                                 weight: 2,
+                                ...paneOption,
                                 opacity: 0.8,
                                 fillOpacity: 0.5
                             });
@@ -1436,10 +1598,39 @@
                 
                 // Zoom to fit all features, or use provided location
                 if (bounds.isValid()) {
-                    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 20 });
+                    const boundsCenter = bounds.getCenter();
+                    
+                    // Sanity check: if bounds are near 0,0, likely bad coordinates - use URL params instead
+                    if (Math.abs(boundsCenter.lat) < 5 && Math.abs(boundsCenter.lng) < 5) {
+                        console.warn('[AI Session] Bounds center near 0,0, likely invalid:', boundsCenter);
+                        if (!isNaN(lat) && !isNaN(lon)) {
+                            const zoom = altitudeToZoom(alt);
+                            console.log('[AI Session] Using URL params instead of invalid bounds:', { lat, lon, zoom });
+                            map.setView([lat, lon], zoom);
+                        } else {
+                            console.warn('[AI Session] No valid URL params to fall back to');
+                        }
+                    } else {
+                        console.log('[AI Session] Fitting map to feature bounds:', bounds);
+                        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 20 });
+                    }
                 } else if (!isNaN(lat) && !isNaN(lon)) {
                     const zoom = altitudeToZoom(alt);
+                    console.log('[AI Session] No valid bounds, centering on location:', { lat, lon, zoom });
                     map.setView([lat, lon], zoom);
+                } else {
+                    console.warn('[AI Session] No valid bounds or location, map view not changed');
+                }
+                
+                // Ensure AI segmentation features stay on top of base/raster layers
+                if (drawnItems) {
+                    drawnItems.bringToFront();
+                    // Also bring to front after a delay in case other layers load async
+                    setTimeout(() => {
+                        if (window.globals.drawnItems) {
+                            window.globals.drawnItems.bringToFront();
+                            }
+                    }, 1000);
                 }
                 
                 showSnackBar(`Loaded ${featuresAdded} AI analysis features for editing`);
@@ -1455,7 +1646,7 @@
         }
         
         // Histogram initialization is now handled by map_label.js
-        
+
         // Get number of bins for histogram
         function getBinsValue() {
             // Default to 10 bins, can be adjusted based on data distribution
@@ -1919,12 +2110,12 @@
                 // Just wait for it to be ready
                 const waitForMapReady = async () => {
                     for (let i = 0; i < 50; i++) {
-                        if (window.globals && window.globals.map && window.globals.map._container) {
+                    if (window.globals && window.globals.map && window.globals.map._container) {
                             console.log('Map ready from map_label.js');
                             return true;
-                        }
-                        await new Promise(resolve => setTimeout(resolve, 100));
                     }
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
                     console.error('Map failed to initialize within timeout');
                     return false;
                 };
@@ -1935,10 +2126,17 @@
                 const urlParams = new URLSearchParams(window.location.search);
                 const aiSessionId = urlParams.get('ai_session');
                 if (aiSessionId) {
+                    console.log('[AI Session] Detected ai_session parameter:', aiSessionId);
+                    console.log('[AI Session] Location params:', {
+                        lat: urlParams.get('lat'),
+                        lon: urlParams.get('lon'),
+                        alt: urlParams.get('alt')
+                    });
                     // Show AI session context bar
                     showAISessionBar(aiSessionId, urlParams);
                     // Load the AI analysis features
-                    loadAIAnalysisSession(aiSessionId);
+                    await loadAIAnalysisSession(aiSessionId);
+                    console.log('[AI Session] Finished loading AI session');
                 }
 
                 // Add event listeners for histogram updates - with debouncing
@@ -2036,93 +2234,235 @@
                     vectorLayerToggle.addEventListener('change', debouncedUpdate);
                 }
 
-                // Terrain layer controls
-                const terrainLayerToggle = document.getElementById('terrainLayerToggle');
-                const hillshadeLayerToggle = document.getElementById('hillshadeLayerToggle');
-                const contourLayerToggle = document.getElementById('contourLayerToggle');
-                const terrainControls = document.getElementById('terrainControls');
-                const elevationColorScheme = document.getElementById('elevationColorScheme');
-                const terrainOpacity = document.getElementById('terrainOpacity');
-                const opacityValue = document.getElementById('opacityValue');
+                // Terrain layer controls - setup function for reusable initialization
+                function setupTerrainControls(prefix = '') {
+                    const terrainLayerToggle = document.getElementById(prefix + 'terrainLayerToggle');
+                    const hillshadeLayerToggle = document.getElementById(prefix + 'hillshadeLayerToggle');
+                    const contourLayerToggle = document.getElementById(prefix + 'contourLayerToggle');
+                    const terrainControls = document.getElementById(prefix + 'terrainControls');
+                    const elevationColorScheme = document.getElementById(prefix + 'elevationColorScheme');
+                    const terrainOpacity = document.getElementById(prefix + 'terrainOpacity');
+                    const opacityValue = document.getElementById(prefix + 'opacityValue');
 
-                // Show/hide terrain controls
-                function updateTerrainControlsVisibility() {
-                    const anyTerrainLayerActive = terrainLayerToggle.checked || 
-                                                        hillshadeLayerToggle.checked || 
-                                                        contourLayerToggle.checked;
-                    terrainControls.style.display = anyTerrainLayerActive ? 'block' : 'none';
+                    // Return early if required elements don't exist
+                    if (!terrainLayerToggle || !hillshadeLayerToggle || !contourLayerToggle) {
+                        return;
+                    }
+
+                    // Show/hide terrain controls
+                    function updateTerrainControlsVisibility() {
+                        const anyTerrainLayerActive = (terrainLayerToggle && terrainLayerToggle.checked) || 
+                                                            (hillshadeLayerToggle && hillshadeLayerToggle.checked) || 
+                                                            (contourLayerToggle && contourLayerToggle.checked);
+                        if (terrainControls) {
+                            terrainControls.style.display = anyTerrainLayerActive ? 'block' : 'none';
+                        }
+                    }
+
+                    // Terrain layer toggle handler
+                    terrainLayerToggle.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            if (!window.globals.currentLayers.terrain) {
+                                window.globals.currentLayers.terrain = createTerrainLayer(window.globals.terrainSettings.colorScheme);
+                            }
+                            if (window.globals.currentLayers.terrain) {
+                                window.globals.currentLayers.terrain.addTo(window.globals.map);
+                            } else {
+                                e.target.checked = false;
+                                showSnackBar('Failed to create terrain layer');
+                            }
+                        } else {
+                            if (window.globals.currentLayers.terrain) {
+                                window.globals.map.removeLayer(window.globals.currentLayers.terrain);
+                            }
+                        }
+                        updateTerrainControlsVisibility();
+                        maintainLayerOrder();
+                    });
+
+                    // Hillshade layer toggle handler
+                    hillshadeLayerToggle.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            if (!window.globals.currentLayers.hillshade) {
+                                window.globals.currentLayers.hillshade = createHillshadeLayer();
+                            }
+                            if (window.globals.currentLayers.hillshade) {
+                                window.globals.currentLayers.hillshade.addTo(window.globals.map);
+                            } else {
+                                e.target.checked = false;
+                                showSnackBar('Failed to create hillshade layer');
+                            }
+                        } else {
+                            if (window.globals.currentLayers.hillshade) {
+                                window.globals.map.removeLayer(window.globals.currentLayers.hillshade);
+                            }
+                        }
+                        updateTerrainControlsVisibility();
+                        maintainLayerOrder();
+                    });
+
+                    // Contour layer toggle handler
+                    contourLayerToggle.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            if (!window.globals.currentLayers.contour) {
+                                window.globals.currentLayers.contour = createContourLayer();
+                            }
+                            if (window.globals.currentLayers.contour) {
+                                window.globals.currentLayers.contour.addTo(window.globals.map);
+                            } else {
+                                e.target.checked = false;
+                                showSnackBar('Failed to create contour layer');
+                            }
+                        } else {
+                            if (window.globals.currentLayers.contour) {
+                                window.globals.map.removeLayer(window.globals.currentLayers.contour);
+                            }
+                        }
+                        updateTerrainControlsVisibility();
+                        maintainLayerOrder();
+                    });
+
+                    // Terrain settings controls
+                    if (elevationColorScheme) {
+                        elevationColorScheme.addEventListener('change', (e) => {
+                            updateTerrainColorScheme(e.target.value);
+                            // Sync to HUD control if it exists
+                            const hudScheme = document.getElementById('elevationColorSchemeHud');
+                            if (hudScheme) {
+                                hudScheme.value = e.target.value;
+                            }
+                        });
+                    }
+
+                    if (terrainOpacity && opacityValue) {
+                        terrainOpacity.addEventListener('input', (e) => {
+                            const opacity = parseInt(e.target.value);
+                            opacityValue.textContent = `${opacity}%`;
+                            updateTerrainOpacity(opacity);
+                            // Sync to HUD controls if they exist
+                            const hudOpacity = document.getElementById('terrainOpacityHud');
+                            const hudOpacityValue = document.getElementById('opacityValueHud');
+                            if (hudOpacity) {
+                                hudOpacity.value = opacity;
+                            }
+                            if (hudOpacityValue) {
+                                hudOpacityValue.textContent = `${opacity}%`;
+                            }
+                        });
+                    }
                 }
 
-                terrainLayerToggle.addEventListener('change', (e) => {
-                    if (e.target.checked) {
-                        if (!window.globals.currentLayers.terrain) {
-                            window.globals.currentLayers.terrain = createTerrainLayer(window.globals.terrainSettings.colorScheme);
-                        }
-                        if (window.globals.currentLayers.terrain) {
-                            window.globals.currentLayers.terrain.addTo(window.globals.map);
-                        } else {
-                            e.target.checked = false; // Uncheck if layer creation failed
-                            showSnackBar('Failed to create terrain layer');
-                        }
-                    } else {
-                        if (window.globals.currentLayers.terrain) {
-                            window.globals.map.removeLayer(window.globals.currentLayers.terrain);
-                        }
+                // Initialize terrain controls for modal (primary controls)
+                setupTerrainControls('');
+                
+                // Setup HUD panel controls to sync with modal controls
+                const terrainLayerToggleHud = document.getElementById('terrainLayerToggleHud');
+                const hillshadeLayerToggleHud = document.getElementById('hillshadeLayerToggleHud');
+                const contourLayerToggleHud = document.getElementById('contourLayerToggleHud');
+                const terrainControlsHud = document.getElementById('terrainControlsHud');
+                const elevationColorSchemeHud = document.getElementById('elevationColorSchemeHud');
+                const terrainOpacityHud = document.getElementById('terrainOpacityHud');
+                const opacityValueHud = document.getElementById('opacityValueHud');
+                
+                // Sync HUD toggles with modal toggles
+                function syncHudToggles() {
+                    const modalTerrain = document.getElementById('terrainLayerToggle');
+                    const modalHillshade = document.getElementById('hillshadeLayerToggle');
+                    const modalContour = document.getElementById('contourLayerToggle');
+                    
+                    if (terrainLayerToggleHud && modalTerrain) {
+                        terrainLayerToggleHud.checked = modalTerrain.checked;
                     }
-                    updateTerrainControlsVisibility();
-                    maintainLayerOrder();
-                });
-
-                hillshadeLayerToggle.addEventListener('change', (e) => {
-                    if (e.target.checked) {
-                        if (!window.globals.currentLayers.hillshade) {
-                            window.globals.currentLayers.hillshade = createHillshadeLayer();
-                        }
-                        if (window.globals.currentLayers.hillshade) {
-                            window.globals.currentLayers.hillshade.addTo(window.globals.map);
-                        } else {
-                            e.target.checked = false;
-                            showSnackBar('Failed to create hillshade layer');
-                        }
-                    } else {
-                        if (window.globals.currentLayers.hillshade) {
-                            window.globals.map.removeLayer(window.globals.currentLayers.hillshade);
-                        }
+                    if (hillshadeLayerToggleHud && modalHillshade) {
+                        hillshadeLayerToggleHud.checked = modalHillshade.checked;
                     }
-                    updateTerrainControlsVisibility();
-                    maintainLayerOrder();
-                });
-
-                contourLayerToggle.addEventListener('change', (e) => {
-                    if (e.target.checked) {
-                        if (!window.globals.currentLayers.contour) {
-                            window.globals.currentLayers.contour = createContourLayer();
-                        }
-                        if (window.globals.currentLayers.contour) {
-                            window.globals.currentLayers.contour.addTo(window.globals.map);
-                        } else {
-                            e.target.checked = false;
-                            showSnackBar('Failed to create contour layer');
-                        }
-                    } else {
-                        if (window.globals.currentLayers.contour) {
-                            window.globals.map.removeLayer(window.globals.currentLayers.contour);
-                        }
+                    if (contourLayerToggleHud && modalContour) {
+                        contourLayerToggleHud.checked = modalContour.checked;
                     }
-                    updateTerrainControlsVisibility();
-                    maintainLayerOrder();
-                });
-
-                // Terrain settings controls
-                elevationColorScheme.addEventListener('change', (e) => {
-                    updateTerrainColorScheme(e.target.value);
-                });
-
-                terrainOpacity.addEventListener('input', (e) => {
-                    const opacity = parseInt(e.target.value);
-                    opacityValue.textContent = `${opacity}%`;
-                    updateTerrainOpacity(opacity);
-                });
+                    
+                    // Update HUD terrain controls visibility
+                    if (terrainControlsHud) {
+                        const anyActive = (terrainLayerToggleHud && terrainLayerToggleHud.checked) ||
+                                         (hillshadeLayerToggleHud && hillshadeLayerToggleHud.checked) ||
+                                         (contourLayerToggleHud && contourLayerToggleHud.checked);
+                        terrainControlsHud.style.display = anyActive ? 'block' : 'none';
+                    }
+                }
+                
+                // HUD toggles trigger modal toggles
+                if (terrainLayerToggleHud) {
+                    terrainLayerToggleHud.addEventListener('change', (e) => {
+                        const modalToggle = document.getElementById('terrainLayerToggle');
+                        if (modalToggle) {
+                            modalToggle.checked = e.target.checked;
+                            modalToggle.dispatchEvent(new Event('change'));
+                        }
+                        syncHudToggles();
+                    });
+                }
+                
+                if (hillshadeLayerToggleHud) {
+                    hillshadeLayerToggleHud.addEventListener('change', (e) => {
+                        const modalToggle = document.getElementById('hillshadeLayerToggle');
+                        if (modalToggle) {
+                            modalToggle.checked = e.target.checked;
+                            modalToggle.dispatchEvent(new Event('change'));
+                        }
+                        syncHudToggles();
+                    });
+                }
+                
+                if (contourLayerToggleHud) {
+                    contourLayerToggleHud.addEventListener('change', (e) => {
+                        const modalToggle = document.getElementById('contourLayerToggle');
+                        if (modalToggle) {
+                            modalToggle.checked = e.target.checked;
+                            modalToggle.dispatchEvent(new Event('change'));
+                        }
+                        syncHudToggles();
+                    });
+                }
+                
+                // HUD terrain settings sync with modal
+                if (elevationColorSchemeHud) {
+                    elevationColorSchemeHud.addEventListener('change', (e) => {
+                        updateTerrainColorScheme(e.target.value);
+                        const modalScheme = document.getElementById('elevationColorScheme');
+                        if (modalScheme) {
+                            modalScheme.value = e.target.value;
+                        }
+                    });
+                }
+                
+                if (terrainOpacityHud && opacityValueHud) {
+                    terrainOpacityHud.addEventListener('input', (e) => {
+                        const opacity = parseInt(e.target.value);
+                        opacityValueHud.textContent = `${opacity}%`;
+                        updateTerrainOpacity(opacity);
+                        const modalOpacity = document.getElementById('terrainOpacity');
+                        const modalOpacityValue = document.getElementById('opacityValue');
+                        if (modalOpacity) modalOpacity.value = opacity;
+                        if (modalOpacityValue) modalOpacityValue.textContent = `${opacity}%`;
+                    });
+                }
+                
+                // Initial sync
+                syncHudToggles();
+                
+                // Watch for changes in modal controls to sync HUD
+                const modalTerrain = document.getElementById('terrainLayerToggle');
+                const modalHillshade = document.getElementById('hillshadeLayerToggle');
+                const modalContour = document.getElementById('contourLayerToggle');
+                
+                if (modalTerrain) {
+                    modalTerrain.addEventListener('change', syncHudToggles);
+                }
+                if (modalHillshade) {
+                    modalHillshade.addEventListener('change', syncHudToggles);
+                }
+                if (modalContour) {
+                    modalContour.addEventListener('change', syncHudToggles);
+                }
 
                 // Global variables
                 const MBTILES_SERVER = window.location.protocol === 'https:' ? 
@@ -2137,10 +2477,23 @@
 
                 // Function to fetch layer metadata from mbtiles.json
                 async function fetchLayerMetadata(layerId) {
+                    const metadataUrl = `${MBTILES_SERVER}/data/${layerId}.json`;
+                    console.log('[MBTiles] Fetching metadata from:', metadataUrl);
+                    
                     try {
-                        const response = await fetch(`${MBTILES_SERVER}/data/${layerId}.json`);
-                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        const response = await fetch(metadataUrl);
+                        if (!response.ok) {
+                            // 404 is expected for layers without metadata files - use fallback silently
+                            if (response.status === 404) {
+                                console.log(`[MBTiles] No metadata file for ${layerId}, will use default tile URL`);
+                                return null;
+                            }
+                            // For other HTTP errors, log as warning
+                            console.warn(`[MBTiles] Metadata fetch failed for ${layerId}: HTTP ${response.status}`);
+                            return null;
+                        }
                         const metadata = await response.json();
+                        console.log('[MBTiles] Metadata received for', layerId, ':', metadata);
                         
                         // Normalize all tile URLs in the metadata
                         if (metadata.tiles) {
@@ -2149,7 +2502,8 @@
                         
                         return metadata;
                     } catch (error) {
-                        console.warn(`Error fetching metadata for ${layerId}:`, error);
+                        // Network errors or other issues - log as warning but don't throw
+                        console.warn(`[MBTiles] Error fetching metadata for ${layerId}:`, error.message);
                         return null;
                     }
                 }
@@ -2183,16 +2537,19 @@
                         // Log available layers
                         console.group('Available Layers');
                         console.log('Total layers:', Object.keys(data).length);
+                        console.log('Layer IDs:', Object.keys(data));
 
                         // Group layers by date
                         const layersByDate = {};
                         Object.entries(data).forEach(([id, info]) => {
                             if (!info || typeof info !== 'object') return;
                             
+                            console.log(`[MBTiles] Layer "${id}":`, { name: info.name, format: info.format });
+                            
                             // Extract date from layer name (assuming format: BF_MM-DD-YYYY or bf_aug_2020)
                             let date = 'Unknown';
-                            const dateMatch = info.name.match(/BF_(\d{2}-\d{2}-\d{4})/);
-                            const altDateMatch = info.name.match(/bf_(\w+)_(\d{4})/);
+                            const dateMatch = info.name?.match(/BF_(\d{2}-\d{2}-\d{4})/);
+                            const altDateMatch = info.name?.match(/bf_(\w+)_(\d{4})/);
                             
                             if (dateMatch) {
                                 date = dateMatch[1];
@@ -2210,8 +2567,8 @@
                             }
 
                             const layerInfo = {
-                                id,
-                                name: info.name,
+                                id,  // This is the raw ID used for fetching tiles
+                                name: info.name || id,
                                 format: info.format,
                                 minzoom: info.minzoom,
                                 maxzoom: info.maxzoom,
@@ -2282,10 +2639,23 @@
                             // Load vector layer
                             if (layers.vector) {
                                 try {
-                                    const mbtilesId = getMbtilesId(layers.vector.name);
-                                    const metadata = await fetchLayerMetadata(mbtilesId);
+                                    // Use the raw layer ID, not the display name
+                                    const mbtilesId = layers.vector.id;
+                                    console.log('[MBTiles] Loading vector layer with ID:', mbtilesId);
+                                    let metadata = await fetchLayerMetadata(mbtilesId);
                                     
-                                    if (!metadata || !metadata.tiles || metadata.tiles.length === 0) {
+                                    // If metadata fetch failed, try with default tile URL
+                                    if (!metadata) {
+                                        console.log('[MBTiles] No metadata, using default tile URL for vector');
+                                        metadata = {
+                                            tiles: [`${MBTILES_SERVER}/data/${mbtilesId}/{z}/{x}/{y}.pbf`],
+                                            minzoom: layers.vector.minzoom || 0,
+                                            maxzoom: layers.vector.maxzoom || 22,
+                                            bounds: layers.vector.bounds
+                                        };
+                                    }
+                                    
+                                    if (!metadata.tiles || metadata.tiles.length === 0) {
                                         throw new Error('No valid tile URLs in metadata');
                                     }
 
@@ -2388,10 +2758,23 @@
                             // Load raster layer
                             if (layers.raster) {
                                 try {
-                                    const mbtilesId = getMbtilesId(layers.raster.name);
-                                    const metadata = await fetchLayerMetadata(mbtilesId);
+                                    // Use the raw layer ID, not the display name
+                                    const mbtilesId = layers.raster.id;
+                                    console.log('[MBTiles] Loading raster layer with ID:', mbtilesId);
+                                    let metadata = await fetchLayerMetadata(mbtilesId);
                                     
-                                    if (!metadata || !metadata.tiles || metadata.tiles.length === 0) {
+                                    // If metadata fetch failed, try with default tile URL
+                                    if (!metadata) {
+                                        console.log('[MBTiles] No metadata, using default tile URL for raster');
+                                        metadata = {
+                                            tiles: [`${MBTILES_SERVER}/data/${mbtilesId}/{z}/{x}/{y}.png`],
+                                            minzoom: layers.raster.minzoom || 0,
+                                            maxzoom: layers.raster.maxzoom || 22,
+                                            bounds: layers.raster.bounds
+                                        };
+                                    }
+                                    
+                                    if (!metadata.tiles || metadata.tiles.length === 0) {
                                         throw new Error('No valid tile URLs in metadata');
                                     }
 
@@ -2520,6 +2903,26 @@
                             } else {
                                 satellite.addTo(window.globals.map);
                                 satellite.bringToBack();
+                            }
+                            // Ensure drawn items stay on top after base map change
+                            if (window.globals.drawnItems) {
+                                window.globals.drawnItems.bringToFront();
+                            }
+                        });
+                        
+                        // Global layer ordering: ensure drawnItems stay on top when any layer is added
+                        window.globals.map.on('layeradd', function(e) {
+                            // Only bring to front if drawnItems exists and this isn't drawnItems being added
+                            if (window.globals.drawnItems && 
+                                e.layer !== window.globals.drawnItems &&
+                                !(e.layer._leaflet_id && window.globals.drawnItems.hasLayer(e.layer))) {
+                                // Debounce to avoid multiple calls in rapid succession
+                                clearTimeout(window.globals._layerOrderTimeout);
+                                window.globals._layerOrderTimeout = setTimeout(() => {
+                                    if (window.globals.drawnItems) {
+                                        window.globals.drawnItems.bringToFront();
+                                    }
+                                }, 50);
                             }
                         });
 
@@ -3101,7 +3504,17 @@
         // Function to check for incoming location from label_search
         function checkIncomingLocation() {
             const hash = window.location.hash;
+            const urlParams = new URLSearchParams(window.location.search);
+            const hasAISession = urlParams.get('ai_session');
+            
+            // Skip hash-based navigation if we have an AI session (use query params instead)
+            if (hasAISession && hash) {
+                console.log('[Location Sync] Skipping hash navigation - AI session uses query params');
+                return;
+            }
+            
             if (hash && window.globals.map) {
+                console.log('[Location Sync] Processing hash:', hash);
                 // Hash format: #lat/lng/alt (from 3D) or #zoom/lat/lng (from 2D)
                 const parts = hash.substring(1).split('/');
                 if (parts.length >= 3) {
@@ -3114,17 +3527,19 @@
                     if (isZoomFormat) {
                         // 2D format: zoom/lat/lng
                         window.globals.map.setView([p2, p3], p1);
-                        console.log(`Set view from 2D hash: zoom=${p1}, lat=${p2}, lng=${p3}`);
+                        console.log(`[Location Sync] Set view from 2D hash: zoom=${p1}, lat=${p2}, lng=${p3}`);
                     } else {
                         // 3D format: lat/lng/alt - use appropriate zoom based on altitude
                         const zoom = altitudeToZoom(p3);
                         window.globals.map.setView([p1, p2], zoom);
-                        console.log(`Set view from 3D hash: lat=${p1}, lng=${p2}, alt=${p3}, zoom=${zoom}`);
+                        console.log(`[Location Sync] Set view from 3D hash: lat=${p1}, lng=${p2}, alt=${p3}, zoom=${zoom}`);
                     }
                 }
             } else if (!window.globals.map) {
-                console.warn('Map not ready for location check, will retry...');
+                console.warn('[Location Sync] Map not ready for location check, will retry...');
                 setTimeout(checkIncomingLocation, 500);
+            } else if (!hash) {
+                console.log('[Location Sync] No hash in URL, skipping hash-based navigation');
             }
         }
         
@@ -3142,16 +3557,42 @@
         
         // Function to sync current location to 3D viewer
         function syncLocationTo3D() {
+            // Priority 1: Use stored AI session coordinates if available and valid
+            // This ensures we don't lose the original location from the AI analysis
+            const aiLat = window.globals.aiSessionLat;
+            const aiLon = window.globals.aiSessionLon;
+            const aiAlt = window.globals.aiSessionAlt;
+            
+            if (!isNaN(aiLat) && !isNaN(aiLon) && aiLat !== 0 && aiLon !== 0) {
+                const altitude = aiAlt || 1000;
+                console.log('[syncLocationTo3D] Using stored AI session coordinates:', { aiLat, aiLon, altitude });
+                const targetUrl = "{% url 'label_search' %}" + `#${aiLat}/${aiLon}/${altitude}`;
+                window.location.href = targetUrl;
+                return false;
+            }
+            
+            // Priority 2: Use current map center
             if (window.globals.map) {
                 const center = window.globals.map.getCenter();
                 const zoom = window.globals.map.getZoom();
+                
+                // Sanity check: don't sync if map is at 0,0 (likely uninitialized or error)
+                if (Math.abs(center.lat) < 1 && Math.abs(center.lng) < 1) {
+                    console.warn('[syncLocationTo3D] Map center is near 0,0, likely uninitialized');
+                    showSnackBar('Map location not available');
+                    return false;
+                }
+                
                 // Format: #lat/lng/alt (using zoom to estimate altitude)
                 const altitude = zoomToAltitude(zoom);
+                console.log('[syncLocationTo3D] Using map center:', { lat: center.lat, lng: center.lng, altitude });
                 const targetUrl = "{% url 'label_search' %}" + `#${center.lat}/${center.lng}/${altitude}`;
                 window.location.href = targetUrl;
                 return false; // Prevent default link behavior
             }
-            return true; // Allow default if map not ready
+            
+            console.warn('[syncLocationTo3D] No valid location available');
+            return true; // Allow default if nothing available
         }
         
         // Convert Leaflet zoom level to approximate altitude for 3D viewer

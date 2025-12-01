@@ -106,11 +106,26 @@ function setupMapHandlers(mapInstance) {
         }
     });
     
-    // Create and add feature group for drawn items
+    // Create custom pane for drawn items to ensure they stay on top of all layers
+    // Pane z-index: tile=200, overlay=400, shadow=500, marker=600, tooltip=650, popup=700
+    // We use 550 to be above overlays but below markers/popups
+    if (!mapInstance.getPane('segmentationPane')) {
+        mapInstance.createPane('segmentationPane');
+        mapInstance.getPane('segmentationPane').style.zIndex = 550;
+    }
+    
+    // Create and add feature group for drawn items in the custom pane
     if (!window.globals.drawnItems) {
         window.globals.drawnItems = new L.FeatureGroup();
     }
     mapInstance.addLayer(window.globals.drawnItems);
+    
+    // Ensure drawnItems stays on top after any layer changes
+    window.globals.bringDrawnItemsToFront = function() {
+        if (window.globals.drawnItems && window.globals.map) {
+            window.globals.drawnItems.bringToFront();
+        }
+    };
 
     // Initialize draw control with the properly initialized feature group
     // Store in globals for global access
