@@ -4,9 +4,19 @@ services:
   web:
     build:
       context: .
+    env_file:
+      - .env
     environment:
-      - DEBUG=True
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG:-False}
       - DJANGO_SETTINGS_MODULE=deepgis_xr.settings
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - VECTOR_TILES_URL=${VECTOR_TILES_URL:-https://vector_tiles:8080}
+      - RASTER_TILES_URL=${RASTER_TILES_URL:-https://raster_tiles:8081}
       # GPU support
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
