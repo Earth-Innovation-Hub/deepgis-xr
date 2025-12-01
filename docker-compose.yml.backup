@@ -1,0 +1,62 @@
+version: '3.9'
+
+services:
+  web:
+    build:
+      context: .
+    environment:
+      - DEBUG=True
+      - DJANGO_SETTINGS_MODULE=deepgis_xr.settings
+      # GPU support
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+      # Mount dreams_laboratory/scripts for SAM and ML scripts
+      - ../dreams_laboratory/scripts:/app/dreams_laboratory_scripts:ro
+      # Mount deepgis_results for SAM analysis results (shared with host)
+      - ./deepgis_results:/app/deepgis_results
+      # Named volume for GroundingDINO to preserve build-time installation
+      # This prevents the host directory mount from overwriting the installed GroundingDINO
+      - grounding_dino_volume:/app/GroundingDINO
+    ports:
+      - "8060:8090"
+    # Enable GPU access (uncomment one of the following methods)
+    # Method 1: Using deploy.resources (Docker Compose v3.2+)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Method 2: Using runtime (older method, uncomment if Method 1 doesn't work)
+    # runtime: nvidia
+    command: >
+      bash -c "
+        # Install GroundingDINO if not already installed
+        python -c 'import groundingdino' 2>/dev/null || (
+          echo 'Installing GroundingDINO...' &&
+          cd /app/GroundingDINO &&
+          python setup.py install --prefix=/opt/venv >/dev/null 2>&1 &&
+          pip install -q -r requirements.txt >/dev/null 2>&1 &&
+          echo 'GroundingDINO installed successfully'
+        ) &&
+        python manage.py migrate &&
+        python manage.py runserver 0.0.0.0:8090
+      "
+
+  tileserver:
+    image: maptiler/tileserver-gl
+    ports:
+      - "8091:80"
+    volumes:
+      - ./data:/data
+    environment:
+      - CORS_ENABLED=true
+      - TILESERVER_GL_DATA_PATH=/data
+    command: ["-p", "80", "--verbose"]
+
+volumes:
+  media_volume:
+  grounding_dino_volume: 

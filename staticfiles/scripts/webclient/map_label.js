@@ -7,7 +7,8 @@ window.globals = {
     categoryColor: {},
     histogram_chart: null,
     chart: null,
-    lastLayer: null
+    lastLayer: null,
+    drawControl: null  // Global drawControl reference
 };
 
 // Helper function to parse hash URL
@@ -69,6 +70,15 @@ function initializeMap() {
         
         // Set up map event handlers
         setupMapHandlers(map);
+        
+        // Trigger map ready event after a short delay to ensure map is fully initialized
+        setTimeout(() => {
+            if (typeof window.onMapReady === 'function') {
+                window.onMapReady(map);
+            }
+            // Dispatch custom event for other listeners
+            window.dispatchEvent(new CustomEvent('mapready', { detail: { map: map } }));
+        }, 100);
     }
 }
 
@@ -78,21 +88,22 @@ function setupMapHandlers(mapInstance) {
     
     // Update URL hash when map moves
     mapInstance.on('moveend', function() {
-    const center = map.getCenter();
-    const zoom = map.getZoom();
-    const hash = `#${zoom}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
-    
-    // Only update hash if we're viewing an MBTiles layer
-    if (window.globals.active_layer && window.globals.active_layer.startsWith('bf_')) {
-        window.history.replaceState(null, null, hash);
-    }
+        const center = mapInstance.getCenter();
+        const zoom = mapInstance.getZoom();
+        const hash = `#${zoom}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
+        
+        // Only update hash if we're viewing an MBTiles layer
+        if (window.globals.active_layer && window.globals.active_layer.startsWith('bf_')) {
+            window.history.replaceState(null, null, hash);
+        }
     });
     
     // Add feature group to map first
     mapInstance.addLayer(window.globals.drawnItems);
 
     // Initialize draw control with the properly initialized feature group
-    var drawControl = new L.Control.Draw({
+    // Store in globals for global access
+    window.globals.drawControl = new L.Control.Draw({
         edit: {
             featureGroup: window.globals.drawnItems
         },
@@ -108,6 +119,9 @@ function setupMapHandlers(mapInstance) {
             rectangle: true
         }
     });
+    
+    // Create local reference for convenience
+    const drawControl = window.globals.drawControl;
 
     // Initialize raster layers with the feature group (check if function exists)
     if (typeof window.initRasterLayers === 'function') {
@@ -133,10 +147,10 @@ function setupMapHandlers(mapInstance) {
     mapInstance.addControl(drawControl);
 
     // Add our additional layers to the globals without redeclaring baseLayers
-window.globals.layers["OpenStreetMap"] = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors'
-});
+    window.globals.layers["OpenStreetMap"] = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap contributors'
+    });
 
 window.globals.layers["Google Satellite"] = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
     maxZoom: 19,
@@ -222,7 +236,8 @@ function updateCategoryProperties() {
                     }
                 } else {
                     var color = rgbToHex($(this).attr('data-color'));
-                    drawControl.setDrawingOptions({
+                    if (window.globals.drawControl) {
+                        window.globals.drawControl.setDrawingOptions({
                         rectangle: {
                             shapeOptions: {
                                 color: color
@@ -239,6 +254,9 @@ function updateCategoryProperties() {
                             }
                         }
                     });
+                    } else {
+                        console.warn('drawControl not initialized yet');
+                    }
                 }
             };
             $("input:radio[name=category_select]").on('change load', set_label_draw_color);
@@ -271,7 +289,7 @@ $('#imagemodal').on('hide.bs.modal', function (e) {
 
 $('#ShowAllHist').click(function () {
     var histogram_count = 1;
-    var all_active_layers = drawnItems.getLayers();
+    var all_active_layers = window.globals.drawnItems ? window.globals.drawnItems.getLayers() : [];
     var histograms = {};
     for ( layer in all_active_layers) {
         $('#modal_body').append('<canvas id="histogram' + String(layer) + '" width="600" height="300"></canvas>');
@@ -540,39 +558,112 @@ function updateHistogramVisibility(data) {
 }
 
 // Update the AJAX success handlers to check for data
-map.on('moveend', function(e) {
-    bins = getBinsValue();
-    $.ajax({
-        url: "getHistogramWindow/?northeast_lat=" + map.getBounds()._northEast.lat.toString() + 
-             "&northeast_lng=" + map.getBounds()._northEast.lng.toString() + 
-             "&southwest_lat=" + map.getBounds()._southWest.lat.toString() + 
-             "&southwest_lng=" + map.getBounds()._southWest.lng.toString() + 
-             "&number_of_bins=" + bins,
-        type: "GET",
-        success: function(data) {
-            if (window.globals.histogram_chart) {
-                window.globals.histogram_chart.data.labels = data.x;
-                window.globals.histogram_chart.data.datasets[0].data = data.y;
-                window.globals.histogram_chart.data.datasets[0].borderColor = "#ff0000";
-                window.globals.histogram_chart.data.datasets[0].pointBorderColor = "#ff0000";
-                window.globals.histogram_chart.data.datasets[0].pointBackgroundColor = "#ff0000";
-                window.globals.histogram_chart.data.datasets[0].pointHoverBackgroundColor = "#ff0000";
-                window.globals.histogram_chart.data.datasets[0].pointHoverBorderColor = "#ff0000";
-                window.globals.histogram_chart.data.datasets[0].label = "Rock area count";
-                window.globals.histogram_chart.update();
-                updateHistogramVisibility(data);
+// This should be set up after map is initialized
+function setupHistogramHandlers() {
+    if (!window.globals.map) {
+        setTimeout(setupHistogramHandlers, 100);
+        return;
+    }
+    
+    const map = window.globals.map;
+    map.on('moveend', function(e) {
+        bins = getBinsValue();
+        $.ajax({
+            url: "getHistogramWindow/?northeast_lat=" + map.getBounds()._northEast.lat.toString() + 
+                 "&northeast_lng=" + map.getBounds()._northEast.lng.toString() + 
+                 "&southwest_lat=" + map.getBounds()._southWest.lat.toString() + 
+                 "&southwest_lng=" + map.getBounds()._southWest.lng.toString() + 
+                 "&number_of_bins=" + bins,
+            type: "GET",
+            success: function(data) {
+                if (window.globals.histogram_chart) {
+                    window.globals.histogram_chart.data.labels = data.x;
+                    window.globals.histogram_chart.data.datasets[0].data = data.y;
+                    window.globals.histogram_chart.data.datasets[0].borderColor = "#ff0000";
+                    window.globals.histogram_chart.data.datasets[0].pointBorderColor = "#ff0000";
+                    window.globals.histogram_chart.data.datasets[0].pointBackgroundColor = "#ff0000";
+                    window.globals.histogram_chart.data.datasets[0].pointHoverBackgroundColor = "#ff0000";
+                    window.globals.histogram_chart.data.datasets[0].pointHoverBorderColor = "#ff0000";
+                    window.globals.histogram_chart.data.datasets[0].label = "Rock area count";
+                    window.globals.histogram_chart.update();
+                    if (typeof updateHistogramVisibility === 'function') {
+                        updateHistogramVisibility(data);
+                    }
+                }
             }
-        }
+        });
     });
+}
+
+// Set up histogram handlers when map is ready
+window.addEventListener('mapready', function(e) {
+    setTimeout(setupHistogramHandlers, 300);
 });
 
-// Add the histogram control
-new HistogramControl().addTo(map);
+// Fallback
+setTimeout(setupHistogramHandlers, 1500);
 
-// Add the draw control after organizing other controls
-drawControl.addTo(map);
+// Legacy code - these should be handled in setupMapHandlers
+// Wrap in a function that runs after map is initialized
+function initializeLegacyControls() {
+    if (!window.globals.map) {
+        console.warn('Map not initialized, deferring legacy controls');
+        setTimeout(initializeLegacyControls, 100);
+        return;
+    }
+    
+    const map = window.globals.map;
+    
+    // Check if map is fully initialized (has controlCorners property)
+    if (!map._controlCorners) {
+        console.warn('Map not fully initialized yet, deferring controls');
+        setTimeout(initializeLegacyControls, 100);
+        return;
+    }
+    
+    // Add histogram control if HistogramControl is defined
+    if (typeof HistogramControl !== 'undefined') {
+        try {
+            // Check if histogram control is already added
+            if (!document.querySelector('.leaflet-control-histogram')) {
+                new HistogramControl().addTo(map);
+                console.log('HistogramControl added successfully');
+            }
+        } catch (e) {
+            console.warn('HistogramControl error:', e);
+        }
+    }
+    
+    // drawControl is now managed in setupMapHandlers function
+    // This is just a safety check
+    if (window.globals.drawControl) {
+        try {
+            // Check if already added
+            const controlContainer = map._controlContainer;
+            if (controlContainer && !controlContainer.querySelector('.leaflet-draw')) {
+                window.globals.drawControl.addTo(map);
+            }
+        } catch (e) {
+            console.warn('drawControl error:', e);
+        }
+    }
+    
+    // drawnItems is already in window.globals.drawnItems
+    // This is just a safety check
+    if (window.globals.drawnItems && !map.hasLayer(window.globals.drawnItems)) {
+        window.globals.drawnItems.addTo(map);
+    }
+}
 
-var drawnItems = L.featureGroup().addTo(map);
+// Initialize legacy controls when map is ready
+// Listen for mapready event for more reliable initialization
+window.addEventListener('mapready', function(e) {
+    console.log('Map ready event received');
+    setTimeout(initializeLegacyControls, 200);
+});
+
+// Fallback: also try with setTimeout in case event is missed
+setTimeout(initializeLegacyControls, 1000);
 
 draw_shapes = function(geoJson, label_type) {
     geoJson.properties.options.weight = 0.5;
@@ -600,10 +691,12 @@ draw_shapes = function(geoJson, label_type) {
         draw_shapes_layer.bindPopup("Histogram #" + histogram_polygons).openPopup();
         histogram_polygons += 1;
     }
-    drawnItems.addLayer(draw_shapes_layer);
+    if (window.globals.drawnItems) {
+        window.globals.drawnItems.addLayer(draw_shapes_layer);
+    }
 
-    if ($('#DrawOrHist').hasClass('btn-success')) {
-        drawnItems.on('click', function(e) {
+    if ($('#DrawOrHist').hasClass('btn-success') && window.globals.drawnItems) {
+        window.globals.drawnItems.on('click', function(e) {
             bins = getBinsValue();
             var bounds = e.layer.getBounds();
             var ne_lat = bounds._northEast.lat;
@@ -762,8 +855,10 @@ function freeHand() {
                 });
             });
         });
-        drawnItems.addLayer(drawer);
-        window.globals.lastLayer = drawnItems.getLayerId(drawer);
+        if (window.globals.drawnItems) {
+            window.globals.drawnItems.addLayer(drawer);
+            window.globals.lastLayer = window.globals.drawnItems.getLayerId(drawer);
+        }
     } else {
         $('#freeHandButton').html('<i class="fa fa-check"></i>Enable Free Hand');
         $('#freeHandButton').removeClass('btn-warning');
@@ -771,7 +866,15 @@ function freeHand() {
     }
 }
 
-map.on(L.Draw.Event.CREATED, function(event) {
+// Set up draw event handlers after map is initialized
+function setupDrawEventHandlers() {
+    if (!window.globals.map) {
+        setTimeout(setupDrawEventHandlers, 100);
+        return;
+    }
+    
+    const map = window.globals.map;
+    map.on(L.Draw.Event.CREATED, function(event) {
     var layer = event.layer;
     var geoJson = layer.toGeoJSON(20);
     geoJson.properties.options = layer.options;
@@ -839,45 +942,46 @@ map.on(L.Draw.Event.CREATED, function(event) {
     }
 });
 
-map.on('draw:deleted', function(e) {
-    var request_obj = [];
-    var json = e.layers.toGeoJSON(20);
+    map.on('draw:deleted', function(e) {
+        var request_obj = [];
+        var json = e.layers.toGeoJSON(20);
 
-    e.layers.eachLayer(function(layer) {
-        drawnItems.removeLayer(layer);
-        if (layer instanceof L.Rectangle) {
+        e.layers.eachLayer(function(layer) {
+            if (window.globals.drawnItems) {
+                window.globals.drawnItems.removeLayer(layer);
+            }
+            if (layer instanceof L.Rectangle) {
             var label_type = "rectangle";
         } else if (layer instanceof L.Circle) {
             //Workaround from https://github.com/Leaflet/Leaflet.draw/issues/701
             layer._map = layer._map || map;
-            var label_type = "circle";
-        } else if (layer instanceof L.Polygon) {
-            var label_type = "polygon";
-        } else {
-            return; //Not one of the possible label types
-        }
+                var label_type = "circle";
+            } else if (layer instanceof L.Polygon) {
+                var label_type = "polygon";
+            } else {
+                return; //Not one of the possible label types
+            }
 
-        var bounds = layer.getBounds();
-        var jsonMessage = JSON.stringify(layer.toGeoJSON(20));
-        var northeast = bounds.getNorthEast();
-        var southwest = bounds.getSouthWest();
-        delete_layer_dict = {
-            northeast_lat: northeast.lat,
-            northeast_lng: northeast.lng,
-            southwest_lat: southwest.lat,
-            southwest_lng: southwest.lng,
-            label_type: label_type,
-            geoJSON: jsonMessage,
-            category_name: window.globals.categoryColor[hexToRgb(layer.options.color)]
-        };
+            var bounds = layer.getBounds();
+            var jsonMessage = JSON.stringify(layer.toGeoJSON(20));
+            var northeast = bounds.getNorthEast();
+            var southwest = bounds.getSouthWest();
+            delete_layer_dict = {
+                northeast_lat: northeast.lat,
+                northeast_lng: northeast.lng,
+                southwest_lat: southwest.lat,
+                southwest_lng: southwest.lng,
+                label_type: label_type,
+                geoJSON: jsonMessage,
+                category_name: window.globals.categoryColor[hexToRgb(layer.options.color)]
+            };
 
-        request_obj.push(delete_layer_dict);
+            request_obj.push(delete_layer_dict);
 
-        if (layer._map != null) {
-            layer._map.removeLayer(layer);
-        }
-
-    });
+            if (layer._map != null) {
+                layer._map.removeLayer(layer);
+            }
+        });
 
     // $.ajax({
     //     url: "/webclient/deleteTileLabels",
@@ -891,7 +995,18 @@ map.on('draw:deleted', function(e) {
     //         showSnackBar(JSON.parse(data).message);
     //     }
     // });
+    });
+    
+    // Close the setupDrawEventHandlers function
+}
+
+// Set up draw event handlers when map is ready
+window.addEventListener('mapready', function(e) {
+    setTimeout(setupDrawEventHandlers, 300);
 });
+
+// Fallback
+setTimeout(setupDrawEventHandlers, 1500);
 
 function getBinsValue() {
     const rangeElement = $("#customRange2")[0];
@@ -905,6 +1020,12 @@ $("#customRange2").on("click", function() {
         $("#customRange2label").text("Histogram Bins: " + rangeElement.value);
     }
     
+    if (!window.globals.map) {
+        console.warn('Map not initialized for histogram');
+        return;
+    }
+    
+    const map = window.globals.map;
     $.ajax({
         url: "getHistogramWindow/?northeast_lat=" + map.getBounds()._northEast.lat.toString() + 
              "&northeast_lng=" + map.getBounds()._northEast.lng.toString() + 

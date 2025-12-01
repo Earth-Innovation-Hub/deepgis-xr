@@ -268,10 +268,42 @@ export async function initializeCesium(updateLoadingStatus) {
         });
       }
       
+      // Check for incoming location from URL hash (from map_label or previous session)
+      const hash = window.location.hash;
+      let initialPosition = null;
+      
+      if (hash) {
+        const parts = hash.substring(1).split('/');
+        if (parts.length >= 3) {
+          const [p1, p2, p3] = parts.map(Number);
+          // Format: lat/lng/alt (from map_label or 3D viewer)
+          if (!isNaN(p1) && !isNaN(p2) && !isNaN(p3)) {
+            initialPosition = {
+              lat: p1,
+              lng: p2,
+              alt: p3 > 50 ? p3 : 1000 // Ensure minimum altitude
+            };
+            console.log(`Using location from hash: lat=${p1}, lng=${p2}, alt=${p3}`);
+          }
+        }
+      }
+      
       // Set initial view - will be updated when a layer is loaded
-      viewer.camera.setView({
-        destination: Cesium.Cartesian3.fromDegrees(0, 0, 20000000)
-      });
+      if (initialPosition) {
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(
+            initialPosition.lng,
+            initialPosition.lat,
+            initialPosition.alt
+          )
+        });
+        console.log(`Camera set to: lng=${initialPosition.lng}, lat=${initialPosition.lat}, alt=${initialPosition.alt}`);
+      } else {
+        // Default view
+        viewer.camera.setView({
+          destination: Cesium.Cartesian3.fromDegrees(0, 0, 20000000)
+        });
+      }
     }, 100);
 
     updateLoadingStatus?.('Setting up event handlers...', 80);

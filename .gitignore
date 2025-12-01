@@ -54,9 +54,13 @@ temp/
 uploads/
 data/
 
+# ML/AI Results and outputs
+deepgis_results/
+
 # ML/DL specific
 *.h5
 *.pth
+*.pt
 *.onnx
 *.pb
 checkpoints/

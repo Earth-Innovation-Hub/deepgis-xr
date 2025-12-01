@@ -1,9 +1,0 @@
-{
-  "type": "FeatureCollection",
-  "features": [],
-  "metadata": {
-    "model": "zero_shot_coco",
-    "num_detections": 0,
-    "image_path": "/tmp/tmpp_w6cjv1.png"
-  }
-}

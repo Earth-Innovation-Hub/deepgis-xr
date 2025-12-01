@@ -751,7 +751,7 @@
         <button class="hud-quick-btn" id="quickView2D"><i class="fas fa-map"></i> 2D</button>
         <button class="hud-quick-btn" id="quickView3D"><i class="fas fa-cube"></i> 3D</button>
         <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
-        <a href="{% url 'map_label' %}" class="hud-quick-btn" id="quickTrain" title="Open Training Labeling Interface">
+        <a href="{% url 'map_label' %}" class="hud-quick-btn" id="quickTrain" title="Open Training Labeling Interface" onclick="return syncLocationTo2D()">
             <i class="fas fa-graduation-cap"></i> Train
         </a>
     </div>
@@ -1118,6 +1118,66 @@
                 if (sidebar) {
                     sidebar.style.setProperty('display', 'none', 'important');
                 }
+            }
+            
+            // Function to sync current location to 2D map
+            function syncLocationTo2D() {
+                console.log('syncLocationTo2D called');
+                console.log('window.AppState:', window.AppState);
+                
+                // Get viewer from AppState (loaded by main.js)
+                const viewer = window.AppState?.viewer;
+                
+                if (!viewer) {
+                    console.warn('Viewer not available in AppState, trying fallback...');
+                    // Fallback: try to get viewer from window or global scope
+                    const fallbackViewer = window.viewer;
+                    if (fallbackViewer && fallbackViewer.camera) {
+                        console.log('Using fallback viewer');
+                        const position = fallbackViewer.camera.positionCartographic;
+                        const lat = Cesium.Math.toDegrees(position.latitude);
+                        const lng = Cesium.Math.toDegrees(position.longitude);
+                        const alt = position.height;
+                        
+                        console.log(`Camera position: lat=${lat}, lng=${lng}, alt=${alt}`);
+                        
+                        // Format: #lat/lng/alt for map_label to parse
+                        const targetUrl = "{% url 'map_label' %}" + `#${lat}/${lng}/${alt}`;
+                        console.log('Navigating to:', targetUrl);
+                        window.location.href = targetUrl;
+                        return false;
+                    }
+                    console.error('No viewer found, allowing default navigation');
+                    return true; // Allow default if viewer not ready
+                }
+                
+                if (viewer && viewer.camera) {
+                    const position = viewer.camera.positionCartographic;
+                    const lat = Cesium.Math.toDegrees(position.latitude);
+                    const lng = Cesium.Math.toDegrees(position.longitude);
+                    const alt = position.height;
+                    
+                    console.log(`Camera position: lat=${lat}, lng=${lng}, alt=${alt}`);
+                    
+                    // Format: #lat/lng/alt for map_label to parse
+                    const targetUrl = "{% url 'map_label' %}" + `#${lat}/${lng}/${alt}`;
+                    console.log('Navigating to:', targetUrl);
+                    window.location.href = targetUrl;
+                    return false; // Prevent default link behavior
+                }
+                
+                console.error('Viewer exists but no camera, allowing default navigation');
+                return true; // Allow default if viewer not ready
+            }
+            
+            // Make function globally accessible immediately
+            window.syncLocationTo2D = syncLocationTo2D;
+            
+            // Also expose it in case it's called before this script runs
+            if (!window.syncLocationTo2D) {
+                console.warn('syncLocationTo2D not yet defined');
+            } else {
+                console.log('syncLocationTo2D is now globally available');
             }
             
             // Initialize when DOM is ready
