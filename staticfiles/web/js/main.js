@@ -155,6 +155,23 @@ const lazyLoaders = {
       return astronomyModule;
     }
     return AppState.features.astronomy;
+  },
+  
+  weatherStations: async () => {
+    if (!AppState.features.weatherStations) {
+      try {
+        const { NWSWeatherStationLayer } = await import('./utils/nws-weather-stations.js');
+        AppState.features.weatherStations = { NWSWeatherStationLayer };
+        return AppState.features.weatherStations;
+      } catch (error) {
+        console.warn('Failed to load Weather Stations module:', error);
+        return { 
+          NWSWeatherStationLayer: null,
+          initializeWeatherStations: () => console.warn('Weather Stations module not available')
+        };
+      }
+    }
+    return AppState.features.weatherStations;
   }
 };
 
@@ -209,6 +226,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     const navigationModule = await lazyLoaders.navigation();
     if (navigationModule.initializeNavigation) {
       navigationModule.initializeNavigation(viewer);
+    }
+    
+    // Initialize weather stations widget
+    try {
+      const { default: WeatherStationsWidget } = await import('./widgets/weather-stations.js');
+      window.weatherStationsWidget = new WeatherStationsWidget(viewer);
+      console.log('Weather Stations Widget initialized');
+    } catch (error) {
+      console.warn('Failed to initialize Weather Stations Widget:', error);
     }
     
     // Set up event handlers

@@ -134,6 +134,13 @@
             color: #fbbf24;
         }
         
+        .hud-btn.hud-weather { border-color: rgba(16, 185, 129, 0.5); }
+        .hud-btn.hud-weather:hover, .hud-btn.hud-weather.active { 
+            background: rgba(16, 185, 129, 0.3); 
+            border-color: #10b981;
+            color: #34d399;
+        }
+        
         /* ========== HUD FLOATING PANELS ========== */
         .hud-panel {
             position: fixed;
@@ -626,6 +633,10 @@
             <i class="fas fa-cube"></i>
             <span>Models</span>
         </button>
+        <button class="hud-btn hud-weather" id="hudWeatherBtn" data-panel="weatherPanel">
+            <i class="fas fa-cloud-sun"></i>
+            <span>Weather</span>
+        </button>
         <button class="hud-btn hud-vr" id="hudVrBtn" data-panel="vrPanel">
             <i class="fas fa-vr-cardboard"></i>
             <span>VR</span>
@@ -898,6 +909,17 @@
         </div>
         <div id="hudSamplerContainer">
             <!-- World Sampler content will be moved here -->
+        </div>
+    </div>
+    
+    <!-- Weather Stations Panel -->
+    <div class="hud-panel" id="weatherPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-cloud-sun" style="color: #10b981;"></i> Weather Stations</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('weatherPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="weatherStationsHudContainer">
+            <!-- Weather Stations content will be inserted here by widget -->
         </div>
     </div>
     
