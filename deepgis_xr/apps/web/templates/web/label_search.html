@@ -299,11 +299,6 @@
         .perspective-compass-grid #viewSouth { grid-column: 2; grid-row: 3; }
         .perspective-compass-grid #viewWest { grid-column: 1; grid-row: 2; }
         
-        /* Navigation widget adjustment */
-        .navigation-widget-group {
-            right: 20px !important;
-        }
-        
         /* ========== QUICK VIEW BUTTONS (Top Right) ========== */
         .hud-quick-views {
             position: fixed;
@@ -313,6 +308,30 @@
             flex-direction: column;
             gap: 6px;
             z-index: 1500;
+        }
+        
+        /* Navigation widget adjustment - positioned below quick view buttons */
+        .navigation-widget-group {
+            position: fixed !important;
+            top: 240px !important;  /* Below quick view buttons (80px + 4 buttons ~40px each + gaps) */
+            right: 20px !important;
+            width: 120px;
+            z-index: 1400;  /* Below quick view buttons but above other elements */
+        }
+        
+        /* Train button special styling */
+        .hud-quick-btn#quickTrain {
+            border-color: rgba(16, 185, 129, 0.4);
+        }
+        
+        .hud-quick-btn#quickTrain:hover {
+            background: rgba(16, 185, 129, 0.2);
+            color: #34d399;
+            border-color: #10b981;
+        }
+        
+        .hud-quick-btn#quickTrain i {
+            color: #10b981;
         }
         
         .hud-quick-btn {
@@ -328,12 +347,14 @@
             align-items: center;
             gap: 6px;
             transition: all 0.2s;
+            text-decoration: none;
         }
         
         .hud-quick-btn:hover {
             background: rgba(59, 130, 246, 0.2);
             color: #60a5fa;
             border-color: #3b82f6;
+            text-decoration: none;
         }
         
         .hud-quick-btn.active {
@@ -730,6 +751,9 @@
         <button class="hud-quick-btn" id="quickView2D"><i class="fas fa-map"></i> 2D</button>
         <button class="hud-quick-btn" id="quickView3D"><i class="fas fa-cube"></i> 3D</button>
         <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
+        <a href="{% url 'map_label' %}" class="hud-quick-btn" id="quickTrain" title="Open Training Labeling Interface">
+            <i class="fas fa-graduation-cap"></i> Train
+        </a>
     </div>
 
     <!-- Main Heading -->
@@ -1138,6 +1162,33 @@
             setTimeout(styleWorldSamplerInHUD, 1000);
             setTimeout(styleWorldSamplerInHUD, 2000);
             setTimeout(styleWorldSamplerInHUD, 4000);
+            
+            // Ensure navigation widget is positioned correctly relative to quick view buttons
+            function positionNavigationWidget() {
+                const quickViews = document.querySelector('.hud-quick-views');
+                const navWidget = document.getElementById('navigationWidgetGroup');
+                
+                if (quickViews && navWidget) {
+                    const quickViewsRect = quickViews.getBoundingClientRect();
+                    const quickViewsBottom = quickViewsRect.bottom;
+                    
+                    // Position navigation widget below quick view buttons with some spacing (accounting for 4 buttons now)
+                    navWidget.style.position = 'fixed';
+                    navWidget.style.top = (quickViewsBottom + 20) + 'px';
+                    navWidget.style.right = '20px';
+                }
+            }
+            
+            // Position on load and resize
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    setTimeout(positionNavigationWidget, 100);
+                });
+            } else {
+                setTimeout(positionNavigationWidget, 100);
+            }
+            
+            window.addEventListener('resize', positionNavigationWidget);
         })();
     </script>
 </body>

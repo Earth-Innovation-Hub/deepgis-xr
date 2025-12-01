@@ -24,25 +24,60 @@ function generateHashUrl(layer, zoom, lat, lng) {
     return `https://mbtiles.deepgis.org/data/${layer}/#${zoom}/${lat}/${lng}`;
 }
 
-// Initialize map
-var map = L.map('map', {
-    minZoom: 12,
-    maxZoom: 24,
-    updateWhenZooming: false,
-    updateWhenIdle: true,
-    preferCanvas: true
-});
-
-// Set initial view based on URL hash or default coordinates
-const hashCoords = parseHashUrl();
-if (hashCoords) {
-    map.setView([hashCoords.lat, hashCoords.lng], hashCoords.zoom);
-} else {
-    map.setView([33.78210534131368, -111.26527270115186], 23);
+// Initialize map (check if already initialized and DOM is ready)
+var map;
+function initializeMap() {
+    // Check if map element exists
+    const mapElement = document.getElementById('map');
+    if (!mapElement) {
+        console.warn('Map element not found, deferring initialization');
+        return;
+    }
+    
+    if (window.globals && window.globals.map && window.globals.map._container) {
+        // Use existing map
+        map = window.globals.map;
+        console.log('Using existing map instance');
+    } else {
+        // Check if container is already initialized by Leaflet
+        if (mapElement._leaflet_id) {
+            console.warn('Map container already has Leaflet instance, skipping initialization');
+            return;
+        }
+        
+        // Initialize new map
+        map = L.map('map', {
+            minZoom: 12,
+            maxZoom: 24,
+            updateWhenZooming: false,
+            updateWhenIdle: true,
+            preferCanvas: true
+        });
+        
+        // Set initial view based on URL hash or default coordinates
+        const hashCoords = parseHashUrl();
+        if (hashCoords) {
+            map.setView([hashCoords.lat, hashCoords.lng], hashCoords.zoom);
+        } else {
+            map.setView([33.78210534131368, -111.26527270115186], 20);
+        }
+        
+        // Store in globals
+        if (window.globals) {
+            window.globals.map = map;
+        }
+        
+        // Set up map event handlers
+        setupMapHandlers(map);
+    }
 }
 
-// Update URL hash when map moves
-map.on('moveend', function() {
+// Set up map event handlers
+function setupMapHandlers(mapInstance) {
+    if (!mapInstance) return;
+    
+    // Update URL hash when map moves
+    mapInstance.on('moveend', function() {
     const center = map.getCenter();
     const zoom = map.getZoom();
     const hash = `#${zoom}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
@@ -51,49 +86,53 @@ map.on('moveend', function() {
     if (window.globals.active_layer && window.globals.active_layer.startsWith('bf_')) {
         window.history.replaceState(null, null, hash);
     }
-});
-
-// Add feature group to map first
-map.addLayer(window.globals.drawnItems);
-
-// Initialize draw control with the properly initialized feature group
-var drawControl = new L.Control.Draw({
-    edit: {
-        featureGroup: window.globals.drawnItems
-    },
-    draw: {
-        polyline: false,
-        circle: false,
-        circlemarker: false,
-        marker: false,
-        polygon: {
-            allowIntersection: false,
-            showArea: true
-        },
-        rectangle: true
-    }
-});
-
-// Initialize raster layers with the feature group
-const { baseLayers: rasterBaseLayers, overlayLayers, layerControl: rasterLayerControl } = window.initRasterLayers(map, window.globals.drawnItems);
-
-// Handle base layer changes
-map.on('baselayerchange', function(e) {
-    window.globals.active_layer = e.name;
+    });
     
-    // If switching to an MBTiles layer, update URL hash
-    if (e.name && e.name.startsWith('bf_')) {
-        const center = map.getCenter();
-        const zoom = map.getZoom();
-        const hash = `#${zoom}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
-        window.history.replaceState(null, null, hash);
+    // Add feature group to map first
+    mapInstance.addLayer(window.globals.drawnItems);
+
+    // Initialize draw control with the properly initialized feature group
+    var drawControl = new L.Control.Draw({
+        edit: {
+            featureGroup: window.globals.drawnItems
+        },
+        draw: {
+            polyline: false,
+            circle: false,
+            circlemarker: false,
+            marker: false,
+            polygon: {
+                allowIntersection: false,
+                showArea: true
+            },
+            rectangle: true
+        }
+    });
+
+    // Initialize raster layers with the feature group (check if function exists)
+    if (typeof window.initRasterLayers === 'function') {
+        const { baseLayers: rasterBaseLayers, overlayLayers, layerControl: rasterLayerControl } = window.initRasterLayers(mapInstance, window.globals.drawnItems);
+    } else {
+        console.warn('window.initRasterLayers not available, make sure raster_layers.js is loaded');
     }
-});
 
-// Add the draw control after organizing other controls
-map.addControl(drawControl);
+    // Handle base layer changes
+    mapInstance.on('baselayerchange', function(e) {
+        window.globals.active_layer = e.name;
+        
+        // If switching to an MBTiles layer, update URL hash
+        if (e.name && e.name.startsWith('bf_')) {
+            const center = mapInstance.getCenter();
+            const zoom = mapInstance.getZoom();
+            const hash = `#${zoom}/${center.lat.toFixed(5)}/${center.lng.toFixed(5)}`;
+            window.history.replaceState(null, null, hash);
+        }
+    });
 
-// Add our additional layers to the globals without redeclaring baseLayers
+    // Add the draw control after organizing other controls
+    mapInstance.addControl(drawControl);
+
+    // Add our additional layers to the globals without redeclaring baseLayers
 window.globals.layers["OpenStreetMap"] = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© OpenStreetMap contributors'
@@ -105,43 +144,54 @@ window.globals.layers["Google Satellite"] = L.tileLayer('http://{s}.google.com/v
     attribution: '© Google'
 });
 
-// Add default layer
-window.globals.layers["OpenStreetMap"].addTo(map);
+    // Add default layer
+    window.globals.layers["OpenStreetMap"].addTo(mapInstance);
 
-// Create additional layers object without conflicting with rasterBaseLayers
-var additionalLayers = {
-    "OpenStreetMap": window.globals.layers["OpenStreetMap"],
-    "Google Satellite": window.globals.layers["Google Satellite"]
-};
+    // Create additional layers object without conflicting with rasterBaseLayers
+    var additionalLayers = {
+        "OpenStreetMap": window.globals.layers["OpenStreetMap"],
+        "Google Satellite": window.globals.layers["Google Satellite"]
+    };
 
-// Create empty overlays object for additional layers
-var overlays = {};
+    // Create empty overlays object for additional layers
+    var overlays = {};
 
-// Add layer control for additional layers
-var additionalLayerControl = L.control.layers(additionalLayers, overlays, {
-    position: 'topleft',
-    collapsed: true
-}).addTo(map);
+    // Add layer control for additional layers
+    var additionalLayerControl = L.control.layers(additionalLayers, overlays, {
+        position: 'topleft',
+        collapsed: true
+    }).addTo(mapInstance);
 
-// Draw event handlers
-map.on(L.Draw.Event.CREATED, function(e) {
+    // Draw event handlers
+    mapInstance.on(L.Draw.Event.CREATED, function(e) {
     var layer = e.layer;
     window.globals.drawnItems.addLayer(layer);
 });
 
-map.on(L.Draw.Event.EDITED, function(e) {
-    var layers = e.layers;
-    layers.eachLayer(function(layer) {
-        // Handle edited layers
+    mapInstance.on(L.Draw.Event.EDITED, function(e) {
+        var layers = e.layers;
+        layers.eachLayer(function(layer) {
+            // Handle edited layers
+        });
     });
-});
 
-map.on(L.Draw.Event.DELETED, function(e) {
-    var layers = e.layers;
-    layers.eachLayer(function(layer) {
-        // Handle deleted layers
+    mapInstance.on(L.Draw.Event.DELETED, function(e) {
+        var layers = e.layers;
+        layers.eachLayer(function(layer) {
+            // Handle deleted layers
+        });
     });
-});
+}
+
+// Initialize when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeMap);
+} else {
+    // DOM is already ready
+    initializeMap();
+}
+
+// Rest of the code that uses the global map variable (will be set after initialization)
 
 function updateCategoryProperties() {
     $.ajax({

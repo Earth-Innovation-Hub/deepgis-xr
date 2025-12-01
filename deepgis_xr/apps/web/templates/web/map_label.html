@@ -1,3 +1,4 @@
+{% load static %}
 <!DOCTYPE html>
 <html>
 
@@ -27,26 +28,18 @@
         #map {
             position: absolute;
             top: 0;
-            right: 300px;
+            right: 0;
             bottom: 0;
             left: 0;
-            width: auto;
+            width: 100%;
             height: 100%;
             z-index: 1;
         }
 
+        /* ========== HIDE SIDEBAR & FULL-WIDTH MAP ========== */
         #sidebar-wrapper {
-            width: 300px;
-            position: fixed;
-            height: 100%;
-            z-index: 1000;
-            top: 0;
-            right: 0;
-            background: #1e293b;
-            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
-            overflow-y: auto;
-            transform: translateX(0);
-            transition: transform 0.3s ease;
+            display: none !important;
+            width: 0 !important;
         }
 
         /* Simplified scrollbar */
@@ -68,22 +61,139 @@
         }
 
         .mobile-toggle {
-            position: fixed;
-            top: 15px;
-            right: 315px;
-            z-index: 2000;
-            background: #3b82f6;
-            border: none;
-            border-radius: 6px;
-            padding: 10px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            display: none;
-            color: white;
-            transition: background-color 0.2s ease;
+            display: none !important;
         }
-
-        .mobile-toggle:hover {
-            background: #2563eb;
+        
+        /* ========== HUD TOOLBAR (Bottom) ========== */
+        .hud-toolbar {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            padding: 8px 16px;
+            background: rgba(15, 23, 42, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-bottom: none;
+            border-radius: 12px 12px 0 0;
+            z-index: 2000;
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+        }
+        
+        .hud-btn {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 8px 14px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            color: #94a3b8;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 60px;
+        }
+        
+        .hud-btn:hover {
+            background: rgba(59, 130, 246, 0.25);
+            color: #60a5fa;
+            border-color: #3b82f6;
+            transform: translateY(-2px);
+        }
+        
+        .hud-btn.active {
+            background: rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+            border-color: #3b82f6;
+            box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+        }
+        
+        .hud-btn i {
+            font-size: 1.1rem;
+            margin-bottom: 2px;
+        }
+        
+        .hud-btn span {
+            font-size: 0.65rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        /* ========== HUD FLOATING PANELS ========== */
+        .hud-panel {
+            position: fixed;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%) translateY(20px);
+            width: 380px;
+            max-height: 60vh;
+            overflow-y: auto;
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            z-index: 1999;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.25s ease;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        
+        .hud-panel.visible {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
+        
+        .hud-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+        }
+        
+        .hud-panel-title {
+            color: #f1f5f9;
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .hud-panel-close {
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .hud-panel-close:hover {
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+        }
+        
+        /* Custom scrollbar for panels */
+        .hud-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        .hud-panel::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+        .hud-panel::-webkit-scrollbar-thumb {
+            background: rgba(59, 130, 246, 0.4);
+            border-radius: 3px;
         }
 
         .sidebar-header {
@@ -290,25 +400,104 @@
             padding: 8px;
         }
 
+        /* ========== QUICK VIEW BUTTONS (Top Right) ========== */
+        .hud-quick-views {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 1500;
+        }
+        
+        .hud-quick-btn {
+            padding: 8px 12px;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 6px;
+            color: #94a3b8;
+            cursor: pointer;
+            font-size: 0.75rem;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            text-decoration: none;
+        }
+        
+        .hud-quick-btn:hover {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+            border-color: #3b82f6;
+            text-decoration: none;
+        }
+        
+        /* 3D View button special styling */
+        .hud-quick-btn#quickView3D {
+            border-color: rgba(139, 92, 246, 0.4);
+        }
+        
+        .hud-quick-btn#quickView3D:hover {
+            background: rgba(139, 92, 246, 0.2);
+            color: #a78bfa;
+            border-color: #8b5cf6;
+        }
+        
+        .hud-quick-btn#quickView3D i {
+            color: #8b5cf6;
+        }
+        
+        /* HUD Panel form styling */
+        .hud-panel .form-select,
+        .hud-panel .form-control {
+            background: #374151;
+            border: 1px solid #64748b;
+            color: #f1f5f9;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 0.85rem;
+        }
+        
+        .hud-panel .form-select:focus,
+        .hud-panel .form-control:focus {
+            background: #374151;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            color: #f1f5f9;
+        }
+        
+        .hud-panel .form-check-label {
+            color: #cbd5e1;
+            font-size: 0.85rem;
+        }
+        
+        .hud-panel .form-label {
+            color: #cbd5e1;
+            font-size: 0.85rem;
+            margin-bottom: 6px;
+        }
+        
         /* Responsive Design */
         @media (max-width: 768px) {
-            .mobile-toggle {
-                display: block;
-                right: 15px;
+            .hud-panel {
+                width: 90%;
+                max-width: 380px;
             }
-
-            #sidebar-wrapper {
-                transform: translateX(100%);
-                width: 85%;
-                max-width: 300px;
+            
+            .hud-toolbar {
+                padding: 6px 8px;
+                gap: 2px;
             }
-
-            #map {
-                right: 0;
+            
+            .hud-btn {
+                min-width: 50px;
+                padding: 6px 10px;
             }
-
-            #wrapper.show-sidebar #sidebar-wrapper {
-                transform: translateX(0);
+            
+            .hud-btn span {
+                font-size: 0.6rem;
             }
         }
 
@@ -515,6 +704,207 @@
 
     <div id="map"></div>
     
+    <!-- Quick View Buttons (Top Right) -->
+    <div class="hud-quick-views">
+        <a href="{% url 'label_search' %}" class="hud-quick-btn" id="quickView3D" title="Open 3D Viewer">
+            <i class="fas fa-cube"></i> 3D View
+        </a>
+    </div>
+    
+    <!-- ========== HUD BOTTOM TOOLBAR ========== -->
+    <div class="hud-toolbar" id="hudToolbar">
+        <button class="hud-btn" id="hudLayersBtn" data-panel="layersPanel">
+            <i class="fas fa-layer-group"></i>
+            <span>Layers</span>
+        </button>
+        <button class="hud-btn" id="hudDrawBtn" data-panel="drawPanel">
+            <i class="fas fa-draw-polygon"></i>
+            <span>Draw</span>
+        </button>
+        <button class="hud-btn" id="hudStatsBtn" data-panel="statsPanel">
+            <i class="fas fa-chart-bar"></i>
+            <span>Stats</span>
+        </button>
+        <button class="hud-btn" id="hudSettingsBtn" data-panel="settingsPanel">
+            <i class="fas fa-cog"></i>
+            <span>Settings</span>
+        </button>
+    </div>
+
+    <!-- ========== HUD FLOATING PANELS ========== -->
+    
+    <!-- Layers Panel -->
+    <div class="hud-panel" id="layersPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-layer-group"></i> Layers & Dates</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('layersPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label"><i class="fas fa-calendar-alt me-2"></i>Available Dates</label>
+            <select class="form-select form-select-sm" id="dateSelect">
+                <!-- Will be populated dynamically -->
+            </select>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label"><i class="fas fa-layer-group me-2"></i>Layer Types</label>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="rasterLayerToggle" checked>
+                <label class="form-check-label" for="rasterLayerToggle">
+                    <i class="fas fa-image me-2"></i>Raster Layer
+                </label>
+            </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="vectorLayerToggle" checked>
+                <label class="form-check-label" for="vectorLayerToggle">
+                    <i class="fas fa-vector-square me-2"></i>Vector Layer
+                </label>
+            </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="terrainLayerToggle">
+                <label class="form-check-label" for="terrainLayerToggle">
+                    <i class="fas fa-mountain me-2"></i>Terrain/DEM
+                </label>
+            </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="hillshadeLayerToggle">
+                <label class="form-check-label" for="hillshadeLayerToggle">
+                    <i class="fas fa-chess-board me-2"></i>Hillshade
+                </label>
+            </div>
+            <div class="form-check mb-2">
+                <input class="form-check-input" type="checkbox" id="contourLayerToggle">
+                <label class="form-check-label" for="contourLayerToggle">
+                    <i class="fas fa-project-diagram me-2"></i>Contour Lines
+                </label>
+            </div>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label"><i class="fas fa-map me-2"></i>Base Map</label>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="baseMapToggle" checked>
+                <label class="form-check-label" for="baseMapToggle">
+                    <i class="fas fa-eye-slash me-2"></i>Hide Base Map
+                </label>
+            </div>
+        </div>
+        <!-- Terrain Controls (shown when terrain is active) -->
+        <div id="terrainControls" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(59, 130, 246, 0.2);">
+            <div class="form-group mb-3">
+                <label class="form-label"><i class="fas fa-palette me-2"></i>Color Scheme</label>
+                <select class="form-select form-select-sm" id="elevationColorScheme">
+                    <option value="terrain">🏔️ Terrain</option>
+                    <option value="rainbow">🌈 Rainbow</option>
+                    <option value="grayscale">⚫ Grayscale</option>
+                    <option value="viridis">🟢 Viridis</option>
+                </select>
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label"><i class="fas fa-adjust me-2"></i>Opacity: <span id="opacityValue">70%</span></label>
+                <input type="range" class="form-range" id="terrainOpacity" min="0" max="100" value="70">
+            </div>
+        </div>
+    </div>
+    
+    <!-- Draw Panel -->
+    <div class="hud-panel" id="drawPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-draw-polygon"></i> Drawing Tools</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('drawPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label"><i class="fas fa-tag me-2"></i>Category</label>
+            <div id="categorySelection" style="max-height: 200px; overflow-y: auto;">
+                <ul id="categories_coll" style="list-style: none; padding: 0; margin: 0;">
+                    <!-- Categories will be populated dynamically -->
+                </ul>
+            </div>
+            <style>
+                #categories_coll li {
+                    padding: 8px;
+                    margin: 4px 0;
+                    background: rgba(59, 130, 246, 0.1);
+                    border: 1px solid rgba(59, 130, 246, 0.3);
+                    border-radius: 6px;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                #categories_coll li:hover {
+                    background: rgba(59, 130, 246, 0.2);
+                    border-color: #3b82f6;
+                }
+                #categories_coll li input[type="radio"] {
+                    margin: 0;
+                }
+                #categories_coll li label {
+                    flex: 1;
+                    color: #cbd5e1;
+                    cursor: pointer;
+                    margin: 0;
+                }
+                #categories_coll li .circle {
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 50%;
+                    display: inline-block;
+                }
+            </style>
+        </div>
+        <div class="btn-group-vertical w-100 mb-3" role="group">
+            <button class="btn btn-primary btn-sm mb-2" id="freeHandButton">
+                <i class="fa fa-check me-2"></i>Enable Free Hand
+            </button>
+            <div class="btn-group w-100" role="group">
+                <button class="btn btn-outline-info btn-sm" id="DrawOrHist">
+                    <i class="fas fa-draw-polygon me-2"></i>Draw
+                </button>
+                <button class="btn btn-outline-warning btn-sm" id="HistOrDraw">
+                    <i class="fas fa-chart-bar me-2"></i>Histogram
+                </button>
+            </div>
+        </div>
+        <small style="color: #64748b; font-size: 0.75rem;">
+            Use the draw tools on the map to create polygons and rectangles. Select a category before drawing.
+        </small>
+    </div>
+    
+    <!-- Statistics Panel -->
+    <div class="hud-panel" id="statsPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-chart-bar"></i> Statistics</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('statsPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="chart-container" style="height: 250px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 8px;">
+            <canvas id="histogram"></canvas>
+        </div>
+        <small style="color: #64748b; font-size: 0.75rem; display: block; margin-top: 8px;">
+            Histogram shows distribution of vector shape areas. Draw polygons and use Histogram mode to analyze.
+        </small>
+    </div>
+    
+    <!-- Settings Panel -->
+    <div class="hud-panel" id="settingsPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-cog"></i> Settings</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('settingsPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label"><i class="fas fa-sliders-h me-2"></i>Histogram Bins</label>
+            <input type="number" class="form-control form-control-sm" id="histogramBins" value="10" min="5" max="50">
+        </div>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="showLabels">
+            <label class="form-check-label" for="showLabels">
+                <i class="fas fa-tags me-2"></i>Show Labels on Map
+            </label>
+        </div>
+        <button class="btn btn-outline-danger btn-sm w-100" id="clearAllBtn">
+            <i class="fas fa-trash me-2"></i>Clear All Drawings
+        </button>
+    </div>
+    
     <!-- Scripts - Load in correct order -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
@@ -525,6 +915,8 @@
     <script src="https://cdn.jsdelivr.net/npm/leaflet-measure@3.1.0/dist/leaflet-measure.min.js" crossorigin="anonymous"></script>
     <script src="https://deepgis.org/static/deepgis/scripts/vendor/Leaflet.VectorGrid.bundled.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+    <script src="{% static 'scripts/webclient/raster_layers.js' %}"></script>
+    <script src="{% static 'scripts/webclient/map_label.js' %}"></script>
 
     <script>
         // Improved event handling for Leaflet
@@ -1024,29 +1416,115 @@
         }
 
         // Initialize everything when the document is ready
+        // ========== HUD PANEL MANAGEMENT ==========
+        function toggleHudPanel(panelId) {
+            const panel = document.getElementById(panelId);
+            const button = document.querySelector(`[data-panel="${panelId}"]`);
+            
+            // Close all panels first
+            document.querySelectorAll('.hud-panel').forEach(p => {
+                p.classList.remove('visible');
+            });
+            document.querySelectorAll('.hud-btn').forEach(b => {
+                b.classList.remove('active');
+            });
+            
+            // Toggle the requested panel
+            if (panel && panel.classList.contains('visible')) {
+                panel.classList.remove('visible');
+            } else if (panel) {
+                panel.classList.add('visible');
+                if (button) button.classList.add('active');
+            }
+        }
+        
+        function closeHudPanel(panelId) {
+            const panel = document.getElementById(panelId);
+            const button = document.querySelector(`[data-panel="${panelId}"]`);
+            if (panel) panel.classList.remove('visible');
+            if (button) button.classList.remove('active');
+        }
+        
+        // Close panel when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.hud-panel') && !e.target.closest('.hud-btn') && !e.target.closest('.hud-panel-close')) {
+                document.querySelectorAll('.hud-panel').forEach(panel => {
+                    panel.classList.remove('visible');
+                });
+                document.querySelectorAll('.hud-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+            }
+        });
+        
+        // Initialize HUD button click handlers
+        document.addEventListener('DOMContentLoaded', () => {
+            // Set up HUD button handlers
+            document.querySelectorAll('.hud-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const panelId = btn.getAttribute('data-panel');
+                    if (panelId) {
+                        toggleHudPanel(panelId);
+                    }
+                });
+            });
+            
+            // Clear all button handler
+            const clearAllBtn = document.getElementById('clearAllBtn');
+            if (clearAllBtn) {
+                clearAllBtn.addEventListener('click', () => {
+                    if (confirm('Are you sure you want to clear all drawings?')) {
+                        if (window.globals && window.globals.drawnItems) {
+                            window.globals.drawnItems.clearLayers();
+                            showSnackBar('All drawings cleared');
+                        }
+                    }
+                });
+            }
+        });
+
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 // Keep touch events enabled for better mobile support
                 // L.Browser.touch = false; 
                 // L.Browser.pointer = false;
 
-                // Initialize with sidebar shown
-                document.getElementById('wrapper').classList.add('show-sidebar');
+                // Sidebar is hidden, using HUD panels instead
 
                 // Wait for dependencies
                 await waitForDependencies();
 
-                // Initialize map
-                window.globals.map = L.map('map', {
-                    zoomControl: true,
-                    attributionControl: true,
-                    zoom: 22,
-                    maxZoom: 24,
-                    preferCanvas: true
-                }).setView([33.78202, -111.26536], 22);
+                // map_label.js handles map initialization, so we just need to ensure globals.map is set
+                // Wait a bit for map_label.js to initialize if it hasn't yet
+                let mapInitialized = false;
+                for (let i = 0; i < 10; i++) {
+                    if (window.globals && window.globals.map && window.globals.map._container) {
+                        mapInitialized = true;
+                        console.log('Map already initialized by map_label.js');
+                        break;
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+                
+                if (!mapInitialized) {
+                    console.warn('Map not initialized by map_label.js, initializing fallback...');
+                    window.globals.map = L.map('map', {
+                        zoomControl: true,
+                        attributionControl: true,
+                        zoom: 22,
+                        maxZoom: 24,
+                        preferCanvas: true
+                    }).setView([33.78202, -111.26536], 22);
+                }
 
                 // Initialize histogram
                 initializeHistogram();
+                
+                // Load categories for drawing
+                if (typeof updateCategoryProperties === 'function') {
+                    updateCategoryProperties();
+                }
 
                 // Add event listeners for histogram updates - with debouncing
                 let updateTimeout;

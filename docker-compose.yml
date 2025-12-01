@@ -18,6 +18,8 @@ services:
       - ./deepgis_results:/app/deepgis_results
       # Named volume for YOLO models (auto-downloaded on first use)
       - yolo_models_volume:/app/models
+      # Mount dreamslab-store for accessing training data
+      - /mnt/dreamslab-store:/mnt/dreamslab-store:ro
     ports:
       - "8060:8090"
     # Enable GPU access
