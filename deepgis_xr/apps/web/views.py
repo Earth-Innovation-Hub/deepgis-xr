@@ -131,22 +131,51 @@ def results(request):
 
 @csrf_exempt
 def get_category_info(request):
-    # Return categories in the format expected by the frontend
-    categories = {
-        'Buildings': {
-            'color': '#FF0000',
-            'id': 1
-        },
-        'Roads': {
-            'color': '#00FF00',
-            'id': 2
-        },
-        'Water Bodies': {
-            'color': '#0000FF',
-            'id': 3
-        }
-    }
-    return JsonResponse(categories)
+    """Get all categories from the database"""
+    try:
+        categories = {}
+        for cat in CategoryType.objects.all().order_by('category_name'):
+            if cat.color:
+                # Convert RGB to hex
+                color_hex = f'#{cat.color.red:02x}{cat.color.green:02x}{cat.color.blue:02x}'
+            else:
+                color_hex = '#FF0000'  # Default red
+            
+            categories[cat.category_name] = {
+                'color': color_hex,
+                'id': cat.id,
+                'label_type': cat.label_type
+            }
+        
+        # If no categories exist, return default categories
+        if not categories:
+            categories = {
+                'Buildings': {
+                    'color': '#FF0000',
+                    'id': 1,
+                    'label_type': 'P'
+                },
+                'Roads': {
+                    'color': '#00FF00',
+                    'id': 2,
+                    'label_type': 'P'
+                },
+                'Water Bodies': {
+                    'color': '#0000FF',
+                    'id': 3,
+                    'label_type': 'P'
+                }
+            }
+        
+        return JsonResponse(categories)
+    except Exception as e:
+        print(f"Error in get_category_info: {str(e)}")
+        # Return default categories on error
+        return JsonResponse({
+            'Buildings': {'color': '#FF0000', 'id': 1, 'label_type': 'P'},
+            'Roads': {'color': '#00FF00', 'id': 2, 'label_type': 'P'},
+            'Water Bodies': {'color': '#0000FF', 'id': 3, 'label_type': 'P'}
+        })
 
 @csrf_exempt
 def get_new_image(request):
@@ -322,42 +351,74 @@ def save_label(request):
 
 @csrf_exempt
 def create_category(request):
+    """Create a new category in the database"""
     if request.method == 'POST':
         try:
             data = json.loads(request.body)
-            category_name = data.get('name')
+            category_name = data.get('name', '').strip()
+            color_hex = data.get('color', None)  # Optional: allow custom color
+            label_type = data.get('label_type', 'P')  # Default to Polygon
             
-            # Get existing categories
-            categories = {
-                'Buildings': {
-                    'color': '#FF0000',
-                    'id': 1
-                },
-                'Roads': {
-                    'color': '#00FF00',
-                    'id': 2
-                },
-                'Water Bodies': {
-                    'color': '#0000FF',
-                    'id': 3
+            if not category_name:
+                return JsonResponse({'status': 'error', 'message': 'Category name is required'}, status=400)
+            
+            # Check if category already exists
+            if CategoryType.objects.filter(category_name=category_name).exists():
+                existing = CategoryType.objects.get(category_name=category_name)
+                if existing.color:
+                    color_hex = f'#{existing.color.red:02x}{existing.color.green:02x}{existing.color.blue:02x}'
+                else:
+                    color_hex = '#FF0000'
+                return JsonResponse({
+                    'status': 'error', 
+                    'message': 'Category already exists',
+                    'category': {
+                        'name': existing.category_name,
+                        'color': color_hex,
+                        'id': existing.id
+                    }
+                }, status=400)
+            
+            # Generate random color if not provided
+            if not color_hex:
+                import random
+                color_hex = '#{:06x}'.format(random.randint(0, 0xFFFFFF))
+            
+            # Convert hex to RGB
+            color_hex = color_hex.lstrip('#')
+            rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
+            
+            # Get or create the Color object
+            from deepgis_xr.apps.core.models import Color
+            color, _ = Color.objects.get_or_create(
+                red=rgb[0],
+                green=rgb[1],
+                blue=rgb[2]
+            )
+            
+            # Create the category
+            category = CategoryType.objects.create(
+                category_name=category_name,
+                color=color,
+                label_type=label_type
+            )
+            
+            return JsonResponse({
+                'status': 'success',
+                'category': {
+                    'name': category.category_name,
+                    'color': f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}',
+                    'id': category.id,
+                    'label_type': category.label_type
                 }
-            }
-            
-            # Add new category with a random color
-            import random
-            color = '#{:06x}'.format(random.randint(0, 0xFFFFFF))
-            categories[category_name] = {
-                'color': color,
-                'id': len(categories) + 1
-            }
-            
-            return JsonResponse({'status': 'success', 'category': {
-                'name': category_name,
-                'color': color,
-                'id': len(categories)
-            }})
+            })
         except json.JSONDecodeError:
             return JsonResponse({'status': 'error', 'message': 'Invalid JSON'}, status=400)
+        except Exception as e:
+            print(f"Error creating category: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return JsonResponse({'status': 'error', 'message': str(e)}, status=500)
     return JsonResponse({'status': 'error', 'message': 'Method not allowed'}, status=405)
 
 @csrf_exempt

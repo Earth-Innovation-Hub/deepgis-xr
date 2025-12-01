@@ -64,6 +64,30 @@
             display: none !important;
         }
         
+        /* ========== Leaflet Draw Control Styling ========== */
+        .leaflet-draw-toolbar a {
+            background-color: rgba(15, 23, 42, 0.95) !important;
+            border: 1px solid rgba(59, 130, 246, 0.3) !important;
+        }
+        
+        .leaflet-draw-toolbar a:hover {
+            background-color: rgba(59, 130, 246, 0.3) !important;
+        }
+        
+        .leaflet-draw-actions {
+            background-color: rgba(15, 23, 42, 0.95) !important;
+        }
+        
+        .leaflet-draw-actions a {
+            background-color: rgba(30, 41, 59, 0.9) !important;
+            color: #94a3b8 !important;
+        }
+        
+        .leaflet-draw-actions a:hover {
+            background-color: rgba(59, 130, 246, 0.4) !important;
+            color: #fff !important;
+        }
+        
         /* ========== HUD TOOLBAR (Bottom) ========== */
         .hud-toolbar {
             position: fixed;
@@ -704,6 +728,8 @@
 
     <div id="map"></div>
     
+    <!-- Draw control is handled by Leaflet.Draw standard toolbar -->
+    
     <!-- Quick View Buttons (Top Right) -->
     <div class="hud-quick-views">
         <a href="{% url 'label_search' %}" class="hud-quick-btn" id="quickView3D" title="Open 3D Viewer" onclick="return syncLocationTo3D()">
@@ -999,6 +1025,237 @@
             });
         }
 
+        // Convert Cesium altitude to Leaflet zoom level (approximate)
+        function altitudeToZoom(altitude) {
+            // Approximate conversion based on Cesium camera height
+            // Higher altitude = lower zoom, lower altitude = higher zoom
+            if (altitude <= 50) return 22;
+            if (altitude <= 100) return 21;
+            if (altitude <= 200) return 20;
+            if (altitude <= 500) return 19;
+            if (altitude <= 1000) return 18;
+            if (altitude <= 2000) return 17;
+            if (altitude <= 5000) return 16;
+            if (altitude <= 10000) return 15;
+            if (altitude <= 20000) return 14;
+            if (altitude <= 50000) return 13;
+            if (altitude <= 100000) return 12;
+            return 10;
+        }
+        
+        // Check if coordinates are in geographic range (valid lat/lon)
+        function isGeographicCoordinate(coord) {
+            // GeoJSON is [lng, lat]
+            const lng = coord[0];
+            const lat = coord[1];
+            return lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90;
+        }
+        
+        // Load AI analysis session GeoJSON and display on map
+        async function loadAIAnalysisSession(sessionId) {
+            try {
+                showSnackBar('Loading AI analysis results...');
+                
+                // Get location from URL params (passed from ai_analysis_report)
+                const urlParams = new URLSearchParams(window.location.search);
+                const lat = parseFloat(urlParams.get('lat'));
+                const lon = parseFloat(urlParams.get('lon'));
+                const alt = parseFloat(urlParams.get('alt')) || 1000;
+                
+                const response = await fetch(`/label/ai-analysis/geojson/${sessionId}/`);
+                if (!response.ok) {
+                    throw new Error(`Failed to load AI analysis: ${response.statusText}`);
+                }
+                
+                const geojson = await response.json();
+                
+                if (!geojson || !geojson.features || geojson.features.length === 0) {
+                    showSnackBar('No features found in AI analysis results');
+                    // Still center the map if we have location
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        const map = window.globals?.map;
+                        if (map) {
+                            const zoom = altitudeToZoom(alt);
+                            map.setView([lat, lon], zoom);
+                        }
+                    }
+                    return;
+                }
+                
+                // Wait for map and drawnItems to be ready
+                const waitForMap = async () => {
+                    for (let i = 0; i < 50; i++) {
+                        if (window.globals && window.globals.map && window.globals.drawnItems) {
+                            return true;
+                        }
+                        await new Promise(r => setTimeout(r, 100));
+                    }
+                    return false;
+                };
+                
+                if (!await waitForMap()) {
+                    showSnackBar('Map not ready for AI analysis loading');
+                    return;
+                }
+                
+                const map = window.globals.map;
+                const drawnItems = window.globals.drawnItems;
+                
+                // Check if coordinates are geographic or pixel-based
+                // Sample first feature to determine coordinate type
+                let isPixelCoords = false;
+                if (geojson.features.length > 0) {
+                    const firstFeature = geojson.features[0];
+                    if (firstFeature.geometry && firstFeature.geometry.coordinates) {
+                        let sampleCoord;
+                        if (firstFeature.geometry.type === 'Polygon') {
+                            sampleCoord = firstFeature.geometry.coordinates[0][0];
+                        } else if (firstFeature.geometry.type === 'Point') {
+                            sampleCoord = firstFeature.geometry.coordinates;
+                        }
+                        if (sampleCoord && !isGeographicCoordinate(sampleCoord)) {
+                            isPixelCoords = true;
+                            console.log('Detected pixel coordinates in AI analysis GeoJSON');
+                        }
+                    }
+                }
+                
+                // If pixel coordinates, show warning and just center map on location
+                if (isPixelCoords) {
+                    showSnackBar('AI analysis contains pixel coordinates - centering on analysis location');
+                    if (!isNaN(lat) && !isNaN(lon)) {
+                        const zoom = altitudeToZoom(alt);
+                        map.setView([lat, lon], zoom);
+                        
+                        // Add a marker at the analysis location
+                        const marker = L.marker([lat, lon], {
+                            icon: L.divIcon({
+                                className: 'ai-analysis-marker',
+                                html: '<div style="background: rgba(59, 130, 246, 0.8); color: white; padding: 8px 12px; border-radius: 8px; font-weight: bold; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.3);"><i class="fas fa-brain"></i> AI Analysis Location</div>',
+                                iconSize: null,
+                                iconAnchor: [75, 15]
+                            })
+                        }).addTo(map);
+                        
+                        marker.bindPopup(`
+                            <div style="min-width: 200px;">
+                                <h6><i class="fas fa-brain"></i> AI Analysis Session</h6>
+                                <p><b>Session ID:</b> ${sessionId}</p>
+                                <p><b>Features:</b> ${geojson.features.length}</p>
+                                <p><b>Location:</b> ${lat.toFixed(6)}, ${lon.toFixed(6)}</p>
+                                <p><b>Altitude:</b> ${alt.toFixed(0)}m</p>
+                                <hr>
+                                <p style="font-size: 0.9em; color: #666;">
+                                    <i class="fas fa-info-circle"></i> Features are in pixel coordinates.<br>
+                                    Use the visualization image from the report for reference.
+                                </p>
+                            </div>
+                        `);
+                    }
+                    
+                    setTimeout(() => {
+                        showSnackBar(`${geojson.features.length} features detected (pixel coordinates)`);
+                    }, 2000);
+                    return;
+                }
+                
+                // Geographic coordinates - add features to map
+                const bounds = L.latLngBounds();
+                let featuresAdded = 0;
+                
+                geojson.features.forEach((feature, index) => {
+                    try {
+                        const geometry = feature.geometry;
+                        const properties = feature.properties || {};
+                        
+                        // Get color from properties or generate based on category
+                        let color = properties.color || '#3388ff';
+                        if (properties.category && window.globals.categoryColor) {
+                            const catColor = Object.entries(window.globals.categoryColor)
+                                .find(([c, cat]) => cat === properties.category);
+                            if (catColor) {
+                                color = catColor[0];
+                            }
+                        }
+                        
+                        let layer;
+                        
+                        if (geometry.type === 'Polygon') {
+                            // GeoJSON is [lng, lat], Leaflet needs [lat, lng]
+                            const coords = geometry.coordinates[0].map(coord => [coord[1], coord[0]]);
+                            layer = L.polygon(coords, {
+                                color: color,
+                                weight: 2,
+                                opacity: 0.8,
+                                fillOpacity: 0.3
+                            });
+                            bounds.extend(layer.getBounds());
+                        } else if (geometry.type === 'MultiPolygon') {
+                            const multiCoords = geometry.coordinates.map(polygon => 
+                                polygon[0].map(coord => [coord[1], coord[0]])
+                            );
+                            layer = L.polygon(multiCoords, {
+                                color: color,
+                                weight: 2,
+                                opacity: 0.8,
+                                fillOpacity: 0.3
+                            });
+                            bounds.extend(layer.getBounds());
+                        } else if (geometry.type === 'Point') {
+                            const latlng = [geometry.coordinates[1], geometry.coordinates[0]];
+                            layer = L.circleMarker(latlng, {
+                                radius: 8,
+                                color: color,
+                                weight: 2,
+                                opacity: 0.8,
+                                fillOpacity: 0.5
+                            });
+                            bounds.extend(latlng);
+                        }
+                        
+                        if (layer) {
+                            const popupContent = `
+                                <div style="min-width: 150px;">
+                                    <strong>AI Analysis Feature #${index + 1}</strong><br>
+                                    ${properties.category ? `<b>Category:</b> ${properties.category}<br>` : ''}
+                                    ${properties.confidence ? `<b>Confidence:</b> ${(properties.confidence * 100).toFixed(1)}%<br>` : ''}
+                                    ${properties.area ? `<b>Area:</b> ${properties.area.toFixed(2)} px<br>` : ''}
+                                    <small style="color: #666;">Session: ${sessionId}</small>
+                                </div>
+                            `;
+                            layer.bindPopup(popupContent);
+                            
+                            layer.feature = feature;
+                            layer.aiSessionId = sessionId;
+                            
+                            drawnItems.addLayer(layer);
+                            featuresAdded++;
+                        }
+                    } catch (err) {
+                        console.warn(`Error adding feature ${index}:`, err);
+                    }
+                });
+                
+                // Zoom to fit all features, or use provided location
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 20 });
+                } else if (!isNaN(lat) && !isNaN(lon)) {
+                    const zoom = altitudeToZoom(alt);
+                    map.setView([lat, lon], zoom);
+                }
+                
+                showSnackBar(`Loaded ${featuresAdded} AI analysis features for editing`);
+                
+                setTimeout(() => {
+                    showSnackBar('Use the draw tools to edit or add annotations');
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Error loading AI analysis session:', error);
+                showSnackBar('Error loading AI analysis: ' + error.message);
+            }
+        }
+        
         // Initialize histogram chart
         function initializeHistogram() {
             const ctx = document.getElementById('histogram').getContext('2d');
@@ -1524,6 +1781,13 @@
                 // Load categories for drawing
                 if (typeof updateCategoryProperties === 'function') {
                     updateCategoryProperties();
+                }
+                
+                // Check for AI analysis session to load
+                const urlParams = new URLSearchParams(window.location.search);
+                const aiSessionId = urlParams.get('ai_session');
+                if (aiSessionId) {
+                    loadAIAnalysisSession(aiSessionId);
                 }
 
                 // Add event listeners for histogram updates - with debouncing
@@ -2122,6 +2386,8 @@
 
                 // Initialize map and add event listeners after map is ready
                 await initializeMap();
+                
+                // Draw control is now handled by Leaflet.Draw standard toolbar in map_label.js
 
                 // Add resize handler to update map when sidebar toggles
                 function updateMapSize() {

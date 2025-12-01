@@ -109,7 +109,7 @@ function setupMapHandlers(mapInstance) {
         },
         draw: {
             polyline: false,
-            circle: false,
+            circle: true,  // Enable circle drawing
             circlemarker: false,
             marker: false,
             polygon: {
@@ -123,12 +123,10 @@ function setupMapHandlers(mapInstance) {
     // Create local reference for convenience
     const drawControl = window.globals.drawControl;
 
-    // Initialize raster layers with the feature group (check if function exists)
-    if (typeof window.initRasterLayers === 'function') {
-        const { baseLayers: rasterBaseLayers, overlayLayers, layerControl: rasterLayerControl } = window.initRasterLayers(mapInstance, window.globals.drawnItems);
-    } else {
-        console.warn('window.initRasterLayers not available, make sure raster_layers.js is loaded');
-    }
+    // Note: Raster layer initialization is now handled by the HUD panel in map_label.html
+    // The HTML template's initializeMap() fetches from mbtiles.deepgis.org and provides
+    // layer management via date select and toggle controls. 
+    // This avoids duplicate layer controls and conflicting initialization.
 
     // Handle base layer changes
     mapInstance.on('baselayerchange', function(e) {
@@ -143,7 +141,7 @@ function setupMapHandlers(mapInstance) {
         }
     });
 
-    // Add the draw control after organizing other controls
+    // Add standard Leaflet draw control to map
     mapInstance.addControl(drawControl);
 
     // Add our additional layers to the globals without redeclaring baseLayers
@@ -152,8 +150,8 @@ function setupMapHandlers(mapInstance) {
         attribution: '© OpenStreetMap contributors'
     });
 
-window.globals.layers["Google Satellite"] = L.tileLayer('http://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
-    maxZoom: 19,
+window.globals.layers["Google Satellite"] = L.tileLayer('https://{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}', {
+    maxZoom: 24,
     subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
     attribution: '© Google'
 });
@@ -374,7 +372,17 @@ function showSnackBar(text) {
     }, 6000);
 }
 
-updateCategoryProperties();
+// Defer updateCategoryProperties until map and drawControl are ready to avoid "drawControl not initialized" errors
+function initCategoriesWhenReady() {
+    if (window.globals && window.globals.drawControl && window.globals.map) {
+        updateCategoryProperties();
+    } else {
+        // Wait for map and drawControl to be ready
+        setTimeout(initCategoriesWhenReady, 200);
+    }
+}
+// Start checking after a brief delay to allow map initialization
+setTimeout(initCategoriesWhenReady, 300);
 
 // Create a custom control for the DeepGIS home link
 var HomeControl = L.Control.extend({
@@ -480,72 +488,7 @@ window.globals.histogram_chart = new Chart(window.globals.chart, {
     }
 });
 
-// Create a custom control for the histogram controls
-var HistogramControl = L.Control.extend({
-    options: {
-        position: 'bottomright'
-    },
-    onAdd: function(map) {
-        var container = L.DomUtil.create('div', 'leaflet-control leaflet-control-histogram');
-        container.style.backgroundColor = 'rgba(255, 255, 255, 0.85)';
-        container.style.padding = '5px';
-        container.style.borderRadius = '4px';
-        container.style.boxShadow = '0 1px 5px rgba(0,0,0,0.4)';
-        container.style.marginRight = '10px';
-        container.style.maxWidth = '250px';
-        container.style.backdropFilter = 'blur(2px)';
-        container.style.transition = 'all 0.3s ease';
-
-        // Add toggle button
-        var toggleBtn = L.DomUtil.create('button', 'histogram-toggle', container);
-        toggleBtn.innerHTML = '<i class="fa fa-chart-bar"></i>';
-        toggleBtn.style.position = 'absolute';
-        toggleBtn.style.right = '5px';
-        toggleBtn.style.top = '5px';
-        toggleBtn.style.padding = '2px 5px';
-        toggleBtn.style.fontSize = '0.8em';
-        toggleBtn.style.backgroundColor = 'transparent';
-        toggleBtn.style.border = 'none';
-        toggleBtn.style.cursor = 'pointer';
-
-        // Create content container
-        var content = L.DomUtil.create('div', 'histogram-content', container);
-        content.style.display = 'none';  // Start collapsed
-        
-        content.innerHTML = `
-            <div id="histogram-controls" style="margin-bottom: 5px;">
-                <div style="margin-bottom: 3px; display: flex; align-items: center; gap: 5px;">
-                    <label id="customRange2label" style="font-size: 0.8em; margin: 0;">Bins: 10</label>
-                    <input type="range" class="custom-range" id="customRange2" min="5" max="50" value="10" style="width: 100px;">
-                </div>
-                <div style="display: flex; gap: 3px;">
-                    <button id="DrawOrHist" class="btn btn-danger btn-sm" style="flex: 1; padding: 2px 5px; font-size: 0.8em;">
-                        <i class="fa fa-check"></i> Draw
-                    </button>
-                    <button id="freeHandButton" class="btn btn-success btn-sm" style="flex: 1; padding: 2px 5px; font-size: 0.8em;">
-                        <i class="fa fa-check"></i> Free Hand
-                    </button>
-                </div>
-            </div>
-            <canvas id="histogram" width="220" height="120" style="margin-top: 3px;"></canvas>
-        `;
-
-        // Toggle functionality
-        L.DomEvent.on(toggleBtn, 'click', function() {
-            if (content.style.display === 'none') {
-                content.style.display = 'block';
-            } else {
-                content.style.display = 'none';
-            }
-        });
-
-        // Prevent map interactions when using the controls
-        L.DomEvent.disableClickPropagation(container);
-        L.DomEvent.disableScrollPropagation(container);
-
-        return container;
-    }
-});
+// HistogramControl removed - histogram now in HUD panel in template
 
 // Function to update histogram visibility based on data
 function updateHistogramVisibility(data) {
@@ -621,18 +564,7 @@ function initializeLegacyControls() {
         return;
     }
     
-    // Add histogram control if HistogramControl is defined
-    if (typeof HistogramControl !== 'undefined') {
-        try {
-            // Check if histogram control is already added
-            if (!document.querySelector('.leaflet-control-histogram')) {
-                new HistogramControl().addTo(map);
-                console.log('HistogramControl added successfully');
-            }
-        } catch (e) {
-            console.warn('HistogramControl error:', e);
-        }
-    }
+    // HistogramControl removed - now using HUD panel instead
     
     // drawControl is now managed in setupMapHandlers function
     // This is just a safety check
