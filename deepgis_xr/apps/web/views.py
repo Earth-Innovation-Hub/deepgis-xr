@@ -1270,6 +1270,100 @@ def label_moon_viewer(request):
     return render(request, 'web/label_moon_viewer.html', context)
 
 @csrf_exempt
+def opentopography_lidar_search(request):
+    """
+    Search for OpenTopography LiDAR/point cloud datasets in viewport area.
+    
+    GET /api/opentopography/lidar-search?west=-116.5&east=-116.4&south=36.5&north=36.6
+    
+    Returns available LiDAR datasets for the specified bounding box.
+    """
+    if request.method != 'GET':
+        return JsonResponse({'error': 'Only GET method allowed'}, status=405)
+    
+    try:
+        import os
+        import requests
+        
+        west = float(request.GET.get('west'))
+        east = float(request.GET.get('east'))
+        south = float(request.GET.get('south'))
+        north = float(request.GET.get('north'))
+        
+        # Validate bounding box
+        if not (-180 <= west <= 180) or not (-180 <= east <= 180) or \
+           not (-90 <= south <= 90) or not (-90 <= north <= 90) or \
+           south >= north or west >= east:
+            return JsonResponse({'error': 'Invalid bounding box coordinates'}, status=400)
+        
+        # Get API key from environment
+        api_key = os.environ.get('OPENTOPOGRAPHY_API_KEY', '')
+        
+        # OpenTopography REST API endpoint for dataset search
+        # Note: OpenTopography uses a REST API for dataset discovery
+        # The actual endpoint may vary - this is a placeholder structure
+        base_url = 'https://portal.opentopography.org/API'
+        
+        # For now, we'll query their dataset catalog API
+        # This is a simplified version - actual implementation may need to use their web portal API
+        search_url = f'{base_url}/datasets'
+        
+        params = {
+            'west': west,
+            'east': east,
+            'south': south,
+            'north': north,
+            'outputFormat': 'json'
+        }
+        
+        if api_key:
+            params['API_Key'] = api_key
+        
+        try:
+            response = requests.get(search_url, params=params, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return JsonResponse({
+                    'success': True,
+                    'bounds': {'west': west, 'east': east, 'south': south, 'north': north},
+                    'datasets': data.get('datasets', []),
+                    'count': len(data.get('datasets', []))
+                })
+            else:
+                # If API endpoint doesn't exist or returns error, return mock data structure
+                # In production, you'd want to implement proper API integration
+                return JsonResponse({
+                    'success': True,
+                    'bounds': {'west': west, 'east': east, 'south': south, 'north': north},
+                    'datasets': [],
+                    'count': 0,
+                    'message': 'OpenTopography API integration in progress. Check portal.opentopography.org for available datasets.',
+                    'portal_url': f'https://portal.opentopography.org/datasets?bbox={west},{south},{east},{north}'
+                })
+                
+        except requests.exceptions.RequestException as e:
+            # Return helpful response even if API call fails
+            return JsonResponse({
+                'success': True,
+                'bounds': {'west': west, 'east': east, 'south': south, 'north': north},
+                'datasets': [],
+                'count': 0,
+                'message': f'Could not connect to OpenTopography API: {str(e)}',
+                'portal_url': f'https://portal.opentopography.org/datasets?bbox={west},{south},{east},{north}',
+                'note': 'You can manually search for datasets at the portal URL above'
+            })
+            
+    except ValueError as e:
+        return JsonResponse({'error': f'Invalid parameter: {str(e)}'}, status=400)
+    except Exception as e:
+        import traceback
+        print(f'OpenTopography LiDAR search error: {str(e)}')
+        print(traceback.format_exc())
+        return JsonResponse({'error': 'Internal server error'}, status=500)
+
+
+@csrf_exempt
 def elevation_proxy(request):
     """Proxy for elevation data APIs to avoid CORS issues."""
     

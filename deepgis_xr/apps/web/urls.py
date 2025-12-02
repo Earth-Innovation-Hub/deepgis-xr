@@ -42,6 +42,7 @@ urlpatterns = [
     
     # API endpoints
     path('api/elevation-proxy', views.elevation_proxy, name='elevation_proxy'),
+    path('api/opentopography/lidar-search', views.opentopography_lidar_search, name='opentopography_lidar_search'),
     
     # Semi-supervised labeling (Mask2Former / Segment Anything)
     path('label/semi-supervised/', views.label_semi_supervised, name='label_semi_supervised'),

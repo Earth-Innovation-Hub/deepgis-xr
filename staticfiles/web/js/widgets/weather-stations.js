@@ -271,7 +271,7 @@ export class WeatherStationsWidget {
       position: fixed;
       top: 800px;
       left: 20px;
-      width: 220px;
+      width: 220px !important;
       max-height: 50vh;
       overflow-y: auto;
       z-index: 1400;

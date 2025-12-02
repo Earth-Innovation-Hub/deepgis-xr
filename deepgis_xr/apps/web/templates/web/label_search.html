@@ -241,13 +241,27 @@
             display: none !important;
         }
         
+        /* ========== CONSISTENT LEFT WIDGET WIDTHS ========== */
+        .camera-info {
+            width: 220px !important;
+            min-width: 220px !important;
+            max-width: 220px !important;
+            left: 20px !important;
+            position: fixed !important;
+            top: 90px !important;
+        }
+        
+        .weather-stations-widget {
+            width: 220px !important;
+        }
+        
         /* ========== ADJUST EXISTING HUD ELEMENTS ========== */
         .perspective-views-widget {
-            position: absolute;
-            top: 420px;
-            right: 20px;
+            position: fixed !important;
+            top: 550px !important;  /* Moved further down to avoid overlap with navigation widget */
+            right: 20px !important;
             width: 120px;
-            z-index: 1000;
+            z-index: 1300;  /* Below navigation widget */
             background: rgba(15, 23, 42, 0.8);
             border-radius: 12px;
             padding: 10px;
@@ -323,6 +337,7 @@
             top: 240px !important;  /* Below quick view buttons (80px + 4 buttons ~40px each + gaps) */
             right: 20px !important;
             width: 120px;
+            max-height: 250px;  /* Limit height to prevent overlap */
             z-index: 1400;  /* Below quick view buttons but above other elements */
         }
         
@@ -767,12 +782,19 @@
             <button class="btn btn-warning btn-sm mb-1" id="measureHeight">
                 <i class="fas fa-ruler-vertical me-2"></i>Measure Height
             </button>
+            <button class="btn btn-info btn-sm mb-1" id="searchLidar">
+                <i class="fas fa-cloud me-2"></i>Search LiDAR Data
+            </button>
             <button class="btn btn-danger btn-sm" id="clearMeasurements">
                 <i class="fas fa-trash me-2"></i>Clear All
             </button>
         </div>
         <div id="measurementsList" style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; min-height: 40px; font-size: 0.8rem; color: #94a3b8;">
             No measurements yet
+        </div>
+        <div id="lidarSearchResults" style="display: none; margin-top: 12px; padding: 8px; background: rgba(59, 130, 246, 0.15); border-radius: 4px; font-size: 0.8rem;">
+            <div id="lidarSearchStatus" style="color: #94a3b8;">Click "Search LiDAR Data" to find available datasets</div>
+            <div id="lidarSearchContent" style="margin-top: 8px;"></div>
         </div>
     </div>
     
@@ -1462,32 +1484,44 @@
             setTimeout(styleWorldSamplerInHUD, 2000);
             setTimeout(styleWorldSamplerInHUD, 4000);
             
-            // Ensure navigation widget is positioned correctly relative to quick view buttons
-            function positionNavigationWidget() {
+            // Ensure navigation widget and perspective views widget are positioned correctly
+            function positionNavigationWidgets() {
                 const quickViews = document.querySelector('.hud-quick-views');
                 const navWidget = document.getElementById('navigationWidgetGroup');
+                const perspectiveWidget = document.getElementById('perspectiveViewsWidget');
                 
                 if (quickViews && navWidget) {
                     const quickViewsRect = quickViews.getBoundingClientRect();
                     const quickViewsBottom = quickViewsRect.bottom;
                     
-                    // Position navigation widget below quick view buttons with some spacing (accounting for 4 buttons now)
+                    // Position navigation widget below quick view buttons with some spacing
                     navWidget.style.position = 'fixed';
                     navWidget.style.top = (quickViewsBottom + 20) + 'px';
                     navWidget.style.right = '20px';
+                    
+                    // Position perspective views widget below navigation widget with more spacing
+                    if (perspectiveWidget) {
+                        const navWidgetRect = navWidget.getBoundingClientRect();
+                        const navWidgetBottom = navWidgetRect.bottom;
+                        perspectiveWidget.style.position = 'fixed';
+                        perspectiveWidget.style.top = (navWidgetBottom + 40) + 'px';  // Increased spacing from 20px to 40px
+                        perspectiveWidget.style.right = '20px';
+                    }
                 }
             }
             
             // Position on load and resize
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
-                    setTimeout(positionNavigationWidget, 100);
+                    setTimeout(positionNavigationWidgets, 100);
+                    setTimeout(positionNavigationWidgets, 500);  // Second check after widgets render
                 });
             } else {
-                setTimeout(positionNavigationWidget, 100);
+                setTimeout(positionNavigationWidgets, 100);
+                setTimeout(positionNavigationWidgets, 500);
             }
             
-            window.addEventListener('resize', positionNavigationWidget);
+            window.addEventListener('resize', positionNavigationWidgets);
         })();
     </script>
 </body>

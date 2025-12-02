@@ -505,6 +505,80 @@ function setupEventHandlers(viewer) {
   addLazyEventHandler('measureDistance', lazyLoaders.measurements, 'startDistanceMeasurement', [viewer]);
   addLazyEventHandler('measureArea', lazyLoaders.measurements, 'startAreaMeasurement', [viewer]);
   addLazyEventHandler('measureHeight', lazyLoaders.measurements, 'startHeightMeasurement', [viewer]);
+  
+  // LiDAR search handler
+  const searchLidarBtn = document.getElementById('searchLidar');
+  if (searchLidarBtn) {
+    searchLidarBtn.addEventListener('click', async () => {
+      try {
+        const { OpenTopographyLidarSearch } = await import('./utils/opentopography-lidar.js');
+        const lidarSearch = new OpenTopographyLidarSearch(viewer);
+        
+        const statusEl = document.getElementById('lidarSearchStatus');
+        const contentEl = document.getElementById('lidarSearchContent');
+        const resultsEl = document.getElementById('lidarSearchResults');
+        
+        if (statusEl) statusEl.textContent = 'Searching for LiDAR datasets...';
+        if (resultsEl) resultsEl.style.display = 'block';
+        
+        const bounds = lidarSearch.getViewportBounds();
+        const area = lidarSearch.getViewportArea(bounds);
+        const formattedBounds = lidarSearch.formatBounds(bounds);
+        
+        const results = await lidarSearch.searchViewport();
+        
+        if (statusEl) {
+          statusEl.innerHTML = `
+            <strong>Viewport Area:</strong> ${area.toFixed(2)} km²<br>
+            <strong>Bounds:</strong> ${formattedBounds.south}°N to ${formattedBounds.north}°N, 
+            ${formattedBounds.west}°W to ${formattedBounds.east}°W
+          `;
+        }
+        
+        if (contentEl) {
+          if (results.count > 0) {
+            contentEl.innerHTML = `
+              <div style="color: #10b981; margin-bottom: 8px;">
+                <strong>Found ${results.count} dataset(s):</strong>
+              </div>
+              <div style="max-height: 200px; overflow-y: auto;">
+                ${results.datasets.map((ds, i) => `
+                  <div style="padding: 6px; margin: 4px 0; background: rgba(0,0,0,0.2); border-radius: 4px;">
+                    <strong>${ds.name || `Dataset ${i + 1}`}</strong><br>
+                    ${ds.description ? `<small>${ds.description}</small><br>` : ''}
+                    ${ds.resolution ? `<small>Resolution: ${ds.resolution}</small><br>` : ''}
+                    ${ds.year ? `<small>Year: ${ds.year}</small>` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          } else {
+            contentEl.innerHTML = `
+              <div style="color: #fbbf24; margin-bottom: 8px;">
+                <strong>No datasets found in this area</strong>
+              </div>
+              ${results.portal_url ? `
+                <a href="${results.portal_url}" target="_blank" 
+                   style="color: #60a5fa; text-decoration: underline; font-size: 0.75rem;">
+                  Search OpenTopography Portal →
+                </a>
+              ` : ''}
+              ${results.message ? `<div style="margin-top: 4px; font-size: 0.75rem; color: #94a3b8;">${results.message}</div>` : ''}
+            `;
+          }
+        }
+        
+        showSnackBar(`Found ${results.count} LiDAR dataset(s)`, results.count > 0 ? 'success' : 'info');
+      } catch (error) {
+        console.error('Error searching LiDAR data:', error);
+        const statusEl = document.getElementById('lidarSearchStatus');
+        const contentEl = document.getElementById('lidarSearchContent');
+        if (statusEl) statusEl.textContent = 'Error searching for datasets';
+        if (contentEl) contentEl.innerHTML = `<div style="color: #ef4444;">${error.message}</div>`;
+        showSnackBar('Error searching LiDAR data', 'error');
+      }
+    });
+  }
   addLazyEventHandler('clearMeasurements', lazyLoaders.measurements, 'clearAllMeasurements', [viewer]);
 
   // Fullscreen change detection
