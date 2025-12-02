@@ -243,16 +243,24 @@
         
         /* ========== CONSISTENT LEFT WIDGET WIDTHS ========== */
         .camera-info {
-            width: 220px !important;
-            min-width: 220px !important;
-            max-width: 220px !important;
+            width: 200px !important;
+            min-width: 200px !important;
+            max-width: 200px !important;
             left: 20px !important;
             position: fixed !important;
             top: 90px !important;
         }
         
         .weather-stations-widget {
-            width: 220px !important;
+            width: 200px !important;
+        }
+        
+        .drone-fly-widget {
+            width: 200px !important;
+        }
+        
+        .drone-orbit-widget {
+            width: 200px !important;
         }
         
         /* ========== ADJUST EXISTING HUD ELEMENTS ========== */
@@ -346,7 +354,7 @@
             position: fixed;
             top: 360px;
             left: 20px;
-            width: 220px;
+            width: 200px;
             z-index: 1400;
             background: rgba(15, 23, 42, 0.8);
             border-radius: 12px;
@@ -419,7 +427,7 @@
             position: fixed;
             top: 580px;
             left: 20px;
-            width: 220px;
+            width: 200px;
             max-height: 50vh;
             overflow-y: auto;
             z-index: 1400;
@@ -883,22 +891,9 @@
             <div class="hud-panel-title"><i class="fas fa-route" style="color: #3b82f6;"></i> Mission Planning</div>
             <button class="hud-panel-close" onclick="closeHudPanel('missionPanel')"><i class="fas fa-times"></i></button>
         </div>
-        <div id="missionLoginPanel" style="display: none;">
-            <div style="text-align: center; padding: 20px;">
-                <i class="fas fa-lock" style="font-size: 2rem; color: #64748b; margin-bottom: 10px;"></i>
-                <p style="color: #94a3b8; font-size: 0.85rem;">Login required</p>
-                <input type="tel" class="form-control form-control-sm mb-2" id="phoneNumberInput" placeholder="Phone number">
-                <button class="btn btn-primary btn-sm w-100" id="phoneLoginBtn">
-                    <i class="fas fa-sign-in-alt me-2"></i>Login
-                </button>
-                <div id="loginError" style="color: #ef4444; font-size: 0.8rem; margin-top: 8px; display: none;"></div>
-            </div>
-        </div>
+        <!-- Login panel removed - no authentication required -->
         <div id="missionControlsPanel">
-            <div id="userInfoBar" style="background: #065f46; padding: 6px 10px; border-radius: 4px; margin-bottom: 10px; display: none; font-size: 0.8rem;">
-                <small style="color: #a7f3d0;"><i class="fas fa-user-check me-1"></i><span id="loggedInUser">Logged in</span></small>
-                <button class="btn btn-link btn-sm float-end p-0" id="logoutBtn" style="color: #fca5a5; text-decoration: none; font-size: 0.75rem;">Logout</button>
-            </div>
+            <!-- User info bar removed - no authentication required -->
             <div class="form-group mb-2">
                 <select class="form-select form-select-sm" id="missionSelect">
                     <option value="">-- Select Mission --</option>
@@ -919,6 +914,34 @@
             <div class="form-group">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Default Altitude (m):</label>
                 <input type="number" class="form-control form-control-sm" id="defaultAltitude" value="50" min="0" step="1">
+            </div>
+            
+            <!-- GPS Telemetry Section (Vehicle Paths) -->
+            <div class="mt-3 pt-3" style="border-top: 1px solid rgba(148, 163, 184, 0.3);">
+                <h5 style="color: #cbd5e1; font-size: 0.9rem; margin-bottom: 10px;">
+                    <i class="fas fa-satellite" style="color: #10b981;"></i> GPS Telemetry (Vehicle Paths)
+                </h5>
+                <div class="form-group mb-2">
+                    <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Session:</label>
+                    <select class="form-select form-select-sm" id="gpsSessionSelect">
+                        <option value="">Loading sessions...</option>
+                    </select>
+                </div>
+                <div class="btn-group-vertical w-100" role="group">
+                    <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
+                        <i class="fas fa-route"></i> Load Path
+                    </button>
+                    <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
+                        <i class="fas fa-map-marker-alt"></i> Load Points
+                    </button>
+                    <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
+                        <i class="fas fa-plane"></i> Fly To Path
+                    </button>
+                    <button class="btn btn-sm btn-danger" id="clearGPSBtn">
+                        <i class="fas fa-trash"></i> Clear All
+                    </button>
+                </div>
+                <div id="gpsSessionInfo" class="mt-2 small" style="display: none; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px; color: #94a3b8;"></div>
             </div>
         </div>
     </div>
@@ -1179,8 +1202,8 @@
     <script type="module" src="{% static 'web/js/main.js' %}"></script>
     
     <!-- GPS Telemetry Path Loader -->
-    <!-- Note: GPS Telemetry is now integrated into World Sampler panel -->
-    <!-- It will be initialized automatically when World Sampler is created -->
+    <!-- Note: GPS Telemetry is now integrated into Mission Planner panel -->
+    <!-- It will be initialized automatically when Mission Planner is created -->
     <script src="{% static 'web/js/gps-telemetry.js' %}"></script>
     
     <!-- World Sampler UI -->

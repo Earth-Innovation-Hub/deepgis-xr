@@ -247,36 +247,7 @@ class WorldSamplerUI {
                     </div>
                 </div>
                 
-                <!-- GPS Telemetry Section (Vehicle Sampling Paths) -->
-                <div class="sampler-section" id="gpsTelemetrySection">
-                    <h4 class="accordion-header" data-target="gpsTelemetryContent">
-                        <span><i class="fas fa-satellite"></i> GPS Telemetry (Vehicle Paths)</span>
-                        <i class="fas fa-chevron-down accordion-icon"></i>
-                    </h4>
-                    <div class="sampler-section-content" id="gpsTelemetryContent">
-                    <div class="form-group mb-2">
-                        <label class="form-label small">Session:</label>
-                        <select class="form-select form-select-sm" id="gpsSessionSelect">
-                            <option value="">Loading sessions...</option>
-                        </select>
-                    </div>
-                    <div class="btn-group-vertical w-100" role="group">
-                        <button class="btn btn-sm btn-success mb-1" id="loadGPSPathBtn" disabled>
-                            <i class="fas fa-route"></i> Load Path
-                        </button>
-                        <button class="btn btn-sm btn-info mb-1" id="loadGPSPointsBtn" disabled>
-                            <i class="fas fa-map-marker-alt"></i> Load Points
-                        </button>
-                        <button class="btn btn-sm btn-warning mb-1" id="flyToPathBtn" disabled>
-                            <i class="fas fa-plane"></i> Fly To Path
-                        </button>
-                        <button class="btn btn-sm btn-danger" id="clearGPSBtn">
-                            <i class="fas fa-trash"></i> Clear All
-                        </button>
-                    </div>
-                    <div id="gpsSessionInfo" class="mt-2 small text-muted" style="display: none; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px;"></div>
-                    </div>
-                </div>
+                <!-- GPS Telemetry has been moved to Mission Planner panel -->
                 
                 <!-- Actions Section -->
                 <div class="sampler-section">
@@ -310,67 +281,8 @@ class WorldSamplerUI {
         // Initialize accordion functionality after DOM is ready
         setTimeout(() => {
             this.initAccordion();
-            // Initialize GPS Telemetry if viewer is available
-            this.initGPSTelemetry();
+            // GPS Telemetry has been moved to Mission Planner
         }, 0);
-    }
-    
-    initGPSTelemetry() {
-        // Initialize GPS Telemetry Loader within World Sampler
-        if (!this.viewer) {
-            console.warn('[World Sampler] Viewer not available for GPS Telemetry');
-            return;
-        }
-        
-        if (!window.GPSTelemetryLoader) {
-            console.warn('[World Sampler] GPSTelemetryLoader not available');
-            return;
-        }
-        
-        // Check if GPS Telemetry UI already exists in World Sampler
-        const gpsSection = document.getElementById('gpsTelemetrySection');
-        if (!gpsSection) {
-            console.warn('[World Sampler] GPS Telemetry section not found in UI');
-            return;
-        }
-        
-        // Check if GPS Telemetry is already initialized
-        if (window.gpsTelemetryLoader && window.gpsTelemetryLoader.initializedInSampler) {
-            return; // Already initialized
-        }
-        
-        // Create GPS Telemetry Loader instance
-        const gpsLoader = new window.GPSTelemetryLoader(this.viewer);
-        
-        // Mark as initialized in sampler to prevent duplicate initialization
-        gpsLoader.initializedInSampler = true;
-        window.gpsTelemetryLoader = gpsLoader;
-        
-        // Override createUI to prevent it from creating its own panel
-        // The UI is already created in World Sampler, so just setup listeners
-        gpsLoader.createUI = function() {
-            // UI already exists in World Sampler, just setup event listeners and load sessions
-            if (document.getElementById('gpsSessionSelect')) {
-                this.setupEventListeners();
-                this.loadSessions();
-            }
-        };
-        
-        // Setup event listeners and load sessions (UI is already in DOM)
-        if (document.getElementById('gpsSessionSelect')) {
-            gpsLoader.setupEventListeners();
-            gpsLoader.loadSessions();
-            console.log('[World Sampler] GPS Telemetry initialized');
-        } else {
-            // Wait a bit for DOM to be ready
-            setTimeout(() => {
-                if (document.getElementById('gpsSessionSelect')) {
-                    gpsLoader.setupEventListeners();
-                    gpsLoader.loadSessions();
-                    console.log('[World Sampler] GPS Telemetry initialized (delayed)');
-                }
-            }, 100);
-        }
     }
     
     createFloatingUI() {

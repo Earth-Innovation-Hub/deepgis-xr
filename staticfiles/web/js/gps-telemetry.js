@@ -15,10 +15,10 @@ class GPSTelemetryLoader {
     }
     
     createUI() {
-        // Check if UI already exists in World Sampler
-        if (document.getElementById('gpsTelemetrySection')) {
-            console.log('GPS Telemetry UI already exists in World Sampler, skipping creation');
-            // UI is already in World Sampler, just setup event listeners
+        // Check if UI already exists in Mission Planner
+        if (document.getElementById('gpsSessionSelect')) {
+            console.log('GPS Telemetry UI already exists in Mission Planner, skipping creation');
+            // UI is already in Mission Planner, just setup event listeners
             this.setupEventListeners();
             this.loadSessions();
             return;

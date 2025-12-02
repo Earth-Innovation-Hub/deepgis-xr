@@ -13,7 +13,8 @@ class MissionPlanner {
         this.isPlacingWaypoint = false;
         this.defaultAltitude = 50.0;
         this.defaultSpeed = null;
-        this.isAuthenticated = false;
+        // Authentication removed - no login required
+        this.isAuthenticated = true; // Always authenticated
         this.currentUser = null;
         
         // CSRF token
@@ -24,7 +25,69 @@ class MissionPlanner {
     
     async init() {
         this.setupEventListeners();
-        await this.checkAuthStatus();
+        // Skip authentication check - always show controls
+        this.updateAuthUI();
+        await this.loadMissions();
+        // Initialize GPS Telemetry if available
+        this.initGPSTelemetry();
+    }
+    
+    initGPSTelemetry() {
+        // Initialize GPS Telemetry Loader within Mission Planner
+        if (!this.viewer) {
+            console.warn('[Mission Planner] Viewer not available for GPS Telemetry');
+            return;
+        }
+        
+        if (!window.GPSTelemetryLoader) {
+            console.warn('[Mission Planner] GPSTelemetryLoader not available');
+            return;
+        }
+        
+        // Check if GPS Telemetry UI already exists in Mission Planner
+        const gpsSelect = document.getElementById('gpsSessionSelect');
+        if (!gpsSelect) {
+            console.warn('[Mission Planner] GPS Telemetry UI not found');
+            return;
+        }
+        
+        // Check if GPS Telemetry is already initialized
+        if (window.gpsTelemetryLoader && window.gpsTelemetryLoader.initializedInMissionPlanner) {
+            return; // Already initialized
+        }
+        
+        // Create GPS Telemetry Loader instance
+        const gpsLoader = new window.GPSTelemetryLoader(this.viewer);
+        
+        // Mark as initialized in mission planner to prevent duplicate initialization
+        gpsLoader.initializedInMissionPlanner = true;
+        window.gpsTelemetryLoader = gpsLoader;
+        
+        // Override createUI to prevent it from creating its own panel
+        // The UI is already created in Mission Planner, so just setup listeners
+        gpsLoader.createUI = function() {
+            // UI already exists in Mission Planner, just setup event listeners and load sessions
+            if (document.getElementById('gpsSessionSelect')) {
+                this.setupEventListeners();
+                this.loadSessions();
+            }
+        };
+        
+        // Setup event listeners and load sessions (UI is already in DOM)
+        if (document.getElementById('gpsSessionSelect')) {
+            gpsLoader.setupEventListeners();
+            gpsLoader.loadSessions();
+            console.log('[Mission Planner] GPS Telemetry initialized');
+        } else {
+            // Wait a bit for DOM to be ready
+            setTimeout(() => {
+                if (document.getElementById('gpsSessionSelect')) {
+                    gpsLoader.setupEventListeners();
+                    gpsLoader.loadSessions();
+                    console.log('[Mission Planner] GPS Telemetry initialized (delayed)');
+                }
+            }, 100);
+        }
     }
     
     getCookie(name) {
@@ -85,187 +148,27 @@ class MissionPlanner {
             }
         });
         
-        // Login button
-        document.getElementById('phoneLoginBtn')?.addEventListener('click', () => this.handleLogin());
-        
-        // Enter key on phone input
-        document.getElementById('phoneNumberInput')?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                this.handleLogin();
-            }
-        });
-        
-        // Logout button
-        document.getElementById('logoutBtn')?.addEventListener('click', () => this.handleLogout());
+        // Login/logout removed - no authentication required
     }
     
     // ========== AUTHENTICATION ==========
-    
-    async checkAuthStatus() {
-        try {
-            const response = await fetch('/api/auth/status/', {
-                method: 'GET',
-                headers: {
-                    'X-CSRFToken': this.csrftoken
-                }
-            });
-            
-            const data = await response.json();
-            this.isAuthenticated = data.authenticated;
-            this.currentUser = data.authenticated ? data : null;
-            
-            this.updateAuthUI();
-            
-            if (this.isAuthenticated) {
-                await this.loadMissions();
-            }
-        } catch (error) {
-            console.error('[Mission Planner] Error checking auth status:', error);
-            this.isAuthenticated = false;
-            this.updateAuthUI();
-        }
-    }
+    // Authentication removed - no login required
     
     updateAuthUI() {
         const loginPanel = document.getElementById('missionLoginPanel');
         const controlsPanel = document.getElementById('missionControlsPanel');
         const userInfoBar = document.getElementById('userInfoBar');
-        const loggedInUser = document.getElementById('loggedInUser');
         
-        if (this.isAuthenticated) {
-            // Show mission controls, hide login panel
-            if (loginPanel) loginPanel.style.display = 'none';
-            if (controlsPanel) controlsPanel.style.display = 'block';
-            if (userInfoBar) userInfoBar.style.display = 'block';
-            if (loggedInUser && this.currentUser) {
-                loggedInUser.textContent = `Logged in as ${this.currentUser.phone || this.currentUser.username}`;
-            }
-            console.log('[Mission Planner] User authenticated');
-        } else {
-            // Show login panel, hide mission controls
-            if (loginPanel) loginPanel.style.display = 'block';
-            if (controlsPanel) controlsPanel.style.display = 'none';
-            if (userInfoBar) userInfoBar.style.display = 'none';
-            console.log('[Mission Planner] User not authenticated - showing login');
-        }
-    }
-    
-    async handleLogin() {
-        const phoneInput = document.getElementById('phoneNumberInput');
-        const errorDiv = document.getElementById('loginError');
-        const successDiv = document.getElementById('loginSuccess');
-        const loginBtn = document.getElementById('phoneLoginBtn');
-        
-        if (!phoneInput) return;
-        
-        const phoneNumber = phoneInput.value.trim();
-        
-        // Reset messages
-        if (errorDiv) errorDiv.style.display = 'none';
-        if (successDiv) successDiv.style.display = 'none';
-        
-        if (!phoneNumber) {
-            if (errorDiv) {
-                errorDiv.textContent = 'Please enter a phone number';
-                errorDiv.style.display = 'block';
-            }
-            return;
-        }
-        
-        // Disable button during request
-        if (loginBtn) {
-            loginBtn.disabled = true;
-            loginBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Logging in...';
-        }
-        
-        try {
-            const response = await fetch('/api/auth/login/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': this.csrftoken
-                },
-                body: JSON.stringify({ phone_number: phoneNumber })
-            });
-            
-            const data = await response.json();
-            
-            if (response.ok && data.authenticated) {
-                // Login successful
-                this.isAuthenticated = true;
-                this.currentUser = data;
-                
-                if (successDiv) {
-                    successDiv.textContent = 'Login successful!';
-                    successDiv.style.display = 'block';
-                }
-                
-                this.showStatus('Logged in successfully', 'success');
-                
-                // Update UI after brief delay
-                setTimeout(() => {
-                    this.updateAuthUI();
-                    this.loadMissions();
-                }, 500);
-                
-            } else if (data.status === 'verification_required') {
-                // Verification needed (production mode)
-                if (successDiv) {
-                    successDiv.textContent = data.message || 'Verification code sent. Check your phone.';
-                    successDiv.style.display = 'block';
-                }
-            } else {
-                // Error
-                if (errorDiv) {
-                    errorDiv.textContent = data.error || 'Login failed';
-                    errorDiv.style.display = 'block';
-                }
-            }
-        } catch (error) {
-            console.error('[Mission Planner] Login error:', error);
-            if (errorDiv) {
-                errorDiv.textContent = 'Network error. Please try again.';
-                errorDiv.style.display = 'block';
-            }
-        } finally {
-            // Re-enable button
-            if (loginBtn) {
-                loginBtn.disabled = false;
-                loginBtn.innerHTML = '<i class="fas fa-sign-in-alt me-2"></i>Login with Phone';
-            }
-        }
-    }
-    
-    async handleLogout() {
-        try {
-            const response = await fetch('/api/auth/logout/', {
-                method: 'POST',
-                headers: {
-                    'X-CSRFToken': this.csrftoken
-                }
-            });
-            
-            if (response.ok) {
-                this.isAuthenticated = false;
-                this.currentUser = null;
-                this.clearMission();
-                this.updateAuthUI();
-                this.showStatus('Logged out successfully', 'success');
-            }
-        } catch (error) {
-            console.error('[Mission Planner] Logout error:', error);
-            this.showStatus('Error logging out', 'error');
-        }
+        // Always show mission controls, hide login panel
+        if (loginPanel) loginPanel.style.display = 'none';
+        if (controlsPanel) controlsPanel.style.display = 'block';
+        if (userInfoBar) userInfoBar.style.display = 'none'; // Hide user info bar
     }
     
     // ========== MISSIONS ==========
     
     async loadMissions() {
-        if (!this.isAuthenticated) {
-            console.warn('[Mission Planner] Cannot load missions - not authenticated');
-            return;
-        }
-        
+        // No authentication check - always allow loading missions
         try {
             const response = await fetch('/label/api/missions/', {
                 method: 'GET',
@@ -275,9 +178,9 @@ class MissionPlanner {
             });
             
             if (response.status === 401) {
-                this.isAuthenticated = false;
-                this.updateAuthUI();
-                console.warn('[Mission Planner] Session expired. Please log in again.');
+                // If API requires auth, just show empty list
+                console.warn('[Mission Planner] API requires authentication, showing empty list');
+                this.populateMissionSelect([]);
                 return;
             }
             
@@ -286,10 +189,11 @@ class MissionPlanner {
             }
             
             const data = await response.json();
-            this.populateMissionSelect(data.missions);
+            this.populateMissionSelect(data.missions || []);
         } catch (error) {
             console.error('Error loading missions:', error);
-            this.showStatus('Error loading missions: ' + error.message, 'error');
+            // Don't show error to user, just show empty list
+            this.populateMissionSelect([]);
         }
     }
     
@@ -312,11 +216,7 @@ class MissionPlanner {
     }
     
     async createNewMission() {
-        if (!this.isAuthenticated) {
-            this.showStatus('Please log in to create missions', 'warning');
-            return;
-        }
-        
+        // No authentication check - always allow creating missions
         const name = prompt('Enter mission name:');
         if (!name) return;
         
@@ -338,9 +238,7 @@ class MissionPlanner {
             });
             
             if (response.status === 401) {
-                this.isAuthenticated = false;
-                this.updateAuthUI();
-                this.showStatus('Session expired. Please log in again.', 'warning');
+                this.showStatus('API requires authentication. Mission creation may not work.', 'warning');
                 return;
             }
             
@@ -410,11 +308,7 @@ class MissionPlanner {
     }
     
     toggleWaypointPlacement() {
-        if (!this.isAuthenticated) {
-            this.showStatus('Please log in first', 'warning');
-            return;
-        }
-        
+        // No authentication check - always allow waypoint placement
         if (!this.currentMission) {
             this.showStatus('Please create or select a mission first', 'warning');
             return;
