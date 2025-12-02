@@ -209,7 +209,7 @@ class GPSTelemetryLoader {
                         width: 4,
                         material: Cesium.Color.CYAN.withAlpha(0.9),
                         clampToGround: false,
-                        heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
+                        heightReference: Cesium.HeightReference.NONE, // Use absolute GPS altitude from DB
                         arcType: Cesium.ArcType.GEODESIC
                     },
                     description: `
@@ -257,15 +257,19 @@ class GPSTelemetryLoader {
                 const [lon, lat, alt] = feature.geometry.coordinates;
                 const props = feature.properties;
                 
+                // Use absolute GPS altitude from database (above MSL)
+                // Ensure altitude is a valid number, fallback to 0 if missing
+                const gpsAltitude = (alt !== null && alt !== undefined && !isNaN(alt)) ? alt : 0;
+                
                 const pointEntity = this.viewer.entities.add({
                     name: `GPS Point ${index + 1}`,
-                    position: Cesium.Cartesian3.fromDegrees(lon, lat, alt || 0),
+                    position: Cesium.Cartesian3.fromDegrees(lon, lat, gpsAltitude),
                     point: {
                         pixelSize: 6,
                         color: this.getColorForFixType(props.fix_type),
                         outlineColor: Cesium.Color.WHITE,
                         outlineWidth: 1,
-                        heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND
+                        heightReference: Cesium.HeightReference.NONE // Use absolute GPS altitude from DB
                     },
                     label: {
                         text: `${index + 1}`,
@@ -275,7 +279,8 @@ class GPSTelemetryLoader {
                         outlineWidth: 2,
                         style: Cesium.LabelStyle.FILL_AND_OUTLINE,
                         verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                        pixelOffset: new Cesium.Cartesian2(0, -20)
+                        pixelOffset: new Cesium.Cartesian2(0, -20),
+                        heightReference: Cesium.HeightReference.NONE // Label uses same absolute altitude as point
                     },
                     description: `
                         <table class="table table-sm">
