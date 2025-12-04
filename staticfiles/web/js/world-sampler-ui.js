@@ -822,7 +822,7 @@ class WorldSamplerUI {
             const speedEl = document.getElementById('droneOrbitSpeed');
             const btnEl = document.getElementById('droneOrbitBtn');
             if (radiusEl && speedEl && btnEl) {
-                const radius = radiusEl.value || 100;
+                const radius = radiusEl.value || 1000;
                 const speed = speedEl.value || 50;
                 btnEl.innerHTML = `<i class="fas fa-circle-notch"></i> Orbit ${radius}m radius @ ${speed} km/h`;
             }
@@ -1396,17 +1396,17 @@ class WorldSamplerUI {
         const ellipsoid = scene.globe.ellipsoid;
         
         // Get orbit parameters from UI
-        const orbitRadius = parseFloat(document.getElementById('droneOrbitRadius').value) || 100;
-        const altitudeAGL = parseFloat(document.getElementById('droneOrbitAltitude').value) || 100;
+        const orbitRadius = parseFloat(document.getElementById('droneOrbitRadius').value) || 1000;
+        const altitudeAGL = parseFloat(document.getElementById('droneOrbitAltitude').value) || 2000;
         const speedKmh = parseFloat(document.getElementById('droneOrbitSpeed').value) || 50;
-        const revolutions = parseFloat(document.getElementById('droneOrbitRevolutions').value) || 1;
-        const pitchAngle = parseFloat(document.getElementById('droneOrbitPitch').value) || -45;
+        const revolutions = parseFloat(document.getElementById('droneOrbitRevolutions').value) || 10;
+        const pitchAngle = parseFloat(document.getElementById('droneOrbitPitch').value) || -65;
         
         // Validate parameters
-        const radius = Math.max(20, Math.min(500, orbitRadius));
-        const altitude = Math.max(20, Math.min(500, altitudeAGL));
+        const radius = Math.max(20, Math.min(5000, orbitRadius));
+        const altitude = Math.max(20, Math.min(5000, altitudeAGL));
         const speed = Math.max(10, Math.min(100, speedKmh));
-        const revs = Math.max(0.25, Math.min(3, revolutions));
+        const revs = Math.max(0.25, Math.min(20, revolutions));
         const pitch = Math.max(-90, Math.min(0, pitchAngle));
         
         // Get current camera position

@@ -318,9 +318,14 @@ export async function initializeCesium(updateLoadingStatus) {
         });
         console.log(`Camera set to: lng=${initialPosition.lng}, lat=${initialPosition.lat}, alt=${initialPosition.alt}`);
       } else {
-        // Default view
+        // Default view - Tempe Town Lake, AZ (ASU area)
         viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(0, 0, 20000000)
+          destination: Cesium.Cartesian3.fromDegrees(-111.933884, 33.428187, 3322.5),
+          orientation: {
+            heading: Cesium.Math.toRadians(6.0), // 366° normalized to 6°
+            pitch: Cesium.Math.toRadians(-90.0), // Looking straight down
+            roll: 0.0
+          }
         });
       }
     }, 100);
