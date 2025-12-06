@@ -943,6 +943,55 @@
                 </div>
                 <div id="gpsSessionInfo" class="mt-2 small" style="display: none; background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: 4px; color: #94a3b8;"></div>
             </div>
+            
+            <!-- Live Aircraft Tracking Section -->
+            <div class="mt-3 pt-3" style="border-top: 1px solid rgba(148, 163, 184, 0.3);">
+                <h5 style="color: #cbd5e1; font-size: 0.9rem; margin-bottom: 10px;">
+                    <i class="fas fa-plane" style="color: #f59e0b;"></i> Live Aircraft (ADS-B)
+                </h5>
+                <div class="form-group mb-2">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; color: #cbd5e1; font-size: 0.85rem;">
+                        <input type="checkbox" id="aircraftTrackingToggle" style="cursor: pointer;">
+                        <span>Enable Aircraft Tracking</span>
+                    </label>
+                </div>
+                <div id="aircraftTrackingControls" style="display: none;">
+                    <div class="form-group mb-2">
+                        <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Update Interval:</label>
+                        <select class="form-select form-select-sm" id="aircraftUpdateInterval">
+                            <option value="5" selected>5 seconds</option>
+                            <option value="10">10 seconds</option>
+                            <option value="15">15 seconds</option>
+                            <option value="30">30 seconds</option>
+                        </select>
+                    </div>
+                    <div id="aircraftTrackingStatus" style="background: rgba(245, 158, 11, 0.1); padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; color: #f59e0b;">
+                        <i class="fas fa-plane"></i> <span id="aircraftCount">0</span> aircraft in view
+                    </div>
+                    <div class="btn-group-vertical w-100" role="group">
+                        <button class="btn btn-sm btn-info mb-1" id="refreshAircraftBtn">
+                            <i class="fas fa-sync-alt"></i> Refresh Now
+                        </button>
+                        <button class="btn btn-sm btn-danger" id="clearAircraftBtn">
+                            <i class="fas fa-trash"></i> Clear All
+                        </button>
+                    </div>
+                    <div style="margin-top: 8px; font-size: 0.7rem; color: #64748b;">
+                        <i class="fas fa-info-circle"></i> Data from OpenSky Network
+                    </div>
+                    <!-- Altitude Legend -->
+                    <div style="margin-top: 8px; font-size: 0.7rem; color: #94a3b8;">
+                        <div style="margin-bottom: 4px;">Altitude Colors:</div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                            <span><span style="color: #888888;">●</span> Ground</span>
+                            <span><span style="color: #22c55e;">●</span> &lt;3k ft</span>
+                            <span><span style="color: #3b82f6;">●</span> &lt;16k ft</span>
+                            <span><span style="color: #8b5cf6;">●</span> &lt;33k ft</span>
+                            <span><span style="color: #ef4444;">●</span> &gt;33k ft</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
     

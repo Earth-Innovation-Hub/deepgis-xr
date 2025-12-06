@@ -3,6 +3,9 @@
  * Handles waypoint placement, mission management, and visualization on Cesium map
  */
 
+// Import OpenSky ADS-B Layer dynamically
+let OpenSkyADSBLayer = null;
+
 class MissionPlanner {
     constructor(viewer) {
         this.viewer = viewer;
@@ -20,6 +23,10 @@ class MissionPlanner {
         // CSRF token
         this.csrftoken = this.getCookie('csrftoken');
         
+        // Aircraft tracking
+        this.adsbLayer = null;
+        this.aircraftTrackingEnabled = false;
+        
         this.init();
     }
     
@@ -30,6 +37,8 @@ class MissionPlanner {
         await this.loadMissions();
         // Initialize GPS Telemetry if available
         this.initGPSTelemetry();
+        // Initialize Aircraft Tracking (ADS-B)
+        this.initAircraftTracking();
     }
     
     initGPSTelemetry() {
@@ -87,6 +96,138 @@ class MissionPlanner {
                     console.log('[Mission Planner] GPS Telemetry initialized (delayed)');
                 }
             }, 100);
+        }
+    }
+    
+    async initAircraftTracking() {
+        // Initialize Aircraft Tracking (ADS-B) within Mission Planner
+        if (!this.viewer) {
+            console.warn('[Mission Planner] Viewer not available for Aircraft Tracking');
+            return;
+        }
+        
+        // Check if Aircraft Tracking UI exists
+        const toggleCheckbox = document.getElementById('aircraftTrackingToggle');
+        if (!toggleCheckbox) {
+            console.warn('[Mission Planner] Aircraft Tracking UI not found');
+            return;
+        }
+        
+        try {
+            // Dynamically import the OpenSky ADS-B Layer
+            const module = await import('./utils/opensky-adsb.js');
+            OpenSkyADSBLayer = module.OpenSkyADSBLayer || module.default;
+            
+            // Create ADS-B Layer instance
+            this.adsbLayer = new OpenSkyADSBLayer(this.viewer);
+            
+            // Setup event listeners for aircraft tracking UI
+            this.setupAircraftTrackingEvents();
+            
+            console.log('[Mission Planner] Aircraft Tracking (ADS-B) initialized');
+        } catch (error) {
+            console.error('[Mission Planner] Failed to initialize Aircraft Tracking:', error);
+        }
+    }
+    
+    setupAircraftTrackingEvents() {
+        // Toggle aircraft tracking
+        const toggleCheckbox = document.getElementById('aircraftTrackingToggle');
+        if (toggleCheckbox) {
+            toggleCheckbox.addEventListener('change', (e) => {
+                this.toggleAircraftTracking(e.target.checked);
+            });
+        }
+        
+        // Update interval selector
+        const intervalSelect = document.getElementById('aircraftUpdateInterval');
+        if (intervalSelect) {
+            intervalSelect.addEventListener('change', (e) => {
+                const interval = parseInt(e.target.value);
+                if (this.aircraftTrackingEnabled && this.adsbLayer) {
+                    this.adsbLayer.stop();
+                    this.adsbLayer.start(interval);
+                    this.showStatus(`Aircraft update interval changed to ${interval}s`, 'info');
+                }
+            });
+        }
+        
+        // Refresh button
+        const refreshBtn = document.getElementById('refreshAircraftBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', async () => {
+                if (this.adsbLayer && this.aircraftTrackingEnabled) {
+                    refreshBtn.disabled = true;
+                    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+                    await this.adsbLayer.updateAircraft();
+                    this.updateAircraftCount();
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Now';
+                }
+            });
+        }
+        
+        // Clear button
+        const clearBtn = document.getElementById('clearAircraftBtn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                if (this.adsbLayer) {
+                    this.adsbLayer.clearAll();
+                    this.updateAircraftCount();
+                    this.showStatus('Cleared all aircraft', 'info');
+                }
+            });
+        }
+    }
+    
+    toggleAircraftTracking(enabled) {
+        if (!this.adsbLayer) {
+            this.showStatus('Aircraft tracking not available', 'error');
+            return;
+        }
+        
+        const controls = document.getElementById('aircraftTrackingControls');
+        const intervalSelect = document.getElementById('aircraftUpdateInterval');
+        
+        if (enabled) {
+            // Show controls
+            if (controls) controls.style.display = 'block';
+            
+            // Get selected interval
+            const interval = intervalSelect ? parseInt(intervalSelect.value) : 5;
+            
+            // Start tracking
+            this.adsbLayer.start(interval);
+            this.aircraftTrackingEnabled = true;
+            
+            // Start count update interval
+            this.aircraftCountInterval = setInterval(() => {
+                this.updateAircraftCount();
+            }, 1000);
+            
+            this.showStatus(`Aircraft tracking enabled (${interval}s updates)`, 'success');
+        } else {
+            // Stop tracking
+            this.adsbLayer.stop();
+            this.aircraftTrackingEnabled = false;
+            
+            // Stop count update
+            if (this.aircraftCountInterval) {
+                clearInterval(this.aircraftCountInterval);
+                this.aircraftCountInterval = null;
+            }
+            
+            // Hide controls
+            if (controls) controls.style.display = 'none';
+            
+            this.showStatus('Aircraft tracking disabled', 'info');
+        }
+    }
+    
+    updateAircraftCount() {
+        const countEl = document.getElementById('aircraftCount');
+        if (countEl && this.adsbLayer) {
+            countEl.textContent = this.adsbLayer.getAircraftCount();
         }
     }
     
@@ -160,8 +301,8 @@ class MissionPlanner {
         const userInfoBar = document.getElementById('userInfoBar');
         
         // Always show mission controls, hide login panel
-        if (loginPanel) loginPanel.style.display = 'none';
-        if (controlsPanel) controlsPanel.style.display = 'block';
+            if (loginPanel) loginPanel.style.display = 'none';
+            if (controlsPanel) controlsPanel.style.display = 'block';
         if (userInfoBar) userInfoBar.style.display = 'none'; // Hide user info bar
     }
     
