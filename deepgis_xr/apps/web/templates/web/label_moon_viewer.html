@@ -3115,9 +3115,58 @@
             const longitude = Cesium.Math.toDegrees(position.longitude);
             const latitude = Cesium.Math.toDegrees(position.latitude);
             const altitude = position.height;
-            const heading = Cesium.Math.toDegrees(camera.heading);
-            const pitch = Cesium.Math.toDegrees(camera.pitch);
-            const roll = Cesium.Math.toDegrees(camera.roll);
+            
+            // Calculate heading, pitch, and roll from camera orientation
+            // Get camera's orientation in local frame
+            const ellipsoid = viewer.scene.globe.ellipsoid;
+            const normal = ellipsoid.geodeticSurfaceNormal(camera.position, new Cesium.Cartesian3());
+            
+            // Get local east and north vectors
+            const east = Cesium.Cartesian3.cross(
+                Cesium.Cartesian3.UNIT_Z,
+                normal,
+                new Cesium.Cartesian3()
+            );
+            Cesium.Cartesian3.normalize(east, east);
+            const north = Cesium.Cartesian3.cross(normal, east, new Cesium.Cartesian3());
+            Cesium.Cartesian3.normalize(north, north);
+            
+            // Get camera direction and up vectors
+            const direction = camera.direction;
+            const up = camera.up;
+            
+            // Project direction onto horizontal plane for heading calculation
+            const directionDotNormal = Cesium.Cartesian3.dot(direction, normal);
+            const horizontalDirection = Cesium.Cartesian3.subtract(
+                direction,
+                Cesium.Cartesian3.multiplyByScalar(normal, directionDotNormal, new Cesium.Cartesian3()),
+                new Cesium.Cartesian3()
+            );
+            const horizontalLength = Cesium.Cartesian3.magnitude(horizontalDirection);
+            
+            let heading = 0;
+            let pitch = 0;
+            let roll = 0;
+            
+            if (horizontalLength > 1e-6) {
+                Cesium.Cartesian3.normalize(horizontalDirection, horizontalDirection);
+                
+                // Calculate heading: angle from north (0 = North, 90 = East, 180 = South, 270 = West)
+                const headingRad = Math.atan2(
+                    Cesium.Cartesian3.dot(horizontalDirection, east),
+                    Cesium.Cartesian3.dot(horizontalDirection, north)
+                );
+                heading = Cesium.Math.toDegrees(headingRad);
+                if (heading < 0) heading += 360;
+            }
+            
+            // Calculate pitch: angle from horizontal (positive = looking up, negative = looking down)
+            pitch = Cesium.Math.toDegrees(Math.asin(-directionDotNormal));
+            
+            // Calculate roll: angle of camera up vector from vertical
+            const upDotNormal = Cesium.Cartesian3.dot(up, normal);
+            const upDotEast = Cesium.Cartesian3.dot(up, east);
+            roll = Cesium.Math.toDegrees(Math.atan2(upDotEast, upDotNormal));
             
             // Calculate ground height (sample terrain at camera position)
             let groundHeight = 0;
@@ -3209,10 +3258,16 @@
             }
 
             // Update compass
-            updateCompass(heading);
+            // Ensure heading is valid (Cesium camera heading is in radians)
+            if (!isNaN(heading) && isFinite(heading)) {
+                updateCompass(heading);
+            }
 
             // Update attitude indicator
-            updateAttitudeIndicator(pitch, roll);
+            // Ensure pitch and roll are valid (Cesium camera pitch/roll are in radians)
+            if (!isNaN(pitch) && !isNaN(roll) && isFinite(pitch) && isFinite(roll)) {
+                updateAttitudeIndicator(pitch, roll);
+            }
 
             // Update camera pose panel (legacy, if it exists)
             updateCameraPosePanel(longitude, latitude, altitude, heading, pitch, roll);
@@ -3264,6 +3319,9 @@
             while (normalizedHeading < 0) normalizedHeading += 360;
             while (normalizedHeading >= 360) normalizedHeading -= 360;
             
+            const headingText = `${Math.round(normalizedHeading).toString().padStart(3, '0')}°T`;
+            
+            // Update old compass elements (if they exist)
             const needle = document.getElementById('compassNeedle');
             const display = document.getElementById('compassHeadingDisplay');
             
@@ -3272,31 +3330,61 @@
             }
             
             if (display) {
-                display.textContent = `${Math.round(normalizedHeading).toString().padStart(3, '0')}°T`;
+                display.textContent = headingText;
+            }
+            
+            // Update new heading dial elements (if they exist)
+            const headingDialNeedle = document.getElementById('headingDialNeedle');
+            const headingDialReadout = document.getElementById('headingDialReadout');
+            
+            if (headingDialNeedle) {
+                headingDialNeedle.style.transform = `translate(-50%, 0) rotate(${normalizedHeading}deg)`;
+            }
+            
+            if (headingDialReadout) {
+                headingDialReadout.textContent = headingText;
             }
         }
 
         function updateAttitudeIndicator(pitchDegrees, rollDegrees) {
+            // Limit pitch to reasonable range for display
+            const pitchOffset = Math.max(-90, Math.min(90, pitchDegrees)) * 1.5;
+            
+            // Normalize roll
+            let normalizedRoll = rollDegrees;
+            while (normalizedRoll > 180) normalizedRoll -= 360;
+            while (normalizedRoll < -180) normalizedRoll += 360;
+            
+            const transformValue = `translate(-50%, calc(-50% + ${-pitchOffset}px)) rotate(${-normalizedRoll}deg)`;
+            
+            const pitchDisplay = Math.round(pitchDegrees);
+            const rollDisplay = Math.round(rollDegrees);
+            const displayText = `P:${pitchDisplay}° R:${rollDisplay}°`;
+            const displayTextAlt = `${pitchDisplay.toString().padStart(3, '0')}°P ${rollDisplay.toString().padStart(3, '0')}°R`;
+            
+            // Update old attitude elements (if they exist)
             const horizon = document.getElementById('attitudeHorizon');
             const display = document.getElementById('attitudeDisplay');
             
             if (horizon) {
-                // Limit pitch to reasonable range for display
-                const pitchOffset = Math.max(-90, Math.min(90, pitchDegrees)) * 1.5;
-                
-                // Normalize roll
-                let normalizedRoll = rollDegrees;
-                while (normalizedRoll > 180) normalizedRoll -= 360;
-                while (normalizedRoll < -180) normalizedRoll += 360;
-                
-                horizon.style.transform = `translate(-50%, calc(-50% + ${-pitchOffset}px)) rotate(${-normalizedRoll}deg)`;
+                horizon.style.transform = transformValue;
             }
             
             if (display) {
-                const pitchDisplay = Math.round(pitchDegrees);
-                const rollDisplay = Math.round(rollDegrees);
-                display.textContent = `P:${pitchDisplay}° R:${rollDisplay}°`;
+                display.textContent = displayText;
             }
+            
+            // Update new attitude readout (if it exists)
+            const attitudeReadout = document.getElementById('attitudeReadout');
+            if (attitudeReadout) {
+                attitudeReadout.textContent = displayTextAlt;
+            }
+            
+            // Update horizon element (there might be multiple with same ID, update all)
+            const allHorizons = document.querySelectorAll('#attitudeHorizon');
+            allHorizons.forEach(h => {
+                h.style.transform = transformValue;
+            });
         }
 
         function updateCameraPosePanel(lon, lat, alt, heading, pitch, roll) {
@@ -4701,6 +4789,11 @@
                    value="100" min="25" max="250" step="5">
             <small>Range: 25-250 km/h</small>
         </div>
+        <div class="widget-item">
+            <label>Altitude AGL (meters):</label>
+            <input type="number" id="droneFlyAltitude" 
+                   value="2000" min="20" max="50000" step="10">
+        </div>
         <div class="widget-item" style="margin-top: 8px;">
             <button class="btn btn-success" id="droneFlyBtn">
                 <i class="fas fa-paper-plane"></i> Fly Forward 100m @ 100 km/h
@@ -4726,7 +4819,7 @@
         <div class="widget-item">
             <label>Altitude AGL (meters):</label>
             <input type="number" id="droneOrbitAltitude" 
-                   value="2000" min="20" max="5000" step="10">
+                   value="2000" min="20" max="50000" step="10">
         </div>
         <div class="widget-item">
             <label>Orbit Speed (km/h):</label>
