@@ -585,6 +585,136 @@
         .hud-toolbar:hover::after {
             opacity: 1;
         }
+        
+        /* ========== MAIN HEADING CENTERING ========== */
+        .main-heading {
+            transition: all 0.3s ease;
+        }
+        
+        /* ========== KEYBOARD SHORTCUTS LEGEND PANEL ========== */
+        .keyboard-shortcuts-legend {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 500px;
+            max-width: 90vw;
+            max-height: 80vh;
+            overflow-y: auto;
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(20px);
+            border: 2px solid rgba(59, 130, 246, 0.5);
+            border-radius: 16px;
+            padding: 24px;
+            z-index: 10000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+        }
+        
+        .keyboard-shortcuts-legend.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .keyboard-shortcuts-legend-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid rgba(59, 130, 246, 0.3);
+        }
+        
+        .keyboard-shortcuts-legend-title {
+            color: #f1f5f9;
+            font-size: 1.2rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .keyboard-shortcuts-legend-close {
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 1.2rem;
+            transition: all 0.2s;
+        }
+        
+        .keyboard-shortcuts-legend-close:hover {
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+        }
+        
+        .keyboard-shortcuts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        
+        .keyboard-shortcut-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        
+        .keyboard-shortcut-item:hover {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.4);
+        }
+        
+        .keyboard-shortcut-label {
+            color: #cbd5e1;
+            font-size: 0.9rem;
+        }
+        
+        .keyboard-shortcut-key {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 32px;
+            height: 28px;
+            padding: 0 8px;
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            border-radius: 6px;
+            color: #93c5fd;
+            font-size: 0.75rem;
+            font-weight: 600;
+            font-family: 'Courier New', monospace;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        .keyboard-shortcut-key.arrow {
+            font-size: 0.9rem;
+        }
+        
+        /* Custom scrollbar for legend */
+        .keyboard-shortcuts-legend::-webkit-scrollbar {
+            width: 8px;
+        }
+        .keyboard-shortcuts-legend::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+        .keyboard-shortcuts-legend::-webkit-scrollbar-thumb {
+            background: rgba(59, 130, 246, 0.4);
+            border-radius: 4px;
+        }
+        .keyboard-shortcuts-legend::-webkit-scrollbar-thumb:hover {
+            background: rgba(59, 130, 246, 0.6);
+        }
     </style>
 </head>
 
@@ -710,6 +840,7 @@
             <select class="form-select form-select-sm" id="analysisTypeSelect">
                 <option value="sam" selected>SAM (Universal Segmentation)</option>
                 <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
+                <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
                 <option value="zero_shot">Zero-Shot (COCO)</option>
                 <option value="mask2former">Mask2Former (Accurate)</option>
             </select>
@@ -747,6 +878,27 @@
             </div>
             <div class="form-group mb-3">
                 <input type="text" class="form-control form-control-sm" id="yolov8Classes" placeholder="Filter: person, car, truck...">
+            </div>
+        </div>
+        <!-- Grounding DINO Options -->
+        <div id="groundingDinoOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
+                <input type="text" class="form-control form-control-sm" id="groundingDinoPrompt" 
+                       value="rock . boulder . crater . debris"
+                       placeholder="Describe objects: rock . boulder . crater"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Separate classes with dots (e.g., "car . person . tree")
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Box Threshold: <span id="gdBoxThresholdValue">0.30</span></label>
+                <input type="range" class="form-range" id="gdBoxThreshold" min="10" max="90" step="5" value="30">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Threshold: <span id="gdTextThresholdValue">0.25</span></label>
+                <input type="range" class="form-range" id="gdTextThreshold" min="10" max="90" step="5" value="25">
             </div>
         </div>
         <!-- Zero-Shot Options -->
@@ -1246,6 +1398,71 @@
             <div id="loadingStatus">Setting up 3D environment...</div>
         </div>
     </div>
+    
+    <!-- Keyboard Shortcuts Legend Panel -->
+    <div class="keyboard-shortcuts-legend" id="keyboardShortcutsLegend">
+        <div class="keyboard-shortcuts-legend-header">
+            <div class="keyboard-shortcuts-legend-title">
+                <i class="fas fa-keyboard"></i> Keyboard Shortcuts
+            </div>
+            <button class="keyboard-shortcuts-legend-close" id="closeShortcutsLegend">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="keyboard-shortcuts-list">
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle View Mode (2D/3D)</span>
+                <span class="keyboard-shortcut-key">V</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: North</span>
+                <span class="keyboard-shortcut-key arrow">↑</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: South</span>
+                <span class="keyboard-shortcut-key arrow">↓</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: West</span>
+                <span class="keyboard-shortcut-key arrow">←</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: East</span>
+                <span class="keyboard-shortcut-key arrow">→</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle Full Screen</span>
+                <span class="keyboard-shortcut-key">F</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Hide All Toolbars</span>
+                <span class="keyboard-shortcut-key">T</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Show Keyboard Shortcuts</span>
+                <span class="keyboard-shortcut-key">H</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Stop Orbit / Close Panel</span>
+                <span class="keyboard-shortcut-key">ESC</span>
+            </div>
+            <div class="keyboard-shortcut-item" style="margin-top: 8px; padding-top: 12px; border-top: 1px solid rgba(59, 130, 246, 0.2);">
+                <span class="keyboard-shortcut-label" style="font-weight: 600; color: #93c5fd;">Drone Controls</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Drone Fly Forward</span>
+                <span class="keyboard-shortcut-key">D</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Start Orbit</span>
+                <span class="keyboard-shortcut-key">O</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Pause/Stop Orbit</span>
+                <span class="keyboard-shortcut-key">P</span>
+            </div>
+        </div>
+    </div>
     <!-- Application JavaScript (built by Vite) -->
     {% load static %}
     <script type="module" src="{% static 'web/js/main.js' %}"></script>
@@ -1323,20 +1540,186 @@
                             closeHudPanel(activePanel);
                         }
                     }
+                    
+                    // Close keyboard shortcuts legend when clicking outside
+                    const legend = document.getElementById('keyboardShortcutsLegend');
+                    if (legend && legend.classList.contains('visible') && !legend.contains(e.target)) {
+                        legend.classList.remove('visible');
+                    }
                 });
                 
-                // H key to toggle HUD visibility
+                // Keyboard shortcuts handler
                 document.addEventListener('keydown', (e) => {
-                    if (e.key === 'h' || e.key === 'H') {
-                        if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-                        const toolbar = document.getElementById('hudToolbar');
-                        if (toolbar) {
-                            toolbar.style.display = toolbar.style.display === 'none' ? 'flex' : 'none';
-                        }
+                    // Ignore if typing in input fields
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+                        return;
                     }
-                    // Escape to close active panel
-                    if (e.key === 'Escape' && activePanel) {
-                        closeHudPanel(activePanel);
+                    
+                    // H key: Toggle keyboard shortcuts legend
+                    if (e.key === 'h' || e.key === 'H') {
+                        e.preventDefault();
+                        const legend = document.getElementById('keyboardShortcutsLegend');
+                        if (legend) {
+                            legend.classList.toggle('visible');
+                        }
+                        return;
+                    }
+                    
+                    // V key: Toggle view mode (2D/3D)
+                    if (e.key === 'v' || e.key === 'V') {
+                        e.preventDefault();
+                        const viewer = window.AppState?.viewer || window.viewer;
+                        if (viewer) {
+                            const currentMode = viewer.scene.mode;
+                            if (currentMode === Cesium.SceneMode.SCENE3D) {
+                                // Switch to 2D
+                                const btn2D = document.getElementById('view2D');
+                                if (btn2D) btn2D.click();
+                            } else {
+                                // Switch to 3D
+                                const btn3D = document.getElementById('view3D');
+                                if (btn3D) btn3D.click();
+                            }
+                        }
+                        return;
+                    }
+                    
+                    // Arrow keys: Perspective views
+                    if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const btnNorth = document.getElementById('viewNorth');
+                        if (btnNorth) btnNorth.click();
+                        return;
+                    }
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const btnSouth = document.getElementById('viewSouth');
+                        if (btnSouth) btnSouth.click();
+                        return;
+                    }
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        const btnWest = document.getElementById('viewWest');
+                        if (btnWest) btnWest.click();
+                        return;
+                    }
+                    if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        const btnEast = document.getElementById('viewEast');
+                        if (btnEast) btnEast.click();
+                        return;
+                    }
+                    
+                    // F key: Toggle full screen
+                    if (e.key === 'f' || e.key === 'F') {
+                        e.preventDefault();
+                        if (!document.fullscreenElement) {
+                            document.documentElement.requestFullscreen().catch(err => {
+                                console.warn('Error attempting to enable fullscreen:', err);
+                            });
+                        } else {
+                            document.exitFullscreen();
+                        }
+                        return;
+                    }
+                    
+                    // T key: Hide/show all toolbars
+                    if (e.key === 't' || e.key === 'T') {
+                        e.preventDefault();
+                        const toolbar = document.getElementById('hudToolbar');
+                        const quickViews = document.querySelector('.hud-quick-views');
+                        const cameraInfo = document.getElementById('cameraInfo');
+                        const droneFlyWidget = document.getElementById('droneFlyWidget');
+                        const droneOrbitWidget = document.getElementById('droneOrbitWidget');
+                        const navWidget = document.getElementById('navigationWidgetGroup');
+                        const perspectiveWidget = document.getElementById('perspectiveViewsWidget');
+                        const performanceIndicator = document.getElementById('performanceIndicator');
+                        const mainHeading = document.querySelector('.main-heading');
+                        
+                        // Toggle visibility of all toolbars/widgets
+                        const elements = [toolbar, quickViews, cameraInfo, droneFlyWidget, droneOrbitWidget, navWidget, perspectiveWidget, performanceIndicator].filter(el => el);
+                        const isHidden = elements[0] && elements[0].style.display === 'none';
+                        
+                        elements.forEach(el => {
+                            if (el) {
+                                el.style.display = isHidden ? '' : 'none';
+                            }
+                        });
+                        
+                        // Center the main heading when toolbars are hidden
+                        if (mainHeading) {
+                            if (isHidden) {
+                                // Restore original positioning by removing inline styles
+                                mainHeading.style.position = '';
+                                mainHeading.style.left = '';
+                                mainHeading.style.transform = '';
+                                mainHeading.style.top = '';
+                            } else {
+                                // Center the heading horizontally
+                                const currentTop = window.getComputedStyle(mainHeading).top;
+                                mainHeading.style.position = 'fixed';
+                                mainHeading.style.left = '50%';
+                                mainHeading.style.transform = 'translateX(-50%)';
+                                // Preserve original top position if it exists
+                                if (currentTop && currentTop !== 'auto') {
+                                    mainHeading.style.top = currentTop;
+                                }
+                            }
+                        }
+                        
+                        return;
+                    }
+                    
+                    // D key: Drone Fly Forward
+                    if (e.key === 'd' || e.key === 'D') {
+                        e.preventDefault();
+                        const droneFlyBtn = document.getElementById('droneFlyBtn');
+                        if (droneFlyBtn) {
+                            droneFlyBtn.click();
+                        }
+                        return;
+                    }
+                    
+                    // O key: Start Orbit
+                    if (e.key === 'o' || e.key === 'O') {
+                        e.preventDefault();
+                        const droneOrbitBtn = document.getElementById('droneOrbitBtn');
+                        if (droneOrbitBtn) {
+                            droneOrbitBtn.click();
+                        }
+                        return;
+                    }
+                    
+                    // P key: Pause/Stop Orbit
+                    if (e.key === 'p' || e.key === 'P') {
+                        e.preventDefault();
+                        const stopOrbitBtn = document.getElementById('stopOrbitBtn');
+                        if (stopOrbitBtn && stopOrbitBtn.offsetParent !== null) {
+                            // Only if stop button is visible (orbit is active)
+                            stopOrbitBtn.click();
+                        }
+                        return;
+                    }
+                    
+                    // Escape: Close active panel or keyboard shortcuts legend, or stop orbit
+                    if (e.key === 'Escape') {
+                        // First check if orbit is active and stop it
+                        const stopOrbitBtn = document.getElementById('stopOrbitBtn');
+                        const stopOrbitContainer = document.getElementById('stopOrbitContainer');
+                        if (stopOrbitBtn && stopOrbitContainer && stopOrbitContainer.style.display !== 'none') {
+                            stopOrbitBtn.click();
+                            return;
+                        }
+                        
+                        // Then close panels/legend
+                        if (activePanel) {
+                            closeHudPanel(activePanel);
+                        }
+                        const legend = document.getElementById('keyboardShortcutsLegend');
+                        if (legend && legend.classList.contains('visible')) {
+                            legend.classList.remove('visible');
+                        }
+                        return;
                     }
                 });
                 
@@ -1390,7 +1773,160 @@
                     });
                 }
                 
-                console.log('[HUD] Initialized - Press H to toggle toolbar');
+                // Close keyboard shortcuts legend button
+                document.getElementById('closeShortcutsLegend')?.addEventListener('click', () => {
+                    const legend = document.getElementById('keyboardShortcutsLegend');
+                    if (legend) {
+                        legend.classList.remove('visible');
+                    }
+                });
+                
+                // Setup view mode buttons if they don't have handlers
+                function setupViewModeButtons() {
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer) {
+                        setTimeout(setupViewModeButtons, 500);
+                        return;
+                    }
+                    
+                    // 2D view button
+                    const btn2D = document.getElementById('view2D');
+                    if (btn2D && !btn2D.dataset.handlerAttached) {
+                        btn2D.addEventListener('click', () => {
+                            if (viewer && viewer.scene) {
+                                viewer.scene.morphTo2D(1.0);
+                            }
+                        });
+                        btn2D.dataset.handlerAttached = 'true';
+                    }
+                    
+                    // 3D view button
+                    const btn3D = document.getElementById('view3D');
+                    if (btn3D && !btn3D.dataset.handlerAttached) {
+                        btn3D.addEventListener('click', () => {
+                            if (viewer && viewer.scene) {
+                                viewer.scene.morphTo3D(1.0);
+                            }
+                        });
+                        btn3D.dataset.handlerAttached = 'true';
+                    }
+                }
+                
+                // Setup perspective view buttons if they don't have handlers
+                function setupPerspectiveViews() {
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer) {
+                        // Retry after viewer is initialized
+                        setTimeout(setupPerspectiveViews, 500);
+                        return;
+                    }
+                    
+                    // North view
+                    const btnNorth = document.getElementById('viewNorth');
+                    if (btnNorth && !btnNorth.dataset.handlerAttached) {
+                        btnNorth.addEventListener('click', () => {
+                            if (viewer && viewer.camera) {
+                                const position = viewer.camera.positionCartographic;
+                                const currentHeight = position.height;
+                                viewer.camera.setView({
+                                    destination: Cesium.Cartesian3.fromDegrees(
+                                        Cesium.Math.toDegrees(position.longitude),
+                                        Cesium.Math.toDegrees(position.latitude),
+                                        currentHeight
+                                    ),
+                                    orientation: {
+                                        heading: Cesium.Math.toRadians(0), // North
+                                        pitch: Cesium.Math.toRadians(-45),
+                                        roll: 0.0
+                                    }
+                                });
+                            }
+                        });
+                        btnNorth.dataset.handlerAttached = 'true';
+                    }
+                    
+                    // South view
+                    const btnSouth = document.getElementById('viewSouth');
+                    if (btnSouth && !btnSouth.dataset.handlerAttached) {
+                        btnSouth.addEventListener('click', () => {
+                            if (viewer && viewer.camera) {
+                                const position = viewer.camera.positionCartographic;
+                                const currentHeight = position.height;
+                                viewer.camera.setView({
+                                    destination: Cesium.Cartesian3.fromDegrees(
+                                        Cesium.Math.toDegrees(position.longitude),
+                                        Cesium.Math.toDegrees(position.latitude),
+                                        currentHeight
+                                    ),
+                                    orientation: {
+                                        heading: Cesium.Math.toRadians(180), // South
+                                        pitch: Cesium.Math.toRadians(-45),
+                                        roll: 0.0
+                                    }
+                                });
+                            }
+                        });
+                        btnSouth.dataset.handlerAttached = 'true';
+                    }
+                    
+                    // West view
+                    const btnWest = document.getElementById('viewWest');
+                    if (btnWest && !btnWest.dataset.handlerAttached) {
+                        btnWest.addEventListener('click', () => {
+                            if (viewer && viewer.camera) {
+                                const position = viewer.camera.positionCartographic;
+                                const currentHeight = position.height;
+                                viewer.camera.setView({
+                                    destination: Cesium.Cartesian3.fromDegrees(
+                                        Cesium.Math.toDegrees(position.longitude),
+                                        Cesium.Math.toDegrees(position.latitude),
+                                        currentHeight
+                                    ),
+                                    orientation: {
+                                        heading: Cesium.Math.toRadians(90), // West
+                                        pitch: Cesium.Math.toRadians(-45),
+                                        roll: 0.0
+                                    }
+                                });
+                            }
+                        });
+                        btnWest.dataset.handlerAttached = 'true';
+                    }
+                    
+                    // East view
+                    const btnEast = document.getElementById('viewEast');
+                    if (btnEast && !btnEast.dataset.handlerAttached) {
+                        btnEast.addEventListener('click', () => {
+                            if (viewer && viewer.camera) {
+                                const position = viewer.camera.positionCartographic;
+                                const currentHeight = position.height;
+                                viewer.camera.setView({
+                                    destination: Cesium.Cartesian3.fromDegrees(
+                                        Cesium.Math.toDegrees(position.longitude),
+                                        Cesium.Math.toDegrees(position.latitude),
+                                        currentHeight
+                                    ),
+                                    orientation: {
+                                        heading: Cesium.Math.toRadians(270), // East
+                                        pitch: Cesium.Math.toRadians(-45),
+                                        roll: 0.0
+                                    }
+                                });
+                            }
+                        });
+                        btnEast.dataset.handlerAttached = 'true';
+                    }
+                }
+                
+                // Setup view mode buttons after a delay to ensure viewer is ready
+                setTimeout(setupViewModeButtons, 1000);
+                setTimeout(setupViewModeButtons, 3000);
+                
+                // Setup perspective views after a delay to ensure viewer is ready
+                setTimeout(setupPerspectiveViews, 1000);
+                setTimeout(setupPerspectiveViews, 3000);
+                
+                console.log('[HUD] Initialized - Press H to show keyboard shortcuts');
             }
             
             // Force full-width cesium container (override main.js settings)
