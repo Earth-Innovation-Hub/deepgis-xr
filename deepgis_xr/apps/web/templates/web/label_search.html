@@ -1435,6 +1435,10 @@
                 <span class="keyboard-shortcut-key">F</span>
             </div>
             <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle Wireframe Mesh/Textured</span>
+                <span class="keyboard-shortcut-key">W</span>
+            </div>
+            <div class="keyboard-shortcut-item">
                 <span class="keyboard-shortcut-label">Hide All Toolbars</span>
                 <span class="keyboard-shortcut-key">T</span>
             </div>
@@ -1619,6 +1623,80 @@
                             });
                         } else {
                             document.exitFullscreen();
+                        }
+                        return;
+                    }
+                    
+                    // W key: Toggle wireframe/textured mode
+                    if (e.key === 'w' || e.key === 'W') {
+                        e.preventDefault();
+                        const viewer = window.AppState?.viewer || window.viewer;
+                        if (viewer && viewer.imageryLayers && viewer.scene) {
+                            const globe = viewer.scene.globe;
+                            const layers = viewer.imageryLayers;
+                            
+                            // Check if any layer is visible (default to true if no layers)
+                            let hasVisibleLayers = true;
+                            if (layers.length > 0) {
+                                // Check if at least one layer is visible
+                                hasVisibleLayers = false;
+                                for (let i = 0; i < layers.length; i++) {
+                                    if (layers.get(i).show) {
+                                        hasVisibleLayers = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            
+                            // Toggle all imagery layers
+                            for (let i = 0; i < layers.length; i++) {
+                                const layer = layers.get(i);
+                                layer.show = !hasVisibleLayers;
+                            }
+                            
+                            // Toggle wireframe mesh details
+                            if (hasVisibleLayers) {
+                                // Wireframe mode: Enable debug wireframe to show mesh details
+                                try {
+                                    // Access debug wireframe (private API, use with caution)
+                                    if (globe._surface && globe._surface._tileProvider && globe._surface._tileProvider._debug) {
+                                        globe._surface._tileProvider._debug.wireframe = true;
+                                    }
+                                    
+                                    // Also set base color for better wireframe visibility
+                                    globe.baseColor = Cesium.Color.fromCssColorString('#2d3748');
+                                    
+                                    // Disable lighting for clearer wireframe view
+                                    globe.enableLighting = false;
+                                    
+                                    // Increase terrain exaggeration slightly to make mesh more visible
+                                    if (globe.terrainExaggeration !== undefined) {
+                                        globe.terrainExaggeration = Math.max(1.0, globe.terrainExaggeration || 1.0);
+                                    }
+                                    
+                                    console.log('Wireframe mode: ON - Showing mesh details');
+                                } catch (error) {
+                                    console.warn('Could not enable wireframe debug mode:', error);
+                                    // Fallback: just hide textures and set base color
+                                    globe.baseColor = Cesium.Color.fromCssColorString('#4a5568');
+                                    globe.enableLighting = false;
+                                }
+                            } else {
+                                // Textured mode: Disable wireframe and restore settings
+                                try {
+                                    if (globe._surface && globe._surface._tileProvider && globe._surface._tileProvider._debug) {
+                                        globe._surface._tileProvider._debug.wireframe = false;
+                                    }
+                                } catch (error) {
+                                    // Ignore if debug property doesn't exist
+                                }
+                                
+                                // Restore default settings
+                                globe.baseColor = Cesium.Color.WHITE;
+                                globe.enableLighting = true;
+                                
+                                console.log('Wireframe mode: OFF - Textured mode restored');
+                            }
                         }
                         return;
                     }
