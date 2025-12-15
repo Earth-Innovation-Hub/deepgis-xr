@@ -27,6 +27,13 @@ class MissionPlanner {
         this.adsbLayer = null;
         this.aircraftTrackingEnabled = false;
         
+        // Vehicle tracking
+        this.vehicleEntities = new Map(); // Map of vehicle_id -> Cesium entity
+        this.vehicleTrackingEnabled = false;
+        this.vehicleUpdateInterval = null;
+        this.vehicleUpdateTimer = null;
+        this.vehicleUpdateInProgress = false; // Prevent overlapping updates
+        
         this.init();
     }
     
@@ -37,6 +44,8 @@ class MissionPlanner {
         await this.loadMissions();
         // Initialize GPS Telemetry if available
         this.initGPSTelemetry();
+        // Initialize Vehicle Tracking (merged with GPS Telemetry)
+        this.initVehicleTracking();
         // Initialize Aircraft Tracking (ADS-B)
         this.initAircraftTracking();
     }
@@ -714,6 +723,369 @@ class MissionPlanner {
         } catch (error) {
             console.error('Error updating mission parameter:', error);
         }
+    }
+    
+    async initVehicleTracking() {
+        // Initialize Vehicle Tracking within Mission Planner (merged with GPS Telemetry)
+        if (!this.viewer) {
+            console.warn('[Mission Planner] Viewer not available for Vehicle Tracking');
+            return;
+        }
+        
+        // Check if Vehicle Tracking UI exists
+        const toggleCheckbox = document.getElementById('vehicleTrackingToggle');
+        if (!toggleCheckbox) {
+            console.warn('[Mission Planner] Vehicle Tracking UI not found');
+            return;
+        }
+        
+        // Setup event listeners for vehicle tracking UI
+        this.setupVehicleTrackingEvents();
+        
+        // Store reference to GPS telemetry loader for accessing sessions
+        this.gpsTelemetryLoader = window.gpsTelemetryLoader;
+        
+        console.log('[Mission Planner] Vehicle Tracking initialized (using GPS Telemetry data)');
+    }
+    
+    setupVehicleTrackingEvents() {
+        // Toggle vehicle tracking
+        const toggleCheckbox = document.getElementById('vehicleTrackingToggle');
+        if (toggleCheckbox) {
+            toggleCheckbox.addEventListener('change', (e) => {
+                this.toggleVehicleTracking(e.target.checked);
+            });
+        }
+        
+        // Update interval selector
+        const intervalSelect = document.getElementById('vehicleUpdateInterval');
+        if (intervalSelect) {
+            intervalSelect.addEventListener('change', (e) => {
+                const interval = parseInt(e.target.value);
+                if (this.vehicleTrackingEnabled) {
+                    this.stopVehicleTracking();
+                    this.startVehicleTracking(interval);
+                    this.showStatus(`Vehicle update interval changed to ${interval}s`, 'info');
+                }
+            });
+        }
+        
+        // Refresh button
+        const refreshBtn = document.getElementById('refreshVehiclesBtn');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', async () => {
+                if (this.vehicleTrackingEnabled) {
+                    refreshBtn.disabled = true;
+                    refreshBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Refreshing...';
+                    await this.updateVehicles();
+                    refreshBtn.disabled = false;
+                    refreshBtn.innerHTML = '<i class="fas fa-sync-alt"></i> Refresh Now';
+                }
+            });
+        }
+        
+        // Clear button
+        const clearBtn = document.getElementById('clearVehiclesBtn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearAllVehicles();
+                this.showStatus('Cleared all vehicles', 'info');
+            });
+        }
+    }
+    
+    toggleVehicleTracking(enabled) {
+        const controls = document.getElementById('vehicleTrackingControls');
+        const intervalSelect = document.getElementById('vehicleUpdateInterval');
+        
+        if (enabled) {
+            // Show controls
+            if (controls) controls.style.display = 'block';
+            
+            // Get selected interval
+            const interval = intervalSelect ? parseInt(intervalSelect.value) : 5;
+            
+            // Start tracking
+            this.startVehicleTracking(interval);
+            this.showStatus('Vehicle tracking enabled', 'success');
+        } else {
+            // Hide controls
+            if (controls) controls.style.display = 'none';
+            
+            // Stop tracking
+            this.stopVehicleTracking();
+            this.showStatus('Vehicle tracking disabled', 'info');
+        }
+    }
+    
+    startVehicleTracking(intervalSeconds = 5) {
+        this.vehicleTrackingEnabled = true;
+        this.vehicleUpdateInterval = intervalSeconds * 1000;
+        
+        // Initial update
+        this.updateVehicles();
+        
+        // Set up periodic updates
+        this.vehicleUpdateTimer = setInterval(() => {
+            this.updateVehicles();
+        }, this.vehicleUpdateInterval);
+    }
+    
+    stopVehicleTracking() {
+        this.vehicleTrackingEnabled = false;
+        
+        if (this.vehicleUpdateTimer) {
+            clearInterval(this.vehicleUpdateTimer);
+            this.vehicleUpdateTimer = null;
+        }
+    }
+    
+    async updateVehicles() {
+        if (!this.viewer || !this.vehicleTrackingEnabled) {
+            return;
+        }
+        
+        // Prevent overlapping updates
+        if (this.vehicleUpdateInProgress) {
+            console.log('[Vehicle Tracking] Update already in progress, skipping...');
+            return;
+        }
+        
+        this.vehicleUpdateInProgress = true;
+        
+        try {
+            console.log('[Vehicle Tracking] Starting vehicle position update...');
+            // Use GPS Telemetry API to get vehicle positions
+            const apiBaseUrl = window.location.origin + '/api/telemetry';
+            
+            // Get all sessions with GPS data
+            const sessionsResponse = await fetch(`${apiBaseUrl}/sessions/?has_gps=true`);
+            if (!sessionsResponse.ok) {
+                throw new Error(`Failed to fetch GPS sessions: ${sessionsResponse.status}`);
+            }
+            
+            const sessionsData = await sessionsResponse.json();
+            if (!sessionsData.sessions || sessionsData.sessions.length === 0) {
+                // No GPS sessions available
+                this.updateVehicleEntities([]);
+                this.updateVehicleCount();
+                return;
+            }
+            
+            // Group sessions by asset (vehicle name) and get the most recent session for each
+            const vehicleSessions = new Map();
+            sessionsData.sessions.forEach(session => {
+                const asset = session.asset || 'Unknown';
+                const existing = vehicleSessions.get(asset);
+                
+                // Keep the most recent session for each vehicle
+                if (!existing || new Date(session.start_time) > new Date(existing.start_time)) {
+                    vehicleSessions.set(asset, session);
+                }
+            });
+            
+            // For each vehicle, get the last position from its most recent session
+            const vehiclePositions = [];
+            
+            for (const [vehicleName, session] of vehicleSessions.entries()) {
+                try {
+                    // Get the path data for this session
+                    const pathResponse = await fetch(`${apiBaseUrl}/sessions/${session.session_id}/path/`);
+                    if (!pathResponse.ok) {
+                        console.warn(`Failed to get path for session ${session.session_id}`);
+                        continue;
+                    }
+                    
+                    const pathData = await pathResponse.json();
+                    if (!pathData.geojson || !pathData.geojson.features) {
+                        continue;
+                    }
+                    
+                    // Find the last Point feature (most recent position)
+                    const pointFeatures = pathData.geojson.features.filter(
+                        f => f.geometry.type === 'Point'
+                    );
+                    
+                    if (pointFeatures.length === 0) {
+                        // If no points, try to get last position from LineString
+                        const lineFeature = pathData.geojson.features.find(
+                            f => f.geometry.type === 'LineString'
+                        );
+                        if (lineFeature && lineFeature.geometry.coordinates.length > 0) {
+                            const lastCoord = lineFeature.geometry.coordinates[lineFeature.geometry.coordinates.length - 1];
+                            vehiclePositions.push({
+                                vehicle_id: vehicleName,
+                                name: vehicleName,
+                                current_latitude: lastCoord[1],
+                                current_longitude: lastCoord[0],
+                                current_altitude: lastCoord[2] || 0,
+                                current_heading: 0, // GPS data may not have heading
+                                current_speed: 0,
+                                last_update: session.start_time,
+                                display_color: '#10b981',
+                                display_icon: 'car',
+                                session_info: pathData.session_info
+                            });
+                        }
+                    } else {
+                        // Get the last point (most recent)
+                        const lastPoint = pointFeatures[pointFeatures.length - 1];
+                        const coords = lastPoint.geometry.coordinates;
+                        const properties = lastPoint.properties || {};
+                        
+                        vehiclePositions.push({
+                            vehicle_id: vehicleName,
+                            name: vehicleName,
+                            current_latitude: coords[1],
+                            current_longitude: coords[0],
+                            current_altitude: coords[2] || properties.altitude || 0,
+                            current_heading: properties.heading || 0,
+                            current_speed: properties.speed || 0,
+                            last_update: properties.timestamp || session.start_time,
+                            display_color: '#10b981',
+                            display_icon: 'car',
+                            session_info: pathData.session_info
+                        });
+                    }
+                } catch (error) {
+                    console.error(`Error getting position for vehicle ${vehicleName}:`, error);
+                }
+            }
+            
+            this.updateVehicleEntities(vehiclePositions);
+            this.updateVehicleCount();
+            console.log(`[Vehicle Tracking] Updated ${vehiclePositions.length} vehicle positions`);
+            
+        } catch (error) {
+            console.error('[Vehicle Tracking] Error updating vehicles from GPS telemetry:', error);
+            this.showStatus('Error updating vehicle locations from GPS data', 'error');
+        } finally {
+            this.vehicleUpdateInProgress = false;
+        }
+    }
+    
+    updateVehicleEntities(vehicles) {
+        if (!this.viewer) return;
+        
+        // Remove vehicles that are no longer in the list
+        const currentVehicleIds = new Set(vehicles.map(v => v.vehicle_id || v.id));
+        for (const [vehicleId, entity] of this.vehicleEntities.entries()) {
+            if (!currentVehicleIds.has(vehicleId)) {
+                this.viewer.entities.remove(entity);
+                this.vehicleEntities.delete(vehicleId);
+            }
+        }
+        
+        // Update or create vehicle entities
+        vehicles.forEach(vehicle => {
+            const vehicleId = vehicle.vehicle_id || vehicle.id;
+            const lat = parseFloat(vehicle.current_latitude || vehicle.latitude);
+            const lon = parseFloat(vehicle.current_longitude || vehicle.longitude);
+            const alt = parseFloat(vehicle.current_altitude || vehicle.altitude || 0);
+            const heading = parseFloat(vehicle.current_heading || vehicle.heading || 0);
+            
+            if (isNaN(lat) || isNaN(lon)) {
+                console.warn(`[Vehicle Tracking] Invalid coordinates for vehicle ${vehicleId}`);
+                return;
+            }
+            
+            const color = vehicle.display_color || '#10b981';
+            const icon = vehicle.display_icon || 'car';
+            const name = vehicle.name || vehicleId;
+            
+            let entity = this.vehicleEntities.get(vehicleId);
+            
+            if (entity) {
+                // Update existing entity
+                entity.position = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
+                if (entity.billboard) {
+                    entity.billboard.rotation = Cesium.Math.toRadians(-heading);
+                }
+                if (entity.label) {
+                    entity.label.text = name;
+                }
+            } else {
+                // Create new entity
+                entity = this.viewer.entities.add({
+                    id: `vehicle-${vehicleId}`,
+                    name: name,
+                    position: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
+                    billboard: {
+                        image: this.getVehicleIcon(icon, color),
+                        scale: 1.0,
+                        rotation: Cesium.Math.toRadians(-heading),
+                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY
+                    },
+                    label: {
+                        text: name,
+                        font: '12pt sans-serif',
+                        fillColor: Cesium.Color.fromCssColorString(color),
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                        pixelOffset: new Cesium.Cartesian2(0, -40),
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY
+                    },
+                    description: this.createVehicleDescription(vehicle)
+                });
+                
+                this.vehicleEntities.set(vehicleId, entity);
+            }
+        });
+    }
+    
+    getVehicleIcon(iconType, color) {
+        // Create a simple SVG icon for the vehicle
+        const svg = `
+            <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+                <path d="M16 4 L24 12 L20 12 L20 24 L12 24 L12 12 L8 12 Z" 
+                      fill="${color}" 
+                      stroke="white" 
+                      stroke-width="2"/>
+            </svg>
+        `;
+        return 'data:image/svg+xml;base64,' + btoa(svg);
+    }
+    
+    createVehicleDescription(vehicle) {
+        const lastUpdate = vehicle.last_update ? new Date(vehicle.last_update).toLocaleString() : 'Unknown';
+        const sessionInfo = vehicle.session_info || {};
+        return `
+            <div style="font-family: sans-serif; padding: 10px;">
+                <h3>${vehicle.name || vehicle.vehicle_id}</h3>
+                <p><strong>Last Known Position (from GPS Telemetry)</strong></p>
+                <hr style="margin: 8px 0; border-color: #475569;">
+                <p><strong>Location:</strong> ${vehicle.current_latitude?.toFixed(6)}, ${vehicle.current_longitude?.toFixed(6)}</p>
+                <p><strong>Altitude:</strong> ${vehicle.current_altitude || 0} m</p>
+                ${vehicle.current_heading ? `<p><strong>Heading:</strong> ${vehicle.current_heading}°</p>` : ''}
+                ${vehicle.current_speed ? `<p><strong>Speed:</strong> ${vehicle.current_speed} m/s</p>` : ''}
+                <hr style="margin: 8px 0; border-color: #475569;">
+                ${sessionInfo.project ? `<p><strong>Project:</strong> ${sessionInfo.project}</p>` : ''}
+                ${sessionInfo.total_points ? `<p><strong>GPS Points:</strong> ${sessionInfo.total_points}</p>` : ''}
+                ${sessionInfo.flight_mode ? `<p><strong>Mode:</strong> ${sessionInfo.flight_mode}</p>` : ''}
+                ${sessionInfo.start_time ? `<p><strong>Session Start:</strong> ${new Date(sessionInfo.start_time).toLocaleString()}</p>` : ''}
+                <p><strong>Last Update:</strong> ${lastUpdate}</p>
+            </div>
+        `;
+    }
+    
+    updateVehicleCount() {
+        const count = this.vehicleEntities.size;
+        const countElement = document.getElementById('vehicleCount');
+        if (countElement) {
+            countElement.textContent = count;
+        }
+    }
+    
+    clearAllVehicles() {
+        // Remove all vehicle entities
+        for (const [vehicleId, entity] of this.vehicleEntities.entries()) {
+            this.viewer.entities.remove(entity);
+        }
+        this.vehicleEntities.clear();
+        this.updateVehicleCount();
     }
     
     showStatus(message, type = 'info') {

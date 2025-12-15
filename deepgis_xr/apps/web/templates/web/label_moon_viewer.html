@@ -1299,7 +1299,7 @@
         /* ========== DRONE FLY WIDGET ========== */
         .drone-fly-widget {
             position: fixed;
-            top: 360px;
+            top: 380px;
             left: 20px;
             width: 200px;
             z-index: 1400;
@@ -1309,6 +1309,7 @@
             border: 1px solid rgba(16, 185, 129, 0.3);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(8px);
+            margin-bottom: 20px;
         }
         
         .drone-fly-widget .widget-title {
@@ -1372,7 +1373,7 @@
         /* ========== DRONE ORBIT WIDGET ========== */
         .drone-orbit-widget {
             position: fixed;
-            top: 580px;
+            top: 620px;
             left: 20px;
             width: 200px;
             max-height: 50vh;
@@ -1384,6 +1385,7 @@
             border: 1px solid rgba(59, 130, 246, 0.3);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(8px);
+            margin-bottom: 20px;
         }
         
         .drone-orbit-widget .widget-title {
@@ -1616,6 +1618,7 @@
             border: 1px solid rgba(59, 130, 246, 0.3);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(8px);
+            margin-bottom: 20px;
         }
         
         .camera-info-title {
@@ -3249,24 +3252,24 @@
             if (infoDiv && infoDiv.innerHTML) {
                 // Only update if it's the old format
                 if (infoDiv.innerHTML.includes('Lat:')) {
-                    infoDiv.innerHTML = `
-                        Lat: ${latitude.toFixed(4)}°<br>
-                        Lon: ${longitude.toFixed(4)}°<br>
-                        Alt: ${Utils.formatDistance(altitude)}
-                    `;
+                infoDiv.innerHTML = `
+                    Lat: ${latitude.toFixed(4)}°<br>
+                    Lon: ${longitude.toFixed(4)}°<br>
+                    Alt: ${Utils.formatDistance(altitude)}
+                `;
                 }
             }
 
             // Update compass
             // Ensure heading is valid (Cesium camera heading is in radians)
             if (!isNaN(heading) && isFinite(heading)) {
-                updateCompass(heading);
+            updateCompass(heading);
             }
 
             // Update attitude indicator
             // Ensure pitch and roll are valid (Cesium camera pitch/roll are in radians)
             if (!isNaN(pitch) && !isNaN(roll) && isFinite(pitch) && isFinite(roll)) {
-                updateAttitudeIndicator(pitch, roll);
+            updateAttitudeIndicator(pitch, roll);
             }
 
             // Update camera pose panel (legacy, if it exists)
@@ -3347,18 +3350,18 @@
         }
 
         function updateAttitudeIndicator(pitchDegrees, rollDegrees) {
-            // Limit pitch to reasonable range for display
-            const pitchOffset = Math.max(-90, Math.min(90, pitchDegrees)) * 1.5;
-            
-            // Normalize roll
-            let normalizedRoll = rollDegrees;
-            while (normalizedRoll > 180) normalizedRoll -= 360;
-            while (normalizedRoll < -180) normalizedRoll += 360;
-            
+                // Limit pitch to reasonable range for display
+                const pitchOffset = Math.max(-90, Math.min(90, pitchDegrees)) * 1.5;
+                
+                // Normalize roll
+                let normalizedRoll = rollDegrees;
+                while (normalizedRoll > 180) normalizedRoll -= 360;
+                while (normalizedRoll < -180) normalizedRoll += 360;
+                
             const transformValue = `translate(-50%, calc(-50% + ${-pitchOffset}px)) rotate(${-normalizedRoll}deg)`;
             
-            const pitchDisplay = Math.round(pitchDegrees);
-            const rollDisplay = Math.round(rollDegrees);
+                const pitchDisplay = Math.round(pitchDegrees);
+                const rollDisplay = Math.round(rollDegrees);
             const displayText = `P:${pitchDisplay}° R:${rollDisplay}°`;
             const displayTextAlt = `${pitchDisplay.toString().padStart(3, '0')}°P ${rollDisplay.toString().padStart(3, '0')}°R`;
             
