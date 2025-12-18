@@ -1500,12 +1500,23 @@
             </button>
         </div>
         
-        <!-- Vertical Movement Controls -->
+        <!-- Speed Controls -->
         <div class="widget-item" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
-            <label>Vertical Speed (m/s):</label>
-            <input type="number" id="droneVerticalSpeed" 
-                   value="5" min="1" max="20" step="1">
-            <small>Default: ±5 m/s</small>
+            <small style="display: block; text-align: center; margin-bottom: 8px; color: #94a3b8;">Movement Speeds</small>
+        </div>
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>Horizontal (m/s):</label>
+                <input type="number" id="droneHorizontalSpeed" 
+                       value="50" min="5" max="100" step="5">
+                <small>Forward/Strafe</small>
+            </div>
+            <div class="widget-field">
+                <label>Vertical (m/s):</label>
+                <input type="number" id="droneVerticalSpeed" 
+                       value="5" min="1" max="20" step="1">
+                <small>Climb/Descend</small>
+            </div>
         </div>
         <div class="widget-fields-row" style="margin-top: 8px;">
             <button class="btn btn-primary" id="droneTakeoffBtn">
@@ -1542,27 +1553,34 @@
         </div>
         <div class="widget-fields-row">
             <div class="widget-field">
-                <label>Orbit Speed (km/h):</label>
-                <input type="number" id="droneOrbitSpeed" 
-                       value="50" min="10" max="100" step="5">
-                <small>Range: 10-100 km/h</small>
-            </div>
-            <div class="widget-field">
                 <label>Revolutions:</label>
                 <input type="number" id="droneOrbitRevolutions" 
                        value="10" min="0.25" max="20" step="0.25">
                 <small>0.25 = 90°, 0.5 = 180°, 1 = 360°</small>
             </div>
+            <div class="widget-field">
+                <label style="opacity: 0.6;">Speed: Horizontal</label>
+                <input type="number" disabled 
+                       style="opacity: 0.6; cursor: not-allowed;" 
+                       placeholder="Set in Fly Mode">
+                <small style="opacity: 0.6;">Uses global setting</small>
+            </div>
         </div>
         <div class="widget-item">
-            <label>Camera Pitch (degrees): <span id="orbitPitchValue">-65°</span></label>
+            <label>Gimbal Pitch (degrees): <span id="orbitPitchValue">-65°</span></label>
             <input type="range" id="droneOrbitPitch" 
                    value="-65" min="-90" max="0" step="5">
             <small>-90° = straight down, -45° = 45° angle, 0° = horizon</small>
         </div>
+        <div class="widget-item">
+            <label>Gimbal Yaw Offset (degrees): <span id="orbitYawValue">0°</span></label>
+            <input type="range" id="droneOrbitYaw" 
+                   value="0" min="-180" max="180" step="5">
+            <small>0° = center, ±180° = opposite direction</small>
+        </div>
         <div class="widget-item" style="margin-top: 8px;">
             <button class="btn btn-primary" id="droneOrbitBtn">
-                <i class="fas fa-circle-notch"></i> Orbit 1000m radius @ 50 km/h
+                <i class="fas fa-circle-notch"></i> Orbit 1000m radius
             </button>
         </div>
         <div class="widget-item" style="margin-top: 4px; display: none;" id="stopOrbitContainer">
@@ -1572,7 +1590,7 @@
         </div>
         <div class="widget-item" style="margin-top: 4px;">
             <small style="display: block; text-align: center;">
-                Orbits around center point, camera faces inward. Press ESC to cancel.
+                QGC-style: Drone orbits around center. Gimbal points at center by default. Adjust pitch/yaw sliders to change viewing angle. Press ESC to stop.
             </small>
         </div>
     </div>
@@ -2498,9 +2516,18 @@
                 // Joystick parameters
                 const maxDistance = 45; // pixels from center
                 const deadzone = 0.1; // 10% deadzone
-                const maxSpeed = 50; // meters per second
                 const maxYawRate = 45; // degrees per second
-                const maxClimbRate = 10; // meters per second
+                
+                // Get speed settings from inputs
+                function getSpeedSettings() {
+                    const horizontalSpeedInput = document.getElementById('droneHorizontalSpeed');
+                    const verticalSpeedInput = document.getElementById('droneVerticalSpeed');
+                    
+                    return {
+                        horizontal: parseFloat(horizontalSpeedInput?.value) || 50,
+                        vertical: parseFloat(verticalSpeedInput?.value) || 5
+                    };
+                }
                 
                 // Toggle joysticks visibility
                 joystickBtn.addEventListener('click', () => {
@@ -2642,10 +2669,13 @@
                     const pitch = camera.pitch;
                     const roll = camera.roll;
                     
+                    // Get current speed settings
+                    const speeds = getSpeedSettings();
+                    
                     // Left joystick: forward/backward (Y) and strafe left/right (X)
                     if (leftState.x !== 0 || leftState.y !== 0) {
-                        const forwardSpeed = leftState.y * maxSpeed; // Forward/backward
-                        const strafeSpeed = leftState.x * maxSpeed; // Left/right
+                        const forwardSpeed = leftState.y * speeds.horizontal; // Forward/backward
+                        const strafeSpeed = leftState.x * speeds.horizontal; // Left/right
                         
                         // Calculate movement in world space
                         const forwardVector = Cesium.Cartesian3.normalize(
@@ -2677,7 +2707,7 @@
                     // Right joystick: altitude (Y) and yaw (X)
                     if (rightState.x !== 0 || rightState.y !== 0) {
                         const yawRate = rightState.x * maxYawRate * (Math.PI / 180); // Convert to radians
-                        const climbRate = rightState.y * maxClimbRate;
+                        const climbRate = rightState.y * speeds.vertical;
                         
                         // Rotate camera (yaw)
                         if (rightState.x !== 0) {
@@ -2903,6 +2933,328 @@
             });
             
             console.log('[Takeoff/Land] Initialized');
+        })();
+        
+        // ========== LIVE GIMBAL CONTROL (Pitch & Yaw) ==========
+        (function initLiveGimbalControl() {
+            const pitchSlider = document.getElementById('droneOrbitPitch');
+            const pitchValue = document.getElementById('orbitPitchValue');
+            const yawSlider = document.getElementById('droneOrbitYaw');
+            const yawValue = document.getElementById('orbitYawValue');
+            
+            if (!pitchSlider || !pitchValue || !yawSlider || !yawValue) {
+                console.error('[Gimbal Control] Missing required elements');
+                return;
+            }
+            
+            // Check if orbit is active
+            function isOrbitActive() {
+                const orbitBtn = document.getElementById('droneOrbitBtn');
+                return orbitBtn && orbitBtn.classList.contains('active');
+            }
+            
+            // Update pitch display and camera (only when not orbiting)
+            pitchSlider.addEventListener('input', (e) => {
+                const pitchDegrees = parseFloat(e.target.value);
+                pitchValue.textContent = `${pitchDegrees}°`;
+                
+                // Only update camera if not orbiting (orbit animation handles it)
+                if (!isOrbitActive()) {
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer || !viewer.camera) {
+                        return;
+                    }
+                    
+                    const camera = viewer.camera;
+                    const heading = camera.heading;
+                    const roll = camera.roll;
+                    const pitchRadians = Cesium.Math.toRadians(pitchDegrees);
+                    
+                    camera.setView({
+                        destination: camera.position,
+                        orientation: {
+                            heading: heading,
+                            pitch: pitchRadians,
+                            roll: roll
+                        }
+                    });
+                }
+            });
+            
+            // Update yaw display (yaw is only used during orbit)
+            yawSlider.addEventListener('input', (e) => {
+                const yawDegrees = parseFloat(e.target.value);
+                yawValue.textContent = `${yawDegrees}°`;
+                // Yaw is applied during orbit animation, no need to update here
+            });
+            
+            console.log('[Gimbal Control] Live pitch and yaw control initialized');
+        })();
+        
+        // ========== QGROUNDCONTROL-STYLE ORBIT IMPLEMENTATION ==========
+        (function initDroneOrbit() {
+            const orbitBtn = document.getElementById('droneOrbitBtn');
+            const stopOrbitBtn = document.getElementById('stopOrbitBtn');
+            const stopOrbitContainer = document.getElementById('stopOrbitContainer');
+            const orbitRadiusInput = document.getElementById('droneOrbitRadius');
+            const orbitAltitudeInput = document.getElementById('droneOrbitAltitude');
+            const orbitPitchInput = document.getElementById('droneOrbitPitch');
+            const horizontalSpeedInput = document.getElementById('droneHorizontalSpeed');
+            
+            if (!orbitBtn || !stopOrbitBtn) {
+                console.error('[Orbit] Missing required elements');
+                return;
+            }
+            
+            let isOrbiting = false;
+            let orbitAnimationId = null;
+            let orbitStartTime = null;
+            let orbitLastFrameTime = null;
+            let orbitCenterPoint = null;
+            let orbitInitialAngle = 0; // Starting angle in orbit (radians)
+            
+            // Start orbit (QGC-style: use current position as center by default)
+            function startOrbit() {
+                if (isOrbiting) {
+                    stopOrbit();
+                    return;
+                }
+                
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer || !viewer.camera) {
+                    console.error('[Orbit] Viewer not available');
+                    return;
+                }
+                
+                // QGC behavior: Use current camera position as orbit center
+                const camera = viewer.camera;
+                const currentPosition = camera.positionCartographic;
+                
+                // Set center point at ground level (directly below current camera position)
+                orbitCenterPoint = Cesium.Cartesian3.fromRadians(
+                    currentPosition.longitude,
+                    currentPosition.latitude,
+                    0 // Ground level
+                );
+                
+                // Log center point for debugging
+                const centerCart = Cesium.Cartographic.fromCartesian(orbitCenterPoint);
+                console.log(`[Orbit] Center set at: ${Cesium.Math.toDegrees(centerCart.longitude).toFixed(6)}°, ${Cesium.Math.toDegrees(centerCart.latitude).toFixed(6)}°`);
+                console.log(`[Orbit] Current camera at: ${Cesium.Math.toDegrees(currentPosition.longitude).toFixed(6)}°, ${Cesium.Math.toDegrees(currentPosition.latitude).toFixed(6)}°, ${currentPosition.height.toFixed(1)}m`);
+                
+                startOrbitWithCenter();
+            }
+            
+            // Start orbit with established center point
+            function startOrbitWithCenter() {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer || !viewer.camera || !orbitCenterPoint) {
+                    console.error('[Orbit] Cannot start orbit');
+                    return;
+                }
+                
+                // Get parameters
+                const radius = parseFloat(orbitRadiusInput.value) || 1000;
+                const targetAltitude = parseFloat(orbitAltitudeInput.value) || 2000;
+                const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
+                
+                const camera = viewer.camera;
+                const currentPosition = camera.positionCartographic;
+                
+                // Initialize orbit state BEFORE calculating angle
+                console.log(`[Orbit] Starting QGC-style orbit: ${radius}m radius, ${targetAltitude}m altitude`);
+                isOrbiting = true;
+                orbitStartTime = Date.now();
+                orbitLastFrameTime = Date.now();
+                orbitBtn.classList.add('active');
+                orbitBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Orbit';
+                stopOrbitContainer.style.display = 'block';
+                
+                // Move to target altitude FIRST (before calculating initial angle)
+                // This ensures we're at the correct altitude when we start orbiting
+                const currentAlt = currentPosition.height;
+                if (Math.abs(currentAlt - targetAltitude) > 1) {
+                    // Update position after altitude change
+                    camera.setView({
+                        destination: Cesium.Cartesian3.fromRadians(
+                            currentPosition.longitude,
+                            currentPosition.latitude,
+                            targetAltitude
+                        ),
+                        orientation: camera.orientation
+                    });
+                    // Wait a frame for the position to update
+                    setTimeout(() => {
+                        const finalPosition = camera.positionCartographic;
+                        calculateInitialAngle(finalPosition);
+                    }, 50);
+                } else {
+                    calculateInitialAngle(currentPosition);
+                }
+                
+                function calculateInitialAngle(position) {
+                    // Calculate initial angle based on position relative to center
+                    const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint);
+                    const deltaLon = position.longitude - centerCartographic.longitude;
+                    const deltaLat = position.latitude - centerCartographic.latitude;
+                    
+                    // If camera is directly above center (or very close), start at angle 0 (north)
+                    const distanceFromCenter = Math.sqrt(deltaLon * deltaLon + deltaLat * deltaLat);
+                    if (distanceFromCenter < 0.00001) { // Less than ~1 meter
+                        orbitInitialAngle = 0; // Start pointing north
+                        console.log(`[Orbit] Camera at center, starting from north (0°)`);
+                    } else {
+                        orbitInitialAngle = Math.atan2(deltaLat, deltaLon);
+                        console.log(`[Orbit] Initial angle: ${(orbitInitialAngle * 180 / Math.PI).toFixed(1)}°`);
+                    }
+                    
+                    // Start orbit animation
+                    startOrbitAnimation();
+                }
+            }
+            
+            // Start orbit animation (called after initial angle is calculated)
+            function startOrbitAnimation() {
+                if (!isOrbiting) return;
+                
+                // QGC-style continuous orbit animation
+                function animateOrbit() {
+                    if (!isOrbiting) return;
+                    
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer || !viewer.camera) {
+                        stopOrbit();
+                        return;
+                    }
+                    
+                    const camera = viewer.camera;
+                    const pitchDegrees = parseFloat(orbitPitchInput.value) || -65;
+                    const yawOffsetDegrees = parseFloat(document.getElementById('droneOrbitYaw')?.value) || 0;
+                    const radius = parseFloat(orbitRadiusInput.value) || 1000;
+                    const targetAltitude = parseFloat(orbitAltitudeInput.value) || 2000;
+                    const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
+                    
+                    // Validate radius
+                    if (radius <= 0) {
+                        console.error('[Orbit] Invalid radius, stopping');
+                        stopOrbit();
+                        return;
+                    }
+                    
+                    // Calculate angular velocity (radians per second)
+                    const angularVelocity = horizontalSpeed / radius; // rad/s
+                    
+                    // Calculate angle based on elapsed time (not frame-based accumulation)
+                    const currentTime = Date.now();
+                    const elapsed = (currentTime - orbitStartTime) / 1000; // seconds
+                    const deltaTime = (currentTime - orbitLastFrameTime) / 1000; // seconds since last frame
+                    orbitLastFrameTime = currentTime;
+                    
+                    // Calculate current angle from elapsed time
+                    const orbitAngle = orbitInitialAngle + (angularVelocity * elapsed);
+                    
+                    // Calculate position on orbit circle
+                    const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint);
+                    const earthRadius = 6371000; // meters
+                    
+                    // Convert radius to angular distance (radians)
+                    // Account for latitude-dependent longitude scaling
+                    const angularRadiusLat = radius / earthRadius;
+                    const angularRadiusLon = radius / (earthRadius * Math.cos(centerCartographic.latitude));
+                    
+                    const cameraLongitude = centerCartographic.longitude + angularRadiusLon * Math.cos(orbitAngle);
+                    const cameraLatitude = centerCartographic.latitude + angularRadiusLat * Math.sin(orbitAngle);
+                    
+                    // Periodic verification (every 5 seconds)
+                    if (Math.floor(elapsed) % 5 === 0 && Math.floor(elapsed * 100) % 100 < 20) {
+                        // Use Cesium's distance calculation for accuracy
+                        const currentPos = Cesium.Cartesian3.fromRadians(cameraLongitude, cameraLatitude, targetAltitude);
+                        const centerPos = Cesium.Cartesian3.fromRadians(
+                            centerCartographic.longitude, 
+                            centerCartographic.latitude, 
+                            targetAltitude
+                        );
+                        const actualDistance = Cesium.Cartesian3.distance(currentPos, centerPos);
+                        console.log(`[Orbit] Verification: Distance from center = ${actualDistance.toFixed(1)}m (expected: ${radius}m)`);
+                    }
+                    
+                    // QGC-style: Maintain constant altitude (can be modified by takeoff/land)
+                    let finalAltitude = targetAltitude;
+                    
+                    // Check if takeoff/land is active
+                    const takeoffBtn = document.getElementById('droneTakeoffBtn');
+                    const landBtn = document.getElementById('droneLandBtn');
+                    const isTakeoffActive = takeoffBtn && takeoffBtn.classList.contains('active');
+                    const isLandActive = landBtn && landBtn.classList.contains('active');
+                    
+                    // If takeoff/land is active, integrate their altitude changes
+                    if (isTakeoffActive || isLandActive) {
+                        // Get the altitude change from takeoff/land
+                        const currentAlt = camera.positionCartographic.height;
+                        const verticalSpeed = parseFloat(document.getElementById('droneVerticalSpeed')?.value) || 5;
+                        const altitudeChange = (isTakeoffActive ? verticalSpeed : -verticalSpeed) * deltaTime;
+                        finalAltitude = currentAlt + altitudeChange;
+                    }
+                    
+                    // Calculate heading to face center (QGC: camera faces inward by default)
+                    // Then apply yaw offset for gimbal control
+                    const headingToCenter = orbitAngle + Math.PI;
+                    const yawOffsetRadians = Cesium.Math.toRadians(yawOffsetDegrees);
+                    const finalHeading = headingToCenter + yawOffsetRadians;
+                    
+                    // Set camera position and orientation
+                    // This emulates a drone with gimbal: drone orbits, gimbal points at center + offset
+                    camera.setView({
+                        destination: Cesium.Cartesian3.fromRadians(
+                            cameraLongitude,
+                            cameraLatitude,
+                            finalAltitude
+                        ),
+                        orientation: {
+                            heading: finalHeading,
+                            pitch: Cesium.Math.toRadians(pitchDegrees),
+                            roll: 0.0
+                        }
+                    });
+                    
+                    orbitAnimationId = requestAnimationFrame(animateOrbit);
+                }
+                
+                animateOrbit();
+            }
+            
+            // Stop orbit
+            function stopOrbit() {
+                if (orbitAnimationId) {
+                    cancelAnimationFrame(orbitAnimationId);
+                    orbitAnimationId = null;
+                }
+                
+                isOrbiting = false;
+                orbitStartTime = null;
+                orbitLastFrameTime = null;
+                orbitCenterPoint = null;
+                orbitInitialAngle = 0;
+                
+                orbitBtn.classList.remove('active');
+                orbitBtn.innerHTML = '<i class="fas fa-circle-notch"></i> Orbit 1000m radius';
+                stopOrbitContainer.style.display = 'none';
+                
+                console.log('[Orbit] Stopped');
+            }
+            
+            // Event listeners
+            orbitBtn.addEventListener('click', startOrbit);
+            stopOrbitBtn.addEventListener('click', stopOrbit);
+            
+            // Stop on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && isOrbiting) {
+                    stopOrbit();
+                }
+            });
+            
+            console.log('[Orbit] QGC-style orbit initialized');
         })();
     </script>
 </body>
