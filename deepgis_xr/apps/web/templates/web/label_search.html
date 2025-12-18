@@ -434,10 +434,41 @@
             background: #059669;
         }
         
+        .drone-fly-widget button.btn-primary {
+            background: #3b82f6;
+        }
+        
+        .drone-fly-widget button.btn-primary:hover {
+            background: #2563eb;
+        }
+        
+        .drone-fly-widget button.btn-warning {
+            background: #f59e0b;
+        }
+        
+        .drone-fly-widget button.btn-warning:hover {
+            background: #d97706;
+        }
+        
+        .drone-fly-widget button.active {
+            background: #ef4444;
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+        
+        .drone-fly-widget button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+        }
+        
         /* ========== DRONE ORBIT WIDGET ========== */
         .drone-orbit-widget {
             position: fixed;
-            top: 510px;
+            top: 720px;
             left: 20px;
             width: 340px;
             max-height: 50vh;
@@ -1468,6 +1499,23 @@
                 <i class="fas fa-paper-plane"></i> Fly Forward 100m @ 100 km/h
             </button>
         </div>
+        
+        <!-- Vertical Movement Controls -->
+        <div class="widget-item" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+            <label>Vertical Speed (m/s):</label>
+            <input type="number" id="droneVerticalSpeed" 
+                   value="5" min="1" max="20" step="1">
+            <small>Default: ±5 m/s</small>
+        </div>
+        <div class="widget-fields-row" style="margin-top: 8px;">
+            <button class="btn btn-primary" id="droneTakeoffBtn">
+                <i class="fas fa-arrow-up"></i> Takeoff
+            </button>
+            <button class="btn btn-warning" id="droneLandBtn">
+                <i class="fas fa-arrow-down"></i> Land
+            </button>
+        </div>
+        
         <div class="widget-item" style="margin-top: 4px;">
             <small style="display: block; text-align: center;">
                 Flies along current heading, maintaining altitude & orientation
@@ -1692,6 +1740,14 @@
             <div class="keyboard-shortcut-item">
                 <span class="keyboard-shortcut-label">Toggle Virtual Joysticks</span>
                 <span class="keyboard-shortcut-key">J</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Takeoff (Climb)</span>
+                <span class="keyboard-shortcut-key">U</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Land (Descend)</span>
+                <span class="keyboard-shortcut-key">L</span>
             </div>
         </div>
     </div>
@@ -1984,6 +2040,26 @@
                         const droneFlyBtn = document.getElementById('droneFlyBtn');
                         if (droneFlyBtn) {
                             droneFlyBtn.click();
+                        }
+                        return;
+                    }
+                    
+                    // U key: Takeoff (Up)
+                    if (e.key === 'u' || e.key === 'U') {
+                        e.preventDefault();
+                        const takeoffBtn = document.getElementById('droneTakeoffBtn');
+                        if (takeoffBtn) {
+                            takeoffBtn.click();
+                        }
+                        return;
+                    }
+                    
+                    // L key: Land
+                    if (e.key === 'l' || e.key === 'L') {
+                        e.preventDefault();
+                        const landBtn = document.getElementById('droneLandBtn');
+                        if (landBtn) {
+                            landBtn.click();
                         }
                         return;
                     }
@@ -2707,6 +2783,126 @@
             }
             
             window.addEventListener('resize', positionNavigationWidgets);
+        })();
+        
+        // ========== TAKEOFF AND LAND FUNCTIONALITY ==========
+        (function initTakeoffLand() {
+            const takeoffBtn = document.getElementById('droneTakeoffBtn');
+            const landBtn = document.getElementById('droneLandBtn');
+            const verticalSpeedInput = document.getElementById('droneVerticalSpeed');
+            
+            if (!takeoffBtn || !landBtn || !verticalSpeedInput) {
+                console.error('[Takeoff/Land] Missing required elements');
+                return;
+            }
+            
+            let isClimbing = false;
+            let isDescending = false;
+            let animationId = null;
+            
+            // Takeoff function
+            function startTakeoff() {
+                if (isClimbing) {
+                    stopVerticalMovement();
+                    return;
+                }
+                
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer || !viewer.camera) {
+                    console.error('[Takeoff] Viewer not available');
+                    return;
+                }
+                
+                isClimbing = true;
+                isDescending = false;
+                takeoffBtn.classList.add('active');
+                takeoffBtn.innerHTML = '<i class="fas fa-stop"></i> Stop';
+                landBtn.disabled = true;
+                
+                const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
+                console.log(`[Takeoff] Starting climb at ${verticalSpeed} m/s`);
+                
+                function climb() {
+                    if (!isClimbing) return;
+                    
+                    const camera = viewer.camera;
+                    const moveDistance = verticalSpeed * 0.016; // ~60fps
+                    camera.moveUp(moveDistance);
+                    
+                    animationId = requestAnimationFrame(climb);
+                }
+                
+                climb();
+            }
+            
+            // Land function
+            function startLanding() {
+                if (isDescending) {
+                    stopVerticalMovement();
+                    return;
+                }
+                
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer || !viewer.camera) {
+                    console.error('[Land] Viewer not available');
+                    return;
+                }
+                
+                isDescending = true;
+                isClimbing = false;
+                landBtn.classList.add('active');
+                landBtn.innerHTML = '<i class="fas fa-stop"></i> Stop';
+                takeoffBtn.disabled = true;
+                
+                const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
+                console.log(`[Land] Starting descent at ${verticalSpeed} m/s`);
+                
+                function descend() {
+                    if (!isDescending) return;
+                    
+                    const camera = viewer.camera;
+                    const moveDistance = verticalSpeed * 0.016; // ~60fps
+                    camera.moveDown(moveDistance);
+                    
+                    animationId = requestAnimationFrame(descend);
+                }
+                
+                descend();
+            }
+            
+            // Stop vertical movement
+            function stopVerticalMovement() {
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                
+                isClimbing = false;
+                isDescending = false;
+                
+                takeoffBtn.classList.remove('active');
+                takeoffBtn.innerHTML = '<i class="fas fa-arrow-up"></i> Takeoff';
+                takeoffBtn.disabled = false;
+                
+                landBtn.classList.remove('active');
+                landBtn.innerHTML = '<i class="fas fa-arrow-down"></i> Land';
+                landBtn.disabled = false;
+                
+                console.log('[Vertical Movement] Stopped');
+            }
+            
+            // Event listeners
+            takeoffBtn.addEventListener('click', startTakeoff);
+            landBtn.addEventListener('click', startLanding);
+            
+            // Stop on Escape key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && (isClimbing || isDescending)) {
+                    stopVerticalMovement();
+                }
+            });
+            
+            console.log('[Takeoff/Land] Initialized');
         })();
     </script>
 </body>
