@@ -256,11 +256,11 @@
         }
         
         .drone-fly-widget {
-            width: 200px !important;
+            width: 340px !important;
         }
         
         .drone-orbit-widget {
-            width: 200px !important;
+            width: 340px !important;
         }
         
         /* ========== ADJUST EXISTING HUD ELEMENTS ========== */
@@ -354,7 +354,7 @@
             position: fixed;
             top: 360px;
             left: 20px;
-            width: 200px;
+            width: 340px;
             z-index: 1400;
             background: rgba(15, 23, 42, 0.8);
             border-radius: 12px;
@@ -380,6 +380,18 @@
         
         .drone-fly-widget .widget-item {
             margin-bottom: 8px;
+        }
+        
+        .drone-fly-widget .widget-fields-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        
+        .drone-fly-widget .widget-field {
+            display: flex;
+            flex-direction: column;
         }
         
         .drone-fly-widget label {
@@ -425,9 +437,9 @@
         /* ========== DRONE ORBIT WIDGET ========== */
         .drone-orbit-widget {
             position: fixed;
-            top: 580px;
+            top: 510px;
             left: 20px;
-            width: 200px;
+            width: 340px;
             max-height: 50vh;
             overflow-y: auto;
             z-index: 1400;
@@ -455,6 +467,18 @@
         
         .drone-orbit-widget .widget-item {
             margin-bottom: 8px;
+        }
+        
+        .drone-orbit-widget .widget-fields-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        
+        .drone-orbit-widget .widget-field {
+            display: flex;
+            flex-direction: column;
         }
         
         .drone-orbit-widget label {
@@ -590,6 +614,131 @@
         .main-heading {
             transition: all 0.3s ease;
         }
+        
+        /* ========== VIRTUAL JOYSTICKS ========== */
+        .joystick-container {
+            position: fixed;
+            bottom: 100px;
+            z-index: 1800;
+            display: none; /* Hidden by default, toggled by button */
+        }
+        
+        .joystick-container.active {
+            display: block;
+        }
+        
+        #leftJoystick {
+            right: 40px;
+        }
+        
+        #rightJoystick {
+            left: 40px;
+        }
+        
+        .joystick-base {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            background: radial-gradient(circle at center, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.85) 100%);
+            border: 2px solid rgba(59, 130, 246, 0.4);
+            position: relative;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 2px 10px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            cursor: pointer;
+            user-select: none;
+        }
+        
+        .joystick-base::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 100px;
+            height: 100px;
+            border-radius: 50%;
+            border: 1px dashed rgba(59, 130, 246, 0.3);
+        }
+        
+        .joystick-base::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 1px dashed rgba(59, 130, 246, 0.2);
+        }
+        
+        .joystick-stick {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #60a5fa, #3b82f6);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            cursor: move;
+            touch-action: none;
+            box-shadow: 0 2px 10px rgba(59, 130, 246, 0.5), 0 0 20px rgba(59, 130, 246, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            transition: box-shadow 0.1s ease;
+        }
+        
+        .joystick-stick:active {
+            box-shadow: 0 2px 15px rgba(59, 130, 246, 0.7), 0 0 30px rgba(59, 130, 246, 0.5);
+        }
+        
+        .joystick-label {
+            position: absolute;
+            bottom: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #94a3b8;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+        }
+        
+        .joystick-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 9px;
+            font-weight: 600;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        /* Joystick cardinal direction markers */
+        .joystick-markers {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+        
+        .joystick-marker {
+            position: absolute;
+            color: rgba(148, 163, 184, 0.4);
+            font-size: 10px;
+            font-weight: bold;
+        }
+        
+        .joystick-marker.north { top: 5px; left: 50%; transform: translateX(-50%); }
+        .joystick-marker.south { bottom: 5px; left: 50%; transform: translateX(-50%); }
+        .joystick-marker.east { right: 5px; top: 50%; transform: translateY(-50%); }
+        .joystick-marker.west { left: 5px; top: 50%; transform: translateY(-50%); }
         
         /* ========== KEYBOARD SHORTCUTS LEGEND PANEL ========== */
         .keyboard-shortcuts-legend {
@@ -793,6 +942,10 @@
         <button class="hud-btn hud-vr" id="hudVrBtn" data-panel="vrPanel">
             <i class="fas fa-vr-cardboard"></i>
             <span>VR</span>
+        </button>
+        <button class="hud-btn" id="hudJoystickBtn">
+            <i class="fas fa-gamepad"></i>
+            <span>Joystick</span>
         </button>
     </div>
 
@@ -1297,16 +1450,18 @@
         <div class="widget-title">
             <i class="fas fa-drone"></i>Drone Fly Mode
         </div>
-        <div class="widget-item">
-            <label>Fly Distance (meters):</label>
-            <input type="number" id="droneFlyDistance" 
-                   value="100" min="10" max="1000" step="10">
-        </div>
-        <div class="widget-item">
-            <label>Speed (km/h):</label>
-            <input type="number" id="droneFlySpeed" 
-                   value="100" min="25" max="250" step="5">
-            <small>Range: 25-250 km/h</small>
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>Fly Distance (meters):</label>
+                <input type="number" id="droneFlyDistance" 
+                       value="100" min="10" max="1000" step="10">
+            </div>
+            <div class="widget-field">
+                <label>Speed (km/h):</label>
+                <input type="number" id="droneFlySpeed" 
+                       value="100" min="25" max="250" step="5">
+                <small>Range: 25-250 km/h</small>
+            </div>
         </div>
         <div class="widget-item" style="margin-top: 8px;">
             <button class="btn btn-success" id="droneFlyBtn">
@@ -1325,27 +1480,31 @@
         <div class="widget-title">
             <i class="fas fa-circle-notch"></i>Drone Orbit Mode
         </div>
-        <div class="widget-item">
-            <label>Orbit Radius (meters):</label>
-            <input type="number" id="droneOrbitRadius" 
-                   value="1000" min="20" max="5000" step="10">
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>Orbit Radius (meters):</label>
+                <input type="number" id="droneOrbitRadius" 
+                       value="1000" min="20" max="5000" step="10">
+            </div>
+            <div class="widget-field">
+                <label>Altitude AGL (meters):</label>
+                <input type="number" id="droneOrbitAltitude" 
+                       value="2000" min="20" max="5000" step="10">
+            </div>
         </div>
-        <div class="widget-item">
-            <label>Altitude AGL (meters):</label>
-            <input type="number" id="droneOrbitAltitude" 
-                   value="2000" min="20" max="5000" step="10">
-        </div>
-        <div class="widget-item">
-            <label>Orbit Speed (km/h):</label>
-            <input type="number" id="droneOrbitSpeed" 
-                   value="50" min="10" max="100" step="5">
-            <small>Range: 10-100 km/h</small>
-        </div>
-        <div class="widget-item">
-            <label>Revolutions:</label>
-            <input type="number" id="droneOrbitRevolutions" 
-                   value="10" min="0.25" max="20" step="0.25">
-            <small>0.25 = 90°, 0.5 = 180°, 1 = 360°</small>
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>Orbit Speed (km/h):</label>
+                <input type="number" id="droneOrbitSpeed" 
+                       value="50" min="10" max="100" step="5">
+                <small>Range: 10-100 km/h</small>
+            </div>
+            <div class="widget-field">
+                <label>Revolutions:</label>
+                <input type="number" id="droneOrbitRevolutions" 
+                       value="10" min="0.25" max="20" step="0.25">
+                <small>0.25 = 90°, 0.5 = 180°, 1 = 360°</small>
+            </div>
         </div>
         <div class="widget-item">
             <label>Camera Pitch (degrees): <span id="orbitPitchValue">-65°</span></label>
@@ -1422,6 +1581,33 @@
             <button class="perspective-btn-hud" id="viewSouth" title="South">
                 <i class="fas fa-arrow-down"></i><br><small>S</small>
             </button>
+        </div>
+    </div>
+
+    <!-- Virtual Joysticks -->
+    <div id="leftJoystick" class="joystick-container">
+        <div class="joystick-base">
+            <div class="joystick-markers">
+                <div class="joystick-marker north">▲</div>
+                <div class="joystick-marker south">▼</div>
+                <div class="joystick-marker east">▶</div>
+                <div class="joystick-marker west">◀</div>
+            </div>
+            <div class="joystick-value" id="leftJoystickValue">0,0</div>
+            <div class="joystick-stick" id="leftJoystickStick"></div>
+            <div class="joystick-label">Movement</div>
+        </div>
+    </div>
+    
+    <div id="rightJoystick" class="joystick-container">
+        <div class="joystick-base">
+            <div class="joystick-markers">
+                <div class="joystick-marker north">▲</div>
+                <div class="joystick-marker south">▼</div>
+            </div>
+            <div class="joystick-value" id="rightJoystickValue">0,0</div>
+            <div class="joystick-stick" id="rightJoystickStick"></div>
+            <div class="joystick-label">Altitude / Yaw</div>
         </div>
     </div>
 
@@ -1502,6 +1688,10 @@
             <div class="keyboard-shortcut-item">
                 <span class="keyboard-shortcut-label">Pause/Stop Orbit</span>
                 <span class="keyboard-shortcut-key">P</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle Virtual Joysticks</span>
+                <span class="keyboard-shortcut-key">J</span>
             </div>
         </div>
     </div>
@@ -1750,10 +1940,12 @@
                         const navWidget = document.getElementById('navigationWidgetGroup');
                         const perspectiveWidget = document.getElementById('perspectiveViewsWidget');
                         const performanceIndicator = document.getElementById('performanceIndicator');
+                        const leftJoystick = document.getElementById('leftJoystick');
+                        const rightJoystick = document.getElementById('rightJoystick');
                         const mainHeading = document.querySelector('.main-heading');
                         
                         // Toggle visibility of all toolbars/widgets
-                        const elements = [toolbar, quickViews, cameraInfo, droneFlyWidget, droneOrbitWidget, navWidget, perspectiveWidget, performanceIndicator].filter(el => el);
+                        const elements = [toolbar, quickViews, cameraInfo, droneFlyWidget, droneOrbitWidget, navWidget, perspectiveWidget, performanceIndicator, leftJoystick, rightJoystick].filter(el => el);
                         const isHidden = elements[0] && elements[0].style.display === 'none';
                         
                         elements.forEach(el => {
@@ -1813,6 +2005,20 @@
                         if (stopOrbitBtn && stopOrbitBtn.offsetParent !== null) {
                             // Only if stop button is visible (orbit is active)
                             stopOrbitBtn.click();
+                        }
+                        return;
+                    }
+                    
+                    // J key: Toggle Joysticks
+                    if (e.key === 'j' || e.key === 'J') {
+                        e.preventDefault();
+                        console.log('[Keyboard] J key pressed - toggling joysticks');
+                        const joystickBtn = document.getElementById('hudJoystickBtn');
+                        if (joystickBtn) {
+                            console.log('[Keyboard] Joystick button found, clicking...');
+                            joystickBtn.click();
+                        } else {
+                            console.error('[Keyboard] Joystick button not found!');
                         }
                         return;
                     }
@@ -2182,6 +2388,261 @@
             
             // Check for incoming location on page load
             checkIncomingLocation();
+            
+            // ========== VIRTUAL JOYSTICK IMPLEMENTATION ==========
+            (function initJoysticks() {
+                const leftJoystick = document.getElementById('leftJoystick');
+                const rightJoystick = document.getElementById('rightJoystick');
+                const leftStick = document.getElementById('leftJoystickStick');
+                const rightStick = document.getElementById('rightJoystickStick');
+                const leftValue = document.getElementById('leftJoystickValue');
+                const rightValue = document.getElementById('rightJoystickValue');
+                const joystickBtn = document.getElementById('hudJoystickBtn');
+                
+                // Verify all elements exist
+                if (!leftJoystick || !rightJoystick || !leftStick || !rightStick || !joystickBtn) {
+                    console.error('[Joysticks] Missing required elements:', {
+                        leftJoystick: !!leftJoystick,
+                        rightJoystick: !!rightJoystick,
+                        leftStick: !!leftStick,
+                        rightStick: !!rightStick,
+                        joystickBtn: !!joystickBtn
+                    });
+                    return;
+                }
+                
+                console.log('[Joysticks] All elements found, initializing...');
+                
+                let leftActive = false;
+                let rightActive = false;
+                let leftState = { x: 0, y: 0 };
+                let rightState = { x: 0, y: 0 };
+                let animationFrameId = null;
+                
+                // Joystick parameters
+                const maxDistance = 45; // pixels from center
+                const deadzone = 0.1; // 10% deadzone
+                const maxSpeed = 50; // meters per second
+                const maxYawRate = 45; // degrees per second
+                const maxClimbRate = 10; // meters per second
+                
+                // Toggle joysticks visibility
+                joystickBtn.addEventListener('click', () => {
+                    console.log('[Joysticks] Button clicked');
+                    const isActive = leftJoystick.classList.contains('active');
+                    if (isActive) {
+                        leftJoystick.classList.remove('active');
+                        rightJoystick.classList.remove('active');
+                        joystickBtn.classList.remove('active');
+                        stopCameraMovement();
+                        console.log('[Joysticks] Disabled');
+                    } else {
+                        leftJoystick.classList.add('active');
+                        rightJoystick.classList.add('active');
+                        joystickBtn.classList.add('active');
+                        startCameraMovement();
+                        console.log('[Joysticks] Enabled');
+                    }
+                });
+                
+                // Handle joystick interaction
+                function setupJoystick(stick, base, valueDisplay, isLeft) {
+                    let isDragging = false;
+                    
+                    function handleStart(e) {
+                        e.preventDefault();
+                        isDragging = true;
+                        if (isLeft) leftActive = true;
+                        else rightActive = true;
+                        stick.style.transition = 'none';
+                        console.log(`[Joystick] ${isLeft ? 'Left' : 'Right'} joystick activated`);
+                        
+                        // Handle the first movement immediately
+                        handleMove(e);
+                    }
+                    
+                    function handleMove(e) {
+                        if (!isDragging) return;
+                        
+                        e.preventDefault();
+                        const rect = base.getBoundingClientRect();
+                        const centerX = rect.width / 2;
+                        const centerY = rect.height / 2;
+                        
+                        let clientX, clientY;
+                        if (e.type.includes('touch')) {
+                            if (e.touches.length === 0) return;
+                            clientX = e.touches[0].clientX;
+                            clientY = e.touches[0].clientY;
+                        } else {
+                            clientX = e.clientX;
+                            clientY = e.clientY;
+                        }
+                        
+                        let deltaX = clientX - rect.left - centerX;
+                        let deltaY = clientY - rect.top - centerY;
+                        
+                        // Limit to maxDistance
+                        const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+                        if (distance > maxDistance) {
+                            const angle = Math.atan2(deltaY, deltaX);
+                            deltaX = Math.cos(angle) * maxDistance;
+                            deltaY = Math.sin(angle) * maxDistance;
+                        }
+                        
+                        // Update stick position
+                        stick.style.left = `calc(50% + ${deltaX}px)`;
+                        stick.style.top = `calc(50% + ${deltaY}px)`;
+                        
+                        // Normalize to -1 to 1
+                        let normalizedX = deltaX / maxDistance;
+                        let normalizedY = -deltaY / maxDistance; // Invert Y for intuitive up/down
+                        
+                        // Apply deadzone
+                        if (Math.abs(normalizedX) < deadzone) normalizedX = 0;
+                        if (Math.abs(normalizedY) < deadzone) normalizedY = 0;
+                        
+                        // Update state
+                        if (isLeft) {
+                            leftState = { x: normalizedX, y: normalizedY };
+                            valueDisplay.textContent = `${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)}`;
+                        } else {
+                            rightState = { x: normalizedX, y: normalizedY };
+                            valueDisplay.textContent = `${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)}`;
+                        }
+                    }
+                    
+                    function handleEnd(e) {
+                        if (!isDragging) return;
+                        
+                        e.preventDefault();
+                        isDragging = false;
+                        if (isLeft) leftActive = false;
+                        else rightActive = false;
+                        
+                        stick.style.transition = 'all 0.2s ease';
+                        stick.style.left = '50%';
+                        stick.style.top = '50%';
+                        
+                        if (isLeft) {
+                            leftState = { x: 0, y: 0 };
+                            valueDisplay.textContent = '0,0';
+                        } else {
+                            rightState = { x: 0, y: 0 };
+                            valueDisplay.textContent = '0,0';
+                        }
+                        
+                        console.log(`[Joystick] ${isLeft ? 'Left' : 'Right'} joystick released`);
+                    }
+                    
+                    // Mouse events - attach to the entire base for QGC-style interaction
+                    base.addEventListener('mousedown', handleStart);
+                    document.addEventListener('mousemove', handleMove);
+                    document.addEventListener('mouseup', handleEnd);
+                    
+                    // Touch events - attach to the entire base
+                    base.addEventListener('touchstart', handleStart, { passive: false });
+                    document.addEventListener('touchmove', handleMove, { passive: false });
+                    document.addEventListener('touchend', handleEnd);
+                    document.addEventListener('touchcancel', handleEnd);
+                }
+                
+                setupJoystick(leftStick, leftJoystick.querySelector('.joystick-base'), leftValue, true);
+                setupJoystick(rightStick, rightJoystick.querySelector('.joystick-base'), rightValue, false);
+                
+                // Camera movement loop
+                function updateCameraMovement() {
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer || !viewer.camera) {
+                        animationFrameId = requestAnimationFrame(updateCameraMovement);
+                        return;
+                    }
+                    
+                    const camera = viewer.camera;
+                    const position = camera.positionCartographic;
+                    
+                    // Get current orientation
+                    const heading = camera.heading;
+                    const pitch = camera.pitch;
+                    const roll = camera.roll;
+                    
+                    // Left joystick: forward/backward (Y) and strafe left/right (X)
+                    if (leftState.x !== 0 || leftState.y !== 0) {
+                        const forwardSpeed = leftState.y * maxSpeed; // Forward/backward
+                        const strafeSpeed = leftState.x * maxSpeed; // Left/right
+                        
+                        // Calculate movement in world space
+                        const forwardVector = Cesium.Cartesian3.normalize(
+                            new Cesium.Cartesian3(
+                                Math.sin(heading),
+                                Math.cos(heading),
+                                0
+                            ),
+                            new Cesium.Cartesian3()
+                        );
+                        
+                        const rightVector = Cesium.Cartesian3.normalize(
+                            new Cesium.Cartesian3(
+                                Math.cos(heading),
+                                -Math.sin(heading),
+                                0
+                            ),
+                            new Cesium.Cartesian3()
+                        );
+                        
+                        // Move camera
+                        const moveDistance = forwardSpeed * 0.016; // ~60fps
+                        const strafeDistance = strafeSpeed * 0.016;
+                        
+                        camera.moveForward(moveDistance);
+                        camera.moveRight(strafeDistance);
+                    }
+                    
+                    // Right joystick: altitude (Y) and yaw (X)
+                    if (rightState.x !== 0 || rightState.y !== 0) {
+                        const yawRate = rightState.x * maxYawRate * (Math.PI / 180); // Convert to radians
+                        const climbRate = rightState.y * maxClimbRate;
+                        
+                        // Rotate camera (yaw)
+                        if (rightState.x !== 0) {
+                            const newHeading = heading + (yawRate * 0.016);
+                            camera.setView({
+                                destination: camera.position,
+                                orientation: {
+                                    heading: newHeading,
+                                    pitch: pitch,
+                                    roll: roll
+                                }
+                            });
+                        }
+                        
+                        // Move up/down
+                        if (rightState.y !== 0) {
+                            const moveDistance = climbRate * 0.016;
+                            camera.moveUp(moveDistance);
+                        }
+                    }
+                    
+                    animationFrameId = requestAnimationFrame(updateCameraMovement);
+                }
+                
+                function startCameraMovement() {
+                    if (!animationFrameId) {
+                        updateCameraMovement();
+                    }
+                }
+                
+                function stopCameraMovement() {
+                    if (animationFrameId) {
+                        cancelAnimationFrame(animationFrameId);
+                        animationFrameId = null;
+                    }
+                    leftState = { x: 0, y: 0 };
+                    rightState = { x: 0, y: 0 };
+                }
+                
+                console.log('[Joysticks] Virtual joysticks initialized');
+            })();
             
             // Style World Sampler when it appears in HUD container
             function styleWorldSamplerInHUD() {
