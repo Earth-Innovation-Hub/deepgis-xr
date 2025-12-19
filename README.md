@@ -1,7 +1,8 @@
 # DeepGIS-XR
 <img width="2558" height="1433" alt="image" src="https://github.com/user-attachments/assets/6ef67028-e9dd-4a6e-96f1-c0f74da05d37" />
 <img width="2556" height="1435" alt="image" src="https://github.com/user-attachments/assets/c06ab8f8-54c3-453f-b112-72a77e8453fa" />
-<img width="2495" height="1365" alt="image" src="https://github.com/user-attachments/assets/4da702b9-7e47-4f54-be64-a5b6f74a2257" />
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/f5826ed4-589b-4dc2-92bb-5ec85c66a179" />
+
 
 
 **Advanced Geospatial Visualization Platform with AI-Powered Analysis**
