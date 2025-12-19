@@ -243,12 +243,36 @@
         
         /* ========== CONSISTENT LEFT WIDGET WIDTHS ========== */
         .camera-info {
-            width: 200px !important;
-            min-width: 200px !important;
-            max-width: 200px !important;
-            left: 20px !important;
+            width: 150px !important;
+            min-width: 150px !important;
+            max-width: 150px !important;
+            left: 10px !important;
             position: fixed !important;
-            top: 90px !important;
+            top: 80px !important;
+            padding: 4px 6px !important;
+            font-size: 9px !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+        
+        .camera-info-title {
+            margin-bottom: 2px !important;
+            font-size: 9px !important;
+            padding-bottom: 1px !important;
+            font-weight: 600 !important;
+        }
+        
+        .camera-info-item {
+            margin-bottom: 1px !important;
+            font-size: 9px !important;
+            line-height: 1.1 !important;
+            display: flex !important;
+            justify-content: space-between !important;
+        }
+        
+        .camera-info-label, .camera-info-value {
+            font-size: 9px !important;
         }
         
         .weather-stations-widget {
@@ -256,58 +280,58 @@
         }
         
         .drone-fly-widget {
-            width: 340px !important;
+            width: 150px !important;
         }
         
         .drone-orbit-widget {
-            width: 340px !important;
+            width: 150px !important;
         }
         
         /* ========== ADJUST EXISTING HUD ELEMENTS ========== */
         .perspective-views-widget {
             position: fixed !important;
-            top: 550px !important;  /* Moved further down to avoid overlap with navigation widget */
-            right: 20px !important;
-            width: 120px;
+            top: 480px !important;  /* Lowered by half height to avoid overlap with navigation */
+            right: 10px !important;  /* Moved left slightly */
+            width: 100px;  /* Reduced from 120px */
             z-index: 1300;  /* Below navigation widget */
-            background: rgba(15, 23, 42, 0.8);
-            border-radius: 12px;
-            padding: 10px;
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(8px);
+            background: transparent;
+            border-radius: 0;
+            padding: 4px;
+            border: none;
+            box-shadow: none;
+            backdrop-filter: none;
         }
         
         .perspective-views-widget .widget-title {
             color: #f1f5f9;
-            font-size: 11px;
-            font-weight: bold;
-            text-align: center;
-            margin-bottom: 8px;
+            font-size: 8px;
+            font-weight: 600;
+            text-align: left;
+            margin-bottom: 2px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.2px;
         }
         
         .perspective-compass-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             grid-template-rows: repeat(3, 1fr);
-            gap: 4px;
+            gap: 3px;
             width: 100%;
             aspect-ratio: 1;
         }
         
         .perspective-btn-hud {
             aspect-ratio: 1;
-            padding: 6px 4px;
-            font-size: 0.7rem;
+            padding: 4px 2px;
+            font-size: 0.65rem;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             background: rgba(59, 130, 246, 0.1);
             border: 1px solid rgba(59, 130, 246, 0.4);
-            border-radius: 6px;
+            border-radius: 4px;
             color: #60a5fa;
             transition: all 0.2s ease;
             cursor: pointer;
@@ -331,62 +355,73 @@
         /* ========== QUICK VIEW BUTTONS (Top Right) ========== */
         .hud-quick-views {
             position: fixed;
-            top: 80px;
-            right: 20px;
+            top: 70px;
+            right: 10px;
             display: flex;
             flex-direction: column;
-            gap: 6px;
+            gap: 3px;
             z-index: 1500;
         }
         
         /* Navigation widget adjustment - positioned below quick view buttons */
         .navigation-widget-group {
             position: fixed !important;
-            top: 240px !important;  /* Below quick view buttons (80px + 4 buttons ~40px each + gaps) */
-            right: 20px !important;
-            width: 120px;
-            max-height: 250px;  /* Limit height to prevent overlap */
+            top: 200px !important;  /* Moved up for compactness */
+            right: 10px !important;  /* Moved left slightly */
+            width: 100px;  /* Reduced from 120px */
+            max-height: 200px;  /* Reduced height */
             z-index: 1400;  /* Below quick view buttons but above other elements */
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            padding: 0 !important;
+        }
+        
+        .navigation-widget-group .widget-title {
+            font-size: 8px !important;
+            font-weight: 600 !important;
+            color: #f1f5f9 !important;
+            margin-bottom: 2px !important;
+            text-align: left !important;
         }
         
         /* ========== DRONE FLY WIDGET ========== */
         .drone-fly-widget {
             position: fixed;
-            top: 360px;
-            left: 20px;
-            width: 340px;
+            top: 240px;
+            left: 10px;
+            width: 150px;
             z-index: 1400;
-            background: rgba(15, 23, 42, 0.8);
-            border-radius: 12px;
-            padding: 12px;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(8px);
+            background: transparent;
+            border-radius: 0;
+            padding: 4px;
+            border: none;
+            box-shadow: none;
+            backdrop-filter: none;
         }
         
         .drone-fly-widget .widget-title {
             color: #10b981;
-            font-size: 11px;
-            font-weight: bold;
-            text-align: center;
-            margin-bottom: 10px;
+            font-size: 8px;
+            font-weight: 600;
+            text-align: left;
+            margin-bottom: 2px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.2px;
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 6px;
+            gap: 2px;
         }
         
         .drone-fly-widget .widget-item {
-            margin-bottom: 8px;
+            margin-bottom: 3px;
         }
         
         .drone-fly-widget .widget-fields-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 8px;
+            gap: 4px;
+            margin-bottom: 3px;
         }
         
         .drone-fly-widget .widget-field {
@@ -395,116 +430,134 @@
         }
         
         .drone-fly-widget label {
-            font-size: 11px;
+            font-size: 9px;
             color: #cbd5e1;
-            margin-bottom: 4px;
+            margin-bottom: 1px;
             display: block;
+            line-height: 1.1;
         }
         
         .drone-fly-widget input[type="number"] {
             width: 100%;
-            padding: 6px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid #475569;
-            border-radius: 4px;
+            padding: 2px 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
             color: #f1f5f9;
-            font-size: 12px;
+            font-size: 10px;
+            height: 20px;
+        }
+        
+        .drone-fly-widget input[type="number"]:focus {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(16, 185, 129, 0.5);
+            outline: none;
         }
         
         .drone-fly-widget small {
-            font-size: 9px;
+            font-size: 7px;
             color: #94a3b8;
             display: block;
-            margin-top: 2px;
+            margin-top: 0px;
+            line-height: 1.1;
         }
         
         .drone-fly-widget button {
             width: 100%;
-            padding: 8px;
-            font-size: 11px;
-            background: #10b981;
-            border: none;
-            border-radius: 4px;
-            color: white;
+            padding: 3px 4px;
+            font-size: 9px;
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            border-radius: 2px;
+            color: #10b981;
             cursor: pointer;
             transition: all 0.2s;
+            line-height: 1.2;
         }
         
         .drone-fly-widget button:hover {
-            background: #059669;
+            background: rgba(16, 185, 129, 0.3);
+            border-color: #10b981;
         }
         
         .drone-fly-widget button.btn-primary {
-            background: #3b82f6;
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.4);
+            color: #60a5fa;
         }
         
         .drone-fly-widget button.btn-primary:hover {
-            background: #2563eb;
+            background: rgba(59, 130, 246, 0.3);
+            border-color: #3b82f6;
         }
         
         .drone-fly-widget button.btn-warning {
-            background: #f59e0b;
+            background: rgba(245, 158, 11, 0.2);
+            border-color: rgba(245, 158, 11, 0.4);
+            color: #fbbf24;
         }
         
         .drone-fly-widget button.btn-warning:hover {
-            background: #d97706;
+            background: rgba(245, 158, 11, 0.3);
+            border-color: #f59e0b;
         }
         
         .drone-fly-widget button.active {
-            background: #ef4444;
+            background: rgba(239, 68, 68, 0.3);
+            border-color: #ef4444;
+            color: #f87171;
             animation: pulse 1.5s ease-in-out infinite;
         }
         
         .drone-fly-widget button:disabled {
-            opacity: 0.5;
+            opacity: 0.3;
             cursor: not-allowed;
         }
         
         @keyframes pulse {
-            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
-            50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+            50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
         }
         
         /* ========== DRONE ORBIT WIDGET ========== */
         .drone-orbit-widget {
             position: fixed;
-            top: 720px;
-            left: 20px;
-            width: 340px;
-            max-height: 50vh;
+            top: 420px;
+            left: 10px;
+            width: 150px;
+            max-height: 45vh;
             overflow-y: auto;
             z-index: 1400;
-            background: rgba(15, 23, 42, 0.8);
-            border-radius: 12px;
-            padding: 12px;
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(8px);
+            background: transparent;
+            border-radius: 0;
+            padding: 4px;
+            border: none;
+            box-shadow: none;
+            backdrop-filter: none;
         }
         
         .drone-orbit-widget .widget-title {
             color: #3b82f6;
-            font-size: 11px;
-            font-weight: bold;
-            text-align: center;
-            margin-bottom: 10px;
+            font-size: 8px;
+            font-weight: 600;
+            text-align: left;
+            margin-bottom: 2px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.2px;
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 6px;
+            gap: 2px;
         }
         
         .drone-orbit-widget .widget-item {
-            margin-bottom: 8px;
+            margin-bottom: 3px;
         }
         
         .drone-orbit-widget .widget-fields-row {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 8px;
+            gap: 4px;
+            margin-bottom: 3px;
         }
         
         .drone-orbit-widget .widget-field {
@@ -513,59 +566,79 @@
         }
         
         .drone-orbit-widget label {
-            font-size: 11px;
+            font-size: 9px;
             color: #cbd5e1;
-            margin-bottom: 4px;
+            margin-bottom: 1px;
             display: block;
+            line-height: 1.1;
         }
         
         .drone-orbit-widget input[type="number"],
         .drone-orbit-widget input[type="range"] {
             width: 100%;
-            padding: 6px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid #475569;
-            border-radius: 4px;
+            padding: 2px 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 2px;
             color: #f1f5f9;
-            font-size: 12px;
+            font-size: 10px;
+            height: 20px;
+        }
+        
+        .drone-orbit-widget input[type="number"]:focus {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: rgba(59, 130, 246, 0.5);
+            outline: none;
         }
         
         .drone-orbit-widget input[type="range"] {
             padding: 0;
+            height: 16px;
+            background: transparent;
+            border: none;
         }
         
         .drone-orbit-widget small {
-            font-size: 9px;
+            font-size: 7px;
             color: #94a3b8;
             display: block;
-            margin-top: 2px;
+            margin-top: 0px;
+            line-height: 1.1;
         }
         
         .drone-orbit-widget button {
             width: 100%;
-            padding: 8px;
-            font-size: 11px;
-            border: none;
-            border-radius: 4px;
-            color: white;
+            padding: 3px 4px;
+            font-size: 9px;
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            border-radius: 2px;
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
             cursor: pointer;
             transition: all 0.2s;
+            line-height: 1.2;
         }
         
         .drone-orbit-widget button.btn-primary {
-            background: #3b82f6;
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.4);
+            color: #60a5fa;
         }
         
         .drone-orbit-widget button.btn-primary:hover {
-            background: #2563eb;
+            background: rgba(59, 130, 246, 0.3);
+            border-color: #3b82f6;
         }
         
         .drone-orbit-widget button.btn-danger {
-            background: #ef4444;
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #f87171;
         }
         
         .drone-orbit-widget button.btn-danger:hover {
-            background: #dc2626;
+            background: rgba(239, 68, 68, 0.3);
+            border-color: #ef4444;
         }
         
         /* Custom scrollbar for orbit widget */
@@ -597,31 +670,32 @@
         }
         
         .hud-quick-btn {
-            padding: 8px 12px;
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            border-radius: 6px;
+            padding: 4px 6px;
+            background: transparent;
+            backdrop-filter: none;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 3px;
             color: #94a3b8;
             cursor: pointer;
-            font-size: 0.75rem;
+            font-size: 0.7rem;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 4px;
             transition: all 0.2s;
             text-decoration: none;
         }
         
         .hud-quick-btn:hover {
-            background: rgba(59, 130, 246, 0.2);
+            background: rgba(59, 130, 246, 0.15);
             color: #60a5fa;
-            border-color: #3b82f6;
+            border-color: rgba(59, 130, 246, 0.3);
             text-decoration: none;
         }
         
         .hud-quick-btn.active {
-            background: rgba(59, 130, 246, 0.3);
+            background: rgba(59, 130, 246, 0.2);
             color: #93c5fd;
+            border-color: rgba(59, 130, 246, 0.4);
         }
         
         /* Hide keyboard shortcut hint */
@@ -1455,14 +1529,6 @@
             <span class="camera-info-value" id="cameraZoom">--</span>
         </div>
         <div class="camera-info-item">
-            <span class="camera-info-label">Ground:</span>
-            <span class="camera-info-value" id="cameraGroundHeight">--</span>
-        </div>
-        <div class="camera-info-item">
-            <span class="camera-info-label">AGL:</span>
-            <span class="camera-info-value" id="cameraAGL">--</span>
-        </div>
-        <div class="camera-info-item">
             <span class="camera-info-label">Heading:</span>
             <span class="camera-info-value" id="cameraHeading">--</span>
         </div>
@@ -1483,7 +1549,7 @@
         </div>
         <div class="widget-fields-row">
             <div class="widget-field">
-                <label>Fly Distance (meters):</label>
+                <label>Distance (m):</label>
                 <input type="number" id="droneFlyDistance" 
                        value="100" min="10" max="1000" step="10">
             </div>
@@ -1491,34 +1557,31 @@
                 <label>Speed (km/h):</label>
                 <input type="number" id="droneFlySpeed" 
                        value="100" min="25" max="250" step="5">
-                <small>Range: 25-250 km/h</small>
             </div>
         </div>
-        <div class="widget-item" style="margin-top: 8px;">
+        <div class="widget-item">
             <button class="btn btn-success" id="droneFlyBtn">
-                <i class="fas fa-paper-plane"></i> Fly Forward 100m @ 100 km/h
+                <i class="fas fa-paper-plane"></i> Fly Forward
             </button>
         </div>
         
         <!-- Speed Controls -->
-        <div class="widget-item" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
-            <small style="display: block; text-align: center; margin-bottom: 8px; color: #94a3b8;">Movement Speeds</small>
+        <div class="widget-item" style="padding-top: 2px;">
+            <small style="display: block; text-align: left; margin-bottom: 1px; color: #94a3b8; font-size: 7px; opacity: 0.7;">Speeds</small>
         </div>
         <div class="widget-fields-row">
             <div class="widget-field">
-                <label>Horizontal (m/s):</label>
+                <label>H (m/s):</label>
                 <input type="number" id="droneHorizontalSpeed" 
                        value="50" min="5" max="100" step="5">
-                <small>Forward/Strafe</small>
             </div>
             <div class="widget-field">
-                <label>Vertical (m/s):</label>
+                <label>V (m/s):</label>
                 <input type="number" id="droneVerticalSpeed" 
                        value="5" min="1" max="20" step="1">
-                <small>Climb/Descend</small>
             </div>
         </div>
-        <div class="widget-fields-row" style="margin-top: 8px;">
+        <div class="widget-fields-row">
             <button class="btn btn-primary" id="droneTakeoffBtn">
                 <i class="fas fa-arrow-up"></i> Takeoff
             </button>
@@ -1527,8 +1590,8 @@
             </button>
         </div>
         
-        <div class="widget-item" style="margin-top: 4px;">
-            <small style="display: block; text-align: center;">
+        <div class="widget-item" style="display: none;" id="droneFlyHelp">
+            <small style="display: block; text-align: center; font-size: 7px;">
                 Flies along current heading, maintaining altitude & orientation
             </small>
         </div>
@@ -1541,56 +1604,42 @@
         </div>
         <div class="widget-fields-row">
             <div class="widget-field">
-                <label>Orbit Radius (meters):</label>
+                <label>Radius (m):</label>
                 <input type="number" id="droneOrbitRadius" 
                        value="1000" min="20" max="5000" step="10">
             </div>
             <div class="widget-field">
-                <label>Altitude AGL (meters):</label>
-                <input type="number" id="droneOrbitAltitude" 
-                       value="2000" min="20" max="5000" step="10">
-            </div>
-        </div>
-        <div class="widget-fields-row">
-            <div class="widget-field">
                 <label>Revolutions:</label>
                 <input type="number" id="droneOrbitRevolutions" 
                        value="10" min="0.25" max="20" step="0.25">
-                <small>0.25 = 90°, 0.5 = 180°, 1 = 360°</small>
-            </div>
-            <div class="widget-field">
-                <label style="opacity: 0.6;">Speed: Horizontal</label>
-                <input type="number" disabled 
-                       style="opacity: 0.6; cursor: not-allowed;" 
-                       placeholder="Set in Fly Mode">
-                <small style="opacity: 0.6;">Uses global setting</small>
             </div>
         </div>
         <div class="widget-item">
-            <label>Gimbal Pitch (degrees): <span id="orbitPitchValue">-65°</span></label>
+            <label style="opacity: 0.5; font-size: 8px;">Speed: Horizontal</label>
+        </div>
+        <div class="widget-item">
+            <label>Pitch: <span id="orbitPitchValue">-65°</span></label>
             <input type="range" id="droneOrbitPitch" 
                    value="-65" min="-90" max="0" step="5">
-            <small>-90° = straight down, -45° = 45° angle, 0° = horizon</small>
         </div>
         <div class="widget-item">
-            <label>Gimbal Yaw Offset (degrees): <span id="orbitYawValue">0°</span></label>
+            <label>Yaw: <span id="orbitYawValue">0°</span></label>
             <input type="range" id="droneOrbitYaw" 
                    value="0" min="-180" max="180" step="5">
-            <small>0° = center, ±180° = opposite direction</small>
         </div>
-        <div class="widget-item" style="margin-top: 8px;">
+        <div class="widget-item">
             <button class="btn btn-primary" id="droneOrbitBtn">
-                <i class="fas fa-circle-notch"></i> Orbit 1000m radius
+                <i class="fas fa-circle-notch"></i> Orbit
             </button>
         </div>
-        <div class="widget-item" style="margin-top: 4px; display: none;" id="stopOrbitContainer">
+        <div class="widget-item" style="display: none;" id="stopOrbitContainer">
             <button class="btn btn-danger" id="stopOrbitBtn">
-                <i class="fas fa-stop"></i> Stop Orbit (ESC)
+                <i class="fas fa-stop"></i> Stop (ESC)
             </button>
         </div>
-        <div class="widget-item" style="margin-top: 4px;">
-            <small style="display: block; text-align: center;">
-                QGC-style: Drone orbits around center. Gimbal points at center by default. Adjust pitch/yaw sliders to change viewing angle. Press ESC to stop.
+        <div class="widget-item" style="display: none;" id="droneOrbitHelp">
+            <small style="display: block; text-align: center; font-size: 7px;">
+                QGC-style: Orbits at current altitude. Gimbal points at center. Adjust pitch/yaw sliders. Press ESC to stop.
             </small>
         </div>
     </div>
@@ -2997,7 +3046,6 @@
             const stopOrbitBtn = document.getElementById('stopOrbitBtn');
             const stopOrbitContainer = document.getElementById('stopOrbitContainer');
             const orbitRadiusInput = document.getElementById('droneOrbitRadius');
-            const orbitAltitudeInput = document.getElementById('droneOrbitAltitude');
             const orbitPitchInput = document.getElementById('droneOrbitPitch');
             const horizontalSpeedInput = document.getElementById('droneHorizontalSpeed');
             
@@ -3012,6 +3060,7 @@
             let orbitLastFrameTime = null;
             let orbitCenterPoint = null;
             let orbitInitialAngle = 0; // Starting angle in orbit (radians)
+            let orbitStartAltitude = 0; // Altitude when orbit started (maintains current altitude)
             
             // Start orbit (QGC-style: use current position as center by default)
             function startOrbit() {
@@ -3055,14 +3104,16 @@
                 
                 // Get parameters
                 const radius = parseFloat(orbitRadiusInput.value) || 1000;
-                const targetAltitude = parseFloat(orbitAltitudeInput.value) || 2000;
                 const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
                 
                 const camera = viewer.camera;
                 const currentPosition = camera.positionCartographic;
                 
+                // Store current altitude - orbit will maintain this altitude
+                orbitStartAltitude = currentPosition.height;
+                
                 // Initialize orbit state BEFORE calculating angle
-                console.log(`[Orbit] Starting QGC-style orbit: ${radius}m radius, ${targetAltitude}m altitude`);
+                console.log(`[Orbit] Starting QGC-style orbit: ${radius}m radius, maintaining altitude at ${orbitStartAltitude.toFixed(1)}m`);
                 isOrbiting = true;
                 orbitStartTime = Date.now();
                 orbitLastFrameTime = Date.now();
@@ -3070,27 +3121,8 @@
                 orbitBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Orbit';
                 stopOrbitContainer.style.display = 'block';
                 
-                // Move to target altitude FIRST (before calculating initial angle)
-                // This ensures we're at the correct altitude when we start orbiting
-                const currentAlt = currentPosition.height;
-                if (Math.abs(currentAlt - targetAltitude) > 1) {
-                    // Update position after altitude change
-                    camera.setView({
-                        destination: Cesium.Cartesian3.fromRadians(
-                            currentPosition.longitude,
-                            currentPosition.latitude,
-                            targetAltitude
-                        ),
-                        orientation: camera.orientation
-                    });
-                    // Wait a frame for the position to update
-                    setTimeout(() => {
-                        const finalPosition = camera.positionCartographic;
-                        calculateInitialAngle(finalPosition);
-                    }, 50);
-                } else {
-                    calculateInitialAngle(currentPosition);
-                }
+                // Calculate initial angle from current position
+                calculateInitialAngle(currentPosition);
                 
                 function calculateInitialAngle(position) {
                     // Calculate initial angle based on position relative to center
@@ -3131,7 +3163,6 @@
                     const pitchDegrees = parseFloat(orbitPitchInput.value) || -65;
                     const yawOffsetDegrees = parseFloat(document.getElementById('droneOrbitYaw')?.value) || 0;
                     const radius = parseFloat(orbitRadiusInput.value) || 1000;
-                    const targetAltitude = parseFloat(orbitAltitudeInput.value) || 2000;
                     const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
                     
                     // Validate radius
@@ -3168,18 +3199,18 @@
                     // Periodic verification (every 5 seconds)
                     if (Math.floor(elapsed) % 5 === 0 && Math.floor(elapsed * 100) % 100 < 20) {
                         // Use Cesium's distance calculation for accuracy
-                        const currentPos = Cesium.Cartesian3.fromRadians(cameraLongitude, cameraLatitude, targetAltitude);
+                        const currentPos = Cesium.Cartesian3.fromRadians(cameraLongitude, cameraLatitude, orbitStartAltitude);
                         const centerPos = Cesium.Cartesian3.fromRadians(
                             centerCartographic.longitude, 
                             centerCartographic.latitude, 
-                            targetAltitude
+                            orbitStartAltitude
                         );
                         const actualDistance = Cesium.Cartesian3.distance(currentPos, centerPos);
                         console.log(`[Orbit] Verification: Distance from center = ${actualDistance.toFixed(1)}m (expected: ${radius}m)`);
                     }
                     
-                    // QGC-style: Maintain constant altitude (can be modified by takeoff/land)
-                    let finalAltitude = targetAltitude;
+                    // QGC-style: Maintain current altitude (can be modified by takeoff/land)
+                    let finalAltitude = orbitStartAltitude;
                     
                     // Check if takeoff/land is active
                     const takeoffBtn = document.getElementById('droneTakeoffBtn');
@@ -3235,9 +3266,10 @@
                 orbitLastFrameTime = null;
                 orbitCenterPoint = null;
                 orbitInitialAngle = 0;
+                orbitStartAltitude = 0;
                 
                 orbitBtn.classList.remove('active');
-                orbitBtn.innerHTML = '<i class="fas fa-circle-notch"></i> Orbit 1000m radius';
+                orbitBtn.innerHTML = '<i class="fas fa-circle-notch"></i> Orbit';
                 stopOrbitContainer.style.display = 'none';
                 
                 console.log('[Orbit] Stopped');
