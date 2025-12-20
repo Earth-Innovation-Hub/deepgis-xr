@@ -293,8 +293,8 @@
         /* ========== ADJUST EXISTING HUD ELEMENTS ========== */
         .perspective-views-widget {
             position: fixed !important;
-            top: 480px !important;  /* Lowered by half height to avoid overlap with navigation */
-            right: 10px !important;  /* Moved left slightly */
+            bottom: 20px !important;  /* Moved to bottom-left corner */
+            left: 10px !important;  /* Left side instead of right */
             width: 100px;  /* Reduced from 120px */
             z-index: 1300;  /* Below navigation widget */
             background: transparent;
@@ -303,6 +303,7 @@
             border: none;
             box-shadow: none;
             backdrop-filter: none;
+            display: none !important;  /* Hidden from viewport */
         }
         
         .perspective-views-widget .widget-title {
@@ -386,6 +387,104 @@
             color: #f1f5f9 !important;
             margin-bottom: 2px !important;
             text-align: left !important;
+        }
+        
+        /* ========== ALTITUDE METER ========== */
+        .altitude-meter {
+            width: 100px;
+            height: 120px;
+            margin-top: 8px;
+            background: rgba(15, 23, 42, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .altitude-meter-container {
+            position: relative;
+            width: 100%;
+            height: 80px;
+            overflow: hidden;
+        }
+        
+        .altitude-tape {
+            position: absolute;
+            left: 0;
+            width: 100%;
+            transition: transform 0.3s ease-out;
+        }
+        
+        .altitude-tape-value {
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: #f1f5f9;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .altitude-tape-value.major {
+            font-size: 13px;
+            color: #60a5fa;
+            border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+        }
+        
+        .altitude-pointer {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #ef4444;
+            transform: translateY(-50%);
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        .altitude-pointer::before {
+            content: '';
+            position: absolute;
+            right: -6px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 0;
+            height: 0;
+            border-left: 6px solid #ef4444;
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+        }
+        
+        .altitude-readout {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 35px;
+            background: rgba(0, 0, 0, 0.6);
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+        }
+        
+        .altitude-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: #10b981;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 1px;
+        }
+        
+        .altitude-unit {
+            font-size: 8px;
+            font-weight: 600;
+            color: #94a3b8;
+            letter-spacing: 0.5px;
         }
         
         /* ========== DRONE FLY WIDGET ========== */
@@ -1640,14 +1739,14 @@
         <div class="widget-fields-row">
             <div class="widget-field">
                 <label>Distance (m):</label>
-                <input type="number" id="droneFlyDistance" 
-                       value="100" min="10" max="1000" step="10">
-            </div>
+            <input type="number" id="droneFlyDistance" 
+                   value="100" min="10" max="1000" step="10">
+        </div>
             <div class="widget-field">
-                <label>Speed (km/h):</label>
-                <input type="number" id="droneFlySpeed" 
-                       value="100" min="25" max="250" step="5">
-            </div>
+            <label>Speed (km/h):</label>
+            <input type="number" id="droneFlySpeed" 
+                   value="100" min="25" max="250" step="5">
+        </div>
         </div>
         <div class="widget-item">
             <button class="btn btn-success" id="droneFlyBtn">
@@ -1695,13 +1794,13 @@
         <div class="widget-fields-row">
             <div class="widget-field">
                 <label>Radius (m):</label>
-                <input type="number" id="droneOrbitRadius" 
-                       value="1000" min="20" max="5000" step="10">
-            </div>
+            <input type="number" id="droneOrbitRadius" 
+                   value="1000" min="20" max="5000" step="10">
+        </div>
             <div class="widget-field">
-                <label>Revolutions:</label>
-                <input type="number" id="droneOrbitRevolutions" 
-                       value="10" min="0.25" max="20" step="0.25">
+            <label>Revolutions:</label>
+            <input type="number" id="droneOrbitRevolutions" 
+                   value="10" min="0.25" max="20" step="0.25">
             </div>
         </div>
         <div class="widget-item">
@@ -1768,6 +1867,20 @@
         
         <!-- Attitude Readout -->
         <div class="attitude-readout" id="attitudeReadout">000°P 000°R</div>
+        
+        <!-- Altitude Meter -->
+        <div class="altitude-meter" id="altitudeMeter">
+            <div class="altitude-meter-container">
+                <div class="altitude-tape" id="altitudeTape">
+                    <!-- Altitude values will be generated by JavaScript -->
+                </div>
+                <div class="altitude-pointer"></div>
+            </div>
+            <div class="altitude-readout" id="altitudeReadout">
+                <div class="altitude-value" id="altitudeValue">00000</div>
+                <div class="altitude-unit">FEET</div>
+            </div>
+        </div>
     </div>
 
     <!-- Perspective Views Widget - HUD Style -->
@@ -3507,14 +3620,35 @@
                 console.log('[Experience] Loading experience from URL...');
                 
                 // Wait for viewer to be ready and not morphing
+                let checkCount = 0;
+                const maxChecks = 100; // 10 seconds max wait
+                
                 const checkViewer = setInterval(() => {
+                    checkCount++;
+                    
                     const viewer = window.AppState?.viewer || window.viewer;
-                    if (!viewer) return;
+                    if (!viewer) {
+                        if (checkCount >= maxChecks) {
+                            console.error('[Experience] Timeout waiting for viewer');
+                            clearInterval(checkViewer);
+                        }
+                        return;
+                    }
                     
                     // Check if scene is morphing
-                    if (viewer.scene.morphTime && viewer.scene.morphTime !== 1.0) {
-                        console.log('[Experience] Scene is still morphing, waiting...');
-                        return;
+                    try {
+                        if (viewer.scene && viewer.scene.morphTime && viewer.scene.morphTime !== 1.0) {
+                            console.log('[Experience] Scene is still morphing, waiting...', viewer.scene.morphTime);
+                            if (checkCount >= maxChecks) {
+                                console.warn('[Experience] Timeout waiting for morph to complete, proceeding anyway');
+                                clearInterval(checkViewer);
+                            } else {
+                                return;
+                            }
+                        }
+                    } catch (error) {
+                        console.warn('[Experience] Error checking morphTime:', error);
+                        // Proceed anyway if we can't check morphTime
                     }
                     
                     clearInterval(checkViewer);
@@ -3530,6 +3664,7 @@
                     
                     console.log('[Experience] Requested viewMode:', viewMode);
                     console.log('[Experience] Current scene mode:', viewer.scene.mode);
+                    console.log('[Experience] Cesium.SceneMode.SCENE3D:', Cesium.SceneMode.SCENE3D);
                     
                     // Restore view mode first (check current mode to avoid unnecessary morphs)
                     const currentMode = viewer.scene.mode;
@@ -3544,11 +3679,11 @@
                         viewer.scene.morphToColumbusView(2.0);
                         needsMorph = true;
                     } else if (viewMode === '3d' && currentMode !== Cesium.SceneMode.SCENE3D) {
-                        console.log('[Experience] Morphing to 3D view...');
+                        console.log('[Experience] Morphing to 3D view from mode', currentMode, 'to', Cesium.SceneMode.SCENE3D);
                         viewer.scene.morphTo3D(2.0);
                         needsMorph = true;
                     } else {
-                        console.log('[Experience] Scene already in requested mode:', viewMode);
+                        console.log('[Experience] Scene already in requested mode:', viewMode, 'currentMode:', currentMode);
                     }
                     
                     // Set camera position (wait longer if morph is needed)
@@ -3812,6 +3947,82 @@
             });
             
             console.log('[QR Code] QR code overlay initialized (Press Q to toggle, auto-refresh every 5s)');
+        })();
+        
+        // ========== ALTITUDE METER ==========
+        (function initAltitudeMeter() {
+            console.log('[Altitude Meter] Initializing altitude meter...');
+            
+            const altitudeTape = document.getElementById('altitudeTape');
+            const altitudeValue = document.getElementById('altitudeValue');
+            
+            if (!altitudeTape || !altitudeValue) {
+                console.warn('[Altitude Meter] Required elements not found');
+                return;
+            }
+            
+            // Generate altitude tape with values
+            function generateAltitudeTape() {
+                const fragment = document.createDocumentFragment();
+                
+                // Generate altitude values from 0 to 100,000 feet in 100 ft increments
+                for (let alt = 0; alt <= 100000; alt += 100) {
+                    const div = document.createElement('div');
+                    div.className = 'altitude-tape-value';
+                    
+                    // Mark every 500 feet as major
+                    if (alt % 500 === 0) {
+                        div.classList.add('major');
+                        div.textContent = alt.toString().padStart(5, '0');
+                    } else {
+                        div.textContent = alt.toString();
+                    }
+                    
+                    fragment.appendChild(div);
+                }
+                
+                altitudeTape.appendChild(fragment);
+                console.log('[Altitude Meter] Tape generated');
+            }
+            
+            // Update altitude display
+            function updateAltitude(altitudeMeters) {
+                // Convert meters to feet
+                const altitudeFeet = Math.round(altitudeMeters * 3.28084);
+                
+                // Update digital readout
+                altitudeValue.textContent = altitudeFeet.toString().padStart(5, '0');
+                
+                // Update tape position (each tape value is 20px high)
+                const tapeIndex = Math.floor(altitudeFeet / 100);
+                const offset = 40 - (tapeIndex * 20); // Center at pointer (40px from top)
+                altitudeTape.style.transform = `translateY(${offset}px)`;
+            }
+            
+            // Start monitoring altitude
+            function startAltitudeMonitoring() {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer) {
+                    setTimeout(startAltitudeMonitoring, 500);
+                    return;
+                }
+                
+                // Update altitude every frame
+                viewer.scene.preRender.addEventListener(() => {
+                    const position = viewer.camera.positionCartographic;
+                    if (position) {
+                        updateAltitude(position.height);
+                    }
+                });
+                
+                console.log('[Altitude Meter] Monitoring started');
+            }
+            
+            // Initialize
+            generateAltitudeTape();
+            startAltitudeMonitoring();
+            
+            console.log('[Altitude Meter] Altitude meter initialized');
         })();
     </script>
 </body>
