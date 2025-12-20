@@ -476,15 +476,7 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 
 ## 🗺️ Roadmap
 
-### Planned Features
-- [ ] CLIP/VLM text-based search integration
-- [ ] Custom Mask2Former model training interface
-- [ ] Real-time telemetry integration
-- [ ] Multi-user collaboration features
-- [ ] Advanced export formats (Shapefile, KML, etc.)
-- [ ] Performance monitoring dashboard
-
-### In Progress
+### ✅ Completed
 - [x] Zero-Shot Detection integration
 - [x] SAM viewport analysis
 - [x] YOLOv8 real-time detection
@@ -498,6 +490,33 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 - [x] Experience URL sharing with full state capture
 - [x] QR code generation for mobile sharing
 - [x] 2D/3D/Columbus view mode switching
+
+### 🔄 Q1 2026 - Near Term
+- [ ] **Mars Terrain Viewer**: Extend lunar capabilities to Mars with HiRISE/CTX imagery
+- [ ] **Mission Export Formats**: MAVLink waypoint export for drone autopilots
+- [ ] **Enhanced Annotation Tools**: Polygon editing, snapping, and undo/redo
+- [ ] **Time-Series Layers**: Temporal slider for historical imagery comparison
+- [ ] **Geofence Alerts**: Real-time boundary violation notifications
+- [ ] **WebXR/VR Support**: Immersive 3D globe exploration with VR headsets
+- [ ] **Real-Time Telemetry**: Live drone/vehicle position tracking via MAVLink/ROS
+- [ ] **Collaborative Sessions**: Multi-user annotation with real-time sync
+- [ ] **Custom Model Training**: Upload datasets and train custom detection models
+- [ ] **Advanced Export**: Shapefile, KML, GeoPackage, and Cloud Optimized GeoTIFF
+- [ ] **Performance Dashboard**: GPU/memory monitoring and optimization hints
+
+### 🔮 Q1-Q4 2026 - Long Term
+- [ ] **CLIP/VLM Semantic Search**: Natural language queries for geospatial features
+- [ ] **Autonomous Survey Planning**: AI-optimized flight path generation
+- [ ] **Digital Twin Integration**: Real-time sensor fusion and 3D reconstruction
+- [ ] **Model Marketplace**: Community-shared detection models and configs
+- [ ] **Edge Deployment**: Lightweight inference for embedded/field devices
+- [ ] **AR Field Overlay**: Mobile AR for on-site navigation and annotation
+
+### 💡 Community Requested
+- [ ] Integration with Google Earth Engine
+- [ ] Integration with OpenTopography and support for point cloud visualization (LAS/LAZ)
+- [ ] 3D building/structure modeling from imagery
+- [ ] Automated change detection between time periods
 
 ---
 
