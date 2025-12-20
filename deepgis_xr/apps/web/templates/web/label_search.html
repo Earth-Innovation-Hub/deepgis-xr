@@ -1492,6 +1492,7 @@
         <button class="hud-quick-btn" id="quickView2D"><i class="fas fa-map"></i> 2D</button>
         <button class="hud-quick-btn" id="quickView3D"><i class="fas fa-cube"></i> 3D</button>
         <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
+        <button class="hud-quick-btn" id="quickShare" title="Share Current View"><i class="fas fa-share-alt"></i> Share</button>
         <a href="{% url 'map_label' %}" class="hud-quick-btn" id="quickTrain" title="Open Training Labeling Interface" onclick="return syncLocationTo2D()">
             <i class="fas fa-graduation-cap"></i> Train
         </a>
@@ -3287,6 +3288,233 @@
             });
             
             console.log('[Orbit] QGC-style orbit initialized');
+        })();
+        
+        // ========== URL-BASED EXPERIENCE SHARING ==========
+        (function initExperienceSharing() {
+            console.log('[Experience] Initializing URL-based experience sharing...');
+            
+            const shareBtn = document.getElementById('quickShare');
+            if (!shareBtn) {
+                console.warn('[Experience] Share button not found');
+                return;
+            }
+            
+            // Get current camera and drone state
+            function captureExperienceState() {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer) {
+                    console.warn('[Experience] Viewer not available');
+                    return null;
+                }
+                
+                const camera = viewer.camera;
+                const position = camera.positionCartographic;
+                
+                // Get camera state
+                const state = {
+                    // Camera position
+                    lon: Cesium.Math.toDegrees(position.longitude).toFixed(6),
+                    lat: Cesium.Math.toDegrees(position.latitude).toFixed(6),
+                    alt: position.height.toFixed(2),
+                    heading: Cesium.Math.toDegrees(camera.heading).toFixed(2),
+                    pitch: Cesium.Math.toDegrees(camera.pitch).toFixed(2),
+                    roll: Cesium.Math.toDegrees(camera.roll).toFixed(2),
+                };
+                
+                // Get drone fly settings
+                const flyDistanceEl = document.getElementById('droneFlyDistance');
+                const horizontalSpeedEl = document.getElementById('droneHorizontalSpeed');
+                const verticalSpeedEl = document.getElementById('droneVerticalSpeed');
+                
+                if (flyDistanceEl) state.flyDist = flyDistanceEl.value;
+                if (horizontalSpeedEl) state.hSpeed = horizontalSpeedEl.value;
+                if (verticalSpeedEl) state.vSpeed = verticalSpeedEl.value;
+                
+                // Get orbit settings
+                const orbitRadiusEl = document.getElementById('droneOrbitRadius');
+                const orbitPitchEl = document.getElementById('droneOrbitPitch');
+                const orbitYawEl = document.getElementById('droneOrbitYaw');
+                
+                if (orbitRadiusEl) state.orbRadius = orbitRadiusEl.value;
+                if (orbitPitchEl) state.orbPitch = orbitPitchEl.value;
+                if (orbitYawEl) state.orbYaw = orbitYawEl.value;
+                
+                // Check if orbit is active
+                const orbitBtn = document.getElementById('droneOrbitBtn');
+                if (orbitBtn && orbitBtn.classList.contains('active')) {
+                    state.orbiting = '1';
+                }
+                
+                console.log('[Experience] Captured state:', state);
+                return state;
+            }
+            
+            // Generate shareable URL
+            function generateExperienceURL(state) {
+                if (!state) return null;
+                
+                const url = new URL(window.location.href);
+                // Clear existing params
+                url.search = '';
+                
+                // Add experience parameters
+                Object.keys(state).forEach(key => {
+                    url.searchParams.set(key, state[key]);
+                });
+                
+                return url.toString();
+            }
+            
+            // Copy URL to clipboard
+            async function copyToClipboard(text) {
+                try {
+                    await navigator.clipboard.writeText(text);
+                    return true;
+                } catch (err) {
+                    console.error('[Experience] Clipboard copy failed:', err);
+                    return false;
+                }
+            }
+            
+            // Share button click handler
+            shareBtn.addEventListener('click', async () => {
+                const state = captureExperienceState();
+                if (!state) {
+                    alert('Unable to capture current view state');
+                    return;
+                }
+                
+                const url = generateExperienceURL(state);
+                console.log('[Experience] Generated URL:', url);
+                
+                const copied = await copyToClipboard(url);
+                
+                if (copied) {
+                    // Visual feedback
+                    const originalHTML = shareBtn.innerHTML;
+                    shareBtn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+                    shareBtn.classList.add('active');
+                    
+                    setTimeout(() => {
+                        shareBtn.innerHTML = originalHTML;
+                        shareBtn.classList.remove('active');
+                    }, 2000);
+                    
+                    console.log('[Experience] URL copied to clipboard');
+                } else {
+                    // Fallback: show URL in prompt
+                    prompt('Copy this URL to share:', url);
+                }
+            });
+            
+            // Load experience from URL on page load
+            function loadExperienceFromURL() {
+                const urlParams = new URLSearchParams(window.location.search);
+                
+                // Check if experience parameters exist
+                if (!urlParams.has('lon') || !urlParams.has('lat')) {
+                    console.log('[Experience] No experience parameters in URL');
+                    return;
+                }
+                
+                console.log('[Experience] Loading experience from URL...');
+                
+                // Wait for viewer to be ready
+                const checkViewer = setInterval(() => {
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer) return;
+                    
+                    clearInterval(checkViewer);
+                    
+                    // Parse parameters
+                    const lon = parseFloat(urlParams.get('lon'));
+                    const lat = parseFloat(urlParams.get('lat'));
+                    const alt = parseFloat(urlParams.get('alt')) || 1000;
+                    const heading = parseFloat(urlParams.get('heading')) || 0;
+                    const pitch = parseFloat(urlParams.get('pitch')) || -45;
+                    const roll = parseFloat(urlParams.get('roll')) || 0;
+                    
+                    // Set camera position
+                    setTimeout(() => {
+                        viewer.camera.setView({
+                            destination: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
+                            orientation: {
+                                heading: Cesium.Math.toRadians(heading),
+                                pitch: Cesium.Math.toRadians(pitch),
+                                roll: Cesium.Math.toRadians(roll)
+                            }
+                        });
+                        console.log('[Experience] Camera position restored');
+                    }, 500);
+                    
+                    // Restore drone fly settings
+                    if (urlParams.has('flyDist')) {
+                        const el = document.getElementById('droneFlyDistance');
+                        if (el) el.value = urlParams.get('flyDist');
+                    }
+                    if (urlParams.has('hSpeed')) {
+                        const el = document.getElementById('droneHorizontalSpeed');
+                        if (el) el.value = urlParams.get('hSpeed');
+                    }
+                    if (urlParams.has('vSpeed')) {
+                        const el = document.getElementById('droneVerticalSpeed');
+                        if (el) el.value = urlParams.get('vSpeed');
+                    }
+                    
+                    // Restore orbit settings
+                    if (urlParams.has('orbRadius')) {
+                        const el = document.getElementById('droneOrbitRadius');
+                        if (el) el.value = urlParams.get('orbRadius');
+                    }
+                    if (urlParams.has('orbPitch')) {
+                        const el = document.getElementById('droneOrbitPitch');
+                        const val = urlParams.get('orbPitch');
+                        if (el) {
+                            el.value = val;
+                            const display = document.getElementById('orbitPitchValue');
+                            if (display) display.textContent = `${val}°`;
+                        }
+                    }
+                    if (urlParams.has('orbYaw')) {
+                        const el = document.getElementById('droneOrbitYaw');
+                        const val = urlParams.get('orbYaw');
+                        if (el) {
+                            el.value = val;
+                            const display = document.getElementById('orbitYawValue');
+                            if (display) display.textContent = `${val}°`;
+                        }
+                    }
+                    
+                    // Start orbit if it was active
+                    if (urlParams.get('orbiting') === '1') {
+                        setTimeout(() => {
+                            const orbitBtn = document.getElementById('droneOrbitBtn');
+                            if (orbitBtn) {
+                                console.log('[Experience] Starting orbit from URL');
+                                orbitBtn.click();
+                            }
+                        }, 1500);
+                    }
+                    
+                    console.log('[Experience] Experience loaded from URL');
+                }, 100);
+            }
+            
+            // Load experience on page load
+            loadExperienceFromURL();
+            
+            // Keyboard shortcut: S key for share
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 's' || e.key === 'S') {
+                    // Don't trigger if typing in an input
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                    e.preventDefault();
+                    shareBtn.click();
+                }
+            });
+            
+            console.log('[Experience] URL-based experience sharing initialized (Press S to share)');
         })();
     </script>
 </body>
