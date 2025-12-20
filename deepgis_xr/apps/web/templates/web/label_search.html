@@ -3545,6 +3545,21 @@
                     state.orbiting = '1';
                 }
                 
+                // Check if takeoff/land/fly is active
+                const takeoffBtn = document.getElementById('droneTakeoffBtn');
+                const landBtn = document.getElementById('droneLandBtn');
+                const flyBtn = document.getElementById('droneFlyBtn');
+                
+                if (takeoffBtn && takeoffBtn.classList.contains('active')) {
+                    state.takeoff = '1';
+                }
+                if (landBtn && landBtn.classList.contains('active')) {
+                    state.landing = '1';
+                }
+                if (flyBtn && flyBtn.classList.contains('active')) {
+                    state.flying = '1';
+                }
+                
                 console.log('[Experience] Captured state:', state);
                 return state;
             }
@@ -3747,6 +3762,49 @@
                                 orbitBtn.click();
                             }
                         }, 1500);
+                    }
+                    
+                    // Restore takeoff/land/fly state (with delay to ensure widgets are ready)
+                    setTimeout(() => {
+                        if (urlParams.get('takeoff') === '1') {
+                            const takeoffBtn = document.getElementById('droneTakeoffBtn');
+                            if (takeoffBtn && !takeoffBtn.classList.contains('active')) {
+                                console.log('[Experience] Starting takeoff from URL');
+                                takeoffBtn.click();
+                            }
+                        }
+                        if (urlParams.get('landing') === '1') {
+                            const landBtn = document.getElementById('droneLandBtn');
+                            if (landBtn && !landBtn.classList.contains('active')) {
+                                console.log('[Experience] Starting landing from URL');
+                                landBtn.click();
+                            }
+                        }
+                        if (urlParams.get('flying') === '1') {
+                            const flyBtn = document.getElementById('droneFlyBtn');
+                            if (flyBtn && !flyBtn.classList.contains('active')) {
+                                console.log('[Experience] Starting fly mode from URL');
+                                flyBtn.click();
+                            }
+                        }
+                    }, 2000); // Delay to ensure camera position is restored first
+                    
+                    // Force 3D mode at the end if requested (workaround for viewport not switching on its own)
+                    if (viewMode === '3d') {
+                        setTimeout(() => {
+                            const viewer = window.AppState?.viewer || window.viewer;
+                            if (viewer && viewer.scene.mode !== Cesium.SceneMode.SCENE3D) {
+                                console.log('[Experience] Force switching to 3D mode (workaround)');
+                                // Trigger the 3D button click (same as V key behavior)
+                                const btn3D = document.getElementById('view3D');
+                                if (btn3D) {
+                                    btn3D.click();
+                                } else {
+                                    // Fallback: direct morph
+                                    viewer.scene.morphTo3D(1.0);
+                                }
+                            }
+                        }, 3000); // After all other restoration completes
                     }
                     
                     console.log('[Experience] Experience loaded from URL');
