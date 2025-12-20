@@ -17,6 +17,9 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     
+    <!-- QR Code Generator -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+
     <!-- Preload disabled due to CORS issues - using Ion Asset ID instead -->
     <!-- <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb" as="fetch" crossorigin="anonymous"> -->
     <link rel="dns-prefetch" href="https://cesium.com">
@@ -696,6 +699,77 @@
             background: rgba(59, 130, 246, 0.2);
             color: #93c5fd;
             border-color: rgba(59, 130, 246, 0.4);
+        }
+        
+        /* ========== QR CODE OVERLAY ========== */
+        .qr-code-overlay {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 8px;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .qr-code-overlay.visible {
+            display: flex;
+        }
+        
+        .qr-code-container {
+            width: 128px;
+            height: 128px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .qr-code-container canvas,
+        .qr-code-container img {
+            max-width: 100%;
+            max-height: 100%;
+        }
+        
+        .qr-code-label {
+            font-size: 9px;
+            color: #1e293b;
+            text-align: center;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .qr-code-controls {
+            display: flex;
+            gap: 4px;
+        }
+        
+        .qr-code-btn {
+            padding: 3px 6px;
+            font-size: 8px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .qr-code-btn:hover {
+            background: #2563eb;
+        }
+        
+        .qr-code-btn.close {
+            background: #ef4444;
+        }
+        
+        .qr-code-btn.close:hover {
+            background: #dc2626;
         }
         
         /* Hide keyboard shortcut hint */
@@ -1493,9 +1567,24 @@
         <button class="hud-quick-btn" id="quickView3D"><i class="fas fa-cube"></i> 3D</button>
         <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
         <button class="hud-quick-btn" id="quickShare" title="Share Current View"><i class="fas fa-share-alt"></i> Share</button>
+        <button class="hud-quick-btn" id="quickQR" title="Show QR Code"><i class="fas fa-qrcode"></i> QR</button>
         <a href="{% url 'map_label' %}" class="hud-quick-btn" id="quickTrain" title="Open Training Labeling Interface" onclick="return syncLocationTo2D()">
             <i class="fas fa-graduation-cap"></i> Train
         </a>
+    </div>
+    
+    <!-- QR Code Overlay -->
+    <div class="qr-code-overlay" id="qrCodeOverlay">
+        <div class="qr-code-label">Scan to Experience</div>
+        <div class="qr-code-container" id="qrCodeContainer"></div>
+        <div class="qr-code-controls">
+            <button class="qr-code-btn" id="qrRefreshBtn" title="Refresh QR Code">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button class="qr-code-btn close" id="qrCloseBtn" title="Close">
+                <i class="fas fa-times"></i> Close
+            </button>
+        </div>
     </div>
 
     <!-- Main Heading -->
@@ -2067,9 +2156,16 @@
                         const leftJoystick = document.getElementById('leftJoystick');
                         const rightJoystick = document.getElementById('rightJoystick');
                         const mainHeading = document.querySelector('.main-heading');
+                        const sidebarHeader = document.querySelector('.sidebar-header');
+                        const statusIndicator = document.getElementById('statusIndicator');
+                        // Note: QR code overlay NOT included - stays visible in distraction-free mode
                         
-                        // Toggle visibility of all toolbars/widgets
-                        const elements = [toolbar, quickViews, cameraInfo, droneFlyWidget, droneOrbitWidget, navWidget, perspectiveWidget, performanceIndicator, leftJoystick, rightJoystick].filter(el => el);
+                        // Toggle visibility of all toolbars/widgets (QR code stays visible)
+                        const elements = [
+                            toolbar, quickViews, cameraInfo, droneFlyWidget, droneOrbitWidget, 
+                            navWidget, perspectiveWidget, performanceIndicator, leftJoystick, 
+                            rightJoystick, mainHeading, sidebarHeader, statusIndicator
+                        ].filter(el => el);
                         const isHidden = elements[0] && elements[0].style.display === 'none';
                         
                         elements.forEach(el => {
@@ -2078,27 +2174,7 @@
                             }
                         });
                         
-                        // Center the main heading when toolbars are hidden
-                        if (mainHeading) {
-                            if (isHidden) {
-                                // Restore original positioning by removing inline styles
-                                mainHeading.style.position = '';
-                                mainHeading.style.left = '';
-                                mainHeading.style.transform = '';
-                                mainHeading.style.top = '';
-                            } else {
-                                // Center the heading horizontally
-                                const currentTop = window.getComputedStyle(mainHeading).top;
-                                mainHeading.style.position = 'fixed';
-                                mainHeading.style.left = '50%';
-                                mainHeading.style.transform = 'translateX(-50%)';
-                                // Preserve original top position if it exists
-                                if (currentTop && currentTop !== 'auto') {
-                                    mainHeading.style.top = currentTop;
-                                }
-                            }
-                        }
-                        
+                        console.log(`[HUD] Toolbars and widgets ${isHidden ? 'shown' : 'hidden'} (QR code remains visible)`);
                         return;
                     }
                     
@@ -3322,6 +3398,16 @@
                     roll: Cesium.Math.toDegrees(camera.roll).toFixed(2),
                 };
                 
+                // Get view mode (2D or 3D)
+                const sceneMode = viewer.scene.mode;
+                if (sceneMode === Cesium.SceneMode.SCENE2D) {
+                    state.viewMode = '2d';
+                } else if (sceneMode === Cesium.SceneMode.COLUMBUS_VIEW) {
+                    state.viewMode = 'columbus';
+                } else {
+                    state.viewMode = '3d'; // Default to 3D
+                }
+                
                 // Get drone fly settings
                 const flyDistanceEl = document.getElementById('droneFlyDistance');
                 const horizontalSpeedEl = document.getElementById('droneHorizontalSpeed');
@@ -3420,10 +3506,16 @@
                 
                 console.log('[Experience] Loading experience from URL...');
                 
-                // Wait for viewer to be ready
+                // Wait for viewer to be ready and not morphing
                 const checkViewer = setInterval(() => {
                     const viewer = window.AppState?.viewer || window.viewer;
                     if (!viewer) return;
+                    
+                    // Check if scene is morphing
+                    if (viewer.scene.morphTime && viewer.scene.morphTime !== 1.0) {
+                        console.log('[Experience] Scene is still morphing, waiting...');
+                        return;
+                    }
                     
                     clearInterval(checkViewer);
                     
@@ -3434,8 +3526,33 @@
                     const heading = parseFloat(urlParams.get('heading')) || 0;
                     const pitch = parseFloat(urlParams.get('pitch')) || -45;
                     const roll = parseFloat(urlParams.get('roll')) || 0;
+                    const viewMode = urlParams.get('viewMode') || '3d';
                     
-                    // Set camera position
+                    console.log('[Experience] Requested viewMode:', viewMode);
+                    console.log('[Experience] Current scene mode:', viewer.scene.mode);
+                    
+                    // Restore view mode first (check current mode to avoid unnecessary morphs)
+                    const currentMode = viewer.scene.mode;
+                    let needsMorph = false;
+                    
+                    if (viewMode === '2d' && currentMode !== Cesium.SceneMode.SCENE2D) {
+                        console.log('[Experience] Morphing to 2D view...');
+                        viewer.scene.morphTo2D(2.0);
+                        needsMorph = true;
+                    } else if (viewMode === 'columbus' && currentMode !== Cesium.SceneMode.COLUMBUS_VIEW) {
+                        console.log('[Experience] Morphing to Columbus view...');
+                        viewer.scene.morphToColumbusView(2.0);
+                        needsMorph = true;
+                    } else if (viewMode === '3d' && currentMode !== Cesium.SceneMode.SCENE3D) {
+                        console.log('[Experience] Morphing to 3D view...');
+                        viewer.scene.morphTo3D(2.0);
+                        needsMorph = true;
+                    } else {
+                        console.log('[Experience] Scene already in requested mode:', viewMode);
+                    }
+                    
+                    // Set camera position (wait longer if morph is needed)
+                    const cameraDelay = needsMorph ? 2500 : 800;
                     setTimeout(() => {
                         viewer.camera.setView({
                             destination: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
@@ -3446,7 +3563,7 @@
                             }
                         });
                         console.log('[Experience] Camera position restored');
-                    }, 500);
+                    }, cameraDelay);
                     
                     // Restore drone fly settings
                     if (urlParams.has('flyDist')) {
@@ -3515,6 +3632,186 @@
             });
             
             console.log('[Experience] URL-based experience sharing initialized (Press S to share)');
+        })();
+        
+        // ========== QR CODE OVERLAY ==========
+        (function initQRCode() {
+            console.log('[QR Code] Initializing QR code overlay...');
+            
+            const qrBtn = document.getElementById('quickQR');
+            const qrOverlay = document.getElementById('qrCodeOverlay');
+            const qrContainer = document.getElementById('qrCodeContainer');
+            const qrRefreshBtn = document.getElementById('qrRefreshBtn');
+            const qrCloseBtn = document.getElementById('qrCloseBtn');
+            
+            if (!qrBtn || !qrOverlay || !qrContainer) {
+                console.warn('[QR Code] Required elements not found');
+                return;
+            }
+            
+            let currentQRCode = null;
+            let autoRefreshInterval = null;
+            
+            // Generate QR code from current experience state
+            function generateQRCode() {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer) {
+                    console.warn('[QR Code] Viewer not available');
+                    return;
+                }
+                
+                // Capture current state (reuse experience sharing logic)
+                const camera = viewer.camera;
+                const position = camera.positionCartographic;
+                
+                const state = {
+                    lon: Cesium.Math.toDegrees(position.longitude).toFixed(6),
+                    lat: Cesium.Math.toDegrees(position.latitude).toFixed(6),
+                    alt: position.height.toFixed(2),
+                    heading: Cesium.Math.toDegrees(camera.heading).toFixed(2),
+                    pitch: Cesium.Math.toDegrees(camera.pitch).toFixed(2),
+                    roll: Cesium.Math.toDegrees(camera.roll).toFixed(2),
+                };
+                
+                // Get view mode
+                const sceneMode = viewer.scene.mode;
+                if (sceneMode === Cesium.SceneMode.SCENE2D) {
+                    state.viewMode = '2d';
+                } else if (sceneMode === Cesium.SceneMode.COLUMBUS_VIEW) {
+                    state.viewMode = 'columbus';
+                } else {
+                    state.viewMode = '3d';
+                }
+                
+                // Get drone settings
+                const flyDistanceEl = document.getElementById('droneFlyDistance');
+                const horizontalSpeedEl = document.getElementById('droneHorizontalSpeed');
+                const verticalSpeedEl = document.getElementById('droneVerticalSpeed');
+                const orbitRadiusEl = document.getElementById('droneOrbitRadius');
+                const orbitPitchEl = document.getElementById('droneOrbitPitch');
+                const orbitYawEl = document.getElementById('droneOrbitYaw');
+                
+                if (flyDistanceEl) state.flyDist = flyDistanceEl.value;
+                if (horizontalSpeedEl) state.hSpeed = horizontalSpeedEl.value;
+                if (verticalSpeedEl) state.vSpeed = verticalSpeedEl.value;
+                if (orbitRadiusEl) state.orbRadius = orbitRadiusEl.value;
+                if (orbitPitchEl) state.orbPitch = orbitPitchEl.value;
+                if (orbitYawEl) state.orbYaw = orbitYawEl.value;
+                
+                // Check if orbit is active
+                const orbitBtn = document.getElementById('droneOrbitBtn');
+                if (orbitBtn && orbitBtn.classList.contains('active')) {
+                    state.orbiting = '1';
+                }
+                
+                // Build URL
+                const url = new URL(window.location.href);
+                url.search = '';
+                Object.keys(state).forEach(key => {
+                    url.searchParams.set(key, state[key]);
+                });
+                
+                const experienceURL = url.toString();
+                console.log('[QR Code] Generating QR for URL:', experienceURL);
+                
+                // Clear previous QR code
+                qrContainer.innerHTML = '';
+                
+                // Generate new QR code
+                try {
+                    currentQRCode = new QRCode(qrContainer, {
+                        text: experienceURL,
+                        width: 128,
+                        height: 128,
+                        colorDark: "#000000",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.M
+                    });
+                    console.log('[QR Code] QR code generated successfully');
+                } catch (error) {
+                    console.error('[QR Code] Error generating QR code:', error);
+                    qrContainer.innerHTML = '<div style="color: red; font-size: 10px; padding: 10px;">QR generation failed</div>';
+                }
+            }
+            
+            // Start auto-refresh timer
+            function startAutoRefresh() {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                }
+                
+                autoRefreshInterval = setInterval(() => {
+                    console.log('[QR Code] Auto-refreshing QR code...');
+                    generateQRCode();
+                }, 5000); // Refresh every 5 seconds
+                
+                console.log('[QR Code] Auto-refresh started (every 5 seconds)');
+            }
+            
+            // Stop auto-refresh timer
+            function stopAutoRefresh() {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                    console.log('[QR Code] Auto-refresh stopped');
+                }
+            }
+            
+            // Show QR overlay
+            function showQROverlay() {
+                generateQRCode();
+                qrOverlay.classList.add('visible');
+                qrBtn.classList.add('active');
+                startAutoRefresh();
+                console.log('[QR Code] Overlay shown');
+            }
+            
+            // Hide QR overlay
+            function hideQROverlay() {
+                qrOverlay.classList.remove('visible');
+                qrBtn.classList.remove('active');
+                stopAutoRefresh();
+                console.log('[QR Code] Overlay hidden');
+            }
+            
+            // Toggle QR overlay
+            qrBtn.addEventListener('click', () => {
+                if (qrOverlay.classList.contains('visible')) {
+                    hideQROverlay();
+                } else {
+                    showQROverlay();
+                }
+            });
+            
+            // Refresh QR code
+            qrRefreshBtn.addEventListener('click', () => {
+                console.log('[QR Code] Manual refresh triggered');
+                generateQRCode();
+            });
+            
+            // Close button
+            qrCloseBtn.addEventListener('click', () => {
+                hideQROverlay();
+            });
+            
+            // Keyboard shortcut: Q key to toggle QR
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'q' || e.key === 'Q') {
+                    // Don't trigger if typing in an input
+                    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+                    e.preventDefault();
+                    qrBtn.click();
+                }
+            });
+            
+            // Close on Escape
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && qrOverlay.classList.contains('visible')) {
+                    hideQROverlay();
+                }
+            });
+            
+            console.log('[QR Code] QR code overlay initialized (Press Q to toggle, auto-refresh every 5s)');
         })();
     </script>
 </body>
