@@ -24,12 +24,25 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
   - Automatic region detection and boundary identification
   - GeoJSON export with polygon simplification
   
+- **YOLOv8 Detection**: Ultra-fast real-time object detection
+  - Multiple model sizes: Nano, Small, Medium, Large, XLarge
+  - 80 COCO object categories
+  - Class filtering support
+  
+- **Grounding DINO**: Open-vocabulary text-based object detection
+  - Detect ANY object by describing it in natural language
+  - Text prompts like: `"rock . boulder . crater . debris"`
+  - Supports remote API deployment for GPU acceleration
+  - Ideal for domain-specific detection (geology, archaeology, agriculture)
+
 - **Zero-Shot Object Detection**: Pre-trained COCO model for 80 object categories
   - Detects: person, car, bicycle, truck, bus, animals, and more
   - Confidence-based filtering
   - Class-labeled visualizations
 
-- **Semi-Supervised Labeling**: Mask2Former integration for custom object detection
+- **Mask2Former**: State-of-the-art instance segmentation
+  - More accurate than Zero-Shot for complex scenes
+  - Pre-trained on COCO dataset
 
 ### 🌍 World Sampler - Adaptive Geospatial Sampling
 - **Intelligent Spatial Sampling**: Probabilistic framework for location sampling
@@ -61,6 +74,15 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 - **Coordinate Systems**: Support for multiple projections and ellipsoids
 - **Drone Navigation**: Fly mode and orbit mode for automated camera movement
 - **Measurement Tools**: Distance, area, and height measurement capabilities
+
+### 🔗 Experience URL Sharing
+- **Shareable URLs**: Generate URLs that capture complete camera state
+- **Camera Parameters**: Position (lon, lat, alt), orientation (heading, pitch, roll)
+- **View Mode Preservation**: Remembers 2D, 3D, or Columbus view mode
+- **Drone State Capture**: Includes fly distance, speeds, orbit settings
+- **Active Mode Restoration**: Restores takeoff, landing, fly, and orbit modes
+- **QR Code Generation**: Share experiences via QR codes
+- **Keyboard Shortcuts**: Press `S` to share current view
 
 ---
 
@@ -124,8 +146,10 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 
 **AI/ML:**
 - Segment Anything Model (SAM) - Meta AI
+- Grounding DINO - Open-vocabulary detection (IDEA Research)
+- YOLOv8 - Real-time object detection (Ultralytics)
 - Zero-Shot Detection (Mask R-CNN) - COCO pre-trained
-- Mask2Former - Custom segmentation
+- Mask2Former - Instance segmentation
 - PyTorch (deep learning framework)
 
 **Infrastructure:**
@@ -177,12 +201,22 @@ deepgis-xr/
 
 - `POST /webclient/sampler/analyze-viewport` - Analyze viewport with AI
   - **Parameters:**
-    - `model_type`: `'sam'` or `'zero_shot'`
+    - `model_type`: `'sam'`, `'yolov8'`, `'grounding_dino'`, `'zero_shot'`, or `'mask2former'`
     - `image`: Base64-encoded viewport image
     - `location`: Camera position metadata
-    - `sam_model`: `'vit_b'`, `'vit_l'`, or `'vit_h'` (for SAM)
-    - `min_area`: Minimum segment area in pixels (for SAM)
-    - `confidence_threshold`: 0.0-1.0 (for zero-shot)
+    - **SAM options:**
+      - `sam_model`: `'vit_b'`, `'vit_l'`, or `'vit_h'`
+      - `min_area`: Minimum segment area in pixels
+    - **YOLOv8 options:**
+      - `yolo_model`: `'yolov8n'`, `'yolov8s'`, `'yolov8m'`, `'yolov8l'`, `'yolov8x'`
+      - `confidence_threshold`: 0.0-1.0
+      - `class_filter`: Comma-separated class names (e.g., `"person,car,truck"`)
+    - **Grounding DINO options:**
+      - `text_prompt`: Dot-separated object descriptions (e.g., `"rock . boulder . crater"`)
+      - `box_threshold`: Detection confidence threshold (default: 0.3)
+      - `text_threshold`: Text matching threshold (default: 0.25)
+    - **Zero-Shot/Mask2Former options:**
+      - `confidence_threshold`: 0.0-1.0
   - **Returns:** GeoJSON with segments/detections, metadata, saved file paths
 
 ### Labeling API
@@ -193,20 +227,113 @@ deepgis-xr/
 
 ---
 
+## 🧠 AI Viewport Analysis Architecture
+
+The AI Viewport Analysis system supports multiple detection models, including remote API deployment for GPU-intensive models like Grounding DINO.
+
+### System Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         DeepGIS-XR Frontend                         │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  AI Viewport Analysis Panel                                   │  │
+│  │  ┌────────────────────────────────────────────────────────┐  │  │
+│  │  │ Analysis Type: [Grounding DINO (Open Vocab) ▼]         │  │  │
+│  │  │ Text Prompt:   [rock . boulder . crater . debris    ]  │  │  │
+│  │  │ Box Threshold: [═══════●═══] 0.30                      │  │  │
+│  │  │ Text Threshold:[══════●════] 0.25                      │  │  │
+│  │  │ [  🧠 Analyze Viewport  ]                              │  │  │
+│  │  └────────────────────────────────────────────────────────┘  │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────┬──────────────────────────────────────┘
+                               │ POST /webclient/sampler/analyze-viewport
+                               │ {image, location, model_type, text_prompt, ...}
+                               ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    DeepGIS-XR Django Backend                        │
+│  world_sampler_api.py::analyze_viewport()                          │
+│     ├── model_type == 'sam'           → Local SAM inference        │
+│     ├── model_type == 'yolov8'        → Local YOLOv8 inference     │
+│     ├── model_type == 'grounding_dino'→ Remote API call ──────┐    │
+│     ├── model_type == 'zero_shot'     → Local Mask R-CNN      │    │
+│     └── model_type == 'mask2former'   → Local Mask2Former     │    │
+└──────────────────────────────┬────────────────────────────────│────┘
+                               │                                │
+                               ▼                                ▼
+┌──────────────────────────────────────┐  ┌───────────────────────────┐
+│     Local GPU/CPU Processing         │  │  Remote Grounding DINO    │
+│  ┌────────────────────────────────┐  │  │  API Server               │
+│  │ • SAM (vit_b, vit_l, vit_h)   │  │  │  ┌─────────────────────┐  │
+│  │ • YOLOv8 (n, s, m, l, x)      │  │  │  │ POST /predict       │  │
+│  │ • Mask R-CNN (COCO)           │  │  │  │ POST /predict_batch │  │
+│  │ • Mask2Former (COCO)          │  │  │  │ GET  /health        │  │
+│  └────────────────────────────────┘  │  │  └─────────────────────┘  │
+└──────────────────────────────────────┘  └───────────────────────────┘
+```
+
+### Grounding DINO Remote API Integration
+
+Grounding DINO can be deployed as a separate Docker container for GPU-accelerated inference. This allows running the model on a dedicated GPU server while keeping DeepGIS-XR lightweight.
+
+**Remote API Endpoints:**
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/predict` | POST | Single image inference |
+| `/predict_batch` | POST | Batch inference with multiple prompts |
+
+**Request format for `/predict`:**
+
+```bash
+curl -X POST "http://${GROUNDING_DINO_HOST}:8000/predict" \
+    -F "image=@viewport.png" \
+    -F "text_prompt=rock . boulder . crater . debris" \
+    -F "box_threshold=0.3" \
+    -F "text_threshold=0.25" \
+    -F "return_annotated_image=true"
+```
+
+**Configuration:**
+
+Set the remote API URL in environment variables:
+```bash
+GROUNDING_DINO_API_URL=http://your-gpu-server:8000
+```
+
+### Use Cases for Grounding DINO
+
+| Domain | Text Prompt Example |
+|--------|-------------------|
+| Lunar/Mars Geology | `"rock . boulder . crater . regolith . debris"` |
+| Urban Mapping | `"building . road . car . tree . pedestrian"` |
+| Agricultural Analysis | `"crop . field . irrigation . tree . structure"` |
+| Disaster Assessment | `"damage . debris . collapsed building . vehicle"` |
+| Archaeological Survey | `"structure . artifact . excavation . mound"` |
+| Wildlife Monitoring | `"animal . bird . nest . den . tracks"` |
+
+---
+
 ## 🎯 Usage Examples
 
 ### AI Viewport Analysis
 
 1. **Navigate to DeepGIS Search** (`/label/3d/search/`)
-2. **Open AI Viewport Analysis panel**
+2. **Open AI Viewport Analysis panel** (brain icon in HUD)
 3. **Select analysis type:**
    - **SAM**: Universal segmentation (all regions)
-   - **Zero-Shot**: Object detection (80 COCO categories)
+   - **YOLOv8**: Fast real-time detection (80 COCO categories)
+   - **Grounding DINO**: Open-vocabulary detection (describe any object)
+   - **Zero-Shot**: Pre-trained COCO detection
+   - **Mask2Former**: High-accuracy instance segmentation
 4. **Configure parameters:**
-   - SAM: Model size, minimum segment area
-   - Zero-Shot: Confidence threshold
+   - SAM: Model size (Base/Large/Huge), minimum segment area
+   - YOLOv8: Model size (Nano to XLarge), confidence, class filter
+   - Grounding DINO: Text prompt (e.g., `"rock . crater . boulder"`), thresholds
+   - Zero-Shot/Mask2Former: Confidence threshold
 5. **Click "Analyze Viewport"**
-6. **View results** on map with color-coded polygons
+6. **View results** on map with color-coded polygons and labels
 
 ### World Sampler
 
@@ -235,6 +362,27 @@ deepgis-xr/
 5. **View weather data**: Click on station markers for detailed information
 6. **Auto-update**: Stations refresh every 15 minutes automatically
 
+### Experience URL Sharing
+
+1. **Navigate to any view** in DeepGIS Search
+2. **Configure your experience**:
+   - Set camera position and orientation
+   - Choose view mode (2D/3D/Columbus) - press `V` to toggle
+   - Enable drone modes (fly, orbit, takeoff, landing)
+3. **Share your view**:
+   - Press `S` or click the Share button
+   - URL is automatically copied to clipboard
+4. **Generate QR Code**: Click QR button to display scannable code
+5. **URL includes**:
+   | Parameter | Description |
+   |-----------|-------------|
+   | `lon`, `lat`, `alt` | Camera position |
+   | `heading`, `pitch`, `roll` | Camera orientation |
+   | `viewMode` | 2D, 3D, or Columbus |
+   | `flyDist`, `hSpeed`, `vSpeed` | Drone fly settings |
+   | `orbRadius`, `orbPitch`, `orbYaw` | Orbit settings |
+   | `orbiting`, `flying`, `takeoff`, `landing` | Active mode flags |
+
 ---
 
 ## 🔧 Configuration
@@ -245,6 +393,9 @@ deepgis-xr/
 DEBUG=True
 DJANGO_SETTINGS_MODULE=deepgis_xr.settings
 NVIDIA_VISIBLE_DEVICES=all  # For GPU support
+
+# Remote AI Services (optional)
+GROUNDING_DINO_API_URL=http://your-gpu-server:8000  # Remote Grounding DINO API
 ```
 
 ### Docker Configuration
@@ -267,10 +418,13 @@ To enable GPU for AI features:
 
 ## 📊 Recent Updates (December 2025)
 
+- ✅ **Experience URL Sharing**: Complete camera state sharing via URL; supports takeoff/landing/fly/orbit modes; QR code generation
+- ✅ **Grounding DINO**: Open-vocabulary detection with text prompts; remote API architecture for GPU servers
 - ✅ **Weather Stations**: NWS integration with 21 stations across CA, AZ, CO, NV; HUD toolbar integration; auto-update every 15 min
 - ✅ **UI/UX**: HUD toolbar with floating panels; aviation-style navigation widgets; drone fly/orbit modes
 - ✅ **AI/ML**: YOLOv8 and Mask2Former integration; SAM optimization; clean viewport capture
 - ✅ **Performance**: Memory optimization; improved error handling; duplicate entity prevention
+- ✅ **View Mode Switching**: 2D/3D/Columbus view toggle with keyboard shortcut (V key); auto-restore from URL
 
 ---
 
@@ -306,6 +460,8 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 
 - **CesiumJS**: 3D globe visualization
 - **Meta AI**: Segment Anything Model
+- **IDEA Research**: Grounding DINO open-vocabulary detection
+- **Ultralytics**: YOLOv8 real-time detection
 - **NASA/GSFC/ASU**: LROC QuickMap lunar imagery
 - **COCO Dataset**: Object detection categories
 
@@ -331,11 +487,17 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 ### In Progress
 - [x] Zero-Shot Detection integration
 - [x] SAM viewport analysis
+- [x] YOLOv8 real-time detection
+- [x] Grounding DINO open-vocabulary detection
+- [x] Remote AI API integration architecture
 - [x] World Sampler adaptive sampling
 - [x] Moon viewer with navigation widgets
 - [x] Weather stations integration
 - [x] HUD toolbar and panel system
 - [x] Multi-state weather station support
+- [x] Experience URL sharing with full state capture
+- [x] QR code generation for mobile sharing
+- [x] 2D/3D/Columbus view mode switching
 
 ---
 
