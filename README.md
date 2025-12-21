@@ -1,6 +1,5 @@
 # DeepGIS-XR
 
-## 🎥 Demo Video
 [![Watch DeepGIS-XR Demo](https://img.shields.io/badge/▶️_Watch_Demo_Video-4285F4?style=for-the-badge&logo=google-drive&logoColor=white)](https://drive.google.com/file/d/1d754ciwbbedvDvMIZTJIseQ_Z0zaTa_l/view)
 
 <img width="2558" height="1433" alt="image" src="https://github.com/user-attachments/assets/6ef67028-e9dd-4a6e-96f1-c0f74da05d37" />
