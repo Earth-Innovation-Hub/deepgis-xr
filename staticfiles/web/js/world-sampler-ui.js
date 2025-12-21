@@ -2053,6 +2053,14 @@ class WorldSamplerUI {
                     requestBody.confidence_threshold = yolov8Confidence ? parseFloat(yolov8Confidence.value) / 100 : 0.25;
                     requestBody.class_filter = yolov8Classes ? yolov8Classes.value.trim() : '';
                     statusText.textContent = 'Running YOLOv8 detection...';
+                } else if (analysisType === 'grounding_dino') {
+                    const textPrompt = document.getElementById('groundingDinoPrompt');
+                    const boxThreshold = document.getElementById('gdBoxThreshold');
+                    const textThreshold = document.getElementById('gdTextThreshold');
+                    requestBody.text_prompt = textPrompt ? textPrompt.value.trim() : 'object';
+                    requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : 0.3;
+                    requestBody.text_threshold = textThreshold ? parseFloat(textThreshold.value) / 100 : 0.25;
+                    statusText.textContent = 'Running Grounding DINO detection...';
                 }
                 
                 // Send to API
@@ -2105,7 +2113,7 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8') {
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino') {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
@@ -2114,12 +2122,15 @@ class WorldSamplerUI {
                     this.displayZeroShotResults(result);
                     
                     // Show notification
-                    const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+                    const deviceNote = deviceInfo.mode === 'remote_api' ? ' (Remote GPU)' : (deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)');
                     let modelName = 'Zero-Shot Detection';
                     if (analysisType === 'mask2former') modelName = 'Mask2Former';
                     if (analysisType === 'yolov8') {
                         const yoloModel = result.yolo_model || 'yolov8n';
                         modelName = `YOLOv8 (${yoloModel})`;
+                    }
+                    if (analysisType === 'grounding_dino') {
+                        modelName = 'Grounding DINO';
                     }
                     this.showNotification(
                         `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
@@ -2225,13 +2236,22 @@ class WorldSamplerUI {
         ];
         
         // Convert screen corners to world coordinates
+        // Use pickPosition to get terrain-aware coordinates, fallback to pickEllipsoid
         const worldCorners = corners.map(screenPos => {
-            const cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            // First try to pick from the terrain/globe
+            let cartesian = scene.pickPosition(screenPos);
+            
+            // Fallback to ellipsoid pick if pickPosition fails
+            if (!Cesium.defined(cartesian)) {
+                cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            }
+            
             if (cartesian) {
                 const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
                 return {
                     lon: Cesium.Math.toDegrees(cartographic.longitude),
-                    lat: Cesium.Math.toDegrees(cartographic.latitude)
+                    lat: Cesium.Math.toDegrees(cartographic.latitude),
+                    height: cartographic.height
                 };
             }
             return null;
@@ -2259,17 +2279,37 @@ class WorldSamplerUI {
         this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
         
         // Convert normalized [0,1] coordinates to geographic coordinates
+        // Use a more accurate pixel-to-geographic transformation
+        const pixelToGeographic = (x_norm, y_norm) => {
+            const screenX = x_norm * viewportWidth;
+            const screenY = y_norm * viewportHeight;
+            const screenPos = new Cesium.Cartesian2(screenX, screenY);
+            
+            // Try to pick position from terrain first
+            let cartesian = scene.pickPosition(screenPos);
+            
+            // Fallback to interpolated bounds if pickPosition fails
+            if (!Cesium.defined(cartesian)) {
+                const lon = minLon + (x_norm * lonRange);
+                const lat = maxLat - (y_norm * latRange); // Invert Y axis
+                return [lon, lat];
+            }
+            
+            const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+            return [
+                Cesium.Math.toDegrees(cartographic.longitude),
+                Cesium.Math.toDegrees(cartographic.latitude)
+            ];
+        };
+        
         const features = result.geojson.features.map((feature, index) => {
             const props = feature.properties;
             const coords = feature.geometry.coordinates[0]; // Polygon coordinates
             
-            // Convert normalized [0,1] coordinates to geographic
-            // Map [0,1] x to [minLon, maxLon] and [0,1] y to [maxLat, minLat] (y is inverted)
-            const geographicCoords = coords.map(([x_norm, y_norm]) => {
-                const lon = minLon + (x_norm * lonRange);
-                const lat = maxLat - (y_norm * latRange); // Invert Y axis
-                return [lon, lat];
-            });
+            // Convert normalized [0,1] coordinates to geographic using accurate transformation
+            const geographicCoords = coords.map(([x_norm, y_norm]) => 
+                pixelToGeographic(x_norm, y_norm)
+            );
             
             return {
                 type: 'Feature',
@@ -2447,12 +2487,20 @@ class WorldSamplerUI {
         ];
         
         const worldCorners = corners.map(screenPos => {
-            const cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            // Try to pick from terrain first
+            let cartesian = scene.pickPosition(screenPos);
+            
+            // Fallback to ellipsoid if pickPosition fails
+            if (!Cesium.defined(cartesian)) {
+                cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            }
+            
             if (cartesian) {
                 const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
                 return {
                     lon: Cesium.Math.toDegrees(cartographic.longitude),
-                    lat: Cesium.Math.toDegrees(cartographic.latitude)
+                    lat: Cesium.Math.toDegrees(cartographic.latitude),
+                    height: cartographic.height
                 };
             }
             return null;
@@ -2479,16 +2527,37 @@ class WorldSamplerUI {
         this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
         
         // Convert normalized [0,1] coordinates to geographic coordinates
+        // Use accurate pixel-to-geographic transformation
+        const pixelToGeographic = (x_norm, y_norm) => {
+            const screenX = x_norm * viewportWidth;
+            const screenY = y_norm * viewportHeight;
+            const screenPos = new Cesium.Cartesian2(screenX, screenY);
+            
+            // Try to pick position from terrain first
+            let cartesian = scene.pickPosition(screenPos);
+            
+            // Fallback to interpolated bounds if pickPosition fails
+            if (!Cesium.defined(cartesian)) {
+                const lon = minLon + (x_norm * lonRange);
+                const lat = minLat + ((1 - y_norm) * latRange); // Flip Y (image origin is top-left)
+                return [lon, lat];
+            }
+            
+            const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+            return [
+                Cesium.Math.toDegrees(cartographic.longitude),
+                Cesium.Math.toDegrees(cartographic.latitude)
+            ];
+        };
+        
         const features = result.geojson.features.map((feature, index) => {
             const props = feature.properties;
             const coords = feature.geometry.coordinates[0];
             
-            // Convert normalized coordinates to geographic
-            const geographicCoords = coords.map(([x_norm, y_norm]) => {
-                const lon = minLon + (x_norm * lonRange);
-                const lat = minLat + ((1 - y_norm) * latRange); // Flip Y (image origin is top-left)
-                return [lon, lat];
-            });
+            // Convert normalized coordinates to geographic using accurate transformation
+            const geographicCoords = coords.map(([x_norm, y_norm]) => 
+                pixelToGeographic(x_norm, y_norm)
+            );
             
             return {
                 type: 'Feature',
@@ -2869,6 +2938,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const zeroShotOptions = document.getElementById('zeroShotOptions');
     const mask2formerOptions = document.getElementById('mask2formerOptions');
     const yolov8Options = document.getElementById('yolov8Options');
+    const groundingDinoOptions = document.getElementById('groundingDinoOptions');
     const analysisDescription = document.getElementById('analysisDescription');
     const zeroShotConfidenceSlider = document.getElementById('zeroShotConfidence');
     const zeroShotConfidenceValue = document.getElementById('zeroShotConfidenceValue');
@@ -2876,6 +2946,10 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const mask2formerConfidenceValue = document.getElementById('mask2formerConfidenceValue');
     const yolov8ConfidenceSlider = document.getElementById('yolov8Confidence');
     const yolov8ConfidenceValueEl = document.getElementById('yolov8ConfidenceValue');
+    const gdBoxThresholdSlider = document.getElementById('gdBoxThreshold');
+    const gdBoxThresholdValue = document.getElementById('gdBoxThresholdValue');
+    const gdTextThresholdSlider = document.getElementById('gdTextThreshold');
+    const gdTextThresholdValue = document.getElementById('gdTextThresholdValue');
     
     if (analysisTypeSelect) {
         analysisTypeSelect.addEventListener('change', (e) => {
@@ -2885,6 +2959,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             if (zeroShotOptions) zeroShotOptions.style.display = 'none';
             if (mask2formerOptions) mask2formerOptions.style.display = 'none';
             if (yolov8Options) yolov8Options.style.display = 'none';
+            if (groundingDinoOptions) groundingDinoOptions.style.display = 'none';
             
             if (analysisType === 'zero_shot') {
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
@@ -2901,6 +2976,11 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 if (analysisDescription) {
                     analysisDescription.textContent = 'Ultra-fast real-time detection with 80 COCO classes - best for vehicles, people, common objects';
                 }
+            } else if (analysisType === 'grounding_dino') {
+                if (groundingDinoOptions) groundingDinoOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'Open-vocabulary detection - describe ANY object to find (rocks, craters, vehicles, custom objects)';
+                }
             } else {
                 // SAM (default)
                 if (samOptions) samOptions.style.display = 'block';
@@ -2908,6 +2988,21 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                     analysisDescription.textContent = 'Segments all visible regions in current viewport using Segment Anything Model';
                 }
             }
+        });
+    }
+    
+    // Setup Grounding DINO threshold sliders
+    if (gdBoxThresholdSlider && gdBoxThresholdValue) {
+        gdBoxThresholdSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            gdBoxThresholdValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    if (gdTextThresholdSlider && gdTextThresholdValue) {
+        gdTextThresholdSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            gdTextThresholdValue.textContent = value.toFixed(2);
         });
     }
     

@@ -44,12 +44,22 @@ export class WeatherStationsWidget {
       'KTPH'  // Tonopah
     ];
     
-    // Default stations: combine all four states
+    this.newMexicoStations = [
+      'KABQ', // Albuquerque International Sunport
+      'KSAF', // Santa Fe Municipal
+      'KFMN', // Farmington
+      'KROW', // Roswell Industrial Air Center
+      'KLRU', // Las Cruces International
+      'KHOB'  // Hobbs/Lea County Regional
+    ];
+    
+    // Default stations: combine all five states
     this.defaultStations = [
       ...this.californiaStations,
       ...this.arizonaStations,
       ...this.coloradoStations,
-      ...this.nevadaStations
+      ...this.nevadaStations,
+      ...this.newMexicoStations
     ];
     
     this.init();
@@ -237,6 +247,9 @@ export class WeatherStationsWidget {
             <button class="btn btn-sm btn-secondary" id="loadNevadaStationsBtn" style="background: #475569; border: none; color: white; flex: 1;">
               NV
             </button>
+            <button class="btn btn-sm btn-secondary" id="loadNewMexicoStationsBtn" style="background: #475569; border: none; color: white; flex: 1;">
+              NM
+            </button>
           </div>
         </div>
         
@@ -271,7 +284,7 @@ export class WeatherStationsWidget {
       position: fixed;
       top: 800px;
       left: 20px;
-      width: 220px !important;
+      width: 200px !important; # left widget width
       max-height: 50vh;
       overflow-y: auto;
       z-index: 1400;
@@ -326,6 +339,9 @@ export class WeatherStationsWidget {
             </button>
             <button class="btn btn-sm btn-secondary" id="loadNevadaStationsBtn" style="flex: 1; padding: 6px; font-size: 10px; background: #475569; border: none; border-radius: 4px; color: white; cursor: pointer;">
               NV
+            </button>
+            <button class="btn btn-sm btn-secondary" id="loadNewMexicoStationsBtn" style="flex: 1; padding: 6px; font-size: 10px; background: #475569; border: none; border-radius: 4px; color: white; cursor: pointer;">
+              NM
             </button>
           </div>
         </div>
@@ -482,6 +498,14 @@ export class WeatherStationsWidget {
       });
     }
 
+    // Load New Mexico stations
+    const loadNewMexicoBtn = document.getElementById('loadNewMexicoStationsBtn');
+    if (loadNewMexicoBtn) {
+      loadNewMexicoBtn.addEventListener('click', async () => {
+        await this.loadNewMexicoStations();
+      });
+    }
+
     // Auto-update toggle
     const autoUpdate = document.getElementById('weatherStationsAutoUpdate');
     if (autoUpdate) {
@@ -613,6 +637,22 @@ export class WeatherStationsWidget {
       console.error('Error loading Nevada stations:', error);
       updateStatusIndicator('Error loading Nevada weather stations');
       showSnackBar('Error loading Nevada weather stations', 'error');
+    }
+  }
+
+  async loadNewMexicoStations() {
+    updateStatusIndicator('Loading New Mexico weather stations...');
+    showSnackBar('Loading New Mexico weather stations...', 'info');
+    
+    try {
+      await this.weatherLayer.addStations(this.newMexicoStations);
+      this.updateStatus();
+      updateStatusIndicator(`Loaded ${this.newMexicoStations.length} New Mexico weather stations`);
+      showSnackBar(`Loaded ${this.newMexicoStations.length} New Mexico weather stations`, 'success');
+    } catch (error) {
+      console.error('Error loading New Mexico stations:', error);
+      updateStatusIndicator('Error loading New Mexico weather stations');
+      showSnackBar('Error loading New Mexico weather stations', 'error');
     }
   }
 

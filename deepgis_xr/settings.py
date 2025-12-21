@@ -178,6 +178,11 @@ TWILIO_PHONE_NUMBER = os.environ.get('TWILIO_PHONE_NUMBER', '')
 TILESERVER_URL = 'https://tileserver'
 TILESERVER_PORT = '80'
 
+# Remote AI Services Configuration
+# Grounding DINO API - Set to your GPU server running the grounding-dino Docker container
+# Example: GROUNDING_DINO_API_URL=http://192.168.1.100:8000
+GROUNDING_DINO_API_URL = os.environ.get('GROUNDING_DINO_API_URL', None)
+
 # MIME type configuration for 3D model files
 import mimetypes
 mimetypes.add_type('application/octet-stream', '.glb')
