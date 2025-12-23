@@ -21,6 +21,17 @@ export class OpenSkyADSBLayer {
     // API endpoint
     this.apiBaseUrl = 'https://opensky-network.org/api/states/all';
     
+    // Optimization: Request management
+    this.updateInProgress = false; // Prevent overlapping requests
+    this.lastRequestTime = 0; // Track last API call
+    this.minRequestInterval = 5000; // Minimum 5 seconds between requests
+    this.lastSuccessfulData = null; // Cache last successful response
+    this.lastSuccessfulBounds = null; // Cache bounds for last successful request
+    this.boundsChangeThreshold = 0.5; // Only refetch if bounds changed by >0.5 degrees
+    this.consecutiveFailures = 0; // Track failures for backoff
+    this.maxConsecutiveFailures = 3; // Back off after 3 failures
+    this.adaptiveInterval = 5; // Start with 5 seconds, adapt based on rate limits
+    
     // Aircraft icon colors by altitude (in meters)
     this.altitudeColors = {
       ground: '#888888',      // On ground
@@ -76,8 +87,9 @@ export class OpenSkyADSBLayer {
         const centerLon = Cesium.Math.toDegrees(cameraPosition.longitude);
         const altitude = cameraPosition.height;
         
-        // Buffer size based on altitude (rough approximation)
-        const buffer = Math.min(5, Math.max(0.5, altitude / 50000));
+        // Buffer size based on altitude (larger buffer to reduce API calls)
+        // Increased buffer by 50% to reduce frequency of requests
+        const buffer = Math.min(7.5, Math.max(0.75, altitude / 33333));
         
         return {
           lamin: centerLat - buffer,
@@ -87,9 +99,10 @@ export class OpenSkyADSBLayer {
         };
       }
       
-      // Add small buffer to bounds
-      const latBuffer = (maxLat - minLat) * 0.1;
-      const lonBuffer = (maxLon - minLon) * 0.1;
+      // Add larger buffer to bounds (reduces frequency of API calls)
+      // 20% buffer instead of 10% to reduce bounds change frequency
+      const latBuffer = (maxLat - minLat) * 0.2;
+      const lonBuffer = (maxLon - minLon) * 0.2;
       
       return {
         lamin: Math.max(-90, minLat - latBuffer),
@@ -104,17 +117,54 @@ export class OpenSkyADSBLayer {
   }
 
   /**
-   * Fetch aircraft states from OpenSky Network API
+   * Check if bounds have changed significantly
+   */
+  boundsChangedSignificantly(newBounds, oldBounds) {
+    if (!oldBounds) return true;
+    
+    const latChange = Math.abs(newBounds.lamax - oldBounds.lamax) + 
+                      Math.abs(newBounds.lamin - oldBounds.lamin);
+    const lonChange = Math.abs(newBounds.lomax - oldBounds.lomax) + 
+                      Math.abs(newBounds.lomin - oldBounds.lomin);
+    
+    return latChange > this.boundsChangeThreshold || lonChange > this.boundsChangeThreshold;
+  }
+
+  /**
+   * Fetch aircraft states from OpenSky Network API (optimized)
    */
   async fetchAircraftStates(bounds) {
+    // Prevent overlapping requests
+    if (this.updateInProgress) {
+      console.log('[OpenSky ADS-B] Request already in progress, skipping');
+      return this.lastSuccessfulData; // Return cached data
+    }
+    
+    // Rate limiting: Don't make requests too frequently
+    const timeSinceLastRequest = Date.now() - this.lastRequestTime;
+    if (timeSinceLastRequest < this.minRequestInterval) {
+      console.log(`[OpenSky ADS-B] Rate limiting: ${timeSinceLastRequest}ms since last request, using cache`);
+      return this.lastSuccessfulData;
+    }
+    
     if (!bounds) {
       bounds = this.getViewBounds();
     }
     
     if (!bounds) {
       console.warn('[OpenSky ADS-B] Could not determine view bounds');
-      return null;
+      return this.lastSuccessfulData; // Return cached data
     }
+
+    // Optimization: Check if bounds changed significantly
+    if (!this.boundsChangedSignificantly(bounds, this.lastSuccessfulBounds)) {
+      console.log('[OpenSky ADS-B] Bounds unchanged, using cached data');
+      return this.lastSuccessfulData; // Reuse cached data
+    }
+
+    // Mark request as in progress
+    this.updateInProgress = true;
+    this.lastRequestTime = Date.now();
 
     const url = new URL(this.apiBaseUrl);
     url.searchParams.append('lamin', bounds.lamin.toFixed(4));
@@ -130,8 +180,11 @@ export class OpenSkyADSBLayer {
       });
 
       if (response.status === 429) {
-        console.warn('[OpenSky ADS-B] Rate limited by API, will retry next interval');
-        return null;
+        console.warn('[OpenSky ADS-B] Rate limited by API, backing off');
+        this.consecutiveFailures++;
+        this.adaptiveInterval = Math.min(this.adaptiveInterval * 2, 60); // Double interval, max 60s
+        this.updateInProgress = false;
+        return this.lastSuccessfulData; // Return cached data
       }
 
       if (!response.ok) {
@@ -139,11 +192,32 @@ export class OpenSkyADSBLayer {
       }
 
       const data = await response.json();
+      
+      // Success: cache data and reset failure counter
+      this.lastSuccessfulData = data;
+      this.lastSuccessfulBounds = { ...bounds }; // Deep copy
       this.lastBounds = bounds;
+      this.consecutiveFailures = 0;
+      
+      // Adaptive interval: reduce if successful (but not below 5s)
+      if (this.adaptiveInterval > 5) {
+        this.adaptiveInterval = Math.max(5, this.adaptiveInterval * 0.8);
+      }
+      
+      this.updateInProgress = false;
       return data;
     } catch (error) {
       console.error('[OpenSky ADS-B] Error fetching aircraft states:', error);
-      return null;
+      this.consecutiveFailures++;
+      
+      // Back off on consecutive failures
+      if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
+        this.adaptiveInterval = Math.min(this.adaptiveInterval * 2, 60);
+        console.warn(`[OpenSky ADS-B] ${this.consecutiveFailures} consecutive failures, backing off to ${this.adaptiveInterval}s`);
+      }
+      
+      this.updateInProgress = false;
+      return this.lastSuccessfulData; // Return cached data on error
     }
   }
 
@@ -219,14 +293,27 @@ export class OpenSkyADSBLayer {
   createAnimatedPosition(aircraft, startTime, endTime) {
     const positionProperty = new Cesium.SampledPositionProperty();
     
+    // Ensure clock is running for time-based properties
+    if (this.viewer.clock) {
+      // Set clock to current time if not already set
+      const now = Cesium.JulianDate.now();
+      if (!this.viewer.clock.currentTime || 
+          Cesium.JulianDate.secondsDifference(now, this.viewer.clock.currentTime) > 1) {
+        this.viewer.clock.currentTime = now;
+      }
+      // Ensure clock is running
+      this.viewer.clock.shouldAnimate = true;
+    }
+    
     const startPos = Cesium.Cartesian3.fromDegrees(
       aircraft.longitude,
       aircraft.latitude,
       aircraft.geoAltitude || aircraft.baroAltitude || 0
     );
     
-    // Set start position
-    positionProperty.addSample(Cesium.JulianDate.fromDate(startTime), startPos);
+    // Set start position using current clock time
+    const currentTime = this.viewer.clock ? this.viewer.clock.currentTime : Cesium.JulianDate.fromDate(startTime);
+    positionProperty.addSample(currentTime, startPos);
     
     // Calculate intermediate positions based on heading and speed
     if (aircraft.velocity && aircraft.trueTrack !== null && !aircraft.onGround) {
@@ -254,11 +341,18 @@ export class OpenSkyADSBLayer {
           futurePos.altitude
         );
         
-        positionProperty.addSample(Cesium.JulianDate.fromDate(sampleTime), cartesian);
+        // Use clock time if available, otherwise use sample time
+        const julianTime = this.viewer.clock ? 
+          Cesium.JulianDate.addSeconds(currentTime, elapsed, new Cesium.JulianDate()) :
+          Cesium.JulianDate.fromDate(sampleTime);
+        positionProperty.addSample(julianTime, cartesian);
       }
     } else {
       // For stationary or ground aircraft, just hold position
-      positionProperty.addSample(Cesium.JulianDate.fromDate(endTime), startPos);
+      const endJulianTime = this.viewer.clock ?
+        Cesium.JulianDate.addSeconds(currentTime, (endTime - startTime) / 1000, new Cesium.JulianDate()) :
+        Cesium.JulianDate.fromDate(endTime);
+      positionProperty.addSample(endJulianTime, startPos);
     }
     
     // Set interpolation
@@ -313,7 +407,7 @@ export class OpenSkyADSBLayer {
       }
     }
 
-    console.log(`[OpenSky ADS-B] Updated: ${seenIcao24s.size} aircraft visible (animated: ${this.animationEnabled})`);
+    console.log(`[OpenSky ADS-B] Updated: ${seenIcao24s.size} aircraft visible (animated: ${this.animationEnabled}, interval: ${this.adaptiveInterval.toFixed(1)}s)`);
   }
 
   /**
@@ -323,32 +417,47 @@ export class OpenSkyADSBLayer {
     const altitude = aircraft.geoAltitude || aircraft.baroAltitude || 0;
     const heading = aircraft.trueTrack || 0;
     
-    // Create animated position property
-    const positionProperty = this.animationEnabled ?
-      this.createAnimatedPosition(aircraft, updateTime, nextUpdateTime) :
-      Cesium.Cartesian3.fromDegrees(aircraft.longitude, aircraft.latitude, altitude);
+    // Create animated position property (with fallback to static if clock unavailable)
+    let positionProperty;
+    try {
+      if (this.animationEnabled && this.viewer.clock) {
+        positionProperty = this.createAnimatedPosition(aircraft, updateTime, nextUpdateTime);
+      } else {
+        // Fallback to static position if animation disabled or clock unavailable
+        positionProperty = Cesium.Cartesian3.fromDegrees(aircraft.longitude, aircraft.latitude, altitude);
+        if (this.animationEnabled && !this.viewer.clock) {
+          console.warn('[OpenSky ADS-B] Clock not available, using static positions');
+        }
+      }
+    } catch (error) {
+      console.error('[OpenSky ADS-B] Error creating animated position, using static:', error);
+      positionProperty = Cesium.Cartesian3.fromDegrees(aircraft.longitude, aircraft.latitude, altitude);
+    }
 
     // Get color based on altitude
     const color = this.getAltitudeColor(altitude, aircraft.onGround);
+    
+    // Determine orientation based on position property type
+    let orientation;
+    if (this.animationEnabled && !aircraft.onGround && positionProperty instanceof Cesium.SampledPositionProperty) {
+      // Use VelocityOrientationProperty for animated entities
+      try {
+        orientation = new Cesium.VelocityOrientationProperty(positionProperty);
+      } catch (error) {
+        console.warn('[OpenSky ADS-B] Failed to create VelocityOrientationProperty, using static:', error);
+        orientation = this.createOrientation(aircraft.longitude, aircraft.latitude, altitude, heading);
+      }
+    } else {
+      // Use static orientation for non-animated or ground aircraft
+      orientation = this.createOrientation(aircraft.longitude, aircraft.latitude, altitude, heading);
+    }
     
     // Create entity with animated position
     const entity = this.viewer.entities.add({
       id: `aircraft_${aircraft.icao24}`,
       position: positionProperty,
-      // Use VelocityOrientationProperty for automatic orientation based on movement
-      orientation: this.animationEnabled && !aircraft.onGround ?
-        new Cesium.VelocityOrientationProperty(positionProperty) :
-        this.createOrientation(aircraft.longitude, aircraft.latitude, altitude, heading),
-      billboard: {
-        image: this.createAircraftIcon(color, aircraft.onGround),
-        scale: aircraft.onGround ? 0.6 : 1.0,
-        heightReference: aircraft.onGround ? 
-          Cesium.HeightReference.CLAMP_TO_GROUND : 
-          Cesium.HeightReference.NONE,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        rotation: Cesium.Math.toRadians(-90), // Adjust for icon orientation
-        alignedAxis: Cesium.Cartesian3.UNIT_Z
-      },
+      orientation: orientation,
+      // Use point as primary (more reliable than billboard)
       point: {
         pixelSize: aircraft.onGround ? 6 : 10,
         color: Cesium.Color.fromCssColorString(color),
@@ -358,7 +467,19 @@ export class OpenSkyADSBLayer {
           Cesium.HeightReference.CLAMP_TO_GROUND : 
           Cesium.HeightReference.NONE,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        show: false // Hide point when using billboard
+        show: true // Primary visualization
+      },
+      // Optional billboard (may not render in all cases)
+      billboard: {
+        image: this.createAircraftIcon(color, aircraft.onGround),
+        scale: aircraft.onGround ? 0.6 : 1.0,
+        heightReference: aircraft.onGround ? 
+          Cesium.HeightReference.CLAMP_TO_GROUND : 
+          Cesium.HeightReference.NONE,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        rotation: Cesium.Math.toRadians(-90), // Adjust for icon orientation
+        alignedAxis: Cesium.Cartesian3.UNIT_Z,
+        show: false // Disabled by default - enable if billboard rendering works
       },
       label: {
         text: aircraft.callsign || aircraft.icao24.toUpperCase(),
@@ -401,6 +522,9 @@ export class OpenSkyADSBLayer {
         alt: altitude
       }
     });
+    
+    // Debug: verify entity was added
+    console.log(`[OpenSky ADS-B] Added aircraft ${aircraft.icao24} at ${aircraft.latitude.toFixed(4)}, ${aircraft.longitude.toFixed(4)}, alt: ${altitude.toFixed(0)}m`);
   }
 
   /**
@@ -420,15 +544,27 @@ export class OpenSkyADSBLayer {
    * Create SVG aircraft icon
    */
   createAircraftIcon(color, onGround) {
-    const size = onGround ? 16 : 24;
-    const svg = `
-      <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-        <path fill="${color}" stroke="white" stroke-width="1" 
-          d="M12 2 L14 10 L22 12 L14 14 L12 22 L10 14 L2 12 L10 10 Z"/>
-        ${onGround ? '<circle cx="12" cy="12" r="3" fill="white" opacity="0.5"/>' : ''}
-      </svg>
-    `;
-    return 'data:image/svg+xml;base64,' + btoa(svg);
+    try {
+      const size = onGround ? 16 : 24;
+      const svg = `
+        <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <path fill="${color}" stroke="white" stroke-width="1" 
+            d="M12 2 L14 10 L22 12 L14 14 L12 22 L10 14 L2 12 L10 10 Z"/>
+          ${onGround ? '<circle cx="12" cy="12" r="3" fill="white" opacity="0.5"/>' : ''}
+        </svg>
+      `;
+      // Use encodeURIComponent for better compatibility
+      const encoded = encodeURIComponent(svg);
+      return 'data:image/svg+xml;charset=utf-8,' + encoded;
+    } catch (error) {
+      console.warn('[OpenSky ADS-B] Failed to create SVG icon, using fallback:', error);
+      // Fallback: use a simple colored circle
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+        `<svg width="24" height="24" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="12" cy="12" r="8" fill="${color}" stroke="white" stroke-width="2"/>
+        </svg>`
+      )}`;
+    }
   }
 
   /**
@@ -594,7 +730,7 @@ export class OpenSkyADSBLayer {
   }
 
   /**
-   * Start tracking aircraft
+   * Start tracking aircraft (optimized)
    */
   start(intervalSeconds = 5) {
     if (this.isEnabled) {
@@ -604,16 +740,35 @@ export class OpenSkyADSBLayer {
 
     this.isEnabled = true;
     this.updateIntervalSeconds = intervalSeconds;
+    this.adaptiveInterval = intervalSeconds; // Start with requested interval
 
     // Initial update
     this.updateAircraft();
 
-    // Set up interval
-    this.updateInterval = setInterval(() => {
-      this.updateAircraft();
-    }, intervalSeconds * 1000);
+    // Set up adaptive interval (will adjust based on rate limits)
+    this.scheduleNextUpdate();
 
-    console.log(`[OpenSky ADS-B] Started tracking with smooth animation (update every ${intervalSeconds}s)`);
+    console.log(`[OpenSky ADS-B] Started tracking with smooth animation (adaptive interval, starting at ${intervalSeconds}s)`);
+  }
+  
+  /**
+   * Schedule next update with adaptive interval
+   */
+  scheduleNextUpdate() {
+    if (!this.isEnabled) return;
+    
+    // Clear existing interval
+    if (this.updateInterval) {
+      clearTimeout(this.updateInterval);
+    }
+    
+    // Use adaptive interval (adjusts based on rate limits)
+    const nextInterval = Math.max(this.minRequestInterval, this.adaptiveInterval * 1000);
+    
+    this.updateInterval = setTimeout(() => {
+      this.updateAircraft();
+      this.scheduleNextUpdate(); // Schedule next update
+    }, nextInterval);
   }
 
   /**
@@ -623,9 +778,14 @@ export class OpenSkyADSBLayer {
     this.isEnabled = false;
 
     if (this.updateInterval) {
-      clearInterval(this.updateInterval);
+      clearTimeout(this.updateInterval);
       this.updateInterval = null;
     }
+    
+    // Reset optimization state
+    this.updateInProgress = false;
+    this.consecutiveFailures = 0;
+    this.adaptiveInterval = 5;
 
     console.log('[OpenSky ADS-B] Stopped tracking');
   }
