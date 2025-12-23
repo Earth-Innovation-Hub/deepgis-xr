@@ -1826,6 +1826,16 @@
                 <i class="fas fa-stop"></i> Stop (ESC)
             </button>
         </div>
+        <div class="widget-item" style="display: none;" id="pauseOrbitContainer">
+            <button class="btn btn-warning" id="pauseOrbitBtn">
+                <i class="fas fa-pause"></i> Pause (Space)
+            </button>
+        </div>
+        <div class="widget-item" style="display: none;" id="orbitProgressContainer">
+            <small style="display: block; text-align: center; font-size: 9px;">
+                <span id="orbitProgressText">Revolution: 0.0 / 10.0</span>
+            </small>
+        </div>
         <div class="widget-item" style="display: none;" id="droneOrbitHelp">
             <small style="display: block; text-align: center; font-size: 7px;">
                 QGC-style: Orbits at current altitude. Gimbal points at center. Adjust pitch/yaw sliders. Press ESC to stop.
@@ -3230,14 +3240,19 @@
             console.log('[Gimbal Control] Live pitch and yaw control initialized');
         })();
         
-        // ========== QGROUNDCONTROL-STYLE ORBIT IMPLEMENTATION ==========
+        // ========== QGROUNDCONTROL-STYLE ORBIT IMPLEMENTATION (ENHANCED) ==========
         (function initDroneOrbit() {
             const orbitBtn = document.getElementById('droneOrbitBtn');
             const stopOrbitBtn = document.getElementById('stopOrbitBtn');
+            const pauseOrbitBtn = document.getElementById('pauseOrbitBtn');
             const stopOrbitContainer = document.getElementById('stopOrbitContainer');
+            const pauseOrbitContainer = document.getElementById('pauseOrbitContainer');
+            const orbitProgressContainer = document.getElementById('orbitProgressContainer');
+            const orbitProgressText = document.getElementById('orbitProgressText');
             const orbitRadiusInput = document.getElementById('droneOrbitRadius');
             const orbitPitchInput = document.getElementById('droneOrbitPitch');
             const horizontalSpeedInput = document.getElementById('droneHorizontalSpeed');
+            const revolutionsInput = document.getElementById('droneOrbitRevolutions');
             
             if (!orbitBtn || !stopOrbitBtn) {
                 console.error('[Orbit] Missing required elements');
@@ -3245,12 +3260,57 @@
             }
             
             let isOrbiting = false;
+            let isPaused = false;
             let orbitAnimationId = null;
             let orbitStartTime = null;
             let orbitLastFrameTime = null;
+            let orbitPausedTime = 0; // Total time spent paused
             let orbitCenterPoint = null;
             let orbitInitialAngle = 0; // Starting angle in orbit (radians)
             let orbitStartAltitude = 0; // Altitude when orbit started (maintains current altitude)
+            let orbitPathEntity = null; // Visual orbit path
+            let lastVerificationTime = 0; // For performance optimization
+            let lastProgressUpdateTime = 0; // For UI updates
+            
+            // Visualize orbit path
+            function visualizeOrbitPath(centerPoint, radius) {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer) return;
+                
+                // Remove existing visualization
+                if (orbitPathEntity) {
+                    viewer.entities.remove(orbitPathEntity);
+                    orbitPathEntity = null;
+                }
+                
+                // Create circle entity at orbit center
+                try {
+                    orbitPathEntity = viewer.entities.add({
+                        position: centerPoint,
+                        ellipse: {
+                            semiMinorAxis: radius,
+                            semiMajorAxis: radius,
+                            height: 0,
+                            material: Cesium.Color.YELLOW.withAlpha(0.3),
+                            outline: true,
+                            outlineColor: Cesium.Color.YELLOW,
+                            outlineWidth: 2
+                        }
+                    });
+                    console.log('[Orbit] Path visualization created');
+                } catch (e) {
+                    console.warn('[Orbit] Could not create path visualization:', e);
+                }
+            }
+            
+            // Remove orbit path visualization
+            function removeOrbitVisualization() {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (viewer && orbitPathEntity) {
+                    viewer.entities.remove(orbitPathEntity);
+                    orbitPathEntity = null;
+                }
+            }
             
             // Start orbit (QGC-style: use current position as center by default)
             function startOrbit() {
@@ -3295,6 +3355,7 @@
                 // Get parameters
                 const radius = parseFloat(orbitRadiusInput.value) || 5000;
                 const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
+                const maxRevolutions = parseFloat(revolutionsInput?.value) || 10;
                 
                 const camera = viewer.camera;
                 const currentPosition = camera.positionCartographic;
@@ -3302,14 +3363,25 @@
                 // Store current altitude - orbit will maintain this altitude
                 orbitStartAltitude = currentPosition.height;
                 
+                // Visualize orbit path
+                visualizeOrbitPath(orbitCenterPoint, radius);
+                
                 // Initialize orbit state BEFORE calculating angle
-                console.log(`[Orbit] Starting QGC-style orbit: ${radius}m radius, maintaining altitude at ${orbitStartAltitude.toFixed(1)}m`);
+                console.log(`[Orbit] Starting enhanced orbit: ${radius}m radius, ${maxRevolutions} revolutions, altitude ${orbitStartAltitude.toFixed(1)}m`);
                 isOrbiting = true;
+                isPaused = false;
                 orbitStartTime = Date.now();
                 orbitLastFrameTime = Date.now();
+                orbitPausedTime = 0;
+                lastVerificationTime = 0;
+                lastProgressUpdateTime = 0;
+                
+                // Update UI
                 orbitBtn.classList.add('active');
                 orbitBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Orbit';
                 stopOrbitContainer.style.display = 'block';
+                if (pauseOrbitContainer) pauseOrbitContainer.style.display = 'block';
+                if (orbitProgressContainer) orbitProgressContainer.style.display = 'block';
                 
                 // Calculate initial angle from current position
                 calculateInitialAngle(currentPosition);
@@ -3330,7 +3402,7 @@
                         console.log(`[Orbit] Initial angle: ${(orbitInitialAngle * 180 / Math.PI).toFixed(1)}°`);
                     }
                     
-                    // Start orbit animation
+                    // Start orbit animation with smooth transition
                     startOrbitAnimation();
                 }
             }
@@ -3339,9 +3411,15 @@
             function startOrbitAnimation() {
                 if (!isOrbiting) return;
                 
-                // QGC-style continuous orbit animation
+                // Enhanced orbit animation with all improvements
                 function animateOrbit() {
                     if (!isOrbiting) return;
+                    
+                    // Handle pause state
+                    if (isPaused) {
+                        orbitAnimationId = requestAnimationFrame(animateOrbit);
+                        return;
+                    }
                     
                     const viewer = window.AppState?.viewer || window.viewer;
                     if (!viewer || !viewer.camera) {
@@ -3354,6 +3432,7 @@
                     const yawOffsetDegrees = parseFloat(document.getElementById('droneOrbitYaw')?.value) || 50;
                     const radius = parseFloat(orbitRadiusInput.value) || 5000;
                     const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
+                    const maxRevolutions = parseFloat(revolutionsInput?.value) || 10;
                     
                     // Validate radius
                     if (radius <= 0) {
@@ -3365,38 +3444,68 @@
                     // Calculate angular velocity (radians per second)
                     const angularVelocity = horizontalSpeed / radius; // rad/s
                     
-                    // Calculate angle based on elapsed time (not frame-based accumulation)
+                    // Calculate angle based on elapsed time (accounting for paused time)
                     const currentTime = Date.now();
-                    const elapsed = (currentTime - orbitStartTime) / 1000; // seconds
+                    const elapsed = (currentTime - orbitStartTime - orbitPausedTime) / 1000; // seconds
                     const deltaTime = (currentTime - orbitLastFrameTime) / 1000; // seconds since last frame
                     orbitLastFrameTime = currentTime;
                     
                     // Calculate current angle from elapsed time
-                    const orbitAngle = orbitInitialAngle + (angularVelocity * elapsed);
+                    const currentRadiansFromStart = angularVelocity * elapsed;
+                    const orbitAngle = orbitInitialAngle + currentRadiansFromStart;
                     
-                    // Calculate position on orbit circle
+                    // ========== REVOLUTION COUNTING & AUTO-STOP ==========
+                    const totalRadians = maxRevolutions * 2 * Math.PI;
+                    const completedRevolutions = currentRadiansFromStart / (2 * Math.PI);
+                    
+                    // Check if completed all revolutions
+                    if (currentRadiansFromStart >= totalRadians) {
+                        console.log(`[Orbit] Completed ${maxRevolutions} revolutions - auto-stopping`);
+                        stopOrbit();
+                        return;
+                    }
+                    
+                    // Update progress display (throttled to every 100ms)
+                    if (orbitProgressText && currentTime - lastProgressUpdateTime > 100) {
+                        orbitProgressText.textContent = `Revolution: ${completedRevolutions.toFixed(2)} / ${maxRevolutions.toFixed(2)}`;
+                        lastProgressUpdateTime = currentTime;
+                    }
+                    
+                    // ========== IMPROVED COORDINATE TRANSFORMATION ==========
                     const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint);
-                    const earthRadius = 6371000; // meters
+                    const ellipsoid = viewer.scene.globe.ellipsoid;
                     
-                    // Convert radius to angular distance (radians)
-                    // Account for latitude-dependent longitude scaling
-                    const angularRadiusLat = radius / earthRadius;
-                    const angularRadiusLon = radius / (earthRadius * Math.cos(centerCartographic.latitude));
+                    // Use Cesium's accurate geodesic calculation
+                    // Calculate bearing from center (orbitAngle is already our bearing)
+                    const bearing = orbitAngle;
                     
-                    const cameraLongitude = centerCartographic.longitude + angularRadiusLon * Math.cos(orbitAngle);
-                    const cameraLatitude = centerCartographic.latitude + angularRadiusLat * Math.sin(orbitAngle);
+                    // For better accuracy, use Cesium's geodesic methods
+                    // Calculate destination point at given bearing and distance
+                    const centerLon = centerCartographic.longitude;
+                    const centerLat = centerCartographic.latitude;
                     
-                    // Periodic verification (every 5 seconds)
-                    if (Math.floor(elapsed) % 5 === 0 && Math.floor(elapsed * 100) % 100 < 20) {
-                        // Use Cesium's distance calculation for accuracy
+                    // Convert to more accurate spherical calculation
+                    const angularDistance = radius / ellipsoid.maximumRadius; // radians
+                    
+                    // Spherical law of cosines for destination point
+                    const cameraLatitude = Math.asin(
+                        Math.sin(centerLat) * Math.cos(angularDistance) +
+                        Math.cos(centerLat) * Math.sin(angularDistance) * Math.sin(bearing)
+                    );
+                    
+                    const cameraLongitude = centerLon + Math.atan2(
+                        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(centerLat),
+                        Math.cos(angularDistance) - Math.sin(centerLat) * Math.sin(cameraLatitude)
+                    );
+                    
+                    // ========== OPTIMIZED VERIFICATION ==========
+                    const VERIFICATION_INTERVAL = 5000; // 5 seconds
+                    if (currentTime - lastVerificationTime > VERIFICATION_INTERVAL) {
                         const currentPos = Cesium.Cartesian3.fromRadians(cameraLongitude, cameraLatitude, orbitStartAltitude);
-                        const centerPos = Cesium.Cartesian3.fromRadians(
-                            centerCartographic.longitude, 
-                            centerCartographic.latitude, 
-                            orbitStartAltitude
-                        );
-                        const actualDistance = Cesium.Cartesian3.distance(currentPos, centerPos);
-                        console.log(`[Orbit] Verification: Distance from center = ${actualDistance.toFixed(1)}m (expected: ${radius}m)`);
+                        const actualDistance = Cesium.Cartesian3.distance(currentPos, orbitCenterPoint);
+                        const error = Math.abs(actualDistance - radius);
+                        console.log(`[Orbit] Verification: Distance=${actualDistance.toFixed(1)}m, Target=${radius}m, Error=${error.toFixed(1)}m, Rev=${completedRevolutions.toFixed(2)}`);
+                        lastVerificationTime = currentTime;
                     }
                     
                     // QGC-style: Maintain current altitude (can be modified by takeoff/land)
@@ -3410,18 +3519,24 @@
                     
                     // If takeoff/land is active, integrate their altitude changes
                     if (isTakeoffActive || isLandActive) {
-                        // Get the altitude change from takeoff/land
                         const currentAlt = camera.positionCartographic.height;
                         const verticalSpeed = parseFloat(document.getElementById('droneVerticalSpeed')?.value) || 5;
                         const altitudeChange = (isTakeoffActive ? verticalSpeed : -verticalSpeed) * deltaTime;
                         finalAltitude = currentAlt + altitudeChange;
+                        orbitStartAltitude = finalAltitude; // Update reference altitude
                     }
                     
-                    // Calculate heading to face center (QGC: camera faces inward by default)
-                    // Then apply yaw offset for gimbal control
-                    const headingToCenter = orbitAngle + Math.PI;
+                    // ========== IMPROVED HEADING CALCULATION ==========
+                    // Calculate accurate geodesic bearing from camera to center
+                    const cameraCart = new Cesium.Cartographic(cameraLongitude, cameraLatitude, 0);
+                    const geodesic = new Cesium.EllipsoidGeodesic(cameraCart, centerCartographic);
+                    
+                    // Get the initial bearing (heading) from camera towards center
+                    let headingToCenter = geodesic.startHeading;
+                    
+                    // Apply yaw offset for gimbal control
                     const yawOffsetRadians = Cesium.Math.toRadians(yawOffsetDegrees);
-                    const finalHeading = headingToCenter + yawOffsetRadians;
+                    const finalHeading = Cesium.Math.zeroToTwoPi(headingToCenter + yawOffsetRadians);
                     
                     // Set camera position and orientation
                     // This emulates a drone with gimbal: drone orbits, gimbal points at center + offset
@@ -3444,6 +3559,35 @@
                 animateOrbit();
             }
             
+            // Pause/Resume orbit
+            function togglePause() {
+                if (!isOrbiting) return;
+                
+                const pauseStartTime = Date.now();
+                isPaused = !isPaused;
+                
+                if (isPaused) {
+                    // Store when we paused
+                    window.orbitPauseStartTime = pauseStartTime;
+                    if (pauseOrbitBtn) {
+                        pauseOrbitBtn.innerHTML = '<i class="fas fa-play"></i> Resume (Space)';
+                        pauseOrbitBtn.classList.add('active');
+                    }
+                    console.log('[Orbit] Paused');
+                } else {
+                    // Calculate how long we were paused and add to total
+                    const pauseDuration = pauseStartTime - (window.orbitPauseStartTime || pauseStartTime);
+                    orbitPausedTime += pauseDuration;
+                    orbitLastFrameTime = Date.now(); // Reset frame time to avoid jump
+                    
+                    if (pauseOrbitBtn) {
+                        pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause (Space)';
+                        pauseOrbitBtn.classList.remove('active');
+                    }
+                    console.log('[Orbit] Resumed (paused for ' + (pauseDuration/1000).toFixed(1) + 's)');
+                }
+            }
+            
             // Stop orbit
             function stopOrbit() {
                 if (orbitAnimationId) {
@@ -3452,15 +3596,29 @@
                 }
                 
                 isOrbiting = false;
+                isPaused = false;
                 orbitStartTime = null;
                 orbitLastFrameTime = null;
+                orbitPausedTime = 0;
                 orbitCenterPoint = null;
                 orbitInitialAngle = 0;
                 orbitStartAltitude = 0;
+                lastVerificationTime = 0;
+                lastProgressUpdateTime = 0;
                 
+                // Remove visualization
+                removeOrbitVisualization();
+                
+                // Update UI
                 orbitBtn.classList.remove('active');
                 orbitBtn.innerHTML = '<i class="fas fa-circle-notch"></i> Orbit';
                 stopOrbitContainer.style.display = 'none';
+                if (pauseOrbitContainer) pauseOrbitContainer.style.display = 'none';
+                if (orbitProgressContainer) orbitProgressContainer.style.display = 'none';
+                if (pauseOrbitBtn) {
+                    pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause (Space)';
+                    pauseOrbitBtn.classList.remove('active');
+                }
                 
                 console.log('[Orbit] Stopped');
             }
@@ -3468,15 +3626,21 @@
             // Event listeners
             orbitBtn.addEventListener('click', startOrbit);
             stopOrbitBtn.addEventListener('click', stopOrbit);
+            if (pauseOrbitBtn) {
+                pauseOrbitBtn.addEventListener('click', togglePause);
+            }
             
-            // Stop on Escape key
+            // Keyboard shortcuts
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape' && isOrbiting) {
                     stopOrbit();
+                } else if (e.key === ' ' && isOrbiting) {
+                    e.preventDefault(); // Prevent page scroll
+                    togglePause();
                 }
             });
             
-            console.log('[Orbit] QGC-style orbit initialized');
+            console.log('[Orbit] Enhanced orbit system initialized with all improvements');
         })();
         
         // ========== URL-BASED EXPERIENCE SHARING ==========
