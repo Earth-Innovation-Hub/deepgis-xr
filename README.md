@@ -2,7 +2,7 @@
 
 ## 🎥 Demo Video
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/Plk7JyJsY7Y?si=zqeQBhl8sFlAe6x2" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+<a href="https://www.youtube.com/embed/Plk7JyJsY7Y?si=zqeQBhl8sFlAe6x2">DemoReel</a>
 
 <img width="2558" height="1433" alt="image" src="https://github.com/user-attachments/assets/6ef67028-e9dd-4a6e-96f1-c0f74da05d37" />
 <img width="2556" height="1435" alt="image" src="https://github.com/user-attachments/assets/c06ab8f8-54c3-453f-b112-72a77e8453fa" />
