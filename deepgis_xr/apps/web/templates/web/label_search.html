@@ -1923,7 +1923,7 @@
             </div>
             <div class="joystick-value" id="leftJoystickValue">0,0</div>
             <div class="joystick-stick" id="leftJoystickStick"></div>
-            <div class="joystick-label">Throttle / Yaw</div>
+            <div class="joystick-label">Pitch / Roll</div>
         </div>
     </div>
     
@@ -1935,7 +1935,7 @@
             </div>
             <div class="joystick-value" id="rightJoystickValue">0,0</div>
             <div class="joystick-stick" id="rightJoystickStick"></div>
-            <div class="joystick-label">Pitch / Roll</div>
+            <div class="joystick-label">Throttle / Yaw</div>
         </div>
     </div>
 
@@ -2921,14 +2921,15 @@
                     // Get current speed settings
                     const speeds = getSpeedSettings();
                     
-                    // ========== QGC MODE 2: LEFT STICK = THROTTLE (Y) + YAW (X) ==========
-                    // Left joystick: altitude/throttle (Y) and yaw/rotation (X)
-                    if (leftState.x !== 0 || leftState.y !== 0) {
-                        const yawRate = leftState.x * maxYawRate * (Math.PI / 180); // Convert to radians
-                        const climbRate = leftState.y * speeds.vertical;
+                    // ========== QGC MODE 2: LEFT PHYSICAL STICK = THROTTLE (Y) + YAW (X) ==========
+                    // Note: rightState = left physical stick (CSS: left: 40px)
+                    // Right joystick element: altitude/throttle (Y) and yaw/rotation (X)
+                    if (rightState.x !== 0 || rightState.y !== 0) {
+                        const yawRate = rightState.x * maxYawRate * (Math.PI / 180); // Convert to radians
+                        const climbRate = rightState.y * speeds.vertical;
                         
                         // Yaw rotation (left/right rotation)
-                        if (leftState.x !== 0) {
+                        if (rightState.x !== 0) {
                             const newHeading = heading + (yawRate * 0.016);
                             camera.setView({
                                 destination: camera.position,
@@ -2941,17 +2942,18 @@
                         }
                         
                         // Throttle (altitude up/down)
-                        if (leftState.y !== 0) {
+                        if (rightState.y !== 0) {
                             const moveDistance = climbRate * 0.016;
                             camera.moveUp(moveDistance);
                         }
                     }
                     
-                    // ========== QGC MODE 2: RIGHT STICK = PITCH (Y) + ROLL (X) ==========
-                    // Right joystick: pitch/forward-backward (Y) and roll/strafe (X)
-                    if (rightState.x !== 0 || rightState.y !== 0) {
-                        const forwardSpeed = rightState.y * speeds.horizontal; // Pitch: Forward/backward
-                        const strafeSpeed = rightState.x * speeds.horizontal; // Roll: Left/right strafe
+                    // ========== QGC MODE 2: RIGHT PHYSICAL STICK = PITCH (Y) + ROLL (X) ==========
+                    // Note: leftState = right physical stick (CSS: right: 40px)
+                    // Left joystick element: pitch/forward-backward (Y) and roll/strafe (X)
+                    if (leftState.x !== 0 || leftState.y !== 0) {
+                        const forwardSpeed = leftState.y * speeds.horizontal; // Pitch: Forward/backward
+                        const strafeSpeed = leftState.x * speeds.horizontal; // Roll: Left/right strafe
                         
                         // Calculate movement in world space
                         const forwardVector = Cesium.Cartesian3.normalize(
@@ -2998,7 +3000,7 @@
                     rightState = { x: 0, y: 0 };
                 }
                 
-                console.log('[Joysticks] Virtual joysticks initialized (QGC Mode 2: Left=Throttle+Yaw, Right=Pitch+Roll)');
+                console.log('[Joysticks] Virtual joysticks initialized (QGC Mode 2: Left Physical=Throttle+Yaw, Right Physical=Pitch+Roll)');
             })();
             
             // Style World Sampler when it appears in HUD container
