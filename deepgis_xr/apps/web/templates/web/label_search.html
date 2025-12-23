@@ -1923,7 +1923,7 @@
             </div>
             <div class="joystick-value" id="leftJoystickValue">0,0</div>
             <div class="joystick-stick" id="leftJoystickStick"></div>
-            <div class="joystick-label">Movement</div>
+            <div class="joystick-label">Throttle / Yaw</div>
         </div>
     </div>
     
@@ -1935,7 +1935,7 @@
             </div>
             <div class="joystick-value" id="rightJoystickValue">0,0</div>
             <div class="joystick-stick" id="rightJoystickStick"></div>
-            <div class="joystick-label">Altitude / Yaw</div>
+            <div class="joystick-label">Pitch / Roll</div>
         </div>
     </div>
 
@@ -2902,7 +2902,7 @@
                 setupJoystick(leftStick, leftJoystick.querySelector('.joystick-base'), leftValue, true);
                 setupJoystick(rightStick, rightJoystick.querySelector('.joystick-base'), rightValue, false);
                 
-                // Camera movement loop
+                // Camera movement loop - QGC Mode 2 mapping
                 function updateCameraMovement() {
                     const viewer = window.AppState?.viewer || window.viewer;
                     if (!viewer || !viewer.camera) {
@@ -2921,10 +2921,37 @@
                     // Get current speed settings
                     const speeds = getSpeedSettings();
                     
-                    // Left joystick: forward/backward (Y) and strafe left/right (X)
+                    // ========== QGC MODE 2: LEFT STICK = THROTTLE (Y) + YAW (X) ==========
+                    // Left joystick: altitude/throttle (Y) and yaw/rotation (X)
                     if (leftState.x !== 0 || leftState.y !== 0) {
-                        const forwardSpeed = leftState.y * speeds.horizontal; // Forward/backward
-                        const strafeSpeed = leftState.x * speeds.horizontal; // Left/right
+                        const yawRate = leftState.x * maxYawRate * (Math.PI / 180); // Convert to radians
+                        const climbRate = leftState.y * speeds.vertical;
+                        
+                        // Yaw rotation (left/right rotation)
+                        if (leftState.x !== 0) {
+                            const newHeading = heading + (yawRate * 0.016);
+                            camera.setView({
+                                destination: camera.position,
+                                orientation: {
+                                    heading: newHeading,
+                                    pitch: pitch,
+                                    roll: roll
+                                }
+                            });
+                        }
+                        
+                        // Throttle (altitude up/down)
+                        if (leftState.y !== 0) {
+                            const moveDistance = climbRate * 0.016;
+                            camera.moveUp(moveDistance);
+                        }
+                    }
+                    
+                    // ========== QGC MODE 2: RIGHT STICK = PITCH (Y) + ROLL (X) ==========
+                    // Right joystick: pitch/forward-backward (Y) and roll/strafe (X)
+                    if (rightState.x !== 0 || rightState.y !== 0) {
+                        const forwardSpeed = rightState.y * speeds.horizontal; // Pitch: Forward/backward
+                        const strafeSpeed = rightState.x * speeds.horizontal; // Roll: Left/right strafe
                         
                         // Calculate movement in world space
                         const forwardVector = Cesium.Cartesian3.normalize(
@@ -2953,31 +2980,6 @@
                         camera.moveRight(strafeDistance);
                     }
                     
-                    // Right joystick: altitude (Y) and yaw (X)
-                    if (rightState.x !== 0 || rightState.y !== 0) {
-                        const yawRate = rightState.x * maxYawRate * (Math.PI / 180); // Convert to radians
-                        const climbRate = rightState.y * speeds.vertical;
-                        
-                        // Rotate camera (yaw)
-                        if (rightState.x !== 0) {
-                            const newHeading = heading + (yawRate * 0.016);
-                            camera.setView({
-                                destination: camera.position,
-                                orientation: {
-                                    heading: newHeading,
-                                    pitch: pitch,
-                                    roll: roll
-                                }
-                            });
-                        }
-                        
-                        // Move up/down
-                        if (rightState.y !== 0) {
-                            const moveDistance = climbRate * 0.016;
-                            camera.moveUp(moveDistance);
-                        }
-                    }
-                    
                     animationFrameId = requestAnimationFrame(updateCameraMovement);
                 }
                 
@@ -2996,7 +2998,7 @@
                     rightState = { x: 0, y: 0 };
                 }
                 
-                console.log('[Joysticks] Virtual joysticks initialized');
+                console.log('[Joysticks] Virtual joysticks initialized (QGC Mode 2: Left=Throttle+Yaw, Right=Pitch+Roll)');
             })();
             
             // Style World Sampler when it appears in HUD container
