@@ -1,7 +1,5 @@
 # DeepGIS-XR
 
-## 🎥 Demo Video
-
 <a href="https://www.youtube.com/embed/Plk7JyJsY7Y?si=zqeQBhl8sFlAe6x2">DemoReel</a>
 
 <img width="2558" height="1433" alt="image" src="https://github.com/user-attachments/assets/6ef67028-e9dd-4a6e-96f1-c0f74da05d37" />
