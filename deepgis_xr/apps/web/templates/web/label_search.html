@@ -3099,6 +3099,10 @@
                 landBtn.disabled = true;
                 
                 const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
+                
+                // Store initial heading when starting takeoff
+                const initialHeading = viewer.camera.heading;
+                
                 console.log(`[Takeoff] Starting climb at ${verticalSpeed} m/s (gimbal control enabled)`);
                 
                 function climb() {
@@ -3115,23 +3119,22 @@
                         const pitchDegrees = parseFloat(pitchSlider.value) || -10;
                         const yawDegrees = parseFloat(yawSlider.value) || 0;
                         
-                        // Get current position and orientation
-                        const position = camera.position.clone();
-                        const currentHeading = camera.heading;
-                        
-                        // Apply yaw offset to current heading
-                        const newHeading = currentHeading + Cesium.Math.toRadians(yawDegrees * 0.01); // Smooth yaw control
-                        const newPitch = Cesium.Math.toRadians(pitchDegrees);
+                        // Apply yaw offset to initial heading (same as orbit mode)
+                        // Base heading: initial direction when takeoff started
+                        // Yaw offset: added to base heading
+                        const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
+                        const finalHeading = Cesium.Math.zeroToTwoPi(initialHeading + yawOffsetRadians);
+                        const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move up while maintaining orientation
                         camera.moveUp(moveDistance);
                         
-                        // Apply gimbal orientation
+                        // Apply gimbal orientation (like orbit mode)
                         camera.setView({
                             destination: camera.position,
                             orientation: {
-                                heading: newHeading,
-                                pitch: newPitch,
+                                heading: finalHeading,
+                                pitch: finalPitch,
                                 roll: 0
                             }
                         });
@@ -3166,6 +3169,10 @@
                 takeoffBtn.disabled = true;
                 
                 const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
+                
+                // Store initial heading when starting landing
+                const initialHeading = viewer.camera.heading;
+                
                 console.log(`[Land] Starting descent at ${verticalSpeed} m/s (gimbal control enabled)`);
                 
                 function descend() {
@@ -3182,23 +3189,22 @@
                         const pitchDegrees = parseFloat(pitchSlider.value) || -10;
                         const yawDegrees = parseFloat(yawSlider.value) || 0;
                         
-                        // Get current position and orientation
-                        const position = camera.position.clone();
-                        const currentHeading = camera.heading;
-                        
-                        // Apply yaw offset to current heading
-                        const newHeading = currentHeading + Cesium.Math.toRadians(yawDegrees * 0.01); // Smooth yaw control
-                        const newPitch = Cesium.Math.toRadians(pitchDegrees);
+                        // Apply yaw offset to initial heading (same as orbit mode)
+                        // Base heading: initial direction when landing started
+                        // Yaw offset: added to base heading
+                        const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
+                        const finalHeading = Cesium.Math.zeroToTwoPi(initialHeading + yawOffsetRadians);
+                        const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move down while maintaining orientation
                         camera.moveDown(moveDistance);
                         
-                        // Apply gimbal orientation
+                        // Apply gimbal orientation (like orbit mode)
                         camera.setView({
                             destination: camera.position,
                             orientation: {
-                                heading: newHeading,
-                                pitch: newPitch,
+                                heading: finalHeading,
+                                pitch: finalPitch,
                                 roll: 0
                             }
                         });
