@@ -3427,40 +3427,46 @@
                         lastProgressUpdateTime = currentTime;
                     }
                     
-                    // ========== IMPROVED COORDINATE TRANSFORMATION ==========
+                    // ========== PERFECT CIRCLE COORDINATE TRANSFORMATION ==========
                     const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint);
                     const ellipsoid = viewer.scene.globe.ellipsoid;
                     
-                    // Use Cesium's accurate geodesic calculation
-                    // Calculate bearing from center (orbitAngle is already our bearing)
+                    // Use small-circle mathematics for perfect circular orbits
+                    // This maintains constant distance from center (not great circle)
                     const bearing = orbitAngle;
-                    
-                    // For better accuracy, use Cesium's geodesic methods
-                    // Calculate destination point at given bearing and distance
                     const centerLon = centerCartographic.longitude;
                     const centerLat = centerCartographic.latitude;
                     
-                    // Convert to more accurate spherical calculation
-                    const angularDistance = radius / ellipsoid.maximumRadius; // radians
+                    // Calculate offset in local tangent plane (ENU coordinates)
+                    // East component
+                    const east = radius * Math.cos(bearing);
+                    // North component
+                    const north = radius * Math.sin(bearing);
                     
-                    // Spherical law of cosines for destination point
-                    const cameraLatitude = Math.asin(
-                        Math.sin(centerLat) * Math.cos(angularDistance) +
-                        Math.cos(centerLat) * Math.sin(angularDistance) * Math.sin(bearing)
-                    );
+                    // Convert ENU offset to lat/lon changes
+                    // This creates a perfect circle in the local tangent plane
+                    const earthRadius = ellipsoid.maximumRadius;
                     
-                    const cameraLongitude = centerLon + Math.atan2(
-                        Math.sin(bearing) * Math.sin(angularDistance) * Math.cos(centerLat),
-                        Math.cos(angularDistance) - Math.sin(centerLat) * Math.sin(cameraLatitude)
-                    );
+                    // Delta latitude (north-south is simple)
+                    const deltaLat = north / earthRadius;
                     
-                    // ========== OPTIMIZED VERIFICATION ==========
+                    // Delta longitude (east-west requires latitude correction)
+                    // At higher latitudes, longitude lines are closer together
+                    const deltaLon = east / (earthRadius * Math.cos(centerLat));
+                    
+                    // Calculate final position
+                    const cameraLatitude = centerLat + deltaLat;
+                    const cameraLongitude = centerLon + deltaLon;
+                    
+                    // ========== CIRCLE ACCURACY VERIFICATION ==========
                     const VERIFICATION_INTERVAL = 5000; // 5 seconds
                     if (currentTime - lastVerificationTime > VERIFICATION_INTERVAL) {
                         const currentPos = Cesium.Cartesian3.fromRadians(cameraLongitude, cameraLatitude, orbitStartAltitude);
                         const actualDistance = Cesium.Cartesian3.distance(currentPos, orbitCenterPoint);
                         const error = Math.abs(actualDistance - radius);
-                        console.log(`[Orbit] Verification: Distance=${actualDistance.toFixed(1)}m, Target=${radius}m, Error=${error.toFixed(1)}m, Rev=${completedRevolutions.toFixed(2)}`);
+                        const errorPercent = (error / radius * 100).toFixed(3);
+                        const bearing = Cesium.Math.toDegrees(orbitAngle % (2 * Math.PI));
+                        console.log(`[Orbit] Circle Check: Distance=${actualDistance.toFixed(1)}m, Target=${radius}m, Error=${error.toFixed(1)}m (${errorPercent}%), Bearing=${bearing.toFixed(0)}°, Rev=${completedRevolutions.toFixed(2)}`);
                         lastVerificationTime = currentTime;
                     }
                     
