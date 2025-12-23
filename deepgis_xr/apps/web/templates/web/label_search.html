@@ -3268,49 +3268,8 @@
             let orbitCenterPoint = null;
             let orbitInitialAngle = 0; // Starting angle in orbit (radians)
             let orbitStartAltitude = 0; // Altitude when orbit started (maintains current altitude)
-            let orbitPathEntity = null; // Visual orbit path
             let lastVerificationTime = 0; // For performance optimization
             let lastProgressUpdateTime = 0; // For UI updates
-            
-            // Visualize orbit path
-            function visualizeOrbitPath(centerPoint, radius) {
-                const viewer = window.AppState?.viewer || window.viewer;
-                if (!viewer) return;
-                
-                // Remove existing visualization
-                if (orbitPathEntity) {
-                    viewer.entities.remove(orbitPathEntity);
-                    orbitPathEntity = null;
-                }
-                
-                // Create circle entity at orbit center
-                try {
-                    orbitPathEntity = viewer.entities.add({
-                        position: centerPoint,
-                        ellipse: {
-                            semiMinorAxis: radius,
-                            semiMajorAxis: radius,
-                            height: 0,
-                            material: Cesium.Color.YELLOW.withAlpha(0.3),
-                            outline: true,
-                            outlineColor: Cesium.Color.YELLOW,
-                            outlineWidth: 2
-                        }
-                    });
-                    console.log('[Orbit] Path visualization created');
-                } catch (e) {
-                    console.warn('[Orbit] Could not create path visualization:', e);
-                }
-            }
-            
-            // Remove orbit path visualization
-            function removeOrbitVisualization() {
-                const viewer = window.AppState?.viewer || window.viewer;
-                if (viewer && orbitPathEntity) {
-                    viewer.entities.remove(orbitPathEntity);
-                    orbitPathEntity = null;
-                }
-            }
             
             // Start orbit (QGC-style: use current position as center by default)
             function startOrbit() {
@@ -3362,9 +3321,6 @@
                 
                 // Store current altitude - orbit will maintain this altitude
                 orbitStartAltitude = currentPosition.height;
-                
-                // Visualize orbit path
-                visualizeOrbitPath(orbitCenterPoint, radius);
                 
                 // Initialize orbit state BEFORE calculating angle
                 console.log(`[Orbit] Starting enhanced orbit: ${radius}m radius, ${maxRevolutions} revolutions, altitude ${orbitStartAltitude.toFixed(1)}m`);
@@ -3605,9 +3561,6 @@
                 orbitStartAltitude = 0;
                 lastVerificationTime = 0;
                 lastProgressUpdateTime = 0;
-                
-                // Remove visualization
-                removeOrbitVisualization();
                 
                 // Update UI
                 orbitBtn.classList.remove('active');
