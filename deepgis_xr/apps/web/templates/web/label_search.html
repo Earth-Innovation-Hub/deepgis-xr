@@ -2762,6 +2762,10 @@
                 let rightState = { x: 0, y: 0 };
                 let animationFrameId = null;
                 
+                // Expose joystick states globally for takeoff/landing integration
+                window.leftJoystickState = leftState;
+                window.rightJoystickState = rightState;
+                
                 // Joystick parameters
                 const maxDistance = 45; // pixels from center
                 const deadzone = 0.1; // 10% deadzone
@@ -2857,9 +2861,11 @@
                         // Update state
                         if (isLeft) {
                             leftState = { x: normalizedX, y: normalizedY };
+                            window.leftJoystickState = leftState;
                             valueDisplay.textContent = `${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)}`;
                         } else {
                             rightState = { x: normalizedX, y: normalizedY };
+                            window.rightJoystickState = rightState;
                             valueDisplay.textContent = `${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)}`;
                         }
                     }
@@ -2878,9 +2884,11 @@
                         
                         if (isLeft) {
                             leftState = { x: 0, y: 0 };
+                            window.leftJoystickState = leftState;
                             valueDisplay.textContent = '0,0';
                         } else {
                             rightState = { x: 0, y: 0 };
+                            window.rightJoystickState = rightState;
                             valueDisplay.textContent = '0,0';
                         }
                         
@@ -2998,6 +3006,8 @@
                     }
                     leftState = { x: 0, y: 0 };
                     rightState = { x: 0, y: 0 };
+                    window.leftJoystickState = leftState;
+                    window.rightJoystickState = rightState;
                 }
                 
                 console.log('[Joysticks] Virtual joysticks initialized (QGC Mode 2: Left Physical=Throttle+Yaw, Right Physical=Pitch+Roll)');
@@ -3105,9 +3115,10 @@
                 const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
                 
                 // Store initial heading when starting takeoff
-                const initialHeading = viewer.camera.heading;
+                let currentHeading = viewer.camera.heading;
+                const maxYawRate = 45; // degrees per second (same as joystick)
                 
-                console.log(`[Takeoff] Starting climb at ${verticalSpeed} m/s (gimbal control enabled)`);
+                console.log(`[Takeoff] Starting climb at ${verticalSpeed} m/s (gimbal + joystick yaw control enabled)`);
                 
                 function climb() {
                     if (!isClimbing) return;
@@ -3115,7 +3126,17 @@
                     const camera = viewer.camera;
                     const moveDistance = verticalSpeed * 0.016; // ~60fps
                     
-                    // Apply gimbal control (pitch and yaw from sliders)
+                    // Get joystick state for yaw rate control
+                    // Note: rightState = left physical stick (has yaw on X-axis)
+                    const rightJoystickState = window.rightJoystickState || { x: 0, y: 0 };
+                    const joystickYawRate = rightJoystickState.x * maxYawRate * (Math.PI / 180); // rad/s
+                    
+                    // Apply joystick yaw rate to current heading
+                    if (joystickYawRate !== 0) {
+                        currentHeading = currentHeading + (joystickYawRate * 0.016);
+                    }
+                    
+                    // Apply gimbal control (pitch and yaw offset from sliders)
                     const pitchSlider = document.getElementById('droneOrbitPitch');
                     const yawSlider = document.getElementById('droneOrbitYaw');
                     
@@ -3123,17 +3144,17 @@
                         const pitchDegrees = parseFloat(pitchSlider.value) || -10;
                         const yawDegrees = parseFloat(yawSlider.value) || 0;
                         
-                        // Apply yaw offset to initial heading (same as orbit mode)
-                        // Base heading: initial direction when takeoff started
-                        // Yaw offset: added to base heading
+                        // Apply yaw offset to current heading
+                        // Current heading includes joystick yaw adjustments
+                        // Yaw slider adds gimbal offset
                         const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
-                        const finalHeading = Cesium.Math.zeroToTwoPi(initialHeading + yawOffsetRadians);
+                        const finalHeading = Cesium.Math.zeroToTwoPi(currentHeading + yawOffsetRadians);
                         const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move up while maintaining orientation
                         camera.moveUp(moveDistance);
                         
-                        // Apply gimbal orientation (like orbit mode)
+                        // Apply gimbal orientation (heading + yaw offset, pitch from slider)
                         camera.setView({
                             destination: camera.position,
                             orientation: {
@@ -3175,9 +3196,10 @@
                 const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
                 
                 // Store initial heading when starting landing
-                const initialHeading = viewer.camera.heading;
+                let currentHeading = viewer.camera.heading;
+                const maxYawRate = 45; // degrees per second (same as joystick)
                 
-                console.log(`[Land] Starting descent at ${verticalSpeed} m/s (gimbal control enabled)`);
+                console.log(`[Land] Starting descent at ${verticalSpeed} m/s (gimbal + joystick yaw control enabled)`);
                 
                 function descend() {
                     if (!isDescending) return;
@@ -3185,7 +3207,17 @@
                     const camera = viewer.camera;
                     const moveDistance = verticalSpeed * 0.016; // ~60fps
                     
-                    // Apply gimbal control (pitch and yaw from sliders)
+                    // Get joystick state for yaw rate control
+                    // Note: rightState = left physical stick (has yaw on X-axis)
+                    const rightJoystickState = window.rightJoystickState || { x: 0, y: 0 };
+                    const joystickYawRate = rightJoystickState.x * maxYawRate * (Math.PI / 180); // rad/s
+                    
+                    // Apply joystick yaw rate to current heading
+                    if (joystickYawRate !== 0) {
+                        currentHeading = currentHeading + (joystickYawRate * 0.016);
+                    }
+                    
+                    // Apply gimbal control (pitch and yaw offset from sliders)
                     const pitchSlider = document.getElementById('droneOrbitPitch');
                     const yawSlider = document.getElementById('droneOrbitYaw');
                     
@@ -3193,17 +3225,17 @@
                         const pitchDegrees = parseFloat(pitchSlider.value) || -10;
                         const yawDegrees = parseFloat(yawSlider.value) || 0;
                         
-                        // Apply yaw offset to initial heading (same as orbit mode)
-                        // Base heading: initial direction when landing started
-                        // Yaw offset: added to base heading
+                        // Apply yaw offset to current heading
+                        // Current heading includes joystick yaw adjustments
+                        // Yaw slider adds gimbal offset
                         const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
-                        const finalHeading = Cesium.Math.zeroToTwoPi(initialHeading + yawOffsetRadians);
+                        const finalHeading = Cesium.Math.zeroToTwoPi(currentHeading + yawOffsetRadians);
                         const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move down while maintaining orientation
                         camera.moveDown(moveDistance);
                         
-                        // Apply gimbal orientation (like orbit mode)
+                        // Apply gimbal orientation (heading + yaw offset, pitch from slider)
                         camera.setView({
                             destination: camera.position,
                             orientation: {
