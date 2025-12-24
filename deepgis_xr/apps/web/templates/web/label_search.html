@@ -1578,12 +1578,12 @@
                 </div>
                 <div id="aircraftTrackingControls" style="display: none;">
                     <div class="form-group mb-2">
-                        <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Update Interval:</label>
+                        <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Update Interval (OpenSky limit ≥10s):</label>
                         <select class="form-select form-select-sm" id="aircraftUpdateInterval">
-                            <option value="5" selected>5 seconds</option>
-                            <option value="10">10 seconds</option>
+                            <option value="10" selected>10 seconds</option>
                             <option value="15">15 seconds</option>
                             <option value="30">30 seconds</option>
+                            <option value="60">60 seconds</option>
                         </select>
                     </div>
                     <div id="aircraftTrackingStatus" style="background: rgba(245, 158, 11, 0.1); padding: 8px; border-radius: 4px; margin-bottom: 8px; font-size: 0.8rem; color: #f59e0b;">
@@ -3152,7 +3152,7 @@
                         const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move up while maintaining orientation
-                        camera.moveUp(moveDistance);
+                    camera.moveUp(moveDistance);
                         
                         // Apply gimbal orientation (heading + yaw offset, pitch from slider)
                         camera.setView({
@@ -3233,7 +3233,7 @@
                         const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move down while maintaining orientation
-                        camera.moveDown(moveDistance);
+                    camera.moveDown(moveDistance);
                         
                         // Apply gimbal orientation (heading + yaw offset, pitch from slider)
                         camera.setView({

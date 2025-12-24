@@ -24,13 +24,26 @@ export class OpenSkyADSBLayer {
     // Optimization: Request management
     this.updateInProgress = false; // Prevent overlapping requests
     this.lastRequestTime = 0; // Track last API call
-    this.minRequestInterval = 5000; // Minimum 5 seconds between requests
+    this.minIntervalSeconds = 10; // Minimum interval to respect OpenSky anon quota (10 req/min)
+    this.minRequestInterval = this.minIntervalSeconds * 1000; // Enforce floor when scheduling
     this.lastSuccessfulData = null; // Cache last successful response
     this.lastSuccessfulBounds = null; // Cache bounds for last successful request
+    this.dataStale = false; // Flag to clear entities when cache is invalid for new view
     this.boundsChangeThreshold = 0.5; // Only refetch if bounds changed by >0.5 degrees
     this.consecutiveFailures = 0; // Track failures for backoff
     this.maxConsecutiveFailures = 3; // Back off after 3 failures
     this.adaptiveInterval = 5; // Start with 5 seconds, adapt based on rate limits
+    
+    // 100km radius limit for queries
+    this.maxQueryRadiusKm = 100; // Maximum 100km radius from camera
+    this.maxQueryRadiusM = 100000; // 100km in meters
+    
+    // Additional optimizations
+    this.lastCameraPosition = null; // Track camera movement
+    this.cameraMovementThreshold = 5000; // Only refetch if camera moved >5km
+    this.maxAircraftCount = 200; // Limit number of aircraft to display
+    this.minAltitude = -1000; // Filter out aircraft below -1000m (invalid data)
+    this.maxAltitude = 20000; // Filter out aircraft above 20km (rare, saves processing)
     
     // Aircraft icon colors by altitude (in meters)
     this.altitudeColors = {
@@ -45,71 +58,64 @@ export class OpenSkyADSBLayer {
   /**
    * Get current view bounds from Cesium viewer
    * Returns {lamin, lomin, lamax, lomax} or null if can't determine
+   * Optimized: Uses fixed 100km radius from camera position
    */
   getViewBounds() {
     try {
       const camera = this.viewer.camera;
-      const canvas = this.viewer.scene.canvas;
+      const cameraPosition = camera.positionCartographic;
       
-      // Get the four corners of the view
-      const corners = [
-        new Cesium.Cartesian2(0, 0),
-        new Cesium.Cartesian2(canvas.width, 0),
-        new Cesium.Cartesian2(0, canvas.height),
-        new Cesium.Cartesian2(canvas.width, canvas.height)
-      ];
-      
-      let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
-      let validCorners = 0;
-      
-      for (const corner of corners) {
-        const ray = camera.getPickRay(corner);
-        if (ray) {
-          const position = this.viewer.scene.globe.pick(ray, this.viewer.scene);
-          if (position) {
-            const cartographic = Cesium.Cartographic.fromCartesian(position);
-            const lat = Cesium.Math.toDegrees(cartographic.latitude);
-            const lon = Cesium.Math.toDegrees(cartographic.longitude);
-            
-            minLat = Math.min(minLat, lat);
-            maxLat = Math.max(maxLat, lat);
-            minLon = Math.min(minLon, lon);
-            maxLon = Math.max(maxLon, lon);
-            validCorners++;
-          }
-        }
+      if (!cameraPosition) {
+        console.warn('[OpenSky ADS-B] Camera position not available');
+        return null;
       }
       
-      // If we couldn't get valid corners, use camera position with a reasonable buffer
-      if (validCorners < 2) {
-        const cameraPosition = camera.positionCartographic;
-        const centerLat = Cesium.Math.toDegrees(cameraPosition.latitude);
-        const centerLon = Cesium.Math.toDegrees(cameraPosition.longitude);
-        const altitude = cameraPosition.height;
-        
-        // Buffer size based on altitude (larger buffer to reduce API calls)
-        // Increased buffer by 50% to reduce frequency of requests
-        const buffer = Math.min(7.5, Math.max(0.75, altitude / 33333));
-        
-        return {
-          lamin: centerLat - buffer,
-          lamax: centerLat + buffer,
-          lomin: centerLon - buffer,
-          lomax: centerLon + buffer
-        };
-      }
+      const centerLat = Cesium.Math.toDegrees(cameraPosition.latitude);
+      const centerLon = Cesium.Math.toDegrees(cameraPosition.longitude);
       
-      // Add larger buffer to bounds (reduces frequency of API calls)
-      // 20% buffer instead of 10% to reduce bounds change frequency
-      const latBuffer = (maxLat - minLat) * 0.2;
-      const lonBuffer = (maxLon - minLon) * 0.2;
+      // Calculate 100km radius bounds using geodesic math
+      // Convert 100km to angular distance (degrees)
+      const ellipsoid = Cesium.Ellipsoid.WGS84;
+      const earthRadius = ellipsoid.maximumRadius; // meters
+      const radiusMeters = this.maxQueryRadiusM; // 100km
       
-      return {
-        lamin: Math.max(-90, minLat - latBuffer),
-        lamax: Math.min(90, maxLat + latBuffer),
-        lomin: Math.max(-180, minLon - lonBuffer),
-        lomax: Math.min(180, maxLon + lonBuffer)
+      // Angular distance in radians
+      const angularDistance = radiusMeters / earthRadius;
+      
+      // Convert to degrees
+      const angularDistanceDeg = Cesium.Math.toDegrees(angularDistance);
+      
+      // Calculate latitude bounds (simple: ±angular distance)
+      const latBuffer = angularDistanceDeg;
+      
+      // Calculate longitude bounds (account for latitude-dependent convergence)
+      // At equator: lonBuffer = angularDistanceDeg
+      // At higher latitudes: lonBuffer = angularDistanceDeg / cos(lat)
+      const latRad = Cesium.Math.toRadians(centerLat);
+      const cosLat = Math.cos(latRad);
+      
+      // Prevent division by zero at poles
+      const lonBuffer = angularDistanceDeg / Math.max(0.087, Math.abs(cosLat)); // Clamp to prevent extreme values
+      
+      // Calculate bounds
+      const bounds = {
+        lamin: Math.max(-90, centerLat - latBuffer),
+        lamax: Math.min(90, centerLat + latBuffer),
+        lomin: Math.max(-180, centerLon - lonBuffer),
+        lomax: Math.min(180, centerLon + lonBuffer)
       };
+      
+      // Verify bounds are reasonable
+      if (bounds.lamax - bounds.lamin > 10 || bounds.lomax - bounds.lomin > 10) {
+        console.warn('[OpenSky ADS-B] Calculated bounds seem too large, clamping');
+        // Fallback to smaller bounds if calculation seems wrong
+        bounds.lamin = Math.max(-90, centerLat - 1);
+        bounds.lamax = Math.min(90, centerLat + 1);
+        bounds.lomin = Math.max(-180, centerLon - 1);
+        bounds.lomax = Math.min(180, centerLon + 1);
+      }
+      
+      return bounds;
     } catch (error) {
       console.error('[OpenSky ADS-B] Error getting view bounds:', error);
       return null;
@@ -156,11 +162,8 @@ export class OpenSkyADSBLayer {
       return this.lastSuccessfulData; // Return cached data
     }
 
-    // Optimization: Check if bounds changed significantly
-    if (!this.boundsChangedSignificantly(bounds, this.lastSuccessfulBounds)) {
-      console.log('[OpenSky ADS-B] Bounds unchanged, using cached data');
-      return this.lastSuccessfulData; // Reuse cached data
-    }
+    // Always fetch on schedule so aircraft keep updating even when camera is stationary.
+    // We still use bounds to scope the query, but we do not skip polling based on bounds.
 
     // Mark request as in progress
     this.updateInProgress = true;
@@ -183,6 +186,14 @@ export class OpenSkyADSBLayer {
         console.warn('[OpenSky ADS-B] Rate limited by API, backing off');
         this.consecutiveFailures++;
         this.adaptiveInterval = Math.min(this.adaptiveInterval * 2, 60); // Double interval, max 60s
+        // If camera moved to a new area, invalidate cache so we don't show stale aircraft
+        if (this.boundsChangedSignificantly(bounds, this.lastSuccessfulBounds)) {
+          this.dataStale = true;
+          this.lastSuccessfulData = null;
+          this.lastSuccessfulBounds = null;
+          this.updateInProgress = false;
+          return null;
+        }
         this.updateInProgress = false;
         return this.lastSuccessfulData; // Return cached data
       }
@@ -197,6 +208,7 @@ export class OpenSkyADSBLayer {
       this.lastSuccessfulData = data;
       this.lastSuccessfulBounds = { ...bounds }; // Deep copy
       this.lastBounds = bounds;
+      this.dataStale = false;
       this.consecutiveFailures = 0;
       
       // Adaptive interval: reduce if successful (but not below 5s)
@@ -214,6 +226,13 @@ export class OpenSkyADSBLayer {
       if (this.consecutiveFailures >= this.maxConsecutiveFailures) {
         this.adaptiveInterval = Math.min(this.adaptiveInterval * 2, 60);
         console.warn(`[OpenSky ADS-B] ${this.consecutiveFailures} consecutive failures, backing off to ${this.adaptiveInterval}s`);
+      }
+      
+      // If camera moved since last good fetch, mark cache stale to avoid showing wrong region
+      if (bounds && this.boundsChangedSignificantly(bounds, this.lastSuccessfulBounds)) {
+        this.dataStale = true;
+        this.lastSuccessfulData = null;
+        this.lastSuccessfulBounds = null;
       }
       
       this.updateInProgress = false;
@@ -251,6 +270,14 @@ export class OpenSkyADSBLayer {
    * Calculate position at future time based on current heading and speed
    */
   calculateFuturePosition(lat, lon, alt, heading, speed, verticalRate, timeSeconds) {
+    // Input validation
+    if (!isFinite(lat) || !isFinite(lon) || !isFinite(alt) || 
+        !isFinite(heading) || !isFinite(speed) || !isFinite(timeSeconds) ||
+        speed < 0 || heading < 0 || heading > 360 || timeSeconds < 0) {
+      console.warn('[OpenSky ADS-B] Invalid input for position calculation:', {lat, lon, alt, heading, speed, timeSeconds});
+      return { latitude: lat, longitude: lon, altitude: alt };
+    }
+    
     // Convert heading to radians (0° = North, clockwise)
     const headingRad = Cesium.Math.toRadians(heading);
     
@@ -263,26 +290,51 @@ export class OpenSkyADSBLayer {
     
     // Use geodesic calculations for accurate position
     const ellipsoid = Cesium.Ellipsoid.WGS84;
-    const startCart = Cesium.Cartographic.fromDegrees(lon, lat, alt);
-    
-    // Calculate new position using bearing and distance
-    // Using ENU local tangent plane for simplicity
     const earthRadius = ellipsoid.maximumRadius;
     
-    // North and East components
+    // North and East components (aviation standard: 0°=North, 90°=East)
     const north = horizontalDistance * Math.cos(headingRad);
     const east = horizontalDistance * Math.sin(headingRad);
     
     // Convert to lat/lon deltas
     const deltaLat = north / earthRadius;
-    const deltaLon = east / (earthRadius * Math.cos(Cesium.Math.toRadians(lat)));
     
+    // Handle poles: avoid division by zero when cos(lat) ≈ 0
+    const latRad = Cesium.Math.toRadians(lat);
+    const cosLat = Math.cos(latRad);
+    
+    // If near poles (±85° or more), use simplified calculation
+    if (Math.abs(lat) > 85) {
+      // Near poles: longitude changes are minimal, use simplified approach
+      const deltaLon = east / (earthRadius * Math.max(0.087, Math.abs(cosLat))); // Clamp to prevent division by zero
+      const newLat = lat + Cesium.Math.toDegrees(deltaLat);
+      const newLon = lon + Cesium.Math.toDegrees(deltaLon);
+      
+      // Normalize longitude to -180 to 180
+      let normalizedLon = newLon;
+      while (normalizedLon > 180) normalizedLon -= 360;
+      while (normalizedLon < -180) normalizedLon += 360;
+      
+      return {
+        latitude: Math.max(-90, Math.min(90, newLat)), // Clamp latitude
+        longitude: normalizedLon,
+        altitude: newAltitude
+      };
+    }
+    
+    // Standard calculation for non-polar regions
+    const deltaLon = east / (earthRadius * cosLat);
     const newLat = lat + Cesium.Math.toDegrees(deltaLat);
     const newLon = lon + Cesium.Math.toDegrees(deltaLon);
     
+    // Normalize longitude to -180 to 180
+    let normalizedLon = newLon;
+    while (normalizedLon > 180) normalizedLon -= 360;
+    while (normalizedLon < -180) normalizedLon += 360;
+    
     return {
-      latitude: newLat,
-      longitude: newLon,
+      latitude: Math.max(-90, Math.min(90, newLat)), // Clamp latitude to valid range
+      longitude: normalizedLon,
       altitude: newAltitude
     };
   }
@@ -365,12 +417,85 @@ export class OpenSkyADSBLayer {
   }
 
   /**
-   * Update all aircraft from API response
+   * Calculate distance from camera to aircraft position
+   */
+  getDistanceFromCamera(aircraftLat, aircraftLon) {
+    try {
+      const camera = this.viewer.camera;
+      const cameraPos = camera.positionCartographic;
+      
+      if (!cameraPos) return Infinity;
+      
+      const cameraLat = Cesium.Math.toDegrees(cameraPos.latitude);
+      const cameraLon = Cesium.Math.toDegrees(cameraPos.longitude);
+      
+      // Calculate distance using geodesic
+      const startCart = Cesium.Cartographic.fromDegrees(cameraLon, cameraLat);
+      const endCart = Cesium.Cartographic.fromDegrees(aircraftLon, aircraftLat);
+      
+      const geodesic = new Cesium.EllipsoidGeodesic(startCart, endCart);
+      const distance = geodesic.surfaceDistance; // meters
+      
+      return distance;
+    } catch (error) {
+      return Infinity;
+    }
+  }
+
+  /**
+   * Check if camera has moved significantly
+   */
+  hasCameraMovedSignificantly() {
+    try {
+      const camera = this.viewer.camera;
+      const currentPos = camera.positionCartographic;
+      
+      if (!currentPos || !this.lastCameraPosition) {
+        this.lastCameraPosition = {
+          lat: Cesium.Math.toDegrees(currentPos.latitude),
+          lon: Cesium.Math.toDegrees(currentPos.longitude)
+        };
+        return true; // First time, consider it moved
+      }
+      
+      const currentLat = Cesium.Math.toDegrees(currentPos.latitude);
+      const currentLon = Cesium.Math.toDegrees(currentPos.longitude);
+      
+      // Calculate distance moved
+      const startCart = Cesium.Cartographic.fromDegrees(this.lastCameraPosition.lon, this.lastCameraPosition.lat);
+      const endCart = Cesium.Cartographic.fromDegrees(currentLon, currentLat);
+      const geodesic = new Cesium.EllipsoidGeodesic(startCart, endCart);
+      const distanceMoved = geodesic.surfaceDistance;
+      
+      if (distanceMoved > this.cameraMovementThreshold) {
+        this.lastCameraPosition = { lat: currentLat, lon: currentLon };
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      return true; // On error, assume moved
+    }
+  }
+
+  /**
+   * Update all aircraft from API response (optimized)
    */
   async updateAircraft() {
     if (!this.isEnabled) return;
 
+    // Note: Always fetch updates to keep aircraft animation smooth
+    // Camera movement check removed - we want animated aircraft even when camera is stationary
+    
     const data = await this.fetchAircraftStates();
+    
+    // If cache is marked stale (e.g., camera moved and fetch failed), clear and wait for fresh data
+    if (this.dataStale) {
+      this.clearAll();
+      this.dataStale = false;
+      return;
+    }
+    
     if (!data || !data.states) {
       return;
     }
@@ -379,15 +504,63 @@ export class OpenSkyADSBLayer {
     const seenIcao24s = new Set();
     const updateTime = new Date(now);
     const nextUpdateTime = new Date(now + this.updateIntervalSeconds * 1000);
+    
+    // Get camera position for distance filtering
+    const camera = this.viewer.camera;
+    const cameraPos = camera.positionCartographic;
+    const cameraLat = cameraPos ? Cesium.Math.toDegrees(cameraPos.latitude) : 0;
+    const cameraLon = cameraPos ? Cesium.Math.toDegrees(cameraPos.longitude) : 0;
 
-    // Update or add aircraft
+    // Filter and sort aircraft by distance (closest first)
+    const aircraftWithDistance = [];
+    
     for (const state of data.states) {
       const aircraft = this.parseStateVector(state);
       
       // Skip if no valid position
-      if (aircraft.latitude === null || aircraft.longitude === null) {
+      if (aircraft.latitude === null || aircraft.longitude === null ||
+          !isFinite(aircraft.latitude) || !isFinite(aircraft.longitude)) {
         continue;
       }
+      
+      // Validate data ranges
+      if (aircraft.latitude < -90 || aircraft.latitude > 90 ||
+          aircraft.longitude < -180 || aircraft.longitude > 180) {
+        continue;
+      }
+      
+      // Filter by altitude (remove invalid/extreme altitudes)
+      const altitude = aircraft.geoAltitude || aircraft.baroAltitude || 0;
+      if (altitude < this.minAltitude || altitude > this.maxAltitude) {
+        continue;
+      }
+      
+      // Calculate distance from camera
+      const distance = this.getDistanceFromCamera(aircraft.latitude, aircraft.longitude);
+      
+      // Filter by 100km radius
+      if (distance > this.maxQueryRadiusM) {
+        continue; // Skip aircraft outside 100km radius
+      }
+      
+      // Validate speed and heading if present
+      if (aircraft.velocity !== null && (aircraft.velocity < 0 || aircraft.velocity > 1000)) {
+        aircraft.velocity = null; // Disable animation for invalid speed
+      }
+      
+      if (aircraft.trueTrack !== null && (aircraft.trueTrack < 0 || aircraft.trueTrack > 360)) {
+        aircraft.trueTrack = null; // Disable animation for invalid heading
+      }
+      
+      aircraftWithDistance.push({ aircraft, distance });
+    }
+    
+    // Sort by distance (closest first) and limit count
+    aircraftWithDistance.sort((a, b) => a.distance - b.distance);
+    const limitedAircraft = aircraftWithDistance.slice(0, this.maxAircraftCount);
+
+    // Update or add aircraft (only closest N aircraft)
+    for (const { aircraft } of limitedAircraft) {
 
       seenIcao24s.add(aircraft.icao24);
       
@@ -407,7 +580,8 @@ export class OpenSkyADSBLayer {
       }
     }
 
-    console.log(`[OpenSky ADS-B] Updated: ${seenIcao24s.size} aircraft visible (animated: ${this.animationEnabled}, interval: ${this.adaptiveInterval.toFixed(1)}s)`);
+    const totalFiltered = data.states ? data.states.length - limitedAircraft.length : 0;
+    console.log(`[OpenSky ADS-B] Updated: ${seenIcao24s.size} aircraft visible (${totalFiltered} filtered by distance/altitude, radius: ${this.maxQueryRadiusKm}km, max: ${this.maxAircraftCount}, animated: ${this.animationEnabled}, interval: ${this.adaptiveInterval.toFixed(1)}s)`);
   }
 
   /**
@@ -524,7 +698,27 @@ export class OpenSkyADSBLayer {
     });
     
     // Debug: verify entity was added
-    console.log(`[OpenSky ADS-B] Added aircraft ${aircraft.icao24} at ${aircraft.latitude.toFixed(4)}, ${aircraft.longitude.toFixed(4)}, alt: ${altitude.toFixed(0)}m`);
+    if (altitude && isFinite(altitude) && altitude > -1000 && altitude < 100000) {
+      console.log(`[OpenSky ADS-B] Added aircraft ${aircraft.icao24} at ${aircraft.latitude.toFixed(4)}, ${aircraft.longitude.toFixed(4)}, alt: ${altitude.toFixed(0)}m, speed: ${aircraft.velocity?.toFixed(0) || 0}m/s, heading: ${aircraft.trueTrack?.toFixed(0) || 0}°`);
+    } else {
+      console.warn(`[OpenSky ADS-B] Added aircraft ${aircraft.icao24} with invalid altitude: ${altitude}`);
+    }
+    
+    // Verify entity is visible
+    if (entity && this.viewer) {
+      // Check if entity is in view
+      try {
+        const boundingSphere = entity.boundingSphere;
+        if (boundingSphere) {
+          const inView = this.viewer.camera.viewRectangle.intersect(boundingSphere);
+          if (!inView) {
+            console.log(`[OpenSky ADS-B] Aircraft ${aircraft.icao24} added but may be outside view`);
+          }
+        }
+      } catch (e) {
+        // Bounding sphere may not be available yet, ignore
+      }
+    }
   }
 
   /**
@@ -732,15 +926,16 @@ export class OpenSkyADSBLayer {
   /**
    * Start tracking aircraft (optimized)
    */
-  start(intervalSeconds = 5) {
+  start(intervalSeconds = 10) {
     if (this.isEnabled) {
       console.log('[OpenSky ADS-B] Already running');
       return;
     }
 
     this.isEnabled = true;
-    this.updateIntervalSeconds = intervalSeconds;
-    this.adaptiveInterval = intervalSeconds; // Start with requested interval
+    const clampedInterval = Math.max(intervalSeconds, this.minIntervalSeconds);
+    this.updateIntervalSeconds = clampedInterval;
+    this.adaptiveInterval = clampedInterval; // Start with requested interval respecting floor
 
     // Initial update
     this.updateAircraft();

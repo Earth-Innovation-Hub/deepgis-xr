@@ -123,8 +123,8 @@ class MissionPlanner {
         }
         
         try {
-            // Dynamically import the OpenSky ADS-B Layer
-            const module = await import('./utils/opensky-adsb.js');
+            // Dynamically import the OpenSky ADS-B Layer (animated version with smooth movement)
+            const module = await import('./utils/opensky-adsb-animated.js');
             OpenSkyADSBLayer = module.OpenSkyADSBLayer || module.default;
             
             // Create ADS-B Layer instance
@@ -203,7 +203,7 @@ class MissionPlanner {
             if (controls) controls.style.display = 'block';
             
             // Get selected interval
-            const interval = intervalSelect ? parseInt(intervalSelect.value) : 5;
+            const interval = intervalSelect ? parseInt(intervalSelect.value) : 10;
             
             // Start tracking
             this.adsbLayer.start(interval);
@@ -219,6 +219,10 @@ class MissionPlanner {
             // Stop tracking
             this.adsbLayer.stop();
             this.aircraftTrackingEnabled = false;
+            
+            // Remove aircraft visuals when tracking is off
+            this.adsbLayer.clearAll();
+            this.updateAircraftCount();
             
             // Stop count update
             if (this.aircraftCountInterval) {

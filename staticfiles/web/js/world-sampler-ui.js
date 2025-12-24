@@ -1964,6 +1964,90 @@ class WorldSamplerUI {
     }
     
     /**
+     * Wait until the camera stops moving so capture/projection matches the rendered frame
+     */
+    async waitForCameraStability(maxWaitMs = 800) {
+        const camera = this.viewer.camera;
+        const start = performance.now();
+        
+        let lastPosition = Cesium.Cartesian3.clone(camera.position);
+        let lastHeading = camera.heading;
+        let lastPitch = camera.pitch;
+        let lastRoll = camera.roll;
+        let stableFrames = 0;
+        
+        return new Promise((resolve) => {
+            const check = () => {
+                const pos = Cesium.Cartesian3.clone(camera.position);
+                const posDelta = Cesium.Cartesian3.distance(pos, lastPosition);
+                const headingDelta = Math.abs(camera.heading - lastHeading);
+                const pitchDelta = Math.abs(camera.pitch - lastPitch);
+                const rollDelta = Math.abs(camera.roll - lastRoll);
+                
+                // Treat camera as stable after two consecutive frames under tiny deltas
+                if (posDelta < 0.05 && 
+                    headingDelta < Cesium.Math.toRadians(0.05) &&
+                    pitchDelta < Cesium.Math.toRadians(0.05) &&
+                    rollDelta < Cesium.Math.toRadians(0.05)) {
+                    stableFrames++;
+                } else {
+                    stableFrames = 0;
+                }
+                
+                lastPosition = pos;
+                lastHeading = camera.heading;
+                lastPitch = camera.pitch;
+                lastRoll = camera.roll;
+                
+                if (stableFrames >= 2 || (performance.now() - start) > maxWaitMs) {
+                    resolve();
+                } else {
+                    requestAnimationFrame(check);
+                }
+            };
+            
+            check();
+        });
+    }
+    
+    /**
+     * Prepare the viewport for AI capture by pausing orbiting, waiting for morphs, and stabilizing the camera.
+     */
+    async prepareViewportForAnalysis(statusTextEl) {
+        const scene = this.viewer.scene;
+        let orbitWasActive = false;
+        
+        // If the view is morphing between 2D/3D, wait until it finishes to avoid mis-projection
+        if (scene.morphing) {
+            if (statusTextEl) statusTextEl.textContent = 'Waiting for view change to finish...';
+            await new Promise((resolve) => {
+                const onComplete = () => {
+                    scene.morphComplete.removeEventListener(onComplete);
+                    resolve();
+                };
+                scene.morphComplete.addEventListener(onComplete);
+            });
+        }
+        
+        // Pause orbit animations to capture a stable frame
+        if (this.orbitActive) {
+            orbitWasActive = true;
+            if (statusTextEl) statusTextEl.textContent = 'Stopping orbit for clean capture...';
+            this.stopOrbitMode();
+            this.cleanupOrbit();
+            await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+        
+        if (statusTextEl) statusTextEl.textContent = 'Stabilizing camera...';
+        await this.waitForCameraStability();
+        
+        // Give Cesium two frames to render the settled view
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        
+        return { orbitWasActive };
+    }
+    
+    /**
      * Analyze viewport using AI models (SAM or Zero-Shot Detection)
      */
     async analyzeViewportWithSAM() {
@@ -1971,16 +2055,22 @@ class WorldSamplerUI {
         const statusText = document.getElementById('samStatusText');
         const analyzeBtn = document.getElementById('analyzeViewportBtn');
         const analysisTypeSelect = document.getElementById('analysisTypeSelect');
+        let orbitPausedForAnalysis = false;
         
         // Get analysis type
         const analysisType = analysisTypeSelect ? analysisTypeSelect.value : 'sam';
         
         // Show status
         statusDiv.style.display = 'block';
-        statusText.textContent = 'Capturing viewport...';
+        statusText.textContent = 'Preparing viewport...';
         analyzeBtn.disabled = true;
         
         try {
+            // Ensure camera isn't moving (orbit / morph) before capture to keep projections aligned
+            const prepState = await this.prepareViewportForAnalysis(statusText);
+            orbitPausedForAnalysis = prepState.orbitWasActive;
+            statusText.textContent = 'Capturing viewport...';
+            
             // Ensure scene is fully rendered before capturing
             // Force a render and wait for it to complete
             this.viewer.scene.requestRender();
@@ -2196,6 +2286,9 @@ class WorldSamplerUI {
             this.showNotification(`SAM Analysis failed: ${error.message}`, 'error');
         } finally {
             analyzeBtn.disabled = false;
+            if (orbitPausedForAnalysis) {
+                this.showNotification('Orbit was stopped to run AI analysis. Click Orbit to resume.', 'info');
+            }
         }
     }
     
@@ -2219,6 +2312,8 @@ class WorldSamplerUI {
         const canvas = scene.canvas;
         const viewportWidth = canvas.width;
         const viewportHeight = canvas.height;
+        const sceneMode = scene.mode;
+        const pickPositionSupported = scene.pickPositionSupported && sceneMode === Cesium.SceneMode.SCENE3D;
         
         // Get camera position and orientation
         const position = camera.positionCartographic;
@@ -2238,11 +2333,15 @@ class WorldSamplerUI {
         // Convert screen corners to world coordinates
         // Use pickPosition to get terrain-aware coordinates, fallback to pickEllipsoid
         const worldCorners = corners.map(screenPos => {
-            // First try to pick from the terrain/globe
-            let cartesian = scene.pickPosition(screenPos);
+            let cartesian = null;
+            
+            // First try to pick from the terrain/globe if supported (3D only)
+            if (pickPositionSupported) {
+                cartesian = scene.pickPosition(screenPos);
+            }
             
             // Fallback to ellipsoid pick if pickPosition fails
-            if (!Cesium.defined(cartesian)) {
+            if (!Cesium.defined(cartesian) && scene.globe) {
                 cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
             }
             
@@ -2286,9 +2385,16 @@ class WorldSamplerUI {
             const screenPos = new Cesium.Cartesian2(screenX, screenY);
             
             // Try to pick position from terrain first
-            let cartesian = scene.pickPosition(screenPos);
+            let cartesian = null;
+            if (pickPositionSupported) {
+                cartesian = scene.pickPosition(screenPos);
+            }
             
             // Fallback to interpolated bounds if pickPosition fails
+            if (!Cesium.defined(cartesian) && scene.globe) {
+                cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+            }
+            
             if (!Cesium.defined(cartesian)) {
                 const lon = minLon + (x_norm * lonRange);
                 const lat = maxLat - (y_norm * latRange); // Invert Y axis
