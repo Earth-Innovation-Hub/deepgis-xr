@@ -2111,11 +2111,13 @@ class WorldSamplerUI {
                 }
                 
                 // Continue with analysis using clean viewport
+            const capturePose = viewportData.location;
+            this.lastCapturePose = capturePose;
                 
                 // Get parameters based on analysis type
                 let requestBody = {
                     image: viewportData.image,
-                    location: viewportData.location,
+                location: capturePose,
                     model_type: analysisType
                 };
                 
@@ -2209,6 +2211,7 @@ class WorldSamplerUI {
                     statusText.style.color = '#10b981';
                     
                     // Display results (all detection models use same display method)
+                    result.capture_pose = capturePose;
                     this.displayZeroShotResults(result);
                     
                     // Show notification
@@ -2233,6 +2236,7 @@ class WorldSamplerUI {
                     statusText.style.color = '#10b981';
                     
                     // Display SAM results
+                    result.capture_pose = capturePose;
                     this.displaySAMResults(result);
                     
                     // Show notification
@@ -2293,6 +2297,52 @@ class WorldSamplerUI {
     }
     
     /**
+     * Run projection-sensitive work using the original capture pose to avoid drift.
+     */
+    withCapturePose(capturePose, workFn) {
+        const camera = this.viewer.camera;
+        const scene = this.viewer.scene;
+        
+        if (!capturePose) {
+            return workFn();
+        }
+        
+        const originalPose = {
+            position: Cesium.Cartesian3.clone(camera.position),
+            heading: camera.heading,
+            pitch: camera.pitch,
+            roll: camera.roll
+        };
+        
+        try {
+            camera.setView({
+                destination: Cesium.Cartesian3.fromDegrees(
+                    capturePose.lon,
+                    capturePose.lat,
+                    capturePose.alt
+                ),
+                orientation: {
+                    heading: Cesium.Math.toRadians(capturePose.heading || 0),
+                    pitch: Cesium.Math.toRadians(capturePose.pitch || 0),
+                    roll: Cesium.Math.toRadians(capturePose.roll || 0)
+                }
+            });
+            scene.requestRender();
+            return workFn();
+        } finally {
+            camera.setView({
+                destination: originalPose.position,
+                orientation: {
+                    heading: originalPose.heading,
+                    pitch: originalPose.pitch,
+                    roll: originalPose.roll
+                }
+            });
+            scene.requestRender();
+        }
+    }
+    
+    /**
      * Display SAM segmentation results on Cesium map
      * @param {Object} result - SAM analysis result
      */
@@ -2307,185 +2357,163 @@ class WorldSamplerUI {
             this.viewer.dataSources.remove(this.samDataSource);
         }
         
-        const camera = this.viewer.camera;
-        const scene = this.viewer.scene;
-        const canvas = scene.canvas;
-        const viewportWidth = canvas.width;
-        const viewportHeight = canvas.height;
-        const sceneMode = scene.mode;
-        const pickPositionSupported = scene.pickPositionSupported && sceneMode === Cesium.SceneMode.SCENE3D;
+        const capturePose = result.capture_pose || this.lastCapturePose || null;
         
-        // Get camera position and orientation
-        const position = camera.positionCartographic;
-        const centerLon = Cesium.Math.toDegrees(position.longitude);
-        const centerLat = Cesium.Math.toDegrees(position.latitude);
-        const height = position.height;
-        
-        // Use Cesium's screen-to-world conversion for accurate mapping
-        // Get the four corners of the viewport in world coordinates
-        const corners = [
-            new Cesium.Cartesian2(0, 0),                    // Top-left
-            new Cesium.Cartesian2(viewportWidth, 0),       // Top-right
-            new Cesium.Cartesian2(viewportWidth, viewportHeight), // Bottom-right
-            new Cesium.Cartesian2(0, viewportHeight)       // Bottom-left
-        ];
-        
-        // Convert screen corners to world coordinates
-        // Use pickPosition to get terrain-aware coordinates, fallback to pickEllipsoid
-        const worldCorners = corners.map(screenPos => {
-            let cartesian = null;
+        this.withCapturePose(capturePose, () => {
+            const camera = this.viewer.camera;
+            const scene = this.viewer.scene;
+            const canvas = scene.canvas;
+            const viewportWidth = canvas.width;
+            const viewportHeight = canvas.height;
+            const sceneMode = scene.mode;
+            const pickPositionSupported = scene.pickPositionSupported && sceneMode === Cesium.SceneMode.SCENE3D;
             
-            // First try to pick from the terrain/globe if supported (3D only)
-            if (pickPositionSupported) {
-                cartesian = scene.pickPosition(screenPos);
-            }
-            
-            // Fallback to ellipsoid pick if pickPosition fails
-            if (!Cesium.defined(cartesian) && scene.globe) {
-                cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
-            }
-            
-            if (cartesian) {
-                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                return {
-                    lon: Cesium.Math.toDegrees(cartographic.longitude),
-                    lat: Cesium.Math.toDegrees(cartographic.latitude),
-                    height: cartographic.height
-                };
-            }
-            return null;
-        }).filter(c => c !== null);
-        
-        if (worldCorners.length < 2) {
-            console.warn('Could not determine viewport bounds, using approximate conversion');
-            // Fallback to approximate method
-            this.displaySAMResultsApproximate(result);
-            return;
-        }
-        
-        // Calculate viewport bounds
-        const lons = worldCorners.map(c => c.lon);
-        const lats = worldCorners.map(c => c.lat);
-        const minLon = Math.min(...lons);
-        const maxLon = Math.max(...lons);
-        const minLat = Math.min(...lats);
-        const maxLat = Math.max(...lats);
-        
-        const lonRange = maxLon - minLon;
-        const latRange = maxLat - minLat;
-        
-        // Create data source for SAM segments
-        this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
-        
-        // Convert normalized [0,1] coordinates to geographic coordinates
-        // Use a more accurate pixel-to-geographic transformation
-        const pixelToGeographic = (x_norm, y_norm) => {
-            const screenX = x_norm * viewportWidth;
-            const screenY = y_norm * viewportHeight;
-            const screenPos = new Cesium.Cartesian2(screenX, screenY);
-            
-            // Try to pick position from terrain first
-            let cartesian = null;
-            if (pickPositionSupported) {
-                cartesian = scene.pickPosition(screenPos);
-            }
-            
-            // Fallback to interpolated bounds if pickPosition fails
-            if (!Cesium.defined(cartesian) && scene.globe) {
-                cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
-            }
-            
-            if (!Cesium.defined(cartesian)) {
-                const lon = minLon + (x_norm * lonRange);
-                const lat = maxLat - (y_norm * latRange); // Invert Y axis
-                return [lon, lat];
-            }
-            
-            const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-            return [
-                Cesium.Math.toDegrees(cartographic.longitude),
-                Cesium.Math.toDegrees(cartographic.latitude)
+            // Get the four corners of the viewport in world coordinates
+            const corners = [
+                new Cesium.Cartesian2(0, 0),                    // Top-left
+                new Cesium.Cartesian2(viewportWidth, 0),       // Top-right
+                new Cesium.Cartesian2(viewportWidth, viewportHeight), // Bottom-right
+                new Cesium.Cartesian2(0, viewportHeight)       // Bottom-left
             ];
-        };
-        
-        const features = result.geojson.features.map((feature, index) => {
-            const props = feature.properties;
-            const coords = feature.geometry.coordinates[0]; // Polygon coordinates
             
-            // Convert normalized [0,1] coordinates to geographic using accurate transformation
-            const geographicCoords = coords.map(([x_norm, y_norm]) => 
-                pixelToGeographic(x_norm, y_norm)
-            );
-            
-            return {
-                type: 'Feature',
-                geometry: {
-                    type: 'Polygon',
-                    coordinates: [geographicCoords]
-                },
-                properties: {
-                    segment_id: props.segment_id || index + 1,
-                    area: props.area || 0,
-                    predicted_iou: props.iou || props.predicted_iou || 0,
-                    stability_score: props.stability || props.stability_score || 0
+            const worldCorners = corners.map(screenPos => {
+                let cartesian = null;
+                
+                // First try to pick from the terrain/globe if supported (3D only)
+                if (pickPositionSupported) {
+                    cartesian = scene.pickPosition(screenPos);
                 }
+                
+                // Fallback to ellipsoid pick if pickPosition fails
+                if (!Cesium.defined(cartesian) && scene.globe) {
+                    cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+                }
+                
+                if (cartesian) {
+                    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+                    return {
+                        lon: Cesium.Math.toDegrees(cartographic.longitude),
+                        lat: Cesium.Math.toDegrees(cartographic.latitude),
+                        height: cartographic.height
+                    };
+                }
+                return null;
+            }).filter(c => c !== null);
+            
+            if (worldCorners.length < 2) {
+                console.warn('Could not determine viewport bounds, using approximate conversion');
+                this.displaySAMResultsApproximate(result);
+                return;
+            }
+            
+            const lons = worldCorners.map(c => c.lon);
+            const lats = worldCorners.map(c => c.lat);
+            const minLon = Math.min(...lons);
+            const maxLon = Math.max(...lons);
+            const minLat = Math.min(...lats);
+            const maxLat = Math.max(...lats);
+            
+            const lonRange = maxLon - minLon;
+            const latRange = maxLat - minLat;
+            
+            this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
+            
+            const pixelToGeographic = (x_norm, y_norm) => {
+                const screenX = x_norm * viewportWidth;
+                const screenY = y_norm * viewportHeight;
+                const screenPos = new Cesium.Cartesian2(screenX, screenY);
+                
+                let cartesian = null;
+                if (pickPositionSupported) {
+                    cartesian = scene.pickPosition(screenPos);
+                }
+                
+                if (!Cesium.defined(cartesian) && scene.globe) {
+                    cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+                }
+                
+                if (!Cesium.defined(cartesian)) {
+                    const lon = minLon + (x_norm * lonRange);
+                    const lat = maxLat - (y_norm * latRange); // Invert Y axis
+                    return [lon, lat];
+                }
+                
+                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+                return [
+                    Cesium.Math.toDegrees(cartographic.longitude),
+                    Cesium.Math.toDegrees(cartographic.latitude)
+                ];
             };
-        });
-        
-        const convertedGeoJSON = {
-            type: 'FeatureCollection',
-            features: features
-        };
-        
-        // Load and style
-        this.samDataSource.load(convertedGeoJSON).then(() => {
-            const entities = this.samDataSource.entities.values;
             
-            entities.forEach((entity, index) => {
-                const props = entity.properties;
-                const segmentId = props.segment_id?.getValue() || index + 1;
-                const area = props.area?.getValue() || 0;
-                const iou = props.predicted_iou?.getValue() || 0;
+            const features = result.geojson.features.map((feature, index) => {
+                const props = feature.properties;
+                const coords = feature.geometry.coordinates[0];
+                const geographicCoords = coords.map(([x_norm, y_norm]) => 
+                    pixelToGeographic(x_norm, y_norm)
+                );
                 
-                // Color based on segment ID (for variety)
-                const hue = (segmentId * 137.508) % 360; // Golden angle for color distribution
-                const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4); // More visible opacity
-                
-                if (entity.polygon) {
-                    entity.polygon.material = color;
-                    entity.polygon.outline = true;
-                    entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
-                    entity.polygon.outlineWidth = 2;
-                    entity.polygon.extrudedHeight = 0; // Flat on ground
-                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
-                }
-                
-                // Add description with segment info
-                entity.description = `
-                    <table class="table table-sm" style="color: white;">
-                        <tr><td><strong>Segment ID:</strong></td><td>${segmentId}</td></tr>
-                        <tr><td><strong>Area:</strong></td><td>${area} pixels</td></tr>
-                        <tr><td><strong>Quality (IoU):</strong></td><td>${iou.toFixed(3)}</td></tr>
-                        <tr><td><strong>Stability:</strong></td><td>${(props.stability_score?.getValue() || 0).toFixed(3)}</td></tr>
-                    </table>
-                `;
+                return {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [geographicCoords]
+                    },
+                    properties: {
+                        segment_id: props.segment_id || index + 1,
+                        area: props.area || 0,
+                        predicted_iou: props.iou || props.predicted_iou || 0,
+                        stability_score: props.stability || props.stability_score || 0
+                    }
+                };
             });
             
-            // Add to viewer
-            this.viewer.dataSources.add(this.samDataSource);
+            const convertedGeoJSON = {
+                type: 'FeatureCollection',
+                features: features
+            };
             
-            console.log(`Displayed ${entities.length} SAM segments on map`);
-            console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
-            
-            // Show summary
-            const avgIoU = features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length;
-            this.showNotification(
-                `SAM: ${result.num_segments} segments displayed (avg quality: ${avgIoU.toFixed(2)})`,
-                'success'
-            );
-        }).catch(error => {
-            console.error('Error loading SAM GeoJSON:', error);
-            this.showNotification('Error displaying SAM results on map', 'error');
+            this.samDataSource.load(convertedGeoJSON).then(() => {
+                const entities = this.samDataSource.entities.values;
+                
+                entities.forEach((entity, index) => {
+                    const props = entity.properties;
+                    const segmentId = props.segment_id?.getValue() || index + 1;
+                    const area = props.area?.getValue() || 0;
+                    const iou = props.predicted_iou?.getValue() || 0;
+                    
+                    const hue = (segmentId * 137.508) % 360;
+                    const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4);
+                    
+                    if (entity.polygon) {
+                        entity.polygon.material = color;
+                        entity.polygon.outline = true;
+                        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
+                        entity.polygon.outlineWidth = 2;
+                        entity.polygon.extrudedHeight = 0;
+                        entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                    }
+                    
+                    entity.description = `
+                        <table class="table table-sm" style="color: white;">
+                            <tr><td><strong>Segment ID:</strong></td><td>${segmentId}</td></tr>
+                            <tr><td><strong>Area:</strong></td><td>${area} pixels</td></tr>
+                            <tr><td><strong>Quality (IoU):</strong></td><td>${iou.toFixed(3)}</td></tr>
+                            <tr><td><strong>Stability:</strong></td><td>${(props.stability_score?.getValue() || 0).toFixed(3)}</td></tr>
+                        </table>
+                    `;
+                });
+                
+                this.viewer.dataSources.add(this.samDataSource);
+                
+                const avgIoU = features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length;
+                this.showNotification(
+                    `SAM: ${result.num_segments} segments displayed (avg quality: ${avgIoU.toFixed(2)})`,
+                    'success'
+                );
+            }).catch(error => {
+                console.error('Error loading SAM GeoJSON:', error);
+                this.showNotification('Error displaying SAM results on map', 'error');
+            });
         });
     }
     
@@ -2612,148 +2640,173 @@ class WorldSamplerUI {
             return null;
         }).filter(c => c !== null);
         
-        if (worldCorners.length < 2) {
-            console.warn('Could not determine viewport bounds for Zero-Shot, using approximate');
-            this.displayZeroShotResultsApproximate(result);
-            return;
-        }
+        const capturePose = result.capture_pose || this.lastCapturePose || null;
         
-        // Calculate viewport bounds
-        const lons = worldCorners.map(c => c.lon);
-        const lats = worldCorners.map(c => c.lat);
-        const minLon = Math.min(...lons);
-        const maxLon = Math.max(...lons);
-        const minLat = Math.min(...lats);
-        const maxLat = Math.max(...lats);
-        
-        const lonRange = maxLon - minLon;
-        const latRange = maxLat - minLat;
-        
-        // Create data source for detections
-        this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
-        
-        // Convert normalized [0,1] coordinates to geographic coordinates
-        // Use accurate pixel-to-geographic transformation
-        const pixelToGeographic = (x_norm, y_norm) => {
-            const screenX = x_norm * viewportWidth;
-            const screenY = y_norm * viewportHeight;
-            const screenPos = new Cesium.Cartesian2(screenX, screenY);
+        this.withCapturePose(capturePose, () => {
+            const camera = this.viewer.camera;
+            const scene = this.viewer.scene;
+            const canvas = scene.canvas;
+            const viewportWidth = canvas.width;
+            const viewportHeight = canvas.height;
+            const pickPositionSupported = scene.pickPositionSupported && scene.mode === Cesium.SceneMode.SCENE3D;
             
-            // Try to pick position from terrain first
-            let cartesian = scene.pickPosition(screenPos);
+            const corners = [
+                new Cesium.Cartesian2(0, 0),
+                new Cesium.Cartesian2(viewportWidth, 0),
+                new Cesium.Cartesian2(viewportWidth, viewportHeight),
+                new Cesium.Cartesian2(0, viewportHeight)
+            ];
             
-            // Fallback to interpolated bounds if pickPosition fails
-            if (!Cesium.defined(cartesian)) {
-                const lon = minLon + (x_norm * lonRange);
-                const lat = minLat + ((1 - y_norm) * latRange); // Flip Y (image origin is top-left)
-                return [lon, lat];
+            const worldCorners = corners.map(screenPos => {
+                let cartesian = null;
+                if (pickPositionSupported) {
+                    cartesian = scene.pickPosition(screenPos);
+                }
+                if (!Cesium.defined(cartesian) && scene.globe) {
+                    cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
+                }
+                if (cartesian) {
+                    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+                    return {
+                        lon: Cesium.Math.toDegrees(cartographic.longitude),
+                        lat: Cesium.Math.toDegrees(cartographic.latitude),
+                        height: cartographic.height
+                    };
+                }
+                return null;
+            }).filter(c => c !== null);
+            
+            if (worldCorners.length < 2) {
+                console.warn('Could not determine viewport bounds for Zero-Shot, using approximate');
+                this.displayZeroShotResultsApproximate(result);
+                return;
             }
             
-            const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-            return [
-                Cesium.Math.toDegrees(cartographic.longitude),
-                Cesium.Math.toDegrees(cartographic.latitude)
-            ];
-        };
-        
-        const features = result.geojson.features.map((feature, index) => {
-            const props = feature.properties;
-            const coords = feature.geometry.coordinates[0];
+            const lons = worldCorners.map(c => c.lon);
+            const lats = worldCorners.map(c => c.lat);
+            const minLon = Math.min(...lons);
+            const maxLon = Math.max(...lons);
+            const minLat = Math.min(...lats);
+            const maxLat = Math.max(...lats);
             
-            // Convert normalized coordinates to geographic using accurate transformation
-            const geographicCoords = coords.map(([x_norm, y_norm]) => 
-                pixelToGeographic(x_norm, y_norm)
-            );
+            const lonRange = maxLon - minLon;
+            const latRange = maxLat - minLat;
             
-            return {
-                type: 'Feature',
-                geometry: {
-                    type: 'Polygon',
-                    coordinates: [geographicCoords]
-                },
-                properties: {
-                    ...props,
-                    detection_id: props.class_id || index + 1,
-                    class_name: props.category || 'unknown',
-                    confidence: props.confidence || 0.0
-                }
-            };
-        });
-        
-        const convertedGeoJSON = {
-            type: 'FeatureCollection',
-            features: features
-        };
-        
-        // Load and style
-        this.samDataSource.load(convertedGeoJSON).then(() => {
-            const entities = this.samDataSource.entities.values;
+            this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
             
-            // Color map for different object classes
-            const classColors = {
-                'person': Cesium.Color.RED,
-                'car': Cesium.Color.BLUE,
-                'bicycle': Cesium.Color.GREEN,
-                'truck': Cesium.Color.ORANGE,
-                'bus': Cesium.Color.YELLOW,
-                'motorcycle': Cesium.Color.CYAN,
-                'bird': Cesium.Color.MAGENTA,
-                'cat': Cesium.Color.PINK,
-                'dog': Cesium.Color.LIME
-            };
-            
-            entities.forEach((entity, index) => {
-                const props = entity.properties;
-                const className = props.class_name?.getValue() || 'unknown';
-                const confidence = props.confidence?.getValue() || 0.0;
+            const pixelToGeographic = (x_norm, y_norm) => {
+                const screenX = x_norm * viewportWidth;
+                const screenY = y_norm * viewportHeight;
+                const screenPos = new Cesium.Cartesian2(screenX, screenY);
                 
-                // Get color for class or use default
-                const baseColor = classColors[className.toLowerCase()] || Cesium.Color.fromHsl(
-                    (index * 137.508) % 360 / 360, 0.7, 0.5
+                let cartesian = null;
+                if (pickPositionSupported) {
+                    cartesian = scene.pickPosition(screenPos);
+                }
+                
+                if (!Cesium.defined(cartesian)) {
+                    const lon = minLon + (x_norm * lonRange);
+                    const lat = minLat + ((1 - y_norm) * latRange); // Flip Y (image origin is top-left)
+                    return [lon, lat];
+                }
+                
+                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+                return [
+                    Cesium.Math.toDegrees(cartographic.longitude),
+                    Cesium.Math.toDegrees(cartographic.latitude)
+                ];
+            };
+            
+            const features = result.geojson.features.map((feature, index) => {
+                const props = feature.properties;
+                const coords = feature.geometry.coordinates[0];
+                
+                const geographicCoords = coords.map(([x_norm, y_norm]) => 
+                    pixelToGeographic(x_norm, y_norm)
                 );
                 
-                // Adjust opacity based on confidence
-                const opacity = 0.3 + (confidence * 0.4); // 0.3 to 0.7
-                const color = baseColor.withAlpha(opacity);
-                
-                // Style polygon
-                if (entity.polygon) {
-                    entity.polygon.material = color;
-                    entity.polygon.outline = true;
-                    entity.polygon.outlineColor = baseColor;
-                    entity.polygon.outlineWidth = 2;
-                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
-                }
-                
-                // Add label with class name and confidence
-                entity.label = {
-                    text: `${className} (${(confidence * 100).toFixed(0)}%)`,
-                    font: '12px sans-serif',
-                    fillColor: Cesium.Color.WHITE,
-                    outlineColor: Cesium.Color.BLACK,
-                    outlineWidth: 2,
-                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                    pixelOffset: new Cesium.Cartesian2(0, -10)
+                return {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'Polygon',
+                        coordinates: [geographicCoords]
+                    },
+                    properties: {
+                        ...props,
+                        detection_id: props.class_id || index + 1,
+                        class_name: props.category || 'unknown',
+                        confidence: props.confidence || 0.0
+                    }
                 };
-                
-                // Add description for info box
-                entity.description = `
-                    <table style="width: 100%;">
-                        <tr><td><strong>Class:</strong></td><td>${className}</td></tr>
-                        <tr><td><strong>Confidence:</strong></td><td>${(confidence * 100).toFixed(1)}%</td></tr>
-                        <tr><td><strong>Detection ID:</strong></td><td>${props.detection_id?.getValue() || index + 1}</td></tr>
-                    </table>
-                `;
             });
             
-            // Add to viewer
-            this.viewer.dataSources.add(this.samDataSource);
+            const convertedGeoJSON = {
+                type: 'FeatureCollection',
+                features: features
+            };
             
-            console.log(`Displayed ${entities.length} Zero-Shot detections on map`);
-            console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
-        }).catch(error => {
-            console.error('Error loading Zero-Shot GeoJSON:', error);
+            this.samDataSource.load(convertedGeoJSON).then(() => {
+                const entities = this.samDataSource.entities.values;
+                
+                const classColors = {
+                    'person': Cesium.Color.RED,
+                    'car': Cesium.Color.BLUE,
+                    'bicycle': Cesium.Color.GREEN,
+                    'truck': Cesium.Color.ORANGE,
+                    'bus': Cesium.Color.YELLOW,
+                    'motorcycle': Cesium.Color.CYAN,
+                    'bird': Cesium.Color.MAGENTA,
+                    'cat': Cesium.Color.PINK,
+                    'dog': Cesium.Color.LIME
+                };
+                
+                entities.forEach((entity, index) => {
+                    const props = entity.properties;
+                    const className = props.class_name?.getValue() || 'unknown';
+                    const confidence = props.confidence?.getValue() || 0.0;
+                    
+                    const baseColor = classColors[className.toLowerCase()] || Cesium.Color.fromHsl(
+                        (index * 137.508) % 360 / 360, 0.7, 0.5
+                    );
+                    
+                    const opacity = 0.3 + (confidence * 0.4);
+                    const color = baseColor.withAlpha(opacity);
+                    
+                    if (entity.polygon) {
+                        entity.polygon.material = color;
+                        entity.polygon.outline = true;
+                        entity.polygon.outlineColor = baseColor;
+                        entity.polygon.outlineWidth = 2;
+                        entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                    }
+                    
+                    entity.label = {
+                        text: `${className} (${(confidence * 100).toFixed(0)}%)`,
+                        font: '12px sans-serif',
+                        fillColor: Cesium.Color.WHITE,
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 2,
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                        pixelOffset: new Cesium.Cartesian2(0, -10)
+                    };
+                    
+                    entity.description = `
+                        <table style="width: 100%;">
+                            <tr><td><strong>Class:</strong></td><td>${className}</td></tr>
+                            <tr><td><strong>Confidence:</strong></td><td>${(confidence * 100).toFixed(1)}%</td></tr>
+                            <tr><td><strong>Detection ID:</strong></td><td>${props.detection_id?.getValue() || index + 1}</td></tr>
+                        </table>
+                    `;
+                });
+                
+                this.viewer.dataSources.add(this.samDataSource);
+                
+                console.log(`Displayed ${entities.length} Zero-Shot detections on map`);
+                console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
+            }).catch(error => {
+                console.error('Error loading Zero-Shot GeoJSON:', error);
+            });
         });
     }
     
