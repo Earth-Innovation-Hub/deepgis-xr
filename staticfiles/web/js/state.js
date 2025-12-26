@@ -31,8 +31,14 @@ export const AppState = {
     gl: null,
     baseLayer: null,
     isSupported: false,
+    vrSupported: false,
+    arSupported: false,
     isInSession: false,
-    frameOfRef: null
+    isReady: false,
+    sessionMode: null, // 'immersive-vr' or 'immersive-ar'
+    frameOfRef: null,
+    initialPosition: null,
+    initialOrientation: null
   },
   // Utility modules (will be lazy loaded)
   utils: null,
