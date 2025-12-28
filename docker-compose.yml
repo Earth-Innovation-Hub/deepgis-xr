@@ -18,7 +18,7 @@ services:
       - VECTOR_TILES_URL=${VECTOR_TILES_URL:-https://vector_tiles:8080}
       - RASTER_TILES_URL=${RASTER_TILES_URL:-https://raster_tiles:8081}
       # Remote AI Services
-      - GROUNDING_DINO_API_URL=${GROUNDING_DINO_API_URL:-http://192.168.0.232:8000}
+      - GROUNDING_DINO_API_URL=${GROUNDING_DINO_API_URL:-http://192.168.0.232:5000}
       # GPU support
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:

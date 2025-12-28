@@ -34,6 +34,13 @@ git+https://github.com/facebookresearch/segment-anything.git
 # Supports detection, segmentation, classification, pose estimation
 ultralytics>=8.0.0
 
+# Prithvi-EO-2.0 - Earth Observation Foundation Model (IBM/NASA)
+# TerraTorch is the recommended library for Prithvi models
+# Provides clean API for loading and using Prithvi-EO-2.0 models
+# terratorch>=0.1.0  # DISABLED: Not available on PyPI, needs custom installation
+# Alternative: transformers can be used as fallback (already includes torch)
+# transformers>=4.30.0  # Uncomment if you need Prithvi-EO support
+
 # GIS dependencies
 fiona==1.9.1
 geopandas==0.12.0

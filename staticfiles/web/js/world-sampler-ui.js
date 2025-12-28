@@ -2153,6 +2153,8 @@ class WorldSamplerUI {
                     requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : 0.3;
                     requestBody.text_threshold = textThreshold ? parseFloat(textThreshold.value) / 100 : 0.25;
                     statusText.textContent = 'Running Grounding DINO detection...';
+                } else if (analysisType === 'prithvi') {
+                    statusText.textContent = 'Extracting Earth Observation features with Prithvi...';
                 }
                 
                 // Send to API
@@ -2298,15 +2300,19 @@ class WorldSamplerUI {
     
     /**
      * Run projection-sensitive work using the original capture pose to avoid drift.
+     * Temporarily moves camera to capture position, does work, then restores.
+     * Uses instant transitions (duration: 0) to prevent visual jumps.
      */
     withCapturePose(capturePose, workFn) {
         const camera = this.viewer.camera;
         const scene = this.viewer.scene;
         
         if (!capturePose) {
+            console.warn('No capture pose available, using current camera position');
             return workFn();
         }
         
+        // Store current camera state
         const originalPose = {
             position: Cesium.Cartesian3.clone(camera.position),
             heading: camera.heading,
@@ -2314,7 +2320,11 @@ class WorldSamplerUI {
             roll: camera.roll
         };
         
+        // Flag to track if we need to restore
+        let needsRestore = false;
+        
         try {
+            // Move to capture pose INSTANTLY (no animation)
             camera.setView({
                 destination: Cesium.Cartesian3.fromDegrees(
                     capturePose.lon,
@@ -2325,20 +2335,56 @@ class WorldSamplerUI {
                     heading: Cesium.Math.toRadians(capturePose.heading || 0),
                     pitch: Cesium.Math.toRadians(capturePose.pitch || 0),
                     roll: Cesium.Math.toRadians(capturePose.roll || 0)
-                }
+                },
+                duration: 0, // INSTANT - no animation to prevent flashing
+                endTransform: Cesium.Matrix4.IDENTITY
             });
+            needsRestore = true;
+            
+            // Force immediate render at capture pose
             scene.requestRender();
-            return workFn();
+            
+            // Do the projection work
+            const result = workFn();
+            
+            return result;
+            
+        } catch (error) {
+            console.error('Error in withCapturePose:', error);
+            throw error;
         } finally {
-            camera.setView({
-                destination: originalPose.position,
-                orientation: {
-                    heading: originalPose.heading,
-                    pitch: originalPose.pitch,
-                    roll: originalPose.roll
+            // ALWAYS restore camera position (even if workFn throws)
+            if (needsRestore) {
+                try {
+                    camera.setView({
+                        destination: originalPose.position,
+                        orientation: {
+                            heading: originalPose.heading,
+                            pitch: originalPose.pitch,
+                            roll: originalPose.roll
+                        },
+                        duration: 0, // INSTANT - no animation
+                        endTransform: Cesium.Matrix4.IDENTITY
+                    });
+                    scene.requestRender();
+                } catch (restoreError) {
+                    console.error('Failed to restore camera after capture pose:', restoreError);
+                    // Last resort: try direct position/orientation setting
+                    try {
+                        camera.position = originalPose.position;
+                        camera.setView({
+                            orientation: {
+                                heading: originalPose.heading,
+                                pitch: originalPose.pitch,
+                                roll: originalPose.roll
+                            },
+                            duration: 0
+                        });
+                    } catch (fallbackError) {
+                        console.error('Camera restore fallback also failed:', fallbackError);
+                    }
                 }
-            });
-            scene.requestRender();
+            }
         }
     }
     
@@ -2595,6 +2641,38 @@ class WorldSamplerUI {
             return;
         }
         
+        // Check if camera has moved since capture
+        const capturePose = result.capture_pose || this.lastCapturePose;
+        if (capturePose) {
+            const currentPos = this.viewer.camera.positionCartographic;
+            const currentLon = Cesium.Math.toDegrees(currentPos.longitude);
+            const currentLat = Cesium.Math.toDegrees(currentPos.latitude);
+            const currentAlt = currentPos.height;
+            
+            const lonDiff = Math.abs(currentLon - capturePose.lon);
+            const latDiff = Math.abs(currentLat - capturePose.lat);
+            const altDiff = Math.abs(currentAlt - capturePose.alt);
+            
+            // Warn if camera has moved significantly (>1% of altitude or >0.001 degrees)
+            const altThreshold = capturePose.alt * 0.01; // 1% of altitude
+            if (lonDiff > 0.001 || latDiff > 0.001 || altDiff > altThreshold) {
+                console.warn('⚠️ Camera has moved since capture - detections may be misaligned!');
+                console.log('  Capture:', capturePose);
+                console.log('  Current:', { lon: currentLon, lat: currentLat, alt: currentAlt });
+                console.log('  Diff:', { lon: lonDiff, lat: latDiff, alt: altDiff });
+                
+                // Show warning to user
+                if (typeof this.showNotification === 'function') {
+                    this.showNotification(
+                        'Camera moved since capture - detections may be slightly misaligned',
+                        'warning'
+                    );
+                }
+            } else {
+                console.log('✓ Camera position stable - detections should align correctly');
+            }
+        }
+        
         // Remove previous SAM/Zero-Shot results if any
         if (this.samDataSource) {
             this.viewer.dataSources.remove(this.samDataSource);
@@ -2640,7 +2718,8 @@ class WorldSamplerUI {
             return null;
         }).filter(c => c !== null);
         
-        const capturePose = result.capture_pose || this.lastCapturePose || null;
+        // Use the same capturePose already defined earlier in function (line 2645)
+        // const capturePose already declared above - no need to redeclare
         
         this.withCapturePose(capturePose, () => {
             const camera = this.viewer.camera;
@@ -2761,43 +2840,83 @@ class WorldSamplerUI {
                 };
                 
                 entities.forEach((entity, index) => {
-                    const props = entity.properties;
-                    const className = props.class_name?.getValue() || 'unknown';
-                    const confidence = props.confidence?.getValue() || 0.0;
-                    
-                    const baseColor = classColors[className.toLowerCase()] || Cesium.Color.fromHsl(
-                        (index * 137.508) % 360 / 360, 0.7, 0.5
-                    );
-                    
-                    const opacity = 0.3 + (confidence * 0.4);
-                    const color = baseColor.withAlpha(opacity);
-                    
-                    if (entity.polygon) {
-                        entity.polygon.material = color;
-                        entity.polygon.outline = true;
-                        entity.polygon.outlineColor = baseColor;
-                        entity.polygon.outlineWidth = 2;
-                        entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                    try {
+                        const props = entity.properties;
+                        const detectionId = props.detection_id?.getValue() || (index + 1);
+                        const className = props.class_name?.getValue() || 'unknown';
+                        const confidence = props.confidence?.getValue() || 0.0;
+                        
+                        // Get color for this class
+                        const baseColor = classColors[className.toLowerCase()] || Cesium.Color.fromHsl(
+                            (index * 137.508) % 360 / 360, 0.7, 0.5
+                        );
+                        
+                        // Make opacity based on confidence (higher confidence = more opaque)
+                        const opacity = 0.3 + (confidence * 0.4);
+                        const color = baseColor.withAlpha(opacity);
+                        
+                        // Style the polygon bounding box
+                        if (entity.polygon) {
+                            entity.polygon.material = color;
+                            entity.polygon.outline = true;
+                            entity.polygon.outlineColor = baseColor.withAlpha(1.0); // Full opacity for outline
+                            entity.polygon.outlineWidth = 3; // Increased from 2 to 3
+                            entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                        }
+                        
+                        // Enhanced label with ID number, class name, and confidence
+                        entity.label = {
+                            text: `#${detectionId}: ${className} (${(confidence * 100).toFixed(0)}%)`,
+                            font: 'bold 14px sans-serif', // Increased from 12px to 14px, made bold
+                            fillColor: Cesium.Color.WHITE,
+                            outlineColor: Cesium.Color.BLACK,
+                            outlineWidth: 3, // Increased from 2 to 3 for better readability
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                            pixelOffset: new Cesium.Cartesian2(0, -15), // Increased offset for visibility
+                            scale: 1.0,
+                            showBackground: true, // Add background for better contrast
+                            backgroundColor: Cesium.Color.BLACK.withAlpha(0.6),
+                            backgroundPadding: new Cesium.Cartesian2(8, 4),
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY // Always show labels on top
+                        };
+                        
+                        // Enhanced description popup
+                        entity.description = `
+                            <div style="padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px;">
+                                <h4 style="margin: 0 0 10px 0; color: white; font-size: 16px;">
+                                    🎯 Detection #${detectionId}
+                                </h4>
+                                <table style="width: 100%; color: white; font-size: 13px;">
+                                    <tr style="background: rgba(255,255,255,0.1);">
+                                        <td style="padding: 6px; font-weight: bold;">Class:</td>
+                                        <td style="padding: 6px;">${className}</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="padding: 6px; font-weight: bold;">Confidence:</td>
+                                        <td style="padding: 6px;">
+                                            <span style="background: rgba(16, 185, 129, 0.3); padding: 2px 8px; border-radius: 4px;">
+                                                ${(confidence * 100).toFixed(1)}%
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    <tr style="background: rgba(255,255,255,0.1);">
+                                        <td style="padding: 6px; font-weight: bold;">ID:</td>
+                                        <td style="padding: 6px;">#${detectionId}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                        `;
+                        
+                        // Log successful processing
+                        if (index === 0 || index === entities.length - 1) {
+                            console.log(`Styled detection #${detectionId}: ${className} (${(confidence * 100).toFixed(1)}%)`);
+                        }
+                        
+                    } catch (error) {
+                        console.error(`Error styling entity ${index}:`, error);
+                        // Continue processing other entities even if one fails
                     }
-                    
-                    entity.label = {
-                        text: `${className} (${(confidence * 100).toFixed(0)}%)`,
-                        font: '12px sans-serif',
-                        fillColor: Cesium.Color.WHITE,
-                        outlineColor: Cesium.Color.BLACK,
-                        outlineWidth: 2,
-                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                        pixelOffset: new Cesium.Cartesian2(0, -10)
-                    };
-                    
-                    entity.description = `
-                        <table style="width: 100%;">
-                            <tr><td><strong>Class:</strong></td><td>${className}</td></tr>
-                            <tr><td><strong>Confidence:</strong></td><td>${(confidence * 100).toFixed(1)}%</td></tr>
-                            <tr><td><strong>Detection ID:</strong></td><td>${props.detection_id?.getValue() || index + 1}</td></tr>
-                        </table>
-                    `;
                 });
                 
                 this.viewer.dataSources.add(this.samDataSource);
@@ -2857,28 +2976,74 @@ class WorldSamplerUI {
         this.samDataSource.load(convertedGeoJSON).then(() => {
             const entities = this.samDataSource.entities.values;
             entities.forEach((entity, index) => {
-                const props = entity.properties;
-                const className = props.class_name?.getValue() || 'unknown';
-                const confidence = props.confidence?.getValue() || 0.0;
-                
-                const hue = (index * 137.508) % 360;
-                const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4);
-                
-                if (entity.polygon) {
-                    entity.polygon.material = color;
-                    entity.polygon.outline = true;
-                    entity.polygon.outlineColor = Cesium.Color.WHITE;
-                    entity.polygon.outlineWidth = 2;
-                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                try {
+                    const props = entity.properties;
+                    const detectionId = props.detection_id?.getValue() || (index + 1);
+                    const className = props.class_name?.getValue() || 'unknown';
+                    const confidence = props.confidence?.getValue() || 0.0;
+                    
+                    const hue = (index * 137.508) % 360;
+                    const baseColor = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5);
+                    const opacity = 0.3 + (confidence * 0.4);
+                    const color = baseColor.withAlpha(opacity);
+                    
+                    if (entity.polygon) {
+                        entity.polygon.material = color;
+                        entity.polygon.outline = true;
+                        entity.polygon.outlineColor = baseColor.withAlpha(1.0); // Full opacity outline
+                        entity.polygon.outlineWidth = 3; // Increased from 2 to 3
+                        entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                    }
+                    
+                    // Enhanced label with ID number
+                    entity.label = {
+                        text: `#${detectionId}: ${className} (${(confidence * 100).toFixed(0)}%)`,
+                        font: 'bold 14px sans-serif', // Increased and made bold
+                        fillColor: Cesium.Color.WHITE,
+                        outlineColor: Cesium.Color.BLACK,
+                        outlineWidth: 3, // Increased from 2 to 3
+                        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                        pixelOffset: new Cesium.Cartesian2(0, -15),
+                        scale: 1.0,
+                        showBackground: true,
+                        backgroundColor: Cesium.Color.BLACK.withAlpha(0.6),
+                        backgroundPadding: new Cesium.Cartesian2(8, 4),
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY // Always show labels on top
+                    };
+                    
+                    // Enhanced description popup
+                    entity.description = `
+                        <div style="padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px;">
+                            <h4 style="margin: 0 0 10px 0; color: white; font-size: 16px;">
+                                🎯 Detection #${detectionId}
+                            </h4>
+                            <table style="width: 100%; color: white; font-size: 13px;">
+                                <tr style="background: rgba(255,255,255,0.1);">
+                                    <td style="padding: 6px; font-weight: bold;">Class:</td>
+                                    <td style="padding: 6px;">${className}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight: bold;">Confidence:</td>
+                                    <td style="padding: 6px;">
+                                        <span style="background: rgba(16, 185, 129, 0.3); padding: 2px 8px; border-radius: 4px;">
+                                            ${(confidence * 100).toFixed(1)}%
+                                        </span>
+                                    </td>
+                                </tr>
+                                <tr style="background: rgba(255,255,255,0.1);">
+                                    <td style="padding: 6px; font-weight: bold;">ID:</td>
+                                    <td style="padding: 6px;">#${detectionId}</td>
+                                </tr>
+                            </table>
+                            <p style="margin: 8px 0 0 0; padding: 6px; background: rgba(255,152,0,0.2); border-radius: 4px; font-size: 11px;">
+                                ⚠️ Approximate positioning (fallback method)
+                            </p>
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error(`Error styling entity ${index} (approximate):`, error);
                 }
-                
-                entity.label = {
-                    text: `${className} (${(confidence * 100).toFixed(0)}%)`,
-                    font: '12px sans-serif',
-                    fillColor: Cesium.Color.WHITE,
-                    outlineColor: Cesium.Color.BLACK,
-                    outlineWidth: 2
-                };
             });
             
             this.viewer.dataSources.add(this.samDataSource);
