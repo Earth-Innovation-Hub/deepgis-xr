@@ -1374,6 +1374,27 @@
                 <input type="range" class="form-range" id="mask2formerConfidence" min="0" max="100" step="5" value="50">
             </div>
         </div>
+        <!-- Grounded-SAM-2 Options -->
+        <div id="groundedSamOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
+                <input type="text" class="form-control form-control-sm" id="groundedSamPrompt" 
+                       value="rock . boulder . crater . debris"
+                       placeholder="Describe objects to detect and segment"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Combines detection + high-quality segmentation
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Box Threshold: <span id="gsBoxThresholdValue">0.35</span></label>
+                <input type="range" class="form-range" id="gsBoxThreshold" min="10" max="90" step="5" value="35">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Threshold: <span id="gsTextThresholdValue">0.25</span></label>
+                <input type="range" class="form-range" id="gsTextThreshold" min="10" max="90" step="5" value="25">
+            </div>
+        </div>
         <button class="btn btn-success w-100" id="analyzeViewportBtn">
             <i class="fas fa-brain me-2"></i>Analyze Viewport
         </button>
@@ -2438,6 +2459,8 @@
                         const type = e.target.value;
                         document.getElementById('samOptions').style.display = type === 'sam' ? 'block' : 'none';
                         document.getElementById('yolov8Options').style.display = type === 'yolov8' ? 'block' : 'none';
+                        document.getElementById('groundingDinoOptions').style.display = type === 'grounding_dino' ? 'block' : 'none';
+                        document.getElementById('groundedSamOptions').style.display = type === 'grounded_sam' ? 'block' : 'none';
                         document.getElementById('zeroShotOptions').style.display = type === 'zero_shot' ? 'block' : 'none';
                         document.getElementById('mask2formerOptions').style.display = type === 'mask2former' ? 'block' : 'none';
                         
@@ -2446,8 +2469,11 @@
                             const descriptions = {
                                 'sam': 'Segments all visible regions using Segment Anything Model',
                                 'yolov8': 'Ultra-fast detection with 80 COCO classes',
+                                'grounding_dino': 'Text-based open-vocabulary object detection',
+                                'grounded_sam': 'Detection + high-quality segmentation with text prompts',
                                 'zero_shot': 'Detects common objects (person, car, etc.)',
-                                'mask2former': 'State-of-the-art detection with 80 COCO categories'
+                                'mask2former': 'State-of-the-art detection with 80 COCO categories',
+                                'prithvi': 'Earth observation foundation model for satellite imagery'
                             };
                             desc.textContent = descriptions[type] || '';
                         }
@@ -2478,6 +2504,40 @@
                 if (m2fConf && m2fConfVal) {
                     m2fConf.addEventListener('input', (e) => {
                         m2fConfVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+                
+                // Grounding DINO threshold sliders
+                const gdBox = document.getElementById('gdBoxThreshold');
+                const gdBoxVal = document.getElementById('gdBoxThresholdValue');
+                if (gdBox && gdBoxVal) {
+                    gdBox.addEventListener('input', (e) => {
+                        gdBoxVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+                
+                const gdText = document.getElementById('gdTextThreshold');
+                const gdTextVal = document.getElementById('gdTextThresholdValue');
+                if (gdText && gdTextVal) {
+                    gdText.addEventListener('input', (e) => {
+                        gdTextVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+                
+                // Grounded-SAM-2 threshold sliders
+                const gsBox = document.getElementById('gsBoxThreshold');
+                const gsBoxVal = document.getElementById('gsBoxThresholdValue');
+                if (gsBox && gsBoxVal) {
+                    gsBox.addEventListener('input', (e) => {
+                        gsBoxVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+                
+                const gsText = document.getElementById('gsTextThreshold');
+                const gsTextVal = document.getElementById('gsTextThresholdValue');
+                if (gsText && gsTextVal) {
+                    gsText.addEventListener('input', (e) => {
+                        gsTextVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
                     });
                 }
                 

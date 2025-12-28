@@ -2145,14 +2145,22 @@ class WorldSamplerUI {
                     requestBody.confidence_threshold = yolov8Confidence ? parseFloat(yolov8Confidence.value) / 100 : 0.25;
                     requestBody.class_filter = yolov8Classes ? yolov8Classes.value.trim() : '';
                     statusText.textContent = 'Running YOLOv8 detection...';
-                } else if (analysisType === 'grounding_dino' || analysisType === 'grounded_sam') {
+                } else if (analysisType === 'grounding_dino') {
                     const textPrompt = document.getElementById('groundingDinoPrompt');
                     const boxThreshold = document.getElementById('gdBoxThreshold');
                     const textThreshold = document.getElementById('gdTextThreshold');
                     requestBody.text_prompt = textPrompt ? textPrompt.value.trim() : 'object';
-                    requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : (analysisType === 'grounded_sam' ? 0.35 : 0.3);
+                    requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : 0.3;
                     requestBody.text_threshold = textThreshold ? parseFloat(textThreshold.value) / 100 : 0.25;
-                    statusText.textContent = analysisType === 'grounded_sam' ? 'Running Grounded-SAM-2 (detection + segmentation)...' : 'Running Grounding DINO detection...';
+                    statusText.textContent = 'Running Grounding DINO detection...';
+                } else if (analysisType === 'grounded_sam') {
+                    const textPrompt = document.getElementById('groundedSamPrompt');
+                    const boxThreshold = document.getElementById('gsBoxThreshold');
+                    const textThreshold = document.getElementById('gsTextThreshold');
+                    requestBody.text_prompt = textPrompt ? textPrompt.value.trim() : 'object';
+                    requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : 0.35;
+                    requestBody.text_threshold = textThreshold ? parseFloat(textThreshold.value) / 100 : 0.25;
+                    statusText.textContent = 'Running Grounded-SAM-2 (detection + segmentation)...';
                 } else if (analysisType === 'prithvi') {
                     statusText.textContent = 'Extracting Earth Observation features with Prithvi...';
                 }
@@ -3266,6 +3274,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const mask2formerOptions = document.getElementById('mask2formerOptions');
     const yolov8Options = document.getElementById('yolov8Options');
     const groundingDinoOptions = document.getElementById('groundingDinoOptions');
+    const groundedSamOptions = document.getElementById('groundedSamOptions');
     const analysisDescription = document.getElementById('analysisDescription');
     const zeroShotConfidenceSlider = document.getElementById('zeroShotConfidence');
     const zeroShotConfidenceValue = document.getElementById('zeroShotConfidenceValue');
@@ -3277,6 +3286,10 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const gdBoxThresholdValue = document.getElementById('gdBoxThresholdValue');
     const gdTextThresholdSlider = document.getElementById('gdTextThreshold');
     const gdTextThresholdValue = document.getElementById('gdTextThresholdValue');
+    const gsBoxThresholdSlider = document.getElementById('gsBoxThreshold');
+    const gsBoxThresholdValue = document.getElementById('gsBoxThresholdValue');
+    const gsTextThresholdSlider = document.getElementById('gsTextThreshold');
+    const gsTextThresholdValue = document.getElementById('gsTextThresholdValue');
     
     if (analysisTypeSelect) {
         analysisTypeSelect.addEventListener('change', (e) => {
@@ -3287,6 +3300,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             if (mask2formerOptions) mask2formerOptions.style.display = 'none';
             if (yolov8Options) yolov8Options.style.display = 'none';
             if (groundingDinoOptions) groundingDinoOptions.style.display = 'none';
+            if (groundedSamOptions) groundedSamOptions.style.display = 'none';
             
             if (analysisType === 'zero_shot') {
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
@@ -3309,7 +3323,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                     analysisDescription.textContent = 'Open-vocabulary detection - describe ANY object to find (rocks, craters, vehicles, custom objects)';
                 }
             } else if (analysisType === 'grounded_sam') {
-                if (groundingDinoOptions) groundingDinoOptions.style.display = 'block';
+                if (groundedSamOptions) groundedSamOptions.style.display = 'block';
                 if (analysisDescription) {
                     analysisDescription.textContent = 'Grounding DINO + SAM 2 - Detection + high-quality instance segmentation (best quality, slower)';
                 }
@@ -3335,6 +3349,21 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         gdTextThresholdSlider.addEventListener('input', (e) => {
             const value = parseFloat(e.target.value) / 100;
             gdTextThresholdValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    // Setup Grounded-SAM-2 threshold sliders
+    if (gsBoxThresholdSlider && gsBoxThresholdValue) {
+        gsBoxThresholdSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            gsBoxThresholdValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    if (gsTextThresholdSlider && gsTextThresholdValue) {
+        gsTextThresholdSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            gsTextThresholdValue.textContent = value.toFixed(2);
         });
     }
     
