@@ -1,5 +1,6 @@
 # DeepGIS-XR
 
+Demo clip: 
 <a href="https://www.youtube.com/watch?v=Plk7JyJsY7Y" target="_blank" rel="noopener noreferrer">
   <img src="https://img.youtube.com/vi/Plk7JyJsY7Y/0.jpg" alt="DeepGIS-XR Demo Video" style="width:560px;height:315px;">
 </a>
@@ -276,6 +277,7 @@ The AI Viewport Analysis system supports multiple detection models, including re
 ```
 
 ### Grounding DINO Remote API Integration
+![detection_visualization](https://github.com/user-attachments/assets/533490e9-bafd-40a4-bf2f-0204186387b3)
 
 Grounding DINO runs as a separate Docker container for GPU-accelerated inference on a dedicated server.
 
