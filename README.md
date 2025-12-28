@@ -277,32 +277,23 @@ The AI Viewport Analysis system supports multiple detection models, including re
 
 ### Grounding DINO Remote API Integration
 
-Grounding DINO can be deployed as a separate Docker container for GPU-accelerated inference. This allows running the model on a dedicated GPU server while keeping DeepGIS-XR lightweight.
+Grounding DINO runs as a separate Docker container for GPU-accelerated inference on a dedicated server.
 
-**Remote API Endpoints:**
+**API Configuration:** `http://192.168.0.232:5000` (set in `docker-compose.yml`)
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/predict` | POST | Single image inference |
-| `/predict_batch` | POST | Batch inference with multiple prompts |
-
-**Request format for `/predict`:**
-
+**Quick Test:**
 ```bash
-curl -X POST "http://${GROUNDING_DINO_HOST}:8000/predict" \
-    -F "image=@viewport.png" \
-    -F "text_prompt=rock . boulder . crater . debris" \
-    -F "box_threshold=0.3" \
-    -F "text_threshold=0.25" \
-    -F "return_annotated_image=true"
-```
+# Health check
+curl http://192.168.0.232:5000/health
 
-**Configuration:**
+# Detect objects
+curl -X POST http://192.168.0.232:5000/api/predict \
+    -F "file=@image.jpg" \
+    -F "text_prompt=rock . boulder . crater" \
+    -F "box_threshold=0.3"
 
-Set the remote API URL in environment variables:
-```bash
-GROUNDING_DINO_API_URL=http://your-gpu-server:8000
+# Using Python client
+./grounding_dino_api_client.py --image viewport.jpg --prompt "rock . boulder . crater"
 ```
 
 ### Use Cases for Grounding DINO
@@ -397,8 +388,8 @@ DEBUG=True
 DJANGO_SETTINGS_MODULE=deepgis_xr.settings
 NVIDIA_VISIBLE_DEVICES=all  # For GPU support
 
-# Remote AI Services (optional)
-GROUNDING_DINO_API_URL=http://your-gpu-server:8000  # Remote Grounding DINO API
+# Remote AI Services (optional - defaults in docker-compose.yml)
+# GROUNDING_DINO_API_URL=http://192.168.0.232:5000
 ```
 
 ### Docker Configuration
