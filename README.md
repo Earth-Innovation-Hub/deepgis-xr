@@ -73,10 +73,14 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 
 ### 🗺️ Advanced Geospatial Features
 - **3D Globe Visualization**: CesiumJS-powered Earth and Moon globes
+- **3D Buildings Layer**: OpenStreetMap buildings with worldwide coverage
+  - Toggle via View panel checkbox or press `B` key
+  - Free and open data source (ODbL license)
+  - Smart loading: loads once, toggles visibility thereafter
 - **Multi-Layer Support**: Raster and vector layer management
 - **Tile Server Integration**: Custom tile server for large datasets
 - **3D Model Support**: GLB/GLTF model loading and visualization
-- **Coordinate Systems**: Support for multiple projections and ellipsoids
+- **Coordinate Systems**: Support for multiple projections and ellipsolds
 - **Drone Navigation**: Fly mode and orbit mode for automated camera movement
 - **Measurement Tools**: Distance, area, and height measurement capabilities
 
@@ -340,6 +344,17 @@ curl -X POST http://192.168.0.232:5001/detect \
 4. **Use navigation widgets** for precise control
 5. **Adjust camera** with aviation-style controls
 
+### 3D Buildings Layer
+
+1. **Navigate to DeepGIS Search** (`/label/3d/search/`)
+2. **Enable buildings**:
+   - Click "View" button in HUD toolbar
+   - Check "3D Buildings (OSM)" checkbox
+   - Or press `B` key to toggle instantly
+3. **Best viewed in 3D mode** (press `V` to switch to 3D)
+4. **Zoom to urban areas** to see detailed building models
+5. **Coverage**: Worldwide, based on OpenStreetMap data quality
+
 ### Weather Stations
 
 1. **Navigate to DeepGIS Search** (`/label/3d/search/`)
@@ -371,6 +386,29 @@ curl -X POST http://192.168.0.232:5001/detect \
    | `flyDist`, `hSpeed`, `vSpeed` | Drone fly settings |
    | `orbRadius`, `orbPitch`, `orbYaw` | Orbit settings |
    | `orbiting`, `flying`, `takeoff`, `landing` | Active mode flags |
+
+### Keyboard Shortcuts
+
+Press `H` to view all shortcuts in-app. Key shortcuts include:
+
+| Key | Action |
+|-----|--------|
+| `B` | Toggle 3D Buildings |
+| `V` | Toggle View Mode (2D/3D/Columbus) |
+| `F` | Toggle Full Screen |
+| `H` | Show Keyboard Shortcuts Help |
+| `S` | Share Current View |
+| `Q` | Toggle QR Code |
+| `T` | Hide/Show Toolbars |
+| `W` | Toggle Wireframe |
+| `D` | Drone Fly Forward |
+| `U` | Takeoff (Up) |
+| `L` | Land |
+| `O` | Start Orbit |
+| `P` | Pause/Stop Orbit |
+| `J` | Toggle Virtual Joysticks |
+| `↑` `↓` `←` `→` | Camera Perspectives (N/S/W/E) |
+| `ESC` | Stop Orbit / Close Panels |
 
 ---
 
@@ -407,6 +445,7 @@ To enable GPU for AI features:
 
 ## 📊 Recent Updates (December 2025)
 
+- ✅ **3D Buildings Layer**: OpenStreetMap buildings worldwide; toggleable via UI or `B` key; free and open data (ODbL)
 - ✅ **Experience URL Sharing**: Complete camera state sharing via URL; supports takeoff/landing/fly/orbit modes; QR code generation
 - ✅ **Grounding DINO**: Open-vocabulary detection with text prompts; remote API architecture for GPU servers
 - ✅ **Weather Stations**: NWS integration with 21 stations across CA, AZ, CO, NV; HUD toolbar integration; auto-update every 15 min
@@ -479,6 +518,7 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 - [x] Experience URL sharing with full state capture
 - [x] QR code generation for mobile sharing
 - [x] 2D/3D/Columbus view mode switching
+- [x] 3D Buildings layer with OpenStreetMap data
 
 ### 🔄 Q1 2026 - Near Term
 - [ ] **Mars Terrain Viewer**: Extend lunar capabilities to Mars with HiRISE/CTX imagery
