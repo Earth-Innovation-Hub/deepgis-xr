@@ -1,6 +1,7 @@
 # DeepGIS-XR
 
-Demo clip: 
+**Demo clip:** 
+
 <a href="https://www.youtube.com/watch?v=Plk7JyJsY7Y" target="_blank" rel="noopener noreferrer">
   <img src="https://img.youtube.com/vi/Plk7JyJsY7Y/0.jpg" alt="DeepGIS-XR Demo Video" style="width:560px;height:315px;">
 </a>
