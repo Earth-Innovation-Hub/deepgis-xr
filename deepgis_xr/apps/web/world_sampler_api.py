@@ -1056,6 +1056,9 @@ def _analyze_viewport_zero_shot(image, location, confidence_threshold, scripts_d
         session_dir = zero_shot_results_dir / folder_name
         session_dir.mkdir(parents=True, exist_ok=True)
         
+        # Extract session ID for report URL (use folder name as session identifier)
+        session_id = folder_name
+        
         # Save query image
         query_image_path = session_dir / 'query_image.png'
         image.save(query_image_path)
@@ -1398,6 +1401,9 @@ def _analyze_viewport_yolov8(image, location, confidence_threshold, yolo_model, 
         session_dir = yolo_results_dir / folder_name
         session_dir.mkdir(exist_ok=True)
         
+        # Extract session ID for report URL (use folder name as session identifier)
+        session_id = folder_name
+        
         # Save query image
         query_image_path = session_dir / 'query_image.png'
         image.save(query_image_path, format='PNG')
@@ -1551,6 +1557,9 @@ def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold
         folder_name = f"grounding_dino_{timestamp}_{lat_str}_{lon_str}_{alt_str}"
         session_dir = grounding_dino_results_dir / folder_name
         session_dir.mkdir(exist_ok=True)
+        
+        # Extract session ID for report URL (use folder name as session identifier)
+        session_id = folder_name
         
         # Save query image
         query_image_path = session_dir / 'query_image.png'
@@ -1940,6 +1949,9 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
         session_dir = grounded_sam_results_dir / folder_name
         session_dir.mkdir(exist_ok=True)
         
+        # Extract session ID for report URL (use folder name as session identifier)
+        session_id = folder_name
+        
         # Save query image
         query_image_path = session_dir / 'query_image.png'
         image.save(query_image_path, format='PNG')
@@ -2273,6 +2285,9 @@ def _analyze_viewport_prithvi(image, location, scripts_dir):
         folder_name = f"prithvi_{timestamp}_{lat_str}_{lon_str}_{alt_str}"
         session_dir = prithvi_results_dir / folder_name
         session_dir.mkdir(exist_ok=True)
+        
+        # Extract session ID for report URL (use folder name as session identifier)
+        session_id = folder_name
         
         # Save query image
         query_image_path = session_dir / 'query_image.png'
