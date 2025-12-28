@@ -279,12 +279,13 @@ The AI Viewport Analysis system supports multiple detection models, including re
 
 ### Remote AI APIs
 
-![detection_visualization](https://github.com/user-attachments/assets/533490e9-bafd-40a4-bf2f-0204186387b3)
-
 GPU-accelerated AI services on dedicated server for open-vocabulary detection and segmentation.
 
 **Grounding DINO** (port 5000): Text-based detection  
+![detection_visualization](https://github.com/user-attachments/assets/533490e9-bafd-40a4-bf2f-0204186387b3)
+
 **Grounded-SAM-2** (port 5001): Detection + high-quality segmentation
+![segmentation_visualization](https://github.com/user-attachments/assets/161de955-7e61-4827-9ee5-1d36ffc7ca9e)
 
 ```bash
 # Grounding DINO - Detection only
