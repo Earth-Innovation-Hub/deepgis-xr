@@ -183,6 +183,10 @@ TILESERVER_PORT = '80'
 # Example: GROUNDING_DINO_API_URL=http://192.168.0.232:5000
 GROUNDING_DINO_API_URL = os.environ.get('GROUNDING_DINO_API_URL', None)
 
+# Grounded-SAM-2 API - Grounding DINO + SAM 2 for detection + segmentation
+# Example: GROUNDED_SAM_API_URL=http://192.168.0.232:5001
+GROUNDED_SAM_API_URL = os.environ.get('GROUNDED_SAM_API_URL', None)
+
 # MIME type configuration for 3D model files
 import mimetypes
 mimetypes.add_type('application/octet-stream', '.glb')

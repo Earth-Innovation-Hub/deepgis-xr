@@ -1953,7 +1953,7 @@ def ai_analysis_report(request, session_id):
     # Try to find the session directory
     # Use exact match instead of substring to avoid matching wrong directories
     session_dir = None
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             # Try exact match first (session_id should match directory name exactly)
@@ -1993,6 +1993,8 @@ def ai_analysis_report(request, session_id):
         model_type = 'yolov8'
     elif 'grounding_dino_' in session_dir.name:
         model_type = 'grounding_dino'
+    elif 'grounded_sam_' in session_dir.name:
+        model_type = 'grounded_sam'
     
     # Get file paths
     query_image_path = session_dir / 'query_image.png'
@@ -2002,7 +2004,7 @@ def ai_analysis_report(request, session_id):
         geojson_path = session_dir / 'detections.geojson'
     
     # Find visualization (check multiple possible filenames)
-    for viz_name in ['segmentation_visualization.jpg', 'detection_visualization.jpg', 'visualization.jpg']:
+    for viz_name in ['segmentation_visualization.jpg', 'detection_visualization.jpg', 'visualization.jpg', 'result.jpg']:
         viz_path = session_dir / viz_name
         if viz_path.exists():
             visualization_path = viz_path
@@ -2054,7 +2056,7 @@ def serve_analysis_geojson(request, session_id):
     
     # Try to find the session directory
     session_dir = None
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             session_path = results_dir / session_id
@@ -2118,7 +2120,7 @@ def serve_analysis_image(request, session_id, image_type):
     session_dir = None
     
     # Find session directory - use exact match instead of substring
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             # Try exact match first

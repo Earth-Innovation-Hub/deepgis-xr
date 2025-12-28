@@ -122,8 +122,21 @@ export class NWSWeatherStationLayer {
         description: this.createDescription(stationInfo, observation)
       });
 
+      // Create wind vector visualization
+      const windSpeed = props.windSpeed?.value;
+      const windDirection = props.windDirection?.value;
+      console.log(`[Wind Vector] Station ${stationId}: windSpeed=${windSpeed}, windDirection=${windDirection}`);
+      
+      const windVectorEntity = this.createWindVector(stationId, lon, lat, windSpeed, windDirection);
+      if (windVectorEntity) {
+        console.log(`[Wind Vector] Created wind vector for ${stationId}`);
+      } else {
+        console.log(`[Wind Vector] No wind vector created for ${stationId} (missing or invalid wind data)`);
+      }
+
       this.stations.set(stationId, {
         entity: entity,
+        windVector: windVectorEntity,
         stationId: stationId,
         lat: lat,
         lon: lon,
@@ -246,6 +259,12 @@ export class NWSWeatherStationLayer {
         );
       }
     }
+
+    // Update wind vector
+    const windSpeed = props.windSpeed?.value;
+    const windDirection = props.windDirection?.value;
+    console.log(`[Wind Vector Update] Station ${station.stationId}: windSpeed=${windSpeed}, windDirection=${windDirection}`);
+    this.updateWindVector(station, windSpeed, windDirection);
 
     // Update description
     entity.description = this.createDescription(
@@ -483,12 +502,233 @@ export class NWSWeatherStationLayer {
   }
 
   /**
+   * Helper function to calculate a point at a given distance and bearing from a start point
+   */
+  calculateDestinationPoint(startLatRad, startLonRad, distanceMeters, bearingRad, earthRadius = 6378137) {
+    const latRad = Math.asin(
+      Math.sin(startLatRad) * Math.cos(distanceMeters / earthRadius) +
+      Math.cos(startLatRad) * Math.sin(distanceMeters / earthRadius) * Math.cos(bearingRad)
+    );
+    const lonRad = startLonRad + Math.atan2(
+      Math.sin(bearingRad) * Math.sin(distanceMeters / earthRadius) * Math.cos(startLatRad),
+      Math.cos(distanceMeters / earthRadius) - Math.sin(startLatRad) * Math.sin(latRad)
+    );
+    return {
+      lat: Cesium.Math.toDegrees(latRad),
+      lon: Cesium.Math.toDegrees(lonRad),
+      latRad: latRad,
+      lonRad: lonRad
+    };
+  }
+
+  /**
+   * Create wind vector visualization
+   */
+  createWindVector(stationId, lon, lat, windSpeed, windDirection) {
+    // Check if wind data is available
+    // Note: windSpeed can be 0, so we only check for null/undefined
+    if (windSpeed === undefined || windSpeed === null ||
+        windDirection === undefined || windDirection === null) {
+      console.log(`[Wind Vector] Missing data for ${stationId}: speed=${windSpeed}, direction=${windDirection}`);
+      return null;
+    }
+    
+    // Allow wind speed of 0 but make minimum visible length
+    const minWindSpeed = 0.1; // m/s - minimum to show a vector
+    if (windSpeed < minWindSpeed) {
+      console.log(`[Wind Vector] Wind speed too low for ${stationId}: ${windSpeed} m/s`);
+      return null;
+    }
+
+    // Wind direction is where wind comes FROM, so we add 180° to get direction wind is blowing TO
+    const windBearing = (windDirection + 180) % 360;
+    const windBearingRad = Cesium.Math.toRadians(windBearing);
+
+    // Scale wind speed to a reasonable visual length (meters)
+    // Wind speed is in m/s, scale: 1 m/s = 1000 meters of arrow length
+    // Cap at reasonable max length (e.g., 50 km for very high winds)
+    const baseScale = 1000; // meters per m/s
+    const maxLength = 50000; // maximum arrow length in meters
+    const arrowLength = Math.min(windSpeed * baseScale, maxLength);
+
+    // Calculate end point of wind vector
+    const startPosition = Cesium.Cartesian3.fromDegrees(lon, lat);
+    const heading = windBearingRad;
+    
+    // Use a simple approximation for small distances on the globe
+    // For more accuracy, we could use geodesic calculations
+    const earthRadius = 6378137; // meters
+    const latRad = Cesium.Math.toRadians(lat);
+    const lonRad = Cesium.Math.toRadians(lon);
+    
+    // Calculate end point using geodesic calculation
+    const endPoint = this.calculateDestinationPoint(latRad, lonRad, arrowLength, heading);
+    const endLatRad = endPoint.latRad;
+    const endLonRad = endPoint.lonRad;
+    const endLon = endPoint.lon;
+    const endLat = endPoint.lat;
+    const endPosition = Cesium.Cartesian3.fromDegrees(endLon, endLat);
+
+    // Create polyline for wind vector shaft
+    const windVectorEntity = this.viewer.entities.add({
+      id: `weather_${stationId}_wind_vector`,
+      polyline: {
+        positions: [startPosition, endPosition],
+        width: 4,
+        material: Cesium.Color.CYAN.withAlpha(0.9),
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        clampToGround: true,
+        scaleByDistance: new Cesium.NearFarScalar(1.5e2, 1.0, 8.0e6, 0.3),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 1.0e7),
+        show: true
+      }
+    });
+
+    // Create arrowhead at the end of the wind vector using proper geodesic calculations
+    // Arrowhead should be a triangle pointing in the wind direction
+    // Size: proportional to arrow length, but reasonable limits
+    const arrowheadSizeMeters = Math.min(Math.max(arrowLength * 0.08, 300), 3000); // 8% of length, 300m-3km range
+    const arrowheadBaseWidthMeters = arrowheadSizeMeters * 0.5; // Base width is 50% of arrowhead size
+    
+    // Calculate arrowhead points using geodesic calculations
+    // Tip: extends slightly beyond end point in wind direction
+    const tipExtensionMeters = arrowheadSizeMeters * 0.4;
+    const tipDistance = arrowLength + tipExtensionMeters;
+    const tipPoint = this.calculateDestinationPoint(latRad, lonRad, tipDistance, heading);
+    const tipPosition = Cesium.Cartesian3.fromDegrees(tipPoint.lon, tipPoint.lat);
+    
+    // Base points: perpendicular to wind direction at the end point
+    // Calculate perpendicular bearing (90 degrees from wind direction)
+    const perpBearing1 = (windBearing + 90) % 360;
+    const perpBearing2 = (windBearing - 90 + 360) % 360;
+    const perpBearing1Rad = Cesium.Math.toRadians(perpBearing1);
+    const perpBearing2Rad = Cesium.Math.toRadians(perpBearing2);
+    
+    // Calculate base point 1 (left side when looking in wind direction)
+    const base1Distance = arrowheadBaseWidthMeters / 2;
+    const base1Point = this.calculateDestinationPoint(endLatRad, endLonRad, base1Distance, perpBearing1Rad);
+    const base1Position = Cesium.Cartesian3.fromDegrees(base1Point.lon, base1Point.lat);
+    
+    // Calculate base point 2 (right side when looking in wind direction)
+    const base2Point = this.calculateDestinationPoint(endLatRad, endLonRad, base1Distance, perpBearing2Rad);
+    const base2Position = Cesium.Cartesian3.fromDegrees(base2Point.lon, base2Point.lat);
+    
+    // Create arrowhead triangle: tip at the front, base points at the back
+    // Order: base1 -> tip -> base2 (creates a triangle pointing forward)
+    const arrowheadPositions = [
+      base1Position,
+      tipPosition,
+      base2Position
+    ];
+    
+    const arrowheadEntity = this.viewer.entities.add({
+      id: `weather_${stationId}_wind_arrowhead`,
+      polygon: {
+        hierarchy: new Cesium.PolygonHierarchy(arrowheadPositions),
+        material: Cesium.Color.CYAN.withAlpha(0.9),
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        outline: true,
+        outlineColor: Cesium.Color.CYAN,
+        outlineWidth: 2,
+        scaleByDistance: new Cesium.NearFarScalar(1.5e2, 1.0, 8.0e6, 0.3),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 1.0e7),
+        show: true
+      }
+    });
+
+    // Add a label showing wind speed at the midpoint of the vector
+    const midLon = (lon + endLon) / 2;
+    const midLat = (lat + endLat) / 2;
+    const midPosition = Cesium.Cartesian3.fromDegrees(midLon, midLat);
+    
+    const windLabelEntity = this.viewer.entities.add({
+      id: `weather_${stationId}_wind_label`,
+      position: midPosition,
+      label: {
+        text: `${(windSpeed * 2.237).toFixed(1)} mph`, // Convert m/s to mph
+        font: '11pt sans-serif',
+        fillColor: Cesium.Color.CYAN,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+        pixelOffset: new Cesium.Cartesian2(0, -15),
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        scaleByDistance: new Cesium.NearFarScalar(1.5e2, 1.0, 8.0e6, 0.3),
+        distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0.0, 1.0e7),
+        show: true
+      }
+    });
+
+    // Store all entities
+    return {
+      vector: windVectorEntity,
+      arrowhead: arrowheadEntity,
+      label: windLabelEntity
+    };
+  }
+
+  /**
+   * Update wind vector visualization
+   */
+  updateWindVector(station, windSpeed, windDirection) {
+    // Remove existing wind vector if it exists
+    if (station.windVector) {
+      if (station.windVector.vector) {
+        this.viewer.entities.remove(station.windVector.vector);
+      }
+      if (station.windVector.arrowhead) {
+        this.viewer.entities.remove(station.windVector.arrowhead);
+      }
+      if (station.windVector.label) {
+        this.viewer.entities.remove(station.windVector.label);
+      }
+      station.windVector = null;
+    }
+
+    // Create new wind vector if wind data is available
+    // Use same logic as createWindVector
+    if (windSpeed !== undefined && windSpeed !== null &&
+        windDirection !== undefined && windDirection !== null) {
+      const minWindSpeed = 0.1; // m/s - minimum to show a vector
+      if (windSpeed >= minWindSpeed) {
+        station.windVector = this.createWindVector(
+          station.stationId,
+          station.lon,
+          station.lat,
+          windSpeed,
+          windDirection
+        );
+        if (station.windVector) {
+          console.log(`[Wind Vector Update] Created wind vector for ${station.stationId}`);
+        }
+      } else {
+        console.log(`[Wind Vector Update] Wind speed too low for ${station.stationId}: ${windSpeed} m/s`);
+      }
+    } else {
+      console.log(`[Wind Vector Update] Missing wind data for ${station.stationId}: speed=${windSpeed}, direction=${windDirection}`);
+    }
+  }
+
+  /**
    * Remove station
    */
   removeStation(stationId) {
     const station = this.stations.get(stationId);
     if (station) {
       this.viewer.entities.remove(station.entity);
+      // Remove wind vector entities if they exist
+      if (station.windVector) {
+        if (station.windVector.vector) {
+          this.viewer.entities.remove(station.windVector.vector);
+        }
+        if (station.windVector.arrowhead) {
+          this.viewer.entities.remove(station.windVector.arrowhead);
+        }
+        if (station.windVector.label) {
+          this.viewer.entities.remove(station.windVector.label);
+        }
+      }
       this.stations.delete(stationId);
       console.log(`Removed weather station: ${stationId}`);
     }
@@ -500,6 +740,18 @@ export class NWSWeatherStationLayer {
   removeAllStations() {
     this.stations.forEach((station) => {
       this.viewer.entities.remove(station.entity);
+      // Remove wind vector entities if they exist
+      if (station.windVector) {
+        if (station.windVector.vector) {
+          this.viewer.entities.remove(station.windVector.vector);
+        }
+        if (station.windVector.arrowhead) {
+          this.viewer.entities.remove(station.windVector.arrowhead);
+        }
+        if (station.windVector.label) {
+          this.viewer.entities.remove(station.windVector.label);
+        }
+      }
     });
     this.stations.clear();
     this.stopAutoUpdate();
@@ -513,6 +765,18 @@ export class NWSWeatherStationLayer {
   showAll() {
     this.stations.forEach((station) => {
       station.entity.show = true;
+      // Show wind vectors if they exist
+      if (station.windVector) {
+        if (station.windVector.vector) {
+          station.windVector.vector.show = true;
+        }
+        if (station.windVector.arrowhead) {
+          station.windVector.arrowhead.show = true;
+        }
+        if (station.windVector.label) {
+          station.windVector.label.show = true;
+        }
+      }
     });
   }
 
@@ -522,6 +786,18 @@ export class NWSWeatherStationLayer {
   hideAll() {
     this.stations.forEach((station) => {
       station.entity.show = false;
+      // Hide wind vectors if they exist
+      if (station.windVector) {
+        if (station.windVector.vector) {
+          station.windVector.vector.show = false;
+        }
+        if (station.windVector.arrowhead) {
+          station.windVector.arrowhead.show = false;
+        }
+        if (station.windVector.label) {
+          station.windVector.label.show = false;
+        }
+      }
     });
   }
 

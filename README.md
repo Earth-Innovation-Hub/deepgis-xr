@@ -282,21 +282,27 @@ The AI Viewport Analysis system supports multiple detection models, including re
 
 Grounding DINO runs as a separate Docker container for GPU-accelerated inference on a dedicated server.
 
-**API Configuration:** `http://192.168.0.232:5000` (set in `docker-compose.yml`)
+**API:** `http://192.168.0.232:5000` | **Test:** `curl http://192.168.0.232:5000/health`
 
-**Quick Test:**
 ```bash
-# Health check
-curl http://192.168.0.232:5000/health
-
 # Detect objects
 curl -X POST http://192.168.0.232:5000/api/predict \
-    -F "file=@image.jpg" \
-    -F "text_prompt=rock . boulder . crater" \
-    -F "box_threshold=0.3"
+    -F "file=@image.jpg" -F "text_prompt=rock . boulder . crater"
 
-# Using Python client
+# Python client
 ./grounding_dino_api_client.py --image viewport.jpg --prompt "rock . boulder . crater"
+```
+
+### Grounded-SAM-2 Remote API Integration
+
+Combines Grounding DINO detection with SAM 2 segmentation for high-quality instance masks.
+
+**API:** `http://192.168.0.232:5001` | **Test:** `curl http://192.168.0.232:5001/health`
+
+```bash
+# Detect + segment
+curl -X POST http://192.168.0.232:5001/detect \
+    -F "image=@image.jpg" -F "text_prompt=rock . boulder . crater"
 ```
 
 ### Use Cases for Grounding DINO

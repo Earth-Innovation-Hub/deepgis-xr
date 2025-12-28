@@ -2145,14 +2145,14 @@ class WorldSamplerUI {
                     requestBody.confidence_threshold = yolov8Confidence ? parseFloat(yolov8Confidence.value) / 100 : 0.25;
                     requestBody.class_filter = yolov8Classes ? yolov8Classes.value.trim() : '';
                     statusText.textContent = 'Running YOLOv8 detection...';
-                } else if (analysisType === 'grounding_dino') {
+                } else if (analysisType === 'grounding_dino' || analysisType === 'grounded_sam') {
                     const textPrompt = document.getElementById('groundingDinoPrompt');
                     const boxThreshold = document.getElementById('gdBoxThreshold');
                     const textThreshold = document.getElementById('gdTextThreshold');
                     requestBody.text_prompt = textPrompt ? textPrompt.value.trim() : 'object';
-                    requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : 0.3;
+                    requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : (analysisType === 'grounded_sam' ? 0.35 : 0.3);
                     requestBody.text_threshold = textThreshold ? parseFloat(textThreshold.value) / 100 : 0.25;
-                    statusText.textContent = 'Running Grounding DINO detection...';
+                    statusText.textContent = analysisType === 'grounded_sam' ? 'Running Grounded-SAM-2 (detection + segmentation)...' : 'Running Grounding DINO detection...';
                 } else if (analysisType === 'prithvi') {
                     statusText.textContent = 'Extracting Earth Observation features with Prithvi...';
                 }
@@ -2207,7 +2207,7 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino') {
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam') {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
@@ -2226,6 +2226,9 @@ class WorldSamplerUI {
                     }
                     if (analysisType === 'grounding_dino') {
                         modelName = 'Grounding DINO';
+                    }
+                    if (analysisType === 'grounded_sam') {
+                        modelName = 'Grounded-SAM-2';
                     }
                     this.showNotification(
                         `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
@@ -3304,6 +3307,11 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 if (groundingDinoOptions) groundingDinoOptions.style.display = 'block';
                 if (analysisDescription) {
                     analysisDescription.textContent = 'Open-vocabulary detection - describe ANY object to find (rocks, craters, vehicles, custom objects)';
+                }
+            } else if (analysisType === 'grounded_sam') {
+                if (groundingDinoOptions) groundingDinoOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'Grounding DINO + SAM 2 - Detection + high-quality instance segmentation (best quality, slower)';
                 }
             } else {
                 // SAM (default)
