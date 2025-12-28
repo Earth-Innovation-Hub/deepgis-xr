@@ -277,44 +277,29 @@ The AI Viewport Analysis system supports multiple detection models, including re
 └──────────────────────────────────────┘  └───────────────────────────┘
 ```
 
-### Grounding DINO Remote API Integration
+### Remote AI APIs
+
 ![detection_visualization](https://github.com/user-attachments/assets/533490e9-bafd-40a4-bf2f-0204186387b3)
 
-Grounding DINO runs as a separate Docker container for GPU-accelerated inference on a dedicated server.
+GPU-accelerated AI services on dedicated server for open-vocabulary detection and segmentation.
 
-**API:** `http://192.168.0.232:5000` | **Test:** `curl http://192.168.0.232:5000/health`
+**Grounding DINO** (port 5000): Text-based detection  
+**Grounded-SAM-2** (port 5001): Detection + high-quality segmentation
 
 ```bash
-# Detect objects
+# Grounding DINO - Detection only
 curl -X POST http://192.168.0.232:5000/api/predict \
     -F "file=@image.jpg" -F "text_prompt=rock . boulder . crater"
 
-# Python client
-./grounding_dino_api_client.py --image viewport.jpg --prompt "rock . boulder . crater"
-```
-
-### Grounded-SAM-2 Remote API Integration
-
-Combines Grounding DINO detection with SAM 2 segmentation for high-quality instance masks.
-
-**API:** `http://192.168.0.232:5001` | **Test:** `curl http://192.168.0.232:5001/health`
-
-```bash
-# Detect + segment
+# Grounded-SAM-2 - Detection + Segmentation
 curl -X POST http://192.168.0.232:5001/detect \
     -F "image=@image.jpg" -F "text_prompt=rock . boulder . crater"
+
+# Python client
+./grounding_dino_api_client.py --image viewport.jpg --prompt "rock . boulder"
 ```
 
-### Use Cases for Grounding DINO
-
-| Domain | Text Prompt Example |
-|--------|-------------------|
-| Lunar/Mars Geology | `"rock . boulder . crater . regolith . debris"` |
-| Urban Mapping | `"building . road . car . tree . pedestrian"` |
-| Agricultural Analysis | `"crop . field . irrigation . tree . structure"` |
-| Disaster Assessment | `"damage . debris . collapsed building . vehicle"` |
-| Archaeological Survey | `"structure . artifact . excavation . mound"` |
-| Wildlife Monitoring | `"animal . bird . nest . den . tracks"` |
+**Example Prompts:** Geology: `"rock . boulder . crater"` | Urban: `"building . car . tree"` | Wildlife: `"animal . bird . nest"`
 
 ---
 
