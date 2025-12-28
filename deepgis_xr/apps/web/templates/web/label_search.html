@@ -1252,6 +1252,12 @@
                 <i class="fas fa-mountain me-2"></i>3D Terrain
             </label>
         </div>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="buildingsToggle">
+            <label class="form-check-label" for="buildingsToggle" style="color: #cbd5e1; font-size: 0.85rem;">
+                <i class="fas fa-building me-2"></i>3D Buildings (OSM)
+            </label>
+        </div>
         <div class="btn-group w-100 mb-2" role="group">
             <button class="btn btn-outline-primary btn-sm" id="view2D"><i class="fas fa-map"></i> 2D</button>
             <button class="btn btn-outline-primary btn-sm" id="view3D"><i class="fas fa-cube"></i> 3D</button>
@@ -1989,6 +1995,10 @@
                 <span class="keyboard-shortcut-key">F</span>
             </div>
             <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle 3D Buildings</span>
+                <span class="keyboard-shortcut-key">B</span>
+            </div>
+            <div class="keyboard-shortcut-item">
                 <span class="keyboard-shortcut-label">Toggle Wireframe Mesh/Textured</span>
                 <span class="keyboard-shortcut-key">W</span>
             </div>
@@ -2189,6 +2199,17 @@
                             });
                         } else {
                             document.exitFullscreen();
+                        }
+                        return;
+                    }
+                    
+                    // B key: Toggle 3D Buildings
+                    if (e.key === 'b' || e.key === 'B') {
+                        e.preventDefault();
+                        const buildingsToggle = document.getElementById('buildingsToggle');
+                        if (buildingsToggle) {
+                            buildingsToggle.checked = !buildingsToggle.checked;
+                            buildingsToggle.dispatchEvent(new Event('change'));
                         }
                         return;
                     }
@@ -2585,6 +2606,74 @@
                     }
                 }
                 
+                // Setup OSM Buildings toggle
+                function setupBuildingsToggle() {
+                    const viewer = window.AppState?.viewer || window.viewer;
+                    if (!viewer) {
+                        // Retry after viewer is initialized
+                        setTimeout(setupBuildingsToggle, 500);
+                        return;
+                    }
+                    
+                    const buildingsToggle = document.getElementById('buildingsToggle');
+                    if (buildingsToggle && !buildingsToggle.dataset.handlerAttached) {
+                        buildingsToggle.addEventListener('change', async (e) => {
+                            const enabled = e.target.checked;
+                            console.log(`[Buildings] Toggle ${enabled ? 'enabled' : 'disabled'}`);
+                            
+                            try {
+                                // Ensure we have a place to store the buildings reference
+                                // Use fallback storage if AppState is not available
+                                if (!window.osmBuildingsTileset) {
+                                    window.osmBuildingsTileset = null;
+                                }
+                                
+                                // Get current buildings reference
+                                let osmBuildings = window.AppState?.currentLayers?.osmBuildings || window.osmBuildingsTileset;
+                                
+                                // Toggle OSM Buildings directly (inline implementation)
+                                if (enabled) {
+                                    // Load OSM Buildings if not already loaded
+                                    if (!osmBuildings) {
+                                        console.log('Loading OSM 3D Buildings...');
+                                        
+                                        // Create OSM Buildings tileset
+                                        osmBuildings = await Cesium.createOsmBuildingsAsync();
+                                        
+                                        // Add to viewer
+                                        viewer.scene.primitives.add(osmBuildings);
+                                        
+                                        // Store reference (try AppState first, fallback to window)
+                                        if (window.AppState?.currentLayers) {
+                                            window.AppState.currentLayers.osmBuildings = osmBuildings;
+                                        }
+                                        window.osmBuildingsTileset = osmBuildings;
+                                        
+                                        console.log('✓ OSM 3D Buildings loaded successfully');
+                                    } else {
+                                        // Buildings already loaded, just show them
+                                        osmBuildings.show = true;
+                                        console.log('✓ OSM 3D Buildings enabled');
+                                    }
+                                } else {
+                                    // Disable buildings
+                                    if (osmBuildings) {
+                                        osmBuildings.show = false;
+                                        console.log('✓ OSM 3D Buildings disabled');
+                                    }
+                                }
+                            } catch (error) {
+                                console.error('[Buildings] Error:', error);
+                                // Revert checkbox state
+                                e.target.checked = !enabled;
+                                alert(`Failed to ${enabled ? 'load' : 'hide'} buildings: ${error.message}`);
+                            }
+                        });
+                        buildingsToggle.dataset.handlerAttached = 'true';
+                        console.log('[Buildings] Toggle handler attached');
+                    }
+                }
+                
                 // Setup view mode buttons after a delay to ensure viewer is ready
                 setTimeout(setupViewModeButtons, 1000);
                 setTimeout(setupViewModeButtons, 3000);
@@ -2592,6 +2681,10 @@
                 // Setup perspective views after a delay to ensure viewer is ready
                 setTimeout(setupPerspectiveViews, 1000);
                 setTimeout(setupPerspectiveViews, 3000);
+                
+                // Setup buildings toggle after viewer is ready
+                setTimeout(setupBuildingsToggle, 1000);
+                setTimeout(setupBuildingsToggle, 3000);
                 
                 console.log('[HUD] Initialized - Press H to show keyboard shortcuts');
             }

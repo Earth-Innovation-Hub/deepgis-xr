@@ -341,5 +341,56 @@ export async function initializeCesium(updateLoadingStatus) {
   }
 }
 
+/**
+ * Toggle OSM 3D Buildings layer
+ * @param {Cesium.Viewer} viewer - The Cesium viewer instance
+ * @param {boolean} enabled - Whether to enable or disable buildings
+ * @returns {Promise<boolean>} - Success status
+ */
+export async function toggleOSMBuildings(viewer, enabled) {
+  if (!viewer) {
+    console.error('Viewer not initialized');
+    return false;
+  }
+  
+  try {
+    if (enabled) {
+      // Load OSM Buildings if not already loaded
+      if (!AppState.currentLayers.osmBuildings) {
+        console.log('Loading OSM 3D Buildings...');
+        
+        // Create OSM Buildings tileset
+        const osmBuildings = await Cesium.createOsmBuildingsAsync();
+        
+        // Add to viewer
+        viewer.scene.primitives.add(osmBuildings);
+        
+        // Store reference in AppState
+        AppState.currentLayers.osmBuildings = osmBuildings;
+        
+        console.log('✓ OSM 3D Buildings loaded successfully');
+        return true;
+      } else {
+        // Buildings already loaded, just show them
+        AppState.currentLayers.osmBuildings.show = true;
+        console.log('✓ OSM 3D Buildings enabled');
+        return true;
+      }
+    } else {
+      // Disable buildings
+      if (AppState.currentLayers.osmBuildings) {
+        AppState.currentLayers.osmBuildings.show = false;
+        console.log('✓ OSM 3D Buildings disabled');
+        return true;
+      }
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Failed to toggle OSM Buildings:', error);
+    return false;
+  }
+}
+
 // Memory error handling is now in memory-manager.js module
 

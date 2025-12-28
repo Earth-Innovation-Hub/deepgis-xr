@@ -11,7 +11,8 @@ export const AppState = {
     overlays: {},
     vectors: {},  // Vector layer tracking
     terrain: null,
-    models: []
+    models: [],
+    osmBuildings: null  // OSM 3D Buildings tileset
   },
   availableLayers: {},
   measurements: [],
