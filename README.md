@@ -508,8 +508,6 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 - [ ] **Model Marketplace**: Community-shared detection models and configs
 - [ ] **Edge Deployment**: Lightweight inference for embedded/field devices
 - [ ] **AR Field Overlay**: Mobile AR for on-site navigation and annotation
-
-### 💡 Community Requested
 - [ ] Integration with Google Earth Engine
 - [ ] Integration with OpenTopography and support for point cloud visualization (LAS/LAZ)
 - [ ] 3D building/structure modeling from imagery
