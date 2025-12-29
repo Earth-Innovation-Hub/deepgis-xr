@@ -13,7 +13,6 @@
             right: 320px; /* Updated to match new sidebar width */
             bottom: 0;
             left: 0;
-            width: auto;
             height: 100%;
             z-index: 1;
         }
@@ -1242,7 +1241,6 @@
             #cesiumContainer {
                 right: 0;
                 left: 0;
-                width: 100%;
             }
 
             /* Hide most UI elements on mobile */
@@ -1393,7 +1391,6 @@
         #wrapper.fullscreen-mode #cesiumContainer {
             right: 0;
             left: 0;
-            width: 100%;
         }
 
         #wrapper.fullscreen-mode .navigation-widget-group {
@@ -1434,7 +1431,6 @@
         :-ms-fullscreen #cesiumContainer {
             right: 0 !important;
             left: 0 !important;
-            width: 100% !important;
         }
 
         :fullscreen #sidebar-wrapper,
