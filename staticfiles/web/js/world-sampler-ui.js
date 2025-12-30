@@ -2221,6 +2221,9 @@ class WorldSamplerUI {
                     statusText.style.color = '#10b981';
                     
                     // Display results (all detection models use same display method)
+                    // NOTE: Grounded-SAM-2 API returns pixel-precise segmentation masks in GeoJSON format
+                    // The backend requests mask_format='geojson' and converts to normalized coordinates
+                    // Frontend displays masks with visual indicators (🎯 icon, thicker outlines)
                     result.capture_pose = capturePose;
                     this.displayZeroShotResults(result);
                     
@@ -2491,7 +2494,8 @@ class WorldSamplerUI {
                 
                 if (!Cesium.defined(cartesian)) {
                     const lon = minLon + (x_norm * lonRange);
-                    const lat = maxLat - (y_norm * latRange); // Invert Y axis
+                    // Y-axis flip: image origin (0,0) is top-left, but geographic coords have max latitude at top
+                    const lat = minLat + ((1 - y_norm) * latRange);
                     return [lon, lat];
                 }
                 
@@ -2532,6 +2536,12 @@ class WorldSamplerUI {
             this.samDataSource.load(convertedGeoJSON).then(() => {
                 const entities = this.samDataSource.entities.values;
                 
+                // Lock camera position to prevent Cesium from auto-zooming to entities
+                const savedPosition = Cesium.Cartesian3.clone(this.viewer.camera.position);
+                const savedHeading = this.viewer.camera.heading;
+                const savedPitch = this.viewer.camera.pitch;
+                const savedRoll = this.viewer.camera.roll;
+                
                 entities.forEach((entity, index) => {
                     const props = entity.properties;
                     const segmentId = props.segment_id?.getValue() || index + 1;
@@ -2560,7 +2570,19 @@ class WorldSamplerUI {
                     `;
                 });
                 
+                // Add data source WITHOUT triggering auto-zoom
                 this.viewer.dataSources.add(this.samDataSource);
+                
+                // Force camera back to saved position in case Cesium moved it
+                this.viewer.camera.setView({
+                    destination: savedPosition,
+                    orientation: {
+                        heading: savedHeading,
+                        pitch: savedPitch,
+                        roll: savedRoll
+                    },
+                    duration: 0
+                });
                 
                 const avgIoU = features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length;
                 this.showNotification(
@@ -2689,49 +2711,7 @@ class WorldSamplerUI {
             this.viewer.dataSources.remove(this.samDataSource);
         }
         
-        const camera = this.viewer.camera;
-        const scene = this.viewer.scene;
-        const canvas = scene.canvas;
-        const viewportWidth = canvas.width;
-        const viewportHeight = canvas.height;
-        
-        // Get camera position
-        const position = camera.positionCartographic;
-        const centerLon = Cesium.Math.toDegrees(position.longitude);
-        const centerLat = Cesium.Math.toDegrees(position.latitude);
-        const height = position.height;
-        
-        // Get viewport bounds
-        const corners = [
-            new Cesium.Cartesian2(0, 0),
-            new Cesium.Cartesian2(viewportWidth, 0),
-            new Cesium.Cartesian2(viewportWidth, viewportHeight),
-            new Cesium.Cartesian2(0, viewportHeight)
-        ];
-        
-        const worldCorners = corners.map(screenPos => {
-            // Try to pick from terrain first
-            let cartesian = scene.pickPosition(screenPos);
-            
-            // Fallback to ellipsoid if pickPosition fails
-            if (!Cesium.defined(cartesian)) {
-                cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
-            }
-            
-            if (cartesian) {
-                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                return {
-                    lon: Cesium.Math.toDegrees(cartographic.longitude),
-                    lat: Cesium.Math.toDegrees(cartographic.latitude),
-                    height: cartographic.height
-                };
-            }
-            return null;
-        }).filter(c => c !== null);
-        
-        // Use the same capturePose already defined earlier in function (line 2645)
-        // const capturePose already declared above - no need to redeclare
-        
+        // Restore camera to capture pose for accurate coordinate mapping
         this.withCapturePose(capturePose, () => {
             const camera = this.viewer.camera;
             const scene = this.viewer.scene;
@@ -2796,7 +2776,8 @@ class WorldSamplerUI {
                 
                 if (!Cesium.defined(cartesian)) {
                     const lon = minLon + (x_norm * lonRange);
-                    const lat = minLat + ((1 - y_norm) * latRange); // Flip Y (image origin is top-left)
+                    // Y-axis flip: image origin (0,0) is top-left, but geographic coords have max latitude at top
+                    const lat = minLat + ((1 - y_norm) * latRange);
                     return [lon, lat];
                 }
                 
@@ -2809,23 +2790,32 @@ class WorldSamplerUI {
             
             const features = result.geojson.features.map((feature, index) => {
                 const props = feature.properties;
-                const coords = feature.geometry.coordinates[0];
+                const geom = feature.geometry;
                 
-                const geographicCoords = coords.map(([x_norm, y_norm]) => 
-                    pixelToGeographic(x_norm, y_norm)
+                // Transform ALL rings in the polygon (exterior + holes)
+                // coordinates structure: [ [exterior_ring], [hole1], [hole2], ... ]
+                const transformedCoords = geom.coordinates.map(ring => 
+                    ring.map(([x_norm, y_norm]) => pixelToGeographic(x_norm, y_norm))
                 );
+                
+                // Debug first feature to verify coordinates
+                if (index === 0 && transformedCoords[0] && transformedCoords[0][0]) {
+                    console.log('🔍 First entity coordinates:', {
+                        firstPoint: transformedCoords[0][0],
+                        numRings: transformedCoords.length,
+                        ringLength: transformedCoords[0].length,
+                        viewportBounds: { minLon, maxLon, minLat, maxLat }
+                    });
+                }
                 
                 return {
                     type: 'Feature',
                     geometry: {
                         type: 'Polygon',
-                        coordinates: [geographicCoords]
+                        coordinates: transformedCoords  // Preserve all rings
                     },
                     properties: {
-                        ...props,
-                        detection_id: props.class_id || index + 1,
-                        class_name: props.category || 'unknown',
-                        confidence: props.confidence || 0.0
+                        ...props  // Use backend properties as-is (already correct)
                     }
                 };
             });
@@ -2837,6 +2827,12 @@ class WorldSamplerUI {
             
             this.samDataSource.load(convertedGeoJSON).then(() => {
                 const entities = this.samDataSource.entities.values;
+                
+                // Lock camera position to prevent Cesium from auto-zooming to entities
+                const savedPosition = Cesium.Cartesian3.clone(this.viewer.camera.position);
+                const savedHeading = this.viewer.camera.heading;
+                const savedPitch = this.viewer.camera.pitch;
+                const savedRoll = this.viewer.camera.roll;
                 
                 const classColors = {
                     'person': Cesium.Color.RED,
@@ -2856,6 +2852,7 @@ class WorldSamplerUI {
                         const detectionId = props.detection_id?.getValue() || (index + 1);
                         const className = props.class_name?.getValue() || 'unknown';
                         const confidence = props.confidence?.getValue() || 0.0;
+                        const hasMask = props.has_mask?.getValue() || false;  // Check if using segmentation mask
                         
                         // Get color for this class
                         const baseColor = classColors[className.toLowerCase()] || Cesium.Color.fromHsl(
@@ -2863,21 +2860,28 @@ class WorldSamplerUI {
                         );
                         
                         // Make opacity based on confidence (higher confidence = more opaque)
-                        const opacity = 0.3 + (confidence * 0.4);
+                        // Segmentation masks get slightly higher opacity for better visibility
+                        const baseOpacity = hasMask ? 0.4 : 0.3;
+                        const opacity = baseOpacity + (confidence * 0.4);
                         const color = baseColor.withAlpha(opacity);
                         
-                        // Style the polygon bounding box
+                        // Style the polygon (segmentation mask or bounding box)
                         if (entity.polygon) {
                             entity.polygon.material = color;
                             entity.polygon.outline = true;
-                            entity.polygon.outlineColor = baseColor.withAlpha(1.0); // Full opacity for outline
-                            entity.polygon.outlineWidth = 3; // Increased from 2 to 3
+                            // Segmentation masks get thicker, brighter outlines
+                            entity.polygon.outlineColor = hasMask 
+                                ? baseColor.withAlpha(1.0)  // Full opacity for mask outlines
+                                : baseColor.withAlpha(0.8); // Slightly dimmer for bbox outlines
+                            entity.polygon.outlineWidth = hasMask ? 4 : 3;  // Thicker outline for masks
                             entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
                         }
                         
                         // Enhanced label with ID number, class name, and confidence
+                        // Add indicator for segmentation masks
+                        const labelPrefix = hasMask ? '🎯' : '▫️';
                         entity.label = {
-                            text: `#${detectionId}: ${className} (${(confidence * 100).toFixed(0)}%)`,
+                            text: `${labelPrefix} #${detectionId}: ${className} (${(confidence * 100).toFixed(0)}%)`,
                             font: 'bold 14px sans-serif', // Increased from 12px to 14px, made bold
                             fillColor: Cesium.Color.WHITE,
                             outlineColor: Cesium.Color.BLACK,
@@ -2892,11 +2896,15 @@ class WorldSamplerUI {
                             disableDepthTestDistance: Number.POSITIVE_INFINITY // Always show labels on top
                         };
                         
-                        // Enhanced description popup
+                        // Enhanced description popup with segmentation indicator
+                        const segmentationType = hasMask 
+                            ? '<span style="background: rgba(16, 185, 129, 0.3); padding: 2px 8px; border-radius: 4px;">🎯 Pixel-precise Segmentation</span>'
+                            : '<span style="background: rgba(255, 152, 0, 0.3); padding: 2px 8px; border-radius: 4px;">▫️ Bounding Box</span>';
+                        
                         entity.description = `
                             <div style="padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px;">
                                 <h4 style="margin: 0 0 10px 0; color: white; font-size: 16px;">
-                                    🎯 Detection #${detectionId}
+                                    Detection #${detectionId}
                                 </h4>
                                 <table style="width: 100%; color: white; font-size: 13px;">
                                     <tr style="background: rgba(255,255,255,0.1);">
@@ -2915,6 +2923,10 @@ class WorldSamplerUI {
                                         <td style="padding: 6px; font-weight: bold;">ID:</td>
                                         <td style="padding: 6px;">#${detectionId}</td>
                                     </tr>
+                                    <tr>
+                                        <td style="padding: 6px; font-weight: bold;">Type:</td>
+                                        <td style="padding: 6px;">${segmentationType}</td>
+                                    </tr>
                                 </table>
                             </div>
                         `;
@@ -2930,9 +2942,43 @@ class WorldSamplerUI {
                     }
                 });
                 
+                // Add data source WITHOUT triggering auto-zoom
+                // This prevents Cesium from flying to the data when camera has already been restored
                 this.viewer.dataSources.add(this.samDataSource);
                 
-                console.log(`Displayed ${entities.length} Zero-Shot detections on map`);
+                // Debug entity positions
+                if (entities.length > 0 && entities[0].polygon) {
+                    const firstPoly = entities[0].polygon.hierarchy.getValue(Cesium.JulianDate.now());
+                    if (firstPoly && firstPoly.positions && firstPoly.positions.length > 0) {
+                        const firstCartographic = Cesium.Cartographic.fromCartesian(firstPoly.positions[0]);
+                        console.log('🌍 First entity actual position:', {
+                            lon: Cesium.Math.toDegrees(firstCartographic.longitude).toFixed(6),
+                            lat: Cesium.Math.toDegrees(firstCartographic.latitude).toFixed(6),
+                            height: firstCartographic.height.toFixed(2)
+                        });
+                    }
+                }
+                
+                // Force camera back to saved position in case Cesium moved it
+                this.viewer.camera.setView({
+                    destination: savedPosition,
+                    orientation: {
+                        heading: savedHeading,
+                        pitch: savedPitch,
+                        roll: savedRoll
+                    },
+                    duration: 0
+                });
+                
+                // Verify camera didn't move
+                const finalCartographic = Cesium.Cartographic.fromCartesian(this.viewer.camera.position);
+                console.log('📷 Camera after restore:', {
+                    lon: Cesium.Math.toDegrees(finalCartographic.longitude).toFixed(6),
+                    lat: Cesium.Math.toDegrees(finalCartographic.latitude).toFixed(6),
+                    alt: finalCartographic.height.toFixed(2)
+                });
+                
+                console.log(`✅ Displayed ${entities.length} Zero-Shot detections on map`);
                 console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
             }).catch(error => {
                 console.error('Error loading Zero-Shot GeoJSON:', error);
@@ -2960,24 +3006,25 @@ class WorldSamplerUI {
         
         const features = result.geojson.features.map((feature, index) => {
             const props = feature.properties;
-            const coords = feature.geometry.coordinates[0];
-            const geographicCoords = coords.map(([x_norm, y_norm]) => {
-                const lon = Cesium.Math.toDegrees(position.longitude) + (x_norm - 0.5) * viewportWidth * degreesPerPixel;
-                const lat = Cesium.Math.toDegrees(position.latitude) + (0.5 - y_norm) * viewportHeight * degreesPerPixel;
-                return [lon, lat];
-            });
+            const geom = feature.geometry;
+            
+            // Transform ALL rings in the polygon (exterior + holes)
+            const transformedCoords = geom.coordinates.map(ring => 
+                ring.map(([x_norm, y_norm]) => {
+                    const lon = Cesium.Math.toDegrees(position.longitude) + (x_norm - 0.5) * viewportWidth * degreesPerPixel;
+                    const lat = Cesium.Math.toDegrees(position.latitude) + (0.5 - y_norm) * viewportHeight * degreesPerPixel;
+                    return [lon, lat];
+                })
+            );
             
             return {
                 type: 'Feature',
                 geometry: {
                     type: 'Polygon',
-                    coordinates: [geographicCoords]
+                    coordinates: transformedCoords  // Preserve all rings
                 },
                 properties: {
-                    ...props,
-                    detection_id: props.class_id || index + 1,
-                    class_name: props.category || 'unknown',
-                    confidence: props.confidence || 0.0
+                    ...props  // Use backend properties as-is
                 }
             };
         });
@@ -2992,23 +3039,28 @@ class WorldSamplerUI {
                     const detectionId = props.detection_id?.getValue() || (index + 1);
                     const className = props.class_name?.getValue() || 'unknown';
                     const confidence = props.confidence?.getValue() || 0.0;
+                    const hasMask = props.has_mask?.getValue() || false;
                     
                     const hue = (index * 137.508) % 360;
                     const baseColor = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5);
-                    const opacity = 0.3 + (confidence * 0.4);
+                    const baseOpacity = hasMask ? 0.4 : 0.3;
+                    const opacity = baseOpacity + (confidence * 0.4);
                     const color = baseColor.withAlpha(opacity);
                     
                     if (entity.polygon) {
                         entity.polygon.material = color;
                         entity.polygon.outline = true;
-                        entity.polygon.outlineColor = baseColor.withAlpha(1.0); // Full opacity outline
-                        entity.polygon.outlineWidth = 3; // Increased from 2 to 3
+                        entity.polygon.outlineColor = hasMask 
+                            ? baseColor.withAlpha(1.0)
+                            : baseColor.withAlpha(0.8);
+                        entity.polygon.outlineWidth = hasMask ? 4 : 3;
                         entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
                     }
                     
-                    // Enhanced label with ID number
+                    // Enhanced label with ID number and mask indicator
+                    const labelPrefix = hasMask ? '🎯' : '▫️';
                     entity.label = {
-                        text: `#${detectionId}: ${className} (${(confidence * 100).toFixed(0)}%)`,
+                        text: `${labelPrefix} #${detectionId}: ${className} (${(confidence * 100).toFixed(0)}%)`,
                         font: 'bold 14px sans-serif', // Increased and made bold
                         fillColor: Cesium.Color.WHITE,
                         outlineColor: Cesium.Color.BLACK,
@@ -3023,11 +3075,15 @@ class WorldSamplerUI {
                         disableDepthTestDistance: Number.POSITIVE_INFINITY // Always show labels on top
                     };
                     
-                    // Enhanced description popup
+                    // Enhanced description popup with mask indicator
+                    const segmentationType = hasMask 
+                        ? '<span style="background: rgba(16, 185, 129, 0.3); padding: 2px 8px; border-radius: 4px;">🎯 Pixel-precise Segmentation</span>'
+                        : '<span style="background: rgba(255, 152, 0, 0.3); padding: 2px 8px; border-radius: 4px;">▫️ Bounding Box</span>';
+                    
                     entity.description = `
                         <div style="padding: 8px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 8px;">
                             <h4 style="margin: 0 0 10px 0; color: white; font-size: 16px;">
-                                🎯 Detection #${detectionId}
+                                Detection #${detectionId}
                             </h4>
                             <table style="width: 100%; color: white; font-size: 13px;">
                                 <tr style="background: rgba(255,255,255,0.1);">
@@ -3046,6 +3102,10 @@ class WorldSamplerUI {
                                     <td style="padding: 6px; font-weight: bold;">ID:</td>
                                     <td style="padding: 6px;">#${detectionId}</td>
                                 </tr>
+                                <tr>
+                                    <td style="padding: 6px; font-weight: bold;">Type:</td>
+                                    <td style="padding: 6px;">${segmentationType}</td>
+                                </tr>
                             </table>
                             <p style="margin: 8px 0 0 0; padding: 6px; background: rgba(255,152,0,0.2); border-radius: 4px; font-size: 11px;">
                                 ⚠️ Approximate positioning (fallback method)
@@ -3057,7 +3117,20 @@ class WorldSamplerUI {
                 }
             });
             
+            // Add data source WITHOUT triggering auto-zoom
             this.viewer.dataSources.add(this.samDataSource);
+            
+            // Force camera back to saved position in case Cesium moved it
+            this.viewer.camera.setView({
+                destination: savedPosition,
+                orientation: {
+                    heading: savedHeading,
+                    pitch: savedPitch,
+                    roll: savedRoll
+                },
+                duration: 0
+            });
+            
             console.log(`Displayed ${entities.length} Zero-Shot detections (approximate method)`);
         }).catch(error => {
             console.error('Error loading Zero-Shot GeoJSON (approximate):', error);

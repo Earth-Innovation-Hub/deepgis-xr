@@ -1981,7 +1981,7 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
         }
         
         try:
-            # Call Grounded-SAM-2 API
+            # Call Grounded-SAM-2 API with GeoJSON mask format
             print(f"   Sending request to {api_url}/detect")
             print(f"   Image size: {image.width}x{image.height}")
             
@@ -1991,7 +1991,9 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
                 data={
                     'text_prompt': text_prompt,
                     'box_threshold': box_threshold,
-                    'text_threshold': text_threshold
+                    'text_threshold': text_threshold,
+                    'mask_format': 'geojson',  # Request GeoJSON-formatted masks for Cesium
+                    'simplify_tolerance': 0.01  # Simplify polygons for performance
                 },
                 timeout=180  # 3 minute timeout (segmentation takes longer)
             )
@@ -2051,12 +2053,22 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
             confidence = det.get('confidence', 0.0)
             box = det.get('box', [0, 0, 0, 0])  # [x1, y1, x2, y2] in pixels
             
-            detections_data.append({
+            # Extract GeoJSON mask if available
+            # API returns masks as MultiPolygon GeoJSON when mask_format='geojson'
+            mask_geojson = det.get('mask', None)  # GeoJSON MultiPolygon from SAM2 API
+            
+            detection_dict = {
                 "detection_id": i + 1,
                 "class_name": label,
                 "confidence": float(confidence),
                 "bbox": [float(x) for x in box]
-            })
+            }
+            
+            # Add GeoJSON mask if present
+            if mask_geojson is not None:
+                detection_dict['mask_geojson'] = mask_geojson
+            
+            detections_data.append(detection_dict)
         
         # Save annotated image from API if available
         visualization_path = None
@@ -2073,41 +2085,16 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
             except Exception as viz_error:
                 print(f"Warning: Could not download annotated image: {viz_error}")
         
-        # Create GeoJSON from detections (bounding boxes as polygons)
-        features = []
-        for det in detections_data:
-            bbox = det['bbox']
-            x1, y1, x2, y2 = bbox
-            
-            # Normalize coordinates (0-1) for consistency
-            coords = [
-                [x1/img_width, y1/img_height],
-                [x2/img_width, y1/img_height],
-                [x2/img_width, y2/img_height],
-                [x1/img_width, y2/img_height],
-                [x1/img_width, y1/img_height]
-            ]
-            
-            feature = {
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [coords]
-                },
-                "properties": {
-                    "detection_id": det['detection_id'],
-                    "class_name": det['class_name'],
-                    "category": det['class_name'],
-                    "confidence": det['confidence'],
-                    "class_id": det['detection_id']
-                }
-            }
-            features.append(feature)
+        # Create GeoJSON from detections with segmentation masks
+        # API provides masks in GeoJSON MultiPolygon format - normalize to 0-1 coordinates
+        geojson = _masks_to_geojson_with_contours(detections_data, img_width, img_height)
         
-        geojson = {
-            "type": "FeatureCollection",
-            "features": features
-        }
+        # Log mask usage statistics
+        masks_found = sum(1 for det in detections_data if 'mask_geojson' in det and det['mask_geojson'] is not None)
+        if masks_found > 0:
+            print(f"✓ Using {masks_found}/{num_detections} GeoJSON segmentation masks from API")
+        else:
+            print(f"⚠ No segmentation masks found, using bounding boxes as polygons")
         
         # Save GeoJSON
         geojson_path = session_dir / 'detections.geojson'
@@ -2236,8 +2223,104 @@ def _detections_to_geojson(detections_data, image_width, image_height):
             "properties": {
                 "detection_id": det['detection_id'],
                 "class_name": det['class_name'],
+                "category": det['class_name'],  # Frontend compatibility: used by displayZeroShotResults
                 "confidence": det['confidence'],
+                "class_id": det['detection_id'],  # Frontend compatibility: used by displayZeroShotResults
                 "bbox_pixels": bbox
+            }
+        }
+        features.append(feature)
+    
+    return {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+
+def _masks_to_geojson_with_contours(detections_data, image_width, image_height):
+    """
+    Convert Grounded-SAM-2 detections with GeoJSON segmentation masks to normalized GeoJSON.
+    
+    The API returns masks already in GeoJSON MultiPolygon format with pixel coordinates.
+    This function normalizes those coordinates to 0-1 range for geographic mapping.
+    
+    Args:
+        detections_data: List of detections, each with 'mask_geojson', 'class_name', 'confidence', etc.
+        image_width: Image width in pixels
+        image_height: Image height in pixels
+    
+    Returns:
+        GeoJSON FeatureCollection with normalized polygon features
+    """
+    features = []
+    
+    for det in detections_data:
+        has_mask = False
+        
+        # Check if detection has a GeoJSON segmentation mask from API
+        if 'mask_geojson' in det and det['mask_geojson'] is not None:
+            mask_geojson = det['mask_geojson']
+            
+            # API returns GeoJSON MultiPolygon: { "type": "MultiPolygon", "coordinates": [...] }
+            if mask_geojson.get('type') == 'MultiPolygon':
+                mp_coordinates = mask_geojson.get('coordinates', [])
+                
+                if len(mp_coordinates) > 0:
+                    # MultiPolygon structure: [ polygon1, polygon2, ... ]
+                    # Each polygon: [ exterior_ring, hole1, hole2, ... ]
+                    # Each ring: [ [x,y], [x,y], ... ]
+                    
+                    # Take the first polygon (usually the main segmentation region)
+                    first_polygon = mp_coordinates[0]
+                    
+                    # Normalize all rings in this polygon
+                    normalized_polygon = []
+                    for ring in first_polygon:
+                        norm_ring = []
+                        for x, y in ring:
+                            norm_x = float(x) / image_width
+                            norm_y = float(y) / image_height
+                            norm_ring.append([norm_x, norm_y])
+                        
+                        # Ensure ring is closed (first point = last point)
+                        if len(norm_ring) > 0 and norm_ring[0] != norm_ring[-1]:
+                            norm_ring.append(norm_ring[0])
+                        
+                        normalized_polygon.append(norm_ring)
+                    
+                    # Convert to Polygon format: [ [exterior_ring], [hole1], [hole2], ... ]
+                    if len(normalized_polygon) > 0:
+                        coordinates = normalized_polygon  # Preserve ring structure
+                        has_mask = True
+        
+        # Fallback to bounding box if no mask available
+        if not has_mask:
+            bbox = det.get('bbox', [0, 0, image_width, image_height])
+            x1, y1, x2, y2 = bbox
+            # Create closed rectangle polygon (first point = last point)
+            coordinates = [[
+                [x1/image_width, y1/image_height],
+                [x2/image_width, y1/image_height],
+                [x2/image_width, y2/image_height],
+                [x1/image_width, y2/image_height],
+                [x1/image_width, y1/image_height]  # Close the ring
+            ]]
+        
+        # Create GeoJSON feature
+        feature = {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": coordinates
+            },
+            "properties": {
+                "detection_id": det['detection_id'],
+                "class_name": det['class_name'],
+                "category": det['class_name'],  # Frontend compatibility
+                "confidence": det['confidence'],
+                "class_id": det['detection_id'],  # Frontend compatibility
+                "bbox_pixels": det.get('bbox', []),
+                "has_mask": has_mask
             }
         }
         features.append(feature)
