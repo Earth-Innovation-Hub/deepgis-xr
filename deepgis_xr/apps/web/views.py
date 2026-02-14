@@ -1137,6 +1137,7 @@ def label_topology(request):
         ]
     }
     context['viewer_info'] = viewer_info
+    context['cesium_ion_token'] = settings.CESIUM_ION_TOKEN
     
     return render(request, 'web/label_topology.html', context)
 
@@ -1164,6 +1165,7 @@ def label_search(request):
         ]
     }
     context['viewer_info'] = viewer_info
+    context['cesium_ion_token'] = settings.CESIUM_ION_TOKEN
     
     return render(request, 'web/label_search.html', context)
 
@@ -1220,6 +1222,7 @@ def label_topology_sigma(request):
         ]
     }
     context['viewer_info'] = viewer_info
+    context['cesium_ion_token'] = settings.CESIUM_ION_TOKEN
     
     return render(request, 'web/label_topology_refactored.html', context)
 
@@ -1266,6 +1269,7 @@ def label_moon_viewer(request):
         ]
     }
     context['viewer_info'] = viewer_info
+    context['cesium_ion_token'] = settings.CESIUM_ION_TOKEN
     
     return render(request, 'web/label_moon_viewer.html', context)
 

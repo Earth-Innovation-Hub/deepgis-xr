@@ -119,8 +119,9 @@
             originalConsoleWarn.apply(console, args);
         };
         
-        // Set Cesium Ion access token
-        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+        // Set Cesium Ion access token from server configuration
+        window.CESIUM_ION_TOKEN = '{{ cesium_ion_token }}';
+        Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
     </script>
     
     <style>

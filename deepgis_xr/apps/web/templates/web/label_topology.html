@@ -21,23 +21,10 @@
     <!-- <link rel="preload" href="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb" as="fetch" crossorigin="anonymous"> -->
     <link rel="dns-prefetch" href="https://cesium.com">
     
-    <!-- Suppress Cesium source map 404 errors -->
+    <!-- Set Cesium Ion access token from server configuration -->
     <script>
-        // Suppress console errors for missing source maps
-        const originalConsoleError = console.error;
-        console.error = function(...args) {
-            const message = args.join(' ');
-            if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
-                return; // Suppress source map errors
-            }
-            originalConsoleError.apply(console, args);
-        };
-    </script>
-    
-    <!-- Suppress Cesium Ion warnings immediately after Cesium loads -->
-    <script>
-        // Set Cesium Ion access token to enable 3D tiles and terrain
-        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+        window.CESIUM_ION_TOKEN = '{{ cesium_ion_token }}';
+        Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
     </script>
     
     <!-- Application Styles -->
