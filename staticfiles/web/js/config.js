@@ -69,7 +69,7 @@ export const CONFIG = {
       ? 'https://localhost:8092'
       : 'http://localhost:8092'
   },
-  CESIUM_ION_TOKEN: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk',
+  CESIUM_ION_TOKEN: window.CESIUM_ION_TOKEN || '',
   
   // Vector tile configuration
   VECTOR_TILES: {

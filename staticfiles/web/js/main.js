@@ -662,73 +662,71 @@ function setupEventHandlers(viewer) {
   document.addEventListener('mozfullscreenchange', handleFullscreenChange);
   document.addEventListener('MSFullscreenChange', handleFullscreenChange);
 
-  // Window resize handler
+  // Window resize handler (debounced to avoid excessive calls during drag-resize)
+  let resizeTimer;
   window.addEventListener('resize', () => {
-    const isMobile = window.innerWidth <= 768;
-    const cesiumContainer = document.getElementById('cesiumContainer');
-    const navigationWidgetGroup = document.getElementById('navigationWidgetGroup');
-    const wrapper = document.getElementById('wrapper');
-    
-    if (isMobile) {
-      if (cesiumContainer) {
-        cesiumContainer.style.right = '0';
-        cesiumContainer.style.left = '0';
-        cesiumContainer.style.width = '100%';
-      }
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const isMobile = window.innerWidth <= 768;
+      const cesiumContainer = document.getElementById('cesiumContainer');
+      const navigationWidgetGroup = document.getElementById('navigationWidgetGroup');
+      const wrapper = document.getElementById('wrapper');
       
-      if (navigationWidgetGroup) {
-        navigationWidgetGroup.style.right = '15px';
-        navigationWidgetGroup.style.top = '20px';
-        navigationWidgetGroup.style.display = 'block';
-      }
-      
-      if (wrapper) wrapper.classList.remove('show-sidebar');
-    } else {
-      const isFullscreen = !!(document.fullscreenElement || 
-                             document.webkitFullscreenElement || 
-                             document.mozFullScreenElement || 
-                             document.msFullscreenElement);
-      
-      if (!isFullscreen) {
+      if (isMobile) {
         if (cesiumContainer) {
-          cesiumContainer.style.right = '320px';
+          cesiumContainer.style.right = '0';
           cesiumContainer.style.left = '0';
-          cesiumContainer.style.width = 'auto';
+          cesiumContainer.style.width = '100%';
         }
         
         if (navigationWidgetGroup) {
-          navigationWidgetGroup.style.right = '350px';
+          navigationWidgetGroup.style.right = '15px';
+          navigationWidgetGroup.style.top = '20px';
+          navigationWidgetGroup.style.display = 'block';
+        }
+        
+        if (wrapper) wrapper.classList.remove('show-sidebar');
+      } else {
+        const isFullscreen = !!(document.fullscreenElement || 
+                               document.webkitFullscreenElement || 
+                               document.mozFullScreenElement || 
+                               document.msFullscreenElement);
+        
+        if (!isFullscreen) {
+          if (cesiumContainer) {
+            cesiumContainer.style.right = '320px';
+            cesiumContainer.style.left = '0';
+            cesiumContainer.style.width = 'auto';
+          }
+          
+          if (navigationWidgetGroup) {
+            navigationWidgetGroup.style.right = '350px';
+          }
         }
       }
-    }
-    
-    setTimeout(() => {
+      
       viewer.resize();
-    }, 100);
+    }, 250);
   });
 }
 
-// Performance monitoring
+// Performance monitoring - samples FPS every second using Cesium's postRender event
 function startPerformanceMonitoring(viewer) {
-  let lastTime = performance.now();
-  let frameCount = 0;
-
-  function updateFPS() {
-    frameCount++;
-    const currentTime = performance.now();
-    
-    if (currentTime - lastTime >= 1000) {
-      const fps = Math.round((frameCount * 1000) / (currentTime - lastTime));
-      const perfEl = document.getElementById('performanceIndicator');
-      if (perfEl) perfEl.textContent = `FPS: ${fps}`;
-      frameCount = 0;
-      lastTime = currentTime;
-    }
-    
-    requestAnimationFrame(updateFPS);
-  }
+  const perfEl = document.getElementById('performanceIndicator');
+  if (!perfEl) return; // Don't start monitoring if indicator doesn't exist
   
-  requestAnimationFrame(updateFPS);
+  let frameCount = 0;
+  
+  // Count frames via Cesium's render loop (no extra rAF needed)
+  viewer.scene.postRender.addEventListener(() => {
+    frameCount++;
+  });
+  
+  // Sample FPS every second
+  setInterval(() => {
+    perfEl.textContent = `FPS: ${frameCount}`;
+    frameCount = 0;
+  }, 1000);
 }
 
 // Export for use in other modules

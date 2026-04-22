@@ -14,7 +14,7 @@ export function updateStatusIndicator(message) {
 }
 
 /**
- * Show snackbar notification
+ * Show snackbar notification with fade in/out animation
  */
 export function showSnackBar(message, type = 'info') {
   const snackbar = document.createElement('div');
@@ -30,7 +30,7 @@ export function showSnackBar(message, type = 'info') {
     position: fixed;
     bottom: 20px;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(10px);
     background-color: ${colors[type] || colors.info};
     color: white;
     padding: 12px 24px;
@@ -40,12 +40,25 @@ export function showSnackBar(message, type = 'info') {
     text-align: center;
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
     font-weight: ${type === 'error' ? 'bold' : 'normal'};
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease;
   `;
   snackbar.textContent = message;
   document.body.appendChild(snackbar);
   
+  // Trigger entrance animation on next frame
+  requestAnimationFrame(() => {
+    snackbar.style.opacity = '1';
+    snackbar.style.transform = 'translateX(-50%) translateY(0)';
+  });
+  
   const duration = type === 'error' ? 5000 : 3000;
-  setTimeout(() => snackbar.remove(), duration);
+  setTimeout(() => {
+    // Fade out before removing
+    snackbar.style.opacity = '0';
+    snackbar.style.transform = 'translateX(-50%) translateY(10px)';
+    setTimeout(() => snackbar.remove(), 300);
+  }, duration);
 }
 
 /**

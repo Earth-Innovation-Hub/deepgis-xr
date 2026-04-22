@@ -153,6 +153,9 @@ REST_FRAMEWORK = {
 VECTOR_TILES_URL = os.environ.get('VECTOR_TILES_URL', 'https://vector_tiles:8080')
 RASTER_TILES_URL = os.environ.get('RASTER_TILES_URL', 'https://raster_tiles:8081')
 
+# Cesium Ion access token for 3D globe/terrain visualization
+CESIUM_ION_TOKEN = os.environ.get('CESIUM_ION_TOKEN', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk')
+
 # Custom user model
 AUTH_USER_MODEL = 'deepgis_auth.User'
 

@@ -17,7 +17,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
     
-    <!-- Cesium Ion Token -->
+    <!-- Suppress Cesium source map 404 errors and set access token -->
     <script>
         // Suppress console errors for missing source maps
         const originalConsoleError = console.error;
@@ -28,9 +28,10 @@
             }
             originalConsoleError.apply(console, args);
         };
-        
-        // Set Cesium Ion access token
-        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+
+        // Set Cesium Ion access token from server configuration
+        window.CESIUM_ION_TOKEN = '{{ cesium_ion_token }}';
+        Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
     </script>
     
     <style>

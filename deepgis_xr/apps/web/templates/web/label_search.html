@@ -25,22 +25,10 @@
     <link rel="dns-prefetch" href="https://cesium.com">
     
     <!-- Suppress Cesium source map 404 errors -->
+    <!-- Set Cesium Ion access token from server configuration -->
     <script>
-        // Suppress console errors for missing source maps
-        const originalConsoleError = console.error;
-        console.error = function(...args) {
-            const message = args.join(' ');
-            if (message.includes('Source map') || message.includes('sourcemap') || message.includes('.map')) {
-                return; // Suppress source map errors
-            }
-            originalConsoleError.apply(console, args);
-        };
-    </script>
-    
-    <!-- Suppress Cesium Ion warnings immediately after Cesium loads -->
-    <script>
-        // Set Cesium Ion access token to enable 3D tiles and terrain
-        Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk';
+        window.CESIUM_ION_TOKEN = '{{ cesium_ion_token }}';
+        Cesium.Ion.defaultAccessToken = window.CESIUM_ION_TOKEN;
     </script>
     
     <!-- Application Styles -->
@@ -242,6 +230,79 @@
         /* Hide the old status indicator (sidebar mode messages) */
         .status-indicator {
             display: none !important;
+        }
+        
+        /* ========== PERFORMANCE & AIRCRAFT COUNT INDICATORS ========== */
+        .performance-indicator {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: rgba(139, 92, 246, 0.85);
+            backdrop-filter: blur(8px);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            z-index: 1500;
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .aircraft-count-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(245, 158, 11, 0.90);
+            backdrop-filter: blur(10px);
+            color: white;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            z-index: 1500;
+            border: 2px solid rgba(245, 158, 11, 0.5);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 20px rgba(245, 158, 11, 0.3);
+            display: none;
+            transition: all 0.3s ease;
+            min-width: 180px;
+            text-align: center;
+        }
+        
+        .aircraft-count-indicator.visible {
+            display: block;
+            animation: pulseGlow 2s ease-in-out infinite;
+        }
+        
+        .aircraft-count-indicator .icon {
+            font-size: 1.3rem;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        
+        .aircraft-count-indicator .count {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: #ffffff;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+        }
+        
+        .aircraft-count-indicator .label {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.9;
+            display: block;
+            margin-top: 2px;
+        }
+        
+        @keyframes pulseGlow {
+            0%, 100% {
+                box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 20px rgba(245, 158, 11, 0.3);
+            }
+            50% {
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 30px rgba(245, 158, 11, 0.5);
+            }
         }
         
         /* ========== CONSISTENT LEFT WIDGET WIDTHS ========== */
@@ -1745,6 +1806,13 @@
 
     <div class="performance-indicator" id="performanceIndicator">
         FPS: --
+    </div>
+
+    <!-- Aircraft Count Indicator (Main Viewport) -->
+    <div class="aircraft-count-indicator" id="aircraftCountIndicator">
+        <i class="fas fa-plane icon"></i>
+        <span class="count" id="aircraftCountMain">0</span>
+        <span class="label">Aircraft in View</span>
     </div>
 
     <!-- Camera Pose Information -->

@@ -67,6 +67,12 @@ checkpoints/
 runs/
 wandb/
 
+# Model weights — sync from /mnt/dreamslab-store via scripts/sync_assets.sh
+# (contents are individually ignored above by *.pth etc., but ignoring the
+# directory itself keeps `git status` clean when the host mounts a populated
+# copy)
+/models/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 *.ipynb
@@ -157,6 +163,14 @@ cache/
 node_modules/
 .npm/
 .yarn/
+
+# Python tooling caches (pytest, mypy, ruff, pip-tools)
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+pip-wheel-metadata/
+.python-version
 
 # OS generated files
 Thumbs.db
