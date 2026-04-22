@@ -27,18 +27,9 @@ need to change.
 # fmt: off
 # --- still-in-legacy (everything lives in legacy.py after the scaffold commit) --
 from .legacy import (
-    # classes (most are overridden by function aliases below, but kept for API parity)
-    BaseView,
-    IndexView, LabelView, Label3DView, MapLabelView, ViewLabelView, ResultsView,
-
     # helpers
-    simple_render,
     success_json_response, error_json_response,
     get_image_labels, create_simple_grid,
-
-    # page renderers
-    index, label, stl_viewer, label_3d, label_3d_dev,
-    map_label, view_label, results,
 
     # richer page views (have their own request logic)
     label_3d_sigma, label_topology, label_search,
@@ -74,6 +65,13 @@ from .semi_supervised import (
     get_label_images,
 )
 from .models_3d import get_3d_model, list_stl_models
+from .pages import (
+    BaseView,
+    IndexView, LabelView, Label3DView, MapLabelView, ViewLabelView, ResultsView,
+    simple_render,
+    index, label, stl_viewer, label_3d, label_3d_dev,
+    map_label, view_label, results,
+)
 # fmt: on
 
 __all__ = [
