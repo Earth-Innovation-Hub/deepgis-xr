@@ -120,7 +120,13 @@ USE_TZ = True
 # Static and Media Files
 STATIC_URL = '/static/deepgis/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
+# Single source of truth for frontend assets is BASE_DIR/staticfiles/ (tracked in git).
+# deepgis_xr/static/ holds vendored libs (paperjs, jquery) — also untracked; see
+# refactor/tier-d0-static-tree-consolidation for the plan to fold it into staticfiles/lib/.
+# We deliberately do NOT use collectstatic; Django serves these dirs directly via
+# staticfiles finders in both dev and container deployments.
 STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, 'staticfiles'),
     os.path.join(BASE_DIR, 'deepgis_xr', 'static'),
 ]
 
