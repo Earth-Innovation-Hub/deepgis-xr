@@ -14,15 +14,20 @@ to, so `from deepgis_xr.apps.web import world_sampler_api;
 world_sampler_api.foo` continues to work unchanged while functions
 migrate out of `legacy.py` into focused submodules.
 
-Migration order (commits land in this order):
-    1. Scaffold                                   (this commit)
-    2. core helpers                               → core.py
-    3. HTTP handlers                              → http.py
-    4. Per-model analyzers + shared helpers       → analyzers/
+Migration order:
+    1. Scaffold                                   (done)
+    2. core helpers                               → core.py          (done)
+    3. HTTP handlers                              → http.py          (done)
+    4. Per-model analyzers + shared helpers       → analyzers/       (done)
     [deferred] Analyzer ABC + ANALYZER_REGISTRY   → analyzers/base.py
                + dispatch from http.py. This is a behavior-preserving
                design change, not a move, and lands separately once the
                API contract for kernelcal-backed analyzers is pinned.
+
+    legacy.py is now a tombstone that re-exports every public name
+    from the focused modules above. It exists only to protect any
+    external caller that still imports directly from it; prefer
+    importing from this package's top level.
 
 As each submodule is added, its names are imported here and removed
 from the explicit import list against legacy. Nothing outside the
@@ -47,8 +52,8 @@ from .http import (
     get_sample_history, get_scored_locations, analyze_viewport,
 )
 
-from .legacy import (
-    # per-model analyzer branches
+from .analyzers import (
+    # per-model analyzer branches (C4: moved out of legacy.py)
     _analyze_viewport_sam,
     _analyze_viewport_zero_shot,
     _analyze_viewport_mask2former,

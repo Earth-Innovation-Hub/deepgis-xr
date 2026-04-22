@@ -16,11 +16,12 @@ wired in `deepgis_xr/apps/web/urls.py`):
     POST  /webclient/sampler/analyze-viewport  analyze_viewport
 
 `analyze_viewport` dispatches per `model_type` to the seven internal
-`_analyze_viewport_<model>` branches. Those branches currently still
-live in `legacy.py` and are imported from there below; they move to
-`analyzers/<model>.py` submodules in the C4 commit, at which point
-this import list flips to `from .analyzers import ...` (and, later,
-`ANALYZER_REGISTRY.dispatch(model_type, ...)` when the ABC lands).
+`_analyze_viewport_<model>` branches, imported from the `analyzers/`
+subpackage below. The dispatch is still an explicit if/elif chain
+inside the handler; it will move to `ANALYZER_REGISTRY.dispatch(
+model_type, ...)` when the Analyzer ABC lands in a follow-up commit
+(that change is what unblocks the kernelcal ModelKernelSelector
+thread).
 """
 
 from django.http import JsonResponse
@@ -37,7 +38,7 @@ from .core import (
     get_or_create_sampler,
     reset_global_sampler,
 )
-from .legacy import (
+from .analyzers import (
     _analyze_viewport_sam,
     _analyze_viewport_zero_shot,
     _analyze_viewport_mask2former,
