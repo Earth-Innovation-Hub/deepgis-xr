@@ -58,9 +58,8 @@ from .legacy import (
     # semi-supervised labeling
     label_semi_supervised, generate_assisted_labels, save_assisted_labels,
 
-    # training datasets
-    create_training_dataset, list_training_datasets, get_dataset_details,
-    add_label_to_dataset, get_label_images,
+    # training datasets: get_label_images only; dataset CRUD moved to .training_datasets
+    get_label_images,
 
 )
 
@@ -75,6 +74,10 @@ from .auth_ajax import (
 from .ai_reports import (
     ai_analysis_report, serve_analysis_geojson, serve_analysis_image,
     generate_analysis_summary,
+)
+from .training_datasets import (
+    create_training_dataset, list_training_datasets, get_dataset_details,
+    add_label_to_dataset,
 )
 # fmt: on
 
