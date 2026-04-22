@@ -13,8 +13,8 @@
 **Advanced Geospatial Visualization Platform with AI-Powered Analysis**
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
-[![Django](https://img.shields.io/badge/django-4.0+-green.svg)](https://www.djangoproject.com/)
+[![Python](https://img.shields.io/badge/python-3.9-blue.svg)](https://www.python.org/)
+[![Django](https://img.shields.io/badge/django-3.2_LTS-green.svg)](https://www.djangoproject.com/)
 [![Cesium](https://img.shields.io/badge/cesium-1.111+-orange.svg)](https://cesium.com/)
 
 DeepGIS-XR is a comprehensive geospatial visualization and analysis platform that combines advanced 3D mapping, AI-powered image analysis, and adaptive sampling systems for Earth and lunar exploration.
@@ -100,7 +100,7 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 ### Prerequisites
 - Docker and Docker Compose
 - NVIDIA GPU (optional, for AI features)
-- Python 3.8+ (for local development)
+- Python 3.9 (for local development — matches the Docker image)
 
 ### Installation
 
@@ -118,12 +118,20 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 3. **Access the application**
    - Main application: http://localhost:8060
    - Tile server: http://localhost:8091
+   - Topology server (optional): http://localhost:8092
+
+4. **Sync runtime assets** (large MBTiles, models, analysis results)
+   ```bash
+   bash scripts/sync_assets.sh       # from /mnt/dreamslab-store by default
+   ```
+   Override the source with `STORE=/path/to/store bash scripts/sync_assets.sh`.
 
 ### Local Development Setup
 
 1. **Install dependencies**
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements.txt              # runtime
+   pip install -r requirements-dev.txt          # + pytest, ruff, black, pip-tools
    ```
 
 2. **Run migrations**
@@ -136,6 +144,13 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
    python manage.py runserver
    ```
 
+4. **Run tests / lint**
+   ```bash
+   pytest                    # requires requirements-dev.txt
+   ruff check .
+   black --check .
+   ```
+
 ---
 
 ## 🏗️ Architecture
@@ -143,54 +158,82 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 ### Technology Stack
 
 **Backend:**
-- Django 4.0+ (Python web framework)
-- Django REST Framework (API endpoints)
-- PostgreSQL/SQLite (database)
-- Celery (async tasks, optional)
+- Django 3.2 LTS (Python 3.9 web framework) — migration to 4.2 LTS tracked on roadmap
+- Django REST Framework 3.12 (API endpoints)
+- PostgreSQL (via `psycopg2-binary`) / SQLite (dev)
+- Celery 5.6 + Redis (async tasks, world-sampler background jobs)
+- Twilio + `django-phonenumber-field` (phone-number authentication)
+- **Flask** 3.x — separate topology-tile server at `services/topology/`
 
 **Frontend:**
 - CesiumJS (3D globe visualization)
-- JavaScript ES6+ (modern frontend)
+- Hand-written ES modules in `staticfiles/web/js/` (no build step)
 - Bootstrap (UI components)
+- *(Vite build was removed in the Tier-A housekeeping pass — `src/` was empty
+  and the pipeline was never wired into `collectstatic`. The bundle-chunking
+  plan preserved in the refactoring note will be revisited in Tier D.)*
 
 **AI/ML:**
-- Segment Anything Model (SAM) - Meta AI
-- Grounding DINO - Open-vocabulary detection (IDEA Research)
-- YOLOv8 - Real-time object detection (Ultralytics)
-- Zero-Shot Detection (Mask R-CNN) - COCO pre-trained
-- Mask2Former - Instance segmentation
-- PyTorch (deep learning framework)
+- Segment Anything Model (SAM) — Meta AI, local inference
+- Grounding DINO — IDEA Research, remote API (port 5000)
+- Grounded-SAM-2 — remote API (port 5001)
+- YOLOv8 — Ultralytics, local inference
+- Mask R-CNN / Mask2Former — Detectron2, local inference
+- PyTorch 2.5.1 + CUDA 12.1 (deep learning framework)
+- `kernelcal` — Kernel Dynamics / MaxCal integration (integration in progress)
 
 **Infrastructure:**
 - Docker & Docker Compose (containerization)
+- NVIDIA Container Toolkit (GPU pass-through)
 - Nginx (reverse proxy, optional)
-- TileServer GL (tile serving)
+- TileServer GL (MBTiles → raster/vector tiles)
 
 ### Project Structure
 
 ```
 deepgis-xr/
-├── deepgis_xr/              # Django project
+├── deepgis_xr/                       # Django project
 │   ├── apps/
-│   │   ├── web/             # Web application
-│   │   │   ├── world_sampler_api.py  # Sampling & AI APIs
-│   │   │   └── views.py     # View handlers
-│   │   ├── core/            # Core models
-│   │   └── ml/              # ML models
-│   └── settings.py          # Django settings
-├── staticfiles/             # Static assets
-│   └── web/
-│       └── js/
-│           ├── main.js              # Main application entry
-│           ├── world-sampler-ui.js  # World sampler UI logic
-│           ├── widgets/
-│           │   └── weather-stations.js  # Weather stations widget
-│           └── utils/
-│               └── nws-weather-stations.js  # NWS API integration
-├── docker-compose.yml       # Docker configuration
-├── requirements.txt        # Python dependencies
-└── README.md              # This file
+│   │   ├── api/v1/                   # DRF v1 (serializers, urls)
+│   │   ├── auth/                     # phone-based auth (Twilio)
+│   │   ├── core/                     # core models, admin, image processing
+│   │   ├── ml/                       # ML helpers
+│   │   └── web/                      # main web app
+│   │       ├── views.py                     # 50+ request handlers (refactor target)
+│   │       ├── world_sampler.py             # adaptive spatial sampler
+│   │       ├── world_sampler_api.py         # Sampling + AI viewport analysis endpoints
+│   │       ├── urls.py                      # 50+ routes
+│   │       ├── admin.py, models.py, middleware/, templates/
+│   │       └── management/commands/         # e.g. import_rocks_labels
+│   └── settings.py
+├── services/
+│   └── topology/                     # standalone Flask tile/3D-tiles server
+│       ├── server.py                        # (was deepgis_topology_server.py)
+│       ├── prepare_data.py
+│       └── Dockerfile                       # own runtime, no CUDA
+├── examples/                         # kernelcal demos, vegetation segmentation
+│   ├── bf_kernelcal_demo.py
+│   └── bf_vegetation_segment.py
+├── scripts/                          # utility scripts
+│   ├── sync_assets.sh                       # pull data/models from lab store
+│   ├── optimize_large_glb.py
+│   └── grounding_dino_api_client.py
+├── staticfiles/web/                  # hand-written JS, CSS, vendor libs
+├── static/, media/, stl_models/      # runtime assets (gitignored)
+├── data/                             # MBTiles (gitignored)
+├── models/                           # ML model weights (gitignored)
+├── deepgis_results/                  # AI-analysis outputs (gitignored)
+├── GroundingDINO/                    # vendored upstream repo
+├── Dockerfile                        # web container (CUDA 12.1, torch 2.5)
+├── docker-compose.yml                # web + tileserver (+ topology, optional)
+├── requirements.txt                  # pinned runtime deps
+├── requirements-dev.txt              # pytest, ruff, black, pip-tools
+└── README.md
 ```
+
+A companion refactoring plan lives in the integration manuscript workspace at
+`notes/2026-04-22-deepgis-xr-refactoring.md`. Tier A (housekeeping, pinning,
+file relocations) has landed; Tiers B–F are scheduled on the roadmap below.
 
 ---
 
@@ -443,7 +486,24 @@ To enable GPU for AI features:
 
 ---
 
-## 📊 Recent Updates (December 2025)
+## 📊 Recent Updates
+
+### April 2026 — Tier A housekeeping
+
+- 🧹 Fully pinned `requirements.txt` to the versions deployed in `deepgis-xr_web_1`;
+  added `requirements-dev.txt` for pytest / ruff / black / pip-tools.
+- 📦 Root-level `.py` scripts relocated:
+  - `deepgis_topology_server.py`, `prepare_data.py` → `services/topology/`
+    (with their own `Dockerfile`).
+  - `bf_kernelcal_demo.py`, `bf_vegetation_segment.py` → `examples/`.
+  - `optimize_large_glb.py`, `grounding_dino_api_client.py` → `scripts/`.
+- 🔗 `kernelcal` is now a real install dep
+  (`git+https://github.com/darknight-007/kernelcal.git@main`).
+- 🗄️ `scripts/sync_assets.sh` pulls `data/`, `models/`, `deepgis_results/` from
+  `/mnt/dreamslab-store`; those directories are now firmly gitignored.
+- ❌ Dead Vite config (`package.json`, `vite.config.js`, empty `src/`) removed.
+
+### December 2025
 
 - ✅ **3D Buildings Layer**: OpenStreetMap buildings worldwide; toggleable via UI or `B` key; free and open data (ODbL)
 - ✅ **Experience URL Sharing**: Complete camera state sharing via URL; supports takeoff/landing/fly/orbit modes; QR code generation
@@ -519,6 +579,22 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 - [x] QR code generation for mobile sharing
 - [x] 2D/3D/Columbus view mode switching
 - [x] 3D Buildings layer with OpenStreetMap data
+
+### 🔧 Refactor track (Q2 2026)
+
+Tier A (housekeeping) has landed; the remaining tiers are tracked alongside
+feature work. See `notes/2026-04-22-deepgis-xr-refactoring.md` in the
+integration workspace for the full plan.
+
+- [ ] **Tier B** — split `apps/web/views.py` (2 633 lines → package of modules)
+- [ ] **Tier C** — split `world_sampler_api.py`; introduce `ANALYZER_REGISTRY`
+      (unblocks `kernelcal` Thread 1 + 2)
+- [ ] **Tier D** — consolidate frontend into a real layer manager; fix the
+      OSM-Buildings duplication; lift 3D-buildings and canopy-height layers
+      to all 3D pages
+- [ ] **Tier E** — Django 3.2 → 4.2 LTS → 5.x; DRF 3.12 → 3.15; Shapely 2.x
+- [ ] **Tier F** — `kernelcal` integration: MaxCal World Sampler, Model-Kernel
+      Selector, terrain diagnostics endpoint
 
 ### 🔄 Q1 2026 - Near Term
 - [ ] **Mars Terrain Viewer**: Extend lunar capabilities to Mars with HiRISE/CTX imagery
