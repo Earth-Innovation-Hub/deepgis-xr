@@ -54,13 +54,6 @@ from .legacy import (
 
     # lidar / elevation proxies
     opentopography_lidar_search, elevation_proxy,
-
-    # semi-supervised labeling
-    label_semi_supervised, generate_assisted_labels, save_assisted_labels,
-
-    # training datasets: get_label_images only; dataset CRUD moved to .training_datasets
-    get_label_images,
-
 )
 
 # --- moved out of legacy.py ---
@@ -78,6 +71,10 @@ from .ai_reports import (
 from .training_datasets import (
     create_training_dataset, list_training_datasets, get_dataset_details,
     add_label_to_dataset,
+)
+from .semi_supervised import (
+    label_semi_supervised, generate_assisted_labels, save_assisted_labels,
+    get_label_images,
 )
 # fmt: on
 
