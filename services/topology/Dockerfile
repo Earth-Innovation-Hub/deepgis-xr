@@ -25,19 +25,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install GDAL matching the system version first
+# Install GDAL matching the system version first (py-gdal is pinned in
+# requirements.txt but must match the system libgdal-dev version).
 RUN export GDAL_VERSION=$(gdal-config --version) && \
     pip install "GDAL==${GDAL_VERSION}"
 
-# Service-specific Python deps. Kept small on purpose.
-RUN pip install \
-        "Flask>=3.0,<4.0" \
-        "Flask-Cors>=4.0,<5.0" \
-        "rasterio==1.3.0" \
-        "numpy==1.23.5" \
-        "scipy==1.13.1" \
-        "trimesh>=4.0,<5.0" \
-        "Shapely==1.8.0"
+# Service-specific Python deps.
+COPY requirements.txt /app/requirements.txt
+RUN pip install -r /app/requirements.txt
 
 # Copy service code
 COPY . /app/
