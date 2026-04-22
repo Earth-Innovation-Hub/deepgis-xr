@@ -62,9 +62,6 @@ from .legacy import (
     create_training_dataset, list_training_datasets, get_dataset_details,
     add_label_to_dataset, get_label_images,
 
-    # AI analysis reports
-    ai_analysis_report, serve_analysis_geojson, serve_analysis_image,
-    generate_analysis_summary,
 )
 
 # --- moved out of legacy.py ---
@@ -74,6 +71,10 @@ from .missions import (
 )
 from .auth_ajax import (
     check_auth_status, ajax_phone_login, ajax_logout,
+)
+from .ai_reports import (
+    ai_analysis_report, serve_analysis_geojson, serve_analysis_image,
+    generate_analysis_summary,
 )
 # fmt: on
 
