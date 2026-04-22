@@ -40,12 +40,14 @@ from .core import (
     _global_sampler,
 )
 
-from .legacy import (
+from .http import (
     # HTTP handlers (9 endpoints wired in apps/web/urls.py)
     initialize_sampler, sample_locations, update_distribution,
     query_region, get_statistics, reset_sampler,
     get_sample_history, get_scored_locations, analyze_viewport,
+)
 
+from .legacy import (
     # per-model analyzer branches
     _analyze_viewport_sam,
     _analyze_viewport_zero_shot,
