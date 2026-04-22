@@ -65,15 +65,15 @@ from .legacy import (
     # AI analysis reports
     ai_analysis_report, serve_analysis_geojson, serve_analysis_image,
     generate_analysis_summary,
-
-    # auth AJAX
-    check_auth_status, ajax_phone_login, ajax_logout,
 )
 
 # --- moved out of legacy.py ---
 from .missions import (
     list_missions, create_mission, get_mission, update_mission,
     delete_mission, add_waypoint, remove_waypoint,
+)
+from .auth_ajax import (
+    check_auth_status, ajax_phone_login, ajax_logout,
 )
 # fmt: on
 
