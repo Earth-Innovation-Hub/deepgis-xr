@@ -49,9 +49,6 @@ from .legacy import (
     save_labels, export_shapefile, get_raster_info, get_tileserver_url,
     get_tileserver_layers, get_all_images, detect_grid,
 
-    # 3D models
-    get_3d_model, list_stl_models,
-
     # lidar / elevation proxies
     opentopography_lidar_search, elevation_proxy,
 )
@@ -76,6 +73,7 @@ from .semi_supervised import (
     label_semi_supervised, generate_assisted_labels, save_assisted_labels,
     get_label_images,
 )
+from .models_3d import get_3d_model, list_stl_models
 # fmt: on
 
 __all__ = [
