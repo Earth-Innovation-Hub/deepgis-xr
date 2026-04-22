@@ -1,48 +1,99 @@
+# =============================================================================
+# DeepGIS-XR — runtime Python dependencies
+# -----------------------------------------------------------------------------
+# Versions are locked to what the currently deployed container
+# (`deepgis-xr_web_1`) has installed (pip freeze, 2026-04-22).
+# Do not bump without rebuilding the Docker image and regression testing.
+# Use `requirements-dev.txt` for local tooling (pytest, ruff, black).
+# =============================================================================
+
+# --- Django core ---------------------------------------------------------------
+# Django 3.2 LTS — end-of-life April 2024. Upgrade to 4.2 LTS is tracked in the
+# roadmap (see Tier E of refactoring plan). Do NOT bump without testing.
 Django==3.2.24
 djangorestframework==3.12.4
-django-cors-headers>=3.10.0
-celery>=5.2.0
-redis>=4.0.0
-Pillow>=8.3.0
+django-cors-headers==4.5.0
+asgiref==3.11.0
+sqlparse==0.5.5
+pytz==2025.2
+
+# --- Async / queue -------------------------------------------------------------
+celery==5.6.0
+redis==7.0.1
+billiard==4.2.4
+amqp==5.3.1
+kombu==5.6.1
+vine==5.1.0
+tzdata==2025.3
+
+# --- Database / server ---------------------------------------------------------
+psycopg2-binary==2.9.11
+gunicorn==23.0.0
+whitenoise==6.11.0
+
+# --- Imaging / media -----------------------------------------------------------
+Pillow==11.3.0
+opencv-python==4.11.0.86
+ImageIO==2.37.2
+scikit-image==0.24.0
+tifffile==2024.8.30
+numpy-stl==3.2.0
+
+# --- Scientific stack ----------------------------------------------------------
+# numpy 1.23.x is a hard floor for the compiled wheels detectron2 ships against;
+# bumping requires recompiling detectron2. See Dockerfile.
 numpy==1.23.5
-scipy>=1.9.0  # Required for world sampler spatial indexing
-psycopg2-binary>=2.9.0
-gunicorn>=20.1.0
-whitenoise>=5.3.0
+scipy==1.13.1           # Required for world sampler spatial indexing (KDTree)
+pandas==2.3.3
+matplotlib==3.9.4
+
+# --- GIS -----------------------------------------------------------------------
+# GDAL is pinned via `gdal-config --version` in the Dockerfile (system lib).
 rasterio==1.3.0
-shapely==1.8.0
-# NOTE: torch/torchvision are installed in Dockerfile with --index-url for CUDA wheels
-scikit-image>=0.19.0
-twilio>=8.10.0
-django-phonenumber-field>=7.3.0
-phonenumbers>=8.13.27
-opencv-python>=4.5.0
-numpy-stl>=2.17.1  # Required for 3D STL model generation and processing
-
-# AI/ML dependencies for SAM and segmentation
-# Segment Anything Model (SAM) - install from GitHub
-# Note: This requires torch and torchvision (already included above)
-git+https://github.com/facebookresearch/segment-anything.git
-
-# Detectron2 for Mask2Former (pre-trained COCO models)
-# NOTE: detectron2 must be installed AFTER torch/torchvision because its setup.py imports torch
-# Install detectron2 separately in Dockerfile after torch is installed
-# git+https://github.com/facebookresearch/detectron2.git
-
-# YOLOv8 - Object Detection (Ultralytics)
-# Fast, accurate, easy to use - no custom CUDA compilation needed
-# Supports detection, segmentation, classification, pose estimation
-ultralytics>=8.0.0
-
-# Prithvi-EO-2.0 - Earth Observation Foundation Model (IBM/NASA)
-# TerraTorch is the recommended library for Prithvi models
-# Provides clean API for loading and using Prithvi-EO-2.0 models
-# terratorch>=0.1.0  # DISABLED: Not available on PyPI, needs custom installation
-# Alternative: transformers can be used as fallback (already includes torch)
-# transformers>=4.30.0  # Uncomment if you need Prithvi-EO support
-
-# GIS dependencies
-fiona==1.9.1
+Shapely==1.8.0          # Still 1.x; 2.x is an API break (Tier E)
+Fiona==1.9.1
 geopandas==0.12.0
 pyproj==3.5.0
-rtree==1.0.1
+Rtree==1.0.1
+affine==2.4.0
+cligj==0.7.2
+munch==4.0.0
+snuggs==1.4.7
+
+# --- Phone auth (Twilio) -------------------------------------------------------
+twilio==9.9.0
+django-phonenumber-field==8.0.0
+phonenumbers==9.0.21
+PyJWT==2.10.1
+
+# --- AI / ML — object detection & segmentation --------------------------------
+# Torch + torchvision + detectron2 are installed in the Dockerfile, NOT here:
+#   - torch==2.5.1+cu121 / torchvision==0.20.1+cu121 come from the PyTorch
+#     CUDA 12.1 index (see Dockerfile RUN pip install torch torchvision ...).
+#   - detectron2 is installed from GitHub after torch is present (its setup.py
+#     imports torch at build time).
+# See Dockerfile for the authoritative install order.
+ultralytics==8.3.241
+# Segment Anything Model — pinned by SHA via Docker install for reproducibility.
+# Adding here is a no-op inside Docker (already installed) but useful for non-Docker
+# dev installs.
+git+https://github.com/facebookresearch/segment-anything.git@dca509fe793f601edb92606367a655c15ac00fdf#egg=segment_anything
+
+# --- kernelcal integration -----------------------------------------------------
+# Kernel Dynamics under MaxCal library. Currently imported by examples/ only;
+# apps/web integration lands in Tier B–F of the refactor.
+# Pin to a tag once one is cut; for now, follow main.
+kernelcal @ git+https://github.com/darknight-007/kernelcal.git@main
+
+# --- HTTP / utilities ----------------------------------------------------------
+requests==2.32.5
+urllib3==2.6.2
+charset-normalizer==3.4.4
+certifi==2025.11.12
+idna==3.11
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+packaging==25.0
+filelock==3.19.1
+psutil==7.2.0
+tqdm==4.67.1

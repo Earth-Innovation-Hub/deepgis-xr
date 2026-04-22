@@ -1,0 +1,43 @@
+# =============================================================================
+# DeepGIS-XR — development tooling
+# -----------------------------------------------------------------------------
+# Not installed inside the production Docker image. Install locally with:
+#     pip install -r requirements-dev.txt
+#
+# Includes runtime deps via `-r requirements.txt` so a single venv works for
+# testing, linting, and running the app.
+# =============================================================================
+
+-r requirements.txt
+
+# --- Testing -------------------------------------------------------------------
+pytest>=8.0,<9.0
+pytest-django>=4.8,<5.0
+pytest-cov>=4.1,<6.0
+pytest-xdist>=3.5,<4.0           # parallel test runs: pytest -n auto
+factory-boy>=3.3,<4.0            # fixture factories
+freezegun>=1.4,<2.0              # freeze time in tests
+responses>=0.25,<1.0             # mock `requests` calls in tests
+
+# --- Linting / formatting ------------------------------------------------------
+black==25.11.0                   # matches container version for consistency
+ruff>=0.4,<1.0                   # fast replacement for flake8/isort
+mypy>=1.9,<2.0
+django-stubs>=4.2,<5.0
+types-requests
+types-PyYAML
+
+# --- Dev ergonomics ------------------------------------------------------------
+ipython>=8.20
+django-debug-toolbar>=4.3,<5.0
+django-extensions>=3.2,<4.0
+ipdb>=0.13
+
+# --- Dependency hygiene --------------------------------------------------------
+pip-tools>=7.4                   # pip-compile: regenerate pinned requirements.txt
+pre-commit>=3.7                  # hooks for format/lint on commit
+
+# --- Docs (optional; uncomment to build the manuscript-style docs) ------------
+# sphinx>=7.0
+# myst-parser>=3.0
+# sphinx-rtd-theme>=2.0
