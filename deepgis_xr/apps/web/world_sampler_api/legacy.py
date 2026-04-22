@@ -12,8 +12,8 @@ import json
 import math
 from typing import Optional
 
-from .world_sampler import WorldSampler, SamplePoint
-from .models import SampledLocation, SamplingSession, DistributionUpdate
+from ..world_sampler import WorldSampler, SamplePoint
+from ..models import SampledLocation, SamplingSession, DistributionUpdate
 
 
 # Global sampler instance (in production, use Django cache or database)
