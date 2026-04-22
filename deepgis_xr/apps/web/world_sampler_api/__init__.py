@@ -30,14 +30,17 @@ from the explicit import list against legacy. Nothing outside the
 """
 
 # fmt: off
-from .legacy import (
-    # core helpers
-    get_or_create_sampler, altitude_to_zoom_level,
+from .core import (
+    get_or_create_sampler,
+    altitude_to_zoom_level,
+    reset_global_sampler,
     # module-global sampler (kept re-exported so external probes — e.g.
-    # admin shells — can still see it by name; real callers should use
-    # get_or_create_sampler() / reset_global_sampler() once core.py lands)
+    # admin shells — can still see it by name; real callers should go
+    # through get_or_create_sampler() / reset_global_sampler())
     _global_sampler,
+)
 
+from .legacy import (
     # HTTP handlers (9 endpoints wired in apps/web/urls.py)
     initialize_sampler, sample_locations, update_distribution,
     query_region, get_statistics, reset_sampler,

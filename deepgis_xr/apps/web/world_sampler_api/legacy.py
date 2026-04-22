@@ -14,26 +14,11 @@ from typing import Optional
 
 from ..world_sampler import WorldSampler, SamplePoint
 from ..models import SampledLocation, SamplingSession, DistributionUpdate
-
-
-# Global sampler instance (in production, use Django cache or database)
-_global_sampler: Optional[WorldSampler] = None
-
-
-def get_or_create_sampler(session_id: str = 'default') -> WorldSampler:
-    """Get or create a sampler instance for a session"""
-    global _global_sampler
-    
-    # In production, store per-session in cache/database
-    # For now, use a single global instance
-    if _global_sampler is None:
-        _global_sampler = WorldSampler(
-            num_points=1000,
-            initialization='gaussian_mixture',
-            seed=None  # Random seed
-        )
-    
-    return _global_sampler
+from .core import (
+    get_or_create_sampler,
+    altitude_to_zoom_level,
+    reset_global_sampler,
+)
 
 
 @require_http_methods(["POST"])
@@ -55,17 +40,16 @@ def initialize_sampler(request):
     try:
         data = json.loads(request.body)
         
-        global _global_sampler
-        _global_sampler = WorldSampler(
+        sampler = reset_global_sampler(WorldSampler(
             num_points=data.get('num_points', 1000),
             lat_range=tuple(data.get('lat_range', [-90, 90])),
             lon_range=tuple(data.get('lon_range', [-180, 180])),
             alt_range=tuple(data.get('alt_range', [0, 5000])),
             initialization=data.get('initialization', 'uniform'),
             seed=data.get('seed')
-        )
+        ))
         
-        stats = _global_sampler.get_statistics()
+        stats = sampler.get_statistics()
         
         return JsonResponse({
             'status': 'success',
@@ -196,17 +180,6 @@ def sample_locations(request):
             'message': str(e),
             'traceback': traceback.format_exc()
         }, status=400)
-
-
-def altitude_to_zoom_level(altitude: float) -> int:
-    """
-    Convert Cesium camera altitude to approximate zoom level.
-    Cesium zoom levels roughly follow: altitude = 40075000 / (2^zoom)
-    """
-    if altitude <= 0:
-        return 28  # Maximum zoom
-    zoom = math.log2(40075000 / altitude)
-    return max(0, min(28, int(round(zoom))))
 
 
 @require_http_methods(["POST"])
