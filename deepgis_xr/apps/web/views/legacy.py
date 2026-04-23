@@ -9,7 +9,6 @@ import json
 import tempfile
 import zipfile
 import os
-from shapely.geometry import shape
 import fiona
 import requests
 from urllib.parse import urljoin
