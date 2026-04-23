@@ -46,6 +46,7 @@ from .analyzers import (
     _analyze_viewport_grounding_dino,
     _analyze_viewport_grounded_sam,
     _analyze_viewport_prithvi,
+    _analyze_viewport_urban_spectral,
 )
 
 
@@ -597,7 +598,14 @@ def analyze_viewport(request):
         sam_model = data.get('sam_model', 'vit_b')  # For SAM: 'vit_b', 'vit_l', 'vit_h'
         min_area = data.get('min_area', 100)  # For SAM
         confidence_threshold = data.get('confidence_threshold', 0.5)  # For zero-shot
-        
+
+        # Bbox-only analyzers short-circuit before the "image required" check
+        # because they consume a geographic viewport rather than a rendered
+        # tile. Currently just urban_spectral; add future bbox-only branches
+        # here as they land.
+        if analysis_type == 'urban_spectral':
+            return _analyze_viewport_urban_spectral(data)
+
         if not image_data:
             return JsonResponse({
                 'status': 'error',
