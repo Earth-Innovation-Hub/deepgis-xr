@@ -27,9 +27,11 @@ vine==5.1.0
 tzdata==2025.3
 
 # --- Database / server ---------------------------------------------------------
-psycopg2-binary==2.9.11
-gunicorn==23.0.0
-whitenoise==6.11.0
+# psycopg2-binary, whitenoise, gunicorn intentionally absent:
+#   - DATABASES uses sqlite3 (see deepgis_xr/settings.py); no Postgres in compose.
+#   - settings.py serves staticfiles/ via STATICFILES_DIRS — collectstatic disabled.
+#   - Dev/container both run `manage.py runserver` (see docker-compose.yml).
+# Re-add when production switches to Postgres + WhiteNoise/Gunicorn.
 
 # --- Imaging / media -----------------------------------------------------------
 Pillow==11.3.0
@@ -37,42 +39,49 @@ opencv-python==4.11.0.86
 ImageIO==2.37.2
 scikit-image==0.24.0
 tifffile==2024.8.30
-numpy-stl==3.2.0
+# numpy-stl removed: not imported anywhere; STL handling lives in services/topology
+# via trimesh.
 
 # --- Scientific stack ----------------------------------------------------------
-# numpy 1.23.x is a hard floor for the compiled wheels detectron2 ships against;
-# bumping requires recompiling detectron2. See Dockerfile.
-numpy==1.23.5
+# Tier E migration (2026-04-23): numpy/pandas/shapely/geopandas bumped to versions
+# compatible with osmnx 1.9.x (required by kernelcal.urban). Verified that the
+# rest of the stack (torch 2.5.1+cu121, opencv 4.11, rasterio 1.3, fiona 1.9,
+# scikit-image 0.24, pyproj 3.5) loads cleanly under these versions.
+numpy==1.26.4
 scipy==1.13.1           # Required for world sampler spatial indexing (KDTree)
-pandas==2.3.3
+pandas==2.2.3
 matplotlib==3.9.4
 
 # --- GIS -----------------------------------------------------------------------
 # GDAL is pinned via `gdal-config --version` in the Dockerfile (system lib).
 rasterio==1.3.0
-Shapely==1.8.0          # Still 1.x; 2.x is an API break (Tier E)
+shapely==2.0.7          # Tier E: bumped from 1.8 (osmnx>=1.7 requires shapely>=2)
 Fiona==1.9.1
-geopandas==0.12.0
+geopandas==0.14.4       # Tier E: bumped from 0.12 (transitive of shapely 2)
 pyproj==3.5.0
 Rtree==1.0.1
 affine==2.4.0
 cligj==0.7.2
 munch==4.0.0
 snuggs==1.4.7
+# OSMnx for the world-sampler urban_spectral analyzer
+# (kernelcal.urban.fetch_buildings_bbox). Pinned to 1.x for now; 2.x is a
+# breaking API change (positional args removed, bbox tuple order swapped).
+osmnx>=1.9,<2
 
 # --- Phone auth (Twilio) -------------------------------------------------------
 twilio==9.9.0
 django-phonenumber-field==8.0.0
 phonenumbers==9.0.21
-PyJWT==2.10.1
+# PyJWT removed: not imported anywhere (no DRF SimpleJWT, no custom JWT auth).
 
 # --- AI / ML — object detection & segmentation --------------------------------
-# Torch + torchvision + detectron2 are installed in the Dockerfile, NOT here:
+# Torch + torchvision are installed in the Dockerfile, NOT here:
 #   - torch==2.5.1+cu121 / torchvision==0.20.1+cu121 come from the PyTorch
 #     CUDA 12.1 index (see Dockerfile RUN pip install torch torchvision ...).
-#   - detectron2 is installed from GitHub after torch is present (its setup.py
-#     imports torch at build time).
-# See Dockerfile for the authoritative install order.
+# detectron2 was previously installed in the Dockerfile but is not imported
+# anywhere in this codebase; the Mask R-CNN rocks model runs as a remote
+# service (MASKRCNN_ROCKS_API_URL). Removed in the Tier E cleanup.
 ultralytics==8.3.241
 # Segment Anything Model — pinned by SHA via Docker install for reproducibility.
 # Adding here is a no-op inside Docker (already installed) but useful for non-Docker

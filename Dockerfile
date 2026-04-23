@@ -75,13 +75,15 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install PyTorch with CUDA support from PyTorch index, then other requirements
-# Note: detectron2 is installed separately after torch because its setup.py imports torch
+# Install PyTorch with CUDA support from PyTorch index, then the rest of requirements.
+# detectron2 was previously installed here as well, but no Python in this codebase
+# imports it (the Mask R-CNN rocks model runs as a remote service via
+# MASKRCNN_ROCKS_API_URL). Re-add only if a future analyzer needs in-process
+# detectron2 — note that it locks the numpy/torch ABI and has long build times.
 RUN pip install --no-cache-dir torch torchvision \
         --index-url https://download.pytorch.org/whl/cu121 && \
     pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir fiona==$(pip show fiona | grep Version | cut -d' ' -f2) --no-binary fiona && \
-    pip install --no-cache-dir --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || \
+    pip install --no-cache-dir fiona==$(pip show fiona | grep Version | cut -d' ' -f2) --no-binary fiona || \
     (echo "Failed to install requirements" && exit 1)
 
 # Create models directory for YOLO weights (auto-downloaded on first use)
