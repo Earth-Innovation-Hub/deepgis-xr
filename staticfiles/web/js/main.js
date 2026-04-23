@@ -6,6 +6,7 @@
 import { CONFIG } from './config.js';
 import { AppState } from './state.js';
 import { initializeCesium, toggleOSMBuildings } from './core/cesium-init.js';
+import featureLayers, { setFeatureLayerEnabled, renderFeatureLayerToggles } from './core/feature-layers.js';
 import { initializeAvailableLayers, loadBaseRasterLayer, toggleOverlayLayer } from './core/layer-management.js';
 import { toggleTerrain, changeBaseMap } from './core/base-map.js';
 import { updateStatusIndicator, showSnackBar, logLayerOperation } from './core/ui-helpers.js';
@@ -184,11 +185,22 @@ window.lazyLoadFeature = async (featureName) => {
 };
 
 // Expose feature-layer togglers to inline (non-module) template scripts.
-// Templates (e.g. label_search.html) run outside the module graph, so they
-// cannot import these directly. Keeping one canonical implementation here
-// prevents duplicates like the pre-refactor double-instantiated
-// OSM Buildings tileset.
+// Templates (e.g. label_search.html, label_topology.html) run outside the
+// module graph, so they cannot import these directly. Keeping one
+// canonical implementation here prevents duplicates like the pre-refactor
+// double-instantiated OSM Buildings tileset.
 window.toggleOSMBuildings = (enabled) => toggleOSMBuildings(window.viewer || AppState.viewer, enabled);
+
+// Tier-D feature-layer registry. Pages can render a full toggle column
+// with `window.FeatureLayers.renderToggles(container, ['osm-buildings', ...])`
+// or drive individual layers with `window.FeatureLayers.set(id, bool)`.
+window.FeatureLayers = {
+  registry: featureLayers,
+  set: (id, enabled) => setFeatureLayerEnabled(id, window.viewer || AppState.viewer, enabled),
+  renderToggles: (container, ids) => renderFeatureLayerToggles(container, ids, {
+    getViewer: () => window.viewer || AppState.viewer
+  })
+};
 
 // Update loading status helper
 function updateLoadingStatus(message, progress) {
