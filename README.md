@@ -238,9 +238,10 @@ deepgis-xr/
 ```
 
 A companion refactoring plan lives in the integration manuscript workspace at
-`notes/2026-04-22-deepgis-xr-refactoring.md`. Tiers A–C and the Tier-D0 /
-Tier-D0.5 prep steps have landed; the full Tier D layer-manager work plus
-Tiers E–F are scheduled on the roadmap below.
+`notes/2026-04-22-deepgis-xr-refactoring.md`. Tiers A–D have all landed
+(layer manager, static-tree consolidation, and Cesium FPS work) and Tier E's
+forward-compat prep is in; the Tier E version bumps and Tier F are scheduled
+on the roadmap below.
 
 ---
 
@@ -495,7 +496,7 @@ To enable GPU for AI features:
 
 ## 📊 Recent Updates
 
-### April 2026 — Refactor tiers A–C landed, Tier D in progress
+### April 2026 — Refactor tiers A–D landed, Tier E prep landed
 
 - **Tier A** — housekeeping (PR #3): fully pinned `requirements.txt`; added
   `requirements-dev.txt`; relocated root `.py` scripts into
@@ -512,12 +513,36 @@ To enable GPU for AI features:
   `analyzers/` subpackage (7 analyzers + 3 shared helpers) exposed through
   an `ANALYZER_REGISTRY`. This unblocks the MaxCal / Model-Kernel Selector
   work in `kernelcal`.
-- **Tier D0** — frontend static-tree consolidation: collapsed the duplicate
-  `deepgis_xr/apps/web/static/web/` tree; `staticfiles/` is now the single
-  canonical frontend root. Orphaned assets parked in `staticfiles/web/legacy/`.
-- **Tier D0.5** — Cesium FPS tuning (in flight on
-  `refactor/tier-d0.5-fps-tuning`): four FPS sinks identified and removed;
-  60 FPS restored on iGPU / Retina.
+- **Tier D** — frontend layer manager (PR #6): OSM-Buildings double-
+  instantiation bug fixed by collapsing two parallel `toggleOSMBuildings`
+  paths onto one canonical helper in `cesium-init.js`; a new feature-layer
+  registry in `staticfiles/web/js/core/feature-layers.js` normalises
+  heterogeneous layer toggles (OSM Buildings, World Terrain, …) behind
+  a single `window.FeatureLayers.set(id, enabled)` / `renderToggles(…)`
+  API; Tier D3 lifted the OSM-Buildings toggle onto `label_topology`
+  via the registry.
+- **Tier E prep** — forward-compat cleanups (PR #7): dropped
+  `USE_L10N = True` (removed in Django 5.0) and the stale
+  `default_app_config` pointer in `apps/auth/__init__.py` (removed in
+  4.2, already redundant given `INSTALLED_APPS` lists `AuthConfig`
+  directly); removed an unused `shapely.geometry.shape` import in
+  `views/legacy.py`. All three edits are no-ops on the current Django
+  3.2 / Shapely 1.8 stack and shrink the actual bump commit to a
+  four-line `requirements.txt` change.
+- **Tier D0** — frontend static-tree consolidation (PR #8): wired
+  `BASE_DIR/staticfiles/` into `STATICFILES_DIRS` so Django's finders
+  actually resolve `{% static 'web/js/main.js' %}` to the tracked tree.
+  Without this, the Tier D frontend work had been sitting in the repo
+  but not being served — the app had been falling back to an older,
+  untracked `deepgis_xr/apps/web/static/` tree. Orphaned assets
+  (`mask2former-corrector.css`/`.js`, `responsive.css`) parked under
+  `staticfiles/web/legacy/` with a README.
+- **Tier D0.5** — Cesium FPS tuning (PR #8): four FPS sinks removed in
+  `cesium-init.js` — globe `enableLighting`, uncapped
+  `resolutionScale × devicePixelRatio` on Retina/4K (now capped at 1.5×
+  with `?hidpi=1` opt-in), `tileLoadProgressEvent → requestRender`
+  spam, and `fxaa` on an already-supersampled scene. 60 FPS restored
+  on iGPU / Retina.
 
 ### December 2025
 
@@ -609,13 +634,20 @@ for the full plan.
 - [x] **Tier C** — `world_sampler_api.py` → package with `core.py`, `http.py`
       (9 endpoints), `analyzers/` subpackage, and `ANALYZER_REGISTRY`
       (PR #5; unblocks `kernelcal` Threads 1 + 2)
-- [x] **Tier D0** — collapse the duplicate frontend static tree; `staticfiles/`
-      is canonical, orphaned assets parked in `staticfiles/web/legacy/`
-- [~] **Tier D0.5** — Cesium perf pass (in progress on
-      `refactor/tier-d0.5-fps-tuning`; 60 FPS restored on iGPU/Retina)
-- [ ] **Tier D** — real frontend layer manager; fix OSM-Buildings duplication;
-      lift 3D-buildings and canopy-height layers to all 3D pages
-- [ ] **Tier E** — Django 3.2 → 4.2 LTS → 5.x; DRF 3.12 → 3.15; Shapely 2.x
+- [x] **Tier D** — frontend layer manager (PR #6): OSM-Buildings
+      double-instantiation fixed; feature-layer registry in
+      `core/feature-layers.js` with a `window.FeatureLayers` API;
+      registry-driven toggles on `label_topology`
+- [x] **Tier D0** — `staticfiles/` wired into `STATICFILES_DIRS` so the
+      tracked frontend tree is actually served; orphaned assets parked in
+      `staticfiles/web/legacy/` (PR #8)
+- [x] **Tier D0.5** — Cesium perf pass: four FPS sinks removed in
+      `cesium-init.js`; 60 FPS restored on iGPU/Retina (PR #8)
+- [~] **Tier E** — Django 3.2 → 4.2 LTS; DRF 3.12 → 3.15; Shapely 1.8 → 2.x.
+      Forward-compat prep landed (PR #7); the version bumps are a four-line
+      `requirements.txt` change pending container regression sweep. Full
+      recon in `TIER_E_MIGRATION_NOTES.md` at the repo root (local-only).
+      Django 5.0/5.1 is tracked separately (needs Python 3.10+).
 - [ ] **Tier F** — `kernelcal` integration: MaxCal World Sampler, Model-Kernel
       Selector, terrain diagnostics endpoint
 
