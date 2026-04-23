@@ -111,7 +111,10 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
-USE_L10N = True
+# USE_L10N was removed: it became the default (True) in Django 4.0 and
+# the setting itself is removed in Django 5.0. Keeping this line out
+# silences the 4.x deprecation warning without changing behaviour on
+# Django 3.2.24 (where True is also the effective default).
 USE_TZ = True
 
 # Static and Media Files
