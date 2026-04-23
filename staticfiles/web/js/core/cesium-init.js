@@ -92,13 +92,30 @@ export async function initializeCesium(updateLoadingStatus) {
       scene3DOnly: false,
       requestRenderMode: true,
       maximumRenderTimeChange: Infinity,
-      // Enable preserveDrawingBuffer for screenshot/capture functionality
+      // Use Web Mercator projection (EPSG:3857) for 2D/Columbus views.
+      // Default GeographicProjection (Plate Carree) stretches features horizontally
+      // at non-equatorial latitudes, making circles appear elliptical.
+      // Web Mercator is conformal (preserves local shapes), matching Google Maps/OSM.
+      mapProjection: new Cesium.WebMercatorProjection(),
+      // Request the discrete GPU on dual-GPU systems and keep software fallback as
+      // a last resort. preserveDrawingBuffer:true is needed for screenshot/capture.
+      // See refactor/tier-d0.5-fps-tuning.
       contextOptions: {
-        preserveDrawingBuffer: true
+        preserveDrawingBuffer: true,
+        webgl: {
+          powerPreference: "high-performance",
+          failIfMajorPerformanceCaveat: false
+        }
       },
-      // Set resolution scale for high-DPI displays (prevents blurry rendering)
-      // Use devicePixelRatio for crisp rendering on Retina/4K displays
-      resolutionScale: window.devicePixelRatio || 1.0
+      // Render scale: cap at 1.5 even on DPR=2 displays. Without a cap, a 4K
+      // Retina monitor renders at 8K-equivalent resolution (4x pixel work), which
+      // by itself can drop FPS from 60 to single digits on iGPUs. 1.5 is a good
+      // compromise: noticeably crisper than CSS pixels, ~56% of the GPU cost of
+      // full DPR=2. Override with ?hidpi=1 to force native-pixel rendering.
+      resolutionScale: (new URLSearchParams(window.location.search).get("hidpi") === "1")
+        ? (window.devicePixelRatio || 1.0)
+        : Math.min(window.devicePixelRatio || 1.0, 1.5),
+      useBrowserRecommendedResolution: false
     });
     
     // Track default base map layer
@@ -107,6 +124,27 @@ export async function initializeCesium(updateLoadingStatus) {
     }
 
     AppState.viewer = viewer;
+
+    // Visible FPS / MS overlay (top-left of canvas). Cheap to render.
+    // Toggle off via ?fps=0.
+    if (new URLSearchParams(window.location.search).get("fps") !== "0") {
+      viewer.scene.debugShowFramesPerSecond = true;
+    }
+
+    // Log the actual WebGL renderer the browser handed us. If this says
+    // SwiftShader, llvmpipe, or Microsoft Basic Render, we are on a software
+    // rasterizer and FPS will be unrecoverable until the OS/driver is fixed.
+    try {
+      const _gl = viewer.scene.context._gl || viewer.scene.context.canvas.getContext("webgl2") || viewer.scene.context.canvas.getContext("webgl");
+      const _dbg = _gl && _gl.getExtension("WEBGL_debug_renderer_info");
+      const _renderer = _dbg ? _gl.getParameter(_dbg.UNMASKED_RENDERER_WEBGL) : "unknown";
+      const _vendor   = _dbg ? _gl.getParameter(_dbg.UNMASKED_VENDOR_WEBGL)   : "unknown";
+      const _isSoft = /SwiftShader|llvmpipe|Software|Microsoft Basic/i.test(_renderer);
+      console[_isSoft ? "warn" : "log"](`[GPU] vendor=${_vendor} renderer=${_renderer} software=${_isSoft}`);
+      window.GPU_INFO = { vendor: _vendor, renderer: _renderer, isSoftware: _isSoft };
+    } catch (e) {
+      console.warn("[GPU] WEBGL_debug_renderer_info probe failed:", e);
+    }
 
     // Configure Cesium for memory optimization
     if (viewer.scene.globe) {
@@ -133,8 +171,15 @@ export async function initializeCesium(updateLoadingStatus) {
     viewer.camera.changed.addEventListener(() => {
       viewer.scene.requestRender();
     });
-    viewer.scene.globe.tileLoadProgressEvent.addEventListener(() => {
-      viewer.scene.requestRender();
+    // Render storm fix: tileLoadProgressEvent fires on every progress tick.
+    // With requestRenderMode on a slow GPU, requesting a render on each tick
+    // creates a self-stalling loop (each frame is slow -> tiles dont finish ->
+    // event keeps firing -> repeat). Only request a render when tile loading
+    // actually completes (count drops to 0).
+    viewer.scene.globe.tileLoadProgressEvent.addEventListener((tilesRemaining) => {
+      if (tilesRemaining === 0) {
+        viewer.scene.requestRender();
+      }
     });
 
     // Set up error handling for render errors (including out of memory)
@@ -223,7 +268,11 @@ export async function initializeCesium(updateLoadingStatus) {
     }
 
     // Configure the scene
-    viewer.scene.globe.enableLighting = true;
+    // enableLighting=true enables per-pixel sun/atmosphere lighting on every
+    // terrain tile. On weak GPUs it can cut FPS 3-5x. Off by default; opt in
+    // via ?lighting=1 in the URL.
+    const _enableLighting = new URLSearchParams(window.location.search).get("lighting") === "1";
+    viewer.scene.globe.enableLighting = _enableLighting;
     viewer.scene.fog.enabled = true;
     viewer.scene.fog.density = 0.0001;
     viewer.scene.globe.baseColor = Cesium.Color.BLACK.withAlpha(0.0);
@@ -251,6 +300,12 @@ export async function initializeCesium(updateLoadingStatus) {
       
       // Apply 2D-specific optimizations
       if (viewer.scene.mode === Cesium.SceneMode.SCENE2D) {
+        // Fog and atmosphere are meaningless in flat 2D; disabling them removes
+        // one full-screen pass.
+        viewer.scene.fog.enabled = false;
+        viewer.scene.skyAtmosphere.show = false;
+        viewer.scene.globe.showGroundAtmosphere = false;
+
         // Reduce tile cache (2D needs fewer tiles than 3D perspective)
         viewer.scene.globe.tileCacheSize = 150;
         
@@ -267,15 +322,9 @@ export async function initializeCesium(updateLoadingStatus) {
         // Disable preload ancestors (not needed in flat view)
         viewer.scene.globe.preloadAncestors = false;
         
-        // Ensure resolution scale is set for crisp rendering on high-DPI displays
-        if (viewer.scene && viewer.scene.globe) {
-          // Force high-resolution rendering for 2D mode
-          const pixelRatio = window.devicePixelRatio || 1.0;
-          if (pixelRatio > 1.0 && viewer.resolutionScale !== pixelRatio) {
-            viewer.resolutionScale = pixelRatio;
-            console.log(`Set resolution scale to ${pixelRatio} for high-DPI display`);
-          }
-        }
+        // Resolution scale is set once at viewer creation (capped at 1.5 unless
+        // ?hidpi=1). Do NOT re-bump it here; that previously double-applied DPR
+        // and was a major FPS regression on Retina/4K displays.
         
         console.log('Applied 2D mode optimizations:', {
           tileCacheSize: 150,
