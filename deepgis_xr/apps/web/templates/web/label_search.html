@@ -2754,72 +2754,36 @@
                     }
                 }
                 
-                // Setup OSM Buildings toggle
+                // Setup OSM Buildings toggle.
+                // Delegates to window.toggleOSMBuildings (exposed from main.js),
+                // which wraps the canonical toggleOSMBuildings() in cesium-init.js.
+                // Keeping one implementation path avoids the double-instantiation
+                // bug the Tier-D plan flagged (previously an inline copy here kept
+                // its own window.osmBuildingsTileset cache alongside AppState).
                 function setupBuildingsToggle() {
-                    const viewer = window.AppState?.viewer || window.viewer;
-                    if (!viewer) {
-                        // Retry after viewer is initialized
+                    if (typeof window.toggleOSMBuildings !== 'function' ||
+                        !(window.AppState?.viewer || window.viewer)) {
                         setTimeout(setupBuildingsToggle, 500);
                         return;
                     }
-                    
+
                     const buildingsToggle = document.getElementById('buildingsToggle');
-                    if (buildingsToggle && !buildingsToggle.dataset.handlerAttached) {
-                        buildingsToggle.addEventListener('change', async (e) => {
-                            const enabled = e.target.checked;
-                            console.log(`[Buildings] Toggle ${enabled ? 'enabled' : 'disabled'}`);
-                            
-                            try {
-                                // Ensure we have a place to store the buildings reference
-                                // Use fallback storage if AppState is not available
-                                if (!window.osmBuildingsTileset) {
-                                    window.osmBuildingsTileset = null;
-                                }
-                                
-                                // Get current buildings reference
-                                let osmBuildings = window.AppState?.currentLayers?.osmBuildings || window.osmBuildingsTileset;
-                                
-                                // Toggle OSM Buildings directly (inline implementation)
-                                if (enabled) {
-                                    // Load OSM Buildings if not already loaded
-                                    if (!osmBuildings) {
-                                        console.log('Loading OSM 3D Buildings...');
-                                        
-                                        // Create OSM Buildings tileset
-                                        osmBuildings = await Cesium.createOsmBuildingsAsync();
-                                        
-                                        // Add to viewer
-                                        viewer.scene.primitives.add(osmBuildings);
-                                        
-                                        // Store reference (try AppState first, fallback to window)
-                                        if (window.AppState?.currentLayers) {
-                                            window.AppState.currentLayers.osmBuildings = osmBuildings;
-                                        }
-                                        window.osmBuildingsTileset = osmBuildings;
-                                        
-                                        console.log('✓ OSM 3D Buildings loaded successfully');
-                                    } else {
-                                        // Buildings already loaded, just show them
-                                        osmBuildings.show = true;
-                                        console.log('✓ OSM 3D Buildings enabled');
-                                    }
-                                } else {
-                                    // Disable buildings
-                                    if (osmBuildings) {
-                                        osmBuildings.show = false;
-                                        console.log('✓ OSM 3D Buildings disabled');
-                                    }
-                                }
-                            } catch (error) {
-                                console.error('[Buildings] Error:', error);
-                                // Revert checkbox state
-                                e.target.checked = !enabled;
-                                alert(`Failed to ${enabled ? 'load' : 'hide'} buildings: ${error.message}`);
-                            }
-                        });
-                        buildingsToggle.dataset.handlerAttached = 'true';
-                        console.log('[Buildings] Toggle handler attached');
-                    }
+                    if (!buildingsToggle || buildingsToggle.dataset.handlerAttached) return;
+
+                    buildingsToggle.addEventListener('change', async (e) => {
+                        const enabled = e.target.checked;
+                        console.log(`[Buildings] Toggle ${enabled ? 'enabled' : 'disabled'}`);
+                        try {
+                            const ok = await window.toggleOSMBuildings(enabled);
+                            if (ok === false) throw new Error('toggleOSMBuildings returned false');
+                        } catch (error) {
+                            console.error('[Buildings] Error:', error);
+                            e.target.checked = !enabled;
+                            alert(`Failed to ${enabled ? 'load' : 'hide'} buildings: ${error.message}`);
+                        }
+                    });
+                    buildingsToggle.dataset.handlerAttached = 'true';
+                    console.log('[Buildings] Toggle handler attached');
                 }
                 
                 // Setup view mode buttons after a delay to ensure viewer is ready

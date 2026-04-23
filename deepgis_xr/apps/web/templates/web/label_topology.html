@@ -107,6 +107,10 @@
                                 <i class="fas fa-cube me-2"></i>3D Models
                             </label>
                         </div>
+                        {# Tier-D3: registry-rendered toggles. Populated by the #}
+                        {# inline script near the end of the page once main.js #}
+                        {# has exposed window.FeatureLayers. #}
+                        <div id="featureLayersContainer"></div>
                     </div>
 
                     <!-- View Controls -->
@@ -463,6 +467,45 @@
                 document.addEventListener('DOMContentLoaded', initGPSTelemetry);
             } else {
                 initGPSTelemetry();
+            }
+        })();
+    </script>
+
+    <!-- Tier-D3: render registry-backed feature-layer toggles (OSM 3D Buildings, -->
+    <!-- etc.) into the #featureLayersContainer slot once main.js has populated   -->
+    <!-- window.FeatureLayers. main.js is loaded as an ES module so this inline   -->
+    <!-- plain <script> runs before the module graph settles; poll briefly.      -->
+    <script>
+        (function mountFeatureLayerToggles() {
+            const container = document.getElementById('featureLayersContainer');
+            if (!container) return;
+
+            let attempts = 0;
+            const MAX_ATTEMPTS = 40; // ~10s at 250ms cadence
+            const tick = () => {
+                if (window.FeatureLayers && typeof window.FeatureLayers.renderToggles === 'function') {
+                    try {
+                        // Terrain already has a hand-wired toggle on this page,
+                        // so only render the layers that aren't already present
+                        // to avoid double toggles.
+                        window.FeatureLayers.renderToggles(container, ['osm-buildings']);
+                        console.log('[topology] Feature-layer toggles mounted');
+                    } catch (err) {
+                        console.error('[topology] Failed to mount feature-layer toggles:', err);
+                    }
+                    return;
+                }
+                if (++attempts >= MAX_ATTEMPTS) {
+                    console.warn('[topology] window.FeatureLayers never appeared; skipping registry-backed toggles');
+                    return;
+                }
+                setTimeout(tick, 250);
+            };
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', tick);
+            } else {
+                tick();
             }
         })();
     </script>

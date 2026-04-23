@@ -199,9 +199,15 @@ deepgis-xr/
 │   │   ├── core/                     # core models, admin, image processing
 │   │   ├── ml/                       # ML helpers
 │   │   └── web/                      # main web app
-│   │       ├── views.py                     # 50+ request handlers (refactor target)
+│   │       ├── views/                       # request handlers (Tier B split)
+│   │       │   ├── pages.py, missions.py, auth_ajax.py, ai_reports.py,
+│   │       │   ├── training_datasets.py, semi_supervised.py, models_3d.py
+│   │       │   └── legacy.py                # remaining un-split handlers
 │   │       ├── world_sampler.py             # adaptive spatial sampler
-│   │       ├── world_sampler_api.py         # Sampling + AI viewport analysis endpoints
+│   │       ├── world_sampler_api/           # sampling + AI viewport API (Tier C split)
+│   │       │   ├── core.py, http.py         # helpers + 9 HTTP endpoints
+│   │       │   ├── analyzers/               # 7 analyzers + ANALYZER_REGISTRY
+│   │       │   └── legacy.py
 │   │       ├── urls.py                      # 50+ routes
 │   │       ├── admin.py, models.py, middleware/, templates/
 │   │       └── management/commands/         # e.g. import_rocks_labels
@@ -232,8 +238,9 @@ deepgis-xr/
 ```
 
 A companion refactoring plan lives in the integration manuscript workspace at
-`notes/2026-04-22-deepgis-xr-refactoring.md`. Tier A (housekeeping, pinning,
-file relocations) has landed; Tiers B–F are scheduled on the roadmap below.
+`notes/2026-04-22-deepgis-xr-refactoring.md`. Tiers A–C and the Tier-D0 /
+Tier-D0.5 prep steps have landed; the full Tier D layer-manager work plus
+Tiers E–F are scheduled on the roadmap below.
 
 ---
 
@@ -488,20 +495,29 @@ To enable GPU for AI features:
 
 ## 📊 Recent Updates
 
-### April 2026 — Tier A housekeeping
+### April 2026 — Refactor tiers A–C landed, Tier D in progress
 
-- 🧹 Fully pinned `requirements.txt` to the versions deployed in `deepgis-xr_web_1`;
-  added `requirements-dev.txt` for pytest / ruff / black / pip-tools.
-- 📦 Root-level `.py` scripts relocated:
-  - `deepgis_topology_server.py`, `prepare_data.py` → `services/topology/`
-    (with their own `Dockerfile`).
-  - `bf_kernelcal_demo.py`, `bf_vegetation_segment.py` → `examples/`.
-  - `optimize_large_glb.py`, `grounding_dino_api_client.py` → `scripts/`.
-- 🔗 `kernelcal` is now a real install dep
-  (`git+https://github.com/darknight-007/kernelcal.git@main`).
-- 🗄️ `scripts/sync_assets.sh` pulls `data/`, `models/`, `deepgis_results/` from
-  `/mnt/dreamslab-store`; those directories are now firmly gitignored.
-- ❌ Dead Vite config (`package.json`, `vite.config.js`, empty `src/`) removed.
+- **Tier A** — housekeeping (PR #3): fully pinned `requirements.txt`; added
+  `requirements-dev.txt`; relocated root `.py` scripts into
+  `services/topology/`, `examples/`, `scripts/`; `kernelcal` installed as a
+  real dep; `scripts/sync_assets.sh` syncs `data/`/`models/`/`deepgis_results/`
+  from `/mnt/dreamslab-store`; dead Vite config removed.
+- **Tier B** — views split (PR #4): the 2 633-line `apps/web/views.py`
+  monolith is now a `views/` package — `pages`, `missions`, `auth_ajax`,
+  `ai_reports`, `training_datasets`, `semi_supervised`, `models_3d` plus a
+  shrinking `legacy.py`, with `__init__.py` preserving every public name
+  `urls.py` routes to.
+- **Tier C** — world-sampler split (PR #5): `world_sampler_api.py` is now a
+  package with `core.py` (helpers), `http.py` (9 endpoints), and an
+  `analyzers/` subpackage (7 analyzers + 3 shared helpers) exposed through
+  an `ANALYZER_REGISTRY`. This unblocks the MaxCal / Model-Kernel Selector
+  work in `kernelcal`.
+- **Tier D0** — frontend static-tree consolidation: collapsed the duplicate
+  `deepgis_xr/apps/web/static/web/` tree; `staticfiles/` is now the single
+  canonical frontend root. Orphaned assets parked in `staticfiles/web/legacy/`.
+- **Tier D0.5** — Cesium FPS tuning (in flight on
+  `refactor/tier-d0.5-fps-tuning`): four FPS sinks identified and removed;
+  60 FPS restored on iGPU / Retina.
 
 ### December 2025
 
@@ -582,16 +598,23 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 
 ### 🔧 Refactor track (Q2 2026)
 
-Tier A (housekeeping) has landed; the remaining tiers are tracked alongside
-feature work. See `notes/2026-04-22-deepgis-xr-refactoring.md` in the
-integration workspace for the full plan.
+Tiers A–C and the Tier-D prep steps (D0, D0.5) have landed. Remaining work
+is tracked alongside feature work. See
+`notes/2026-04-22-deepgis-xr-refactoring.md` in the integration workspace
+for the full plan.
 
-- [ ] **Tier B** — split `apps/web/views.py` (2 633 lines → package of modules)
-- [ ] **Tier C** — split `world_sampler_api.py`; introduce `ANALYZER_REGISTRY`
-      (unblocks `kernelcal` Thread 1 + 2)
-- [ ] **Tier D** — consolidate frontend into a real layer manager; fix the
-      OSM-Buildings duplication; lift 3D-buildings and canopy-height layers
-      to all 3D pages
+- [x] **Tier A** — housekeeping, pinning, file relocations (PR #3)
+- [x] **Tier B** — `apps/web/views.py` → `views/` package of 7 focused
+      modules + shrinking `legacy.py` (PR #4)
+- [x] **Tier C** — `world_sampler_api.py` → package with `core.py`, `http.py`
+      (9 endpoints), `analyzers/` subpackage, and `ANALYZER_REGISTRY`
+      (PR #5; unblocks `kernelcal` Threads 1 + 2)
+- [x] **Tier D0** — collapse the duplicate frontend static tree; `staticfiles/`
+      is canonical, orphaned assets parked in `staticfiles/web/legacy/`
+- [~] **Tier D0.5** — Cesium perf pass (in progress on
+      `refactor/tier-d0.5-fps-tuning`; 60 FPS restored on iGPU/Retina)
+- [ ] **Tier D** — real frontend layer manager; fix OSM-Buildings duplication;
+      lift 3D-buildings and canopy-height layers to all 3D pages
 - [ ] **Tier E** — Django 3.2 → 4.2 LTS → 5.x; DRF 3.12 → 3.15; Shapely 2.x
 - [ ] **Tier F** — `kernelcal` integration: MaxCal World Sampler, Model-Kernel
       Selector, terrain diagnostics endpoint
