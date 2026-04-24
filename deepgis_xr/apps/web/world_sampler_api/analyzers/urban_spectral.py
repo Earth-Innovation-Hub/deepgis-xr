@@ -6,17 +6,34 @@ Implements the ``model_type="urban_spectral"`` branch of the
 Unlike the other analyzers in this package, this one consumes a
 geographic bounding box (WGS84 degrees) rather than a rendered image.
 The bbox is fetched as OSM building footprints via osmnx, built into a
-k-NN Gaussian proximity graph on centroids, eigendecomposed, and fed
-through the kernelcal MaxCal fixed-point pipeline to yield an
-eigenspectrum and a small set of controller-detection diagnostics
-(ΔH, Δ′, β₁, Fiedler eigenvalue).
+proximity graph on centroids, eigendecomposed, and fed through the
+kernelcal MaxCal fixed-point pipeline to yield an eigenspectrum and a
+small set of controller-detection diagnostics (ΔH, Δ′, β₁, Fiedler
+eigenvalue).
+
+Graph modes
+-----------
+``graph_mode='knn'`` (default)
+    Euclidean k-NN on building centroids with Gaussian edge weights. Pure
+    geometric proximity — buildings across a highway are "neighbours" iff
+    their centroids are close in metres.
+
+``graph_mode='road_knn'``
+    k-NN on **road-network distance** between snapped building centroids.
+    Adds an ``ox.graph_from_bbox`` call (``network_type`` selectable, defaults
+    to ``'drive'``), snaps each centroid to the nearest road node, then
+    ranks k-nearest neighbours by shortest-path distance along the street
+    graph. This is the "option 1" road-aware variant: buildings separated
+    by an impassable boundary (rail cut, canal, unpaved informal fabric)
+    become spectral-distant even if Euclidean-close, which is usually what
+    a planner-controller analysis wants.
 
 The bridge relies on ``kernelcal.urban.buildings_to_graph_from_bbox``
-which in turn calls ``fetch_buildings_bbox`` — both added in the
-``feat/osm-bbox-buildings`` branch of the kernelcal repo. If kernelcal
-is not installed, the endpoint returns a structured 503 so the client
-can show a friendly "spectral analysis unavailable" banner instead of
-a 500.
+(``'knn'``) or ``buildings_to_graph_via_roads_from_bbox`` (``'road_knn'``),
+both exposed from the ``feat/osm-bbox-buildings`` branch of the kernelcal
+repo. If kernelcal is not installed, the endpoint returns a structured 503
+so the client can show a friendly "spectral analysis unavailable" banner
+instead of a 500.
 """
 from __future__ import annotations
 
@@ -40,6 +57,13 @@ DEFAULT_TAU          = 1.0
 DEFAULT_TIMEOUT      = 60
 MAX_LON_DEGREES      = 4.0   # refuse bboxes wider than this (UTM-zone guard)
 MAX_LAT_DEGREES      = 2.0
+
+# Road-aware graph defaults (graph_mode='road_knn').
+DEFAULT_NETWORK_TYPE = 'drive'
+_ALLOWED_NETWORK_TYPES = {
+    'drive', 'drive_service', 'walk', 'bike', 'all', 'all_private',
+}
+_ALLOWED_GRAPH_MODES = {'knn', 'road_knn'}
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +278,35 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
         }, status=400)
 
     graph_mode = str(data.get('graph_mode', 'knn'))
-    if graph_mode != 'knn':
+    if graph_mode not in _ALLOWED_GRAPH_MODES:
         return JsonResponse({
             'status': 'error',
-            'message': f'graph_mode={graph_mode!r} not implemented yet '
-                       f'(only "knn" is wired).',
+            'message': f'graph_mode={graph_mode!r} not supported. '
+                       f'Allowed: {sorted(_ALLOWED_GRAPH_MODES)}.',
             'code': 'graph_mode_unsupported',
         }, status=400)
+
+    # Road-aware mode takes an extra `network_type` selector plus an
+    # optional Dijkstra cutoff. Defaults keep the endpoint callable with
+    # just `graph_mode="road_knn"`.
+    network_type = str(data.get('network_type', DEFAULT_NETWORK_TYPE))
+    if graph_mode == 'road_knn' and network_type not in _ALLOWED_NETWORK_TYPES:
+        return JsonResponse({
+            'status': 'error',
+            'message': f'network_type={network_type!r} not supported. '
+                       f'Allowed: {sorted(_ALLOWED_NETWORK_TYPES)}.',
+            'code': 'network_type_unsupported',
+        }, status=400)
+    try:
+        max_network_dist = data.get('max_network_dist', None)
+        if max_network_dist is not None:
+            max_network_dist = float(max_network_dist)
+    except (TypeError, ValueError) as exc:
+        return JsonResponse({
+            'status': 'error',
+            'message': f'Invalid max_network_dist: {exc}',
+        }, status=400)
+    simplify_roads = bool(data.get('simplify_roads', True))
 
     force_refresh        = bool(data.get('force_refresh', False))
     include_fiedler_vec  = bool(data.get('include_fiedler_vec', True))
@@ -269,14 +315,19 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
     # Import kernelcal lazily: the server should still answer other
     # analyzer routes if kernelcal is missing.
     try:
-        from kernelcal.urban import buildings_to_graph_from_bbox
+        if graph_mode == 'road_knn':
+            from kernelcal.urban import buildings_to_graph_via_roads_from_bbox
+        else:
+            from kernelcal.urban import buildings_to_graph_from_bbox
     except ImportError as exc:
         return JsonResponse({
             'status': 'error',
             'message': (
-                'kernelcal is not installed on this server. Install with '
-                '"pip install git+https://github.com/darknight-007/kernelcal'
-                '@feat/osm-bbox-buildings" or follow ../../INTEGRATION.md.'
+                'kernelcal is not installed on this server (or is missing '
+                'the road-aware helpers from kernelcal.urban). Install/upgrade '
+                'with "pip install -U git+https://github.com/darknight-007/'
+                'kernelcal@feat/osm-bbox-buildings" or follow '
+                '../../INTEGRATION.md.'
             ),
             'code': 'kernelcal_unavailable',
             'detail': str(exc),
@@ -285,12 +336,23 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
     # Build the graph (fetch + k-NN + eigendecomp).
     t_build = time.perf_counter()
     try:
-        cg = buildings_to_graph_from_bbox(
-            south=south, west=west, north=north, east=east,
-            k=k_nn, n_max=n_max, sigma_frac=sigma_frac,
-            force_refresh=force_refresh,
-            timeout=timeout,
-        )
+        if graph_mode == 'road_knn':
+            cg = buildings_to_graph_via_roads_from_bbox(
+                south=south, west=west, north=north, east=east,
+                k=k_nn, n_max=n_max, sigma_frac=sigma_frac,
+                network_type=network_type,
+                simplify=simplify_roads,
+                max_network_dist=max_network_dist,
+                force_refresh=force_refresh,
+                timeout=timeout,
+            )
+        else:
+            cg = buildings_to_graph_from_bbox(
+                south=south, west=west, north=north, east=east,
+                k=k_nn, n_max=n_max, sigma_frac=sigma_frac,
+                force_refresh=force_refresh,
+                timeout=timeout,
+            )
     except RuntimeError as exc:  # e.g., Overpass timeout
         return JsonResponse({
             'status': 'error',
@@ -337,6 +399,14 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
 
     centroids = _centroids_to_lonlat(cg) if include_centroids else []
 
+    # Surface road-aware diagnostics on the response so the Cesium client
+    # can render snap/reachability warnings without a second round-trip.
+    # `effective_graph_mode` differs from the requested one when the road
+    # fetcher degraded to Euclidean k-NN (e.g. viewport with buildings but
+    # no drivable roads).
+    effective_graph_mode = getattr(cg, 'graph_mode', 'knn')
+    road_meta            = dict(getattr(cg, 'road_meta', {}) or {})
+
     return JsonResponse({
         'status':       'ok',
         'n_buildings':  int(cg.positions.shape[0]),
@@ -345,6 +415,8 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
                          'north': north, 'east': east},
         'bbox_m':       [float(v) for v in cg.bounds_m],
         'centroids_lonlat': centroids,
+        'graph_mode':   effective_graph_mode,
+        'road_meta':    road_meta,
         **payload,
         'timings': {
             'graph_build_s':  round(dt_build, 3),
@@ -354,6 +426,9 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
         'params': {
             'k_nn': k_nn, 'n_max': n_max, 'sigma_frac': sigma_frac,
             'mu2':  mu2,  'sigma2': sigma2, 'tau': tau,
-            'graph_mode': graph_mode,
+            'graph_mode':       graph_mode,
+            'network_type':     network_type if graph_mode == 'road_knn' else None,
+            'simplify_roads':   simplify_roads if graph_mode == 'road_knn' else None,
+            'max_network_dist': max_network_dist,
         },
     })

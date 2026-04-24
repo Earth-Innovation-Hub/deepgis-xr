@@ -23,6 +23,8 @@
         n_max: 1500,
         sigma_frac: 0.05,
         tau: 1.0,
+        graph_mode: 'knn',           // 'knn' (Euclidean) or 'road_knn' (road-aware)
+        network_type: 'drive',       // used only when graph_mode === 'road_knn'
         mu2: 2.0,
         sigma2: 1.0,
     };
@@ -164,6 +166,23 @@
                             <input id="urbanSpectralTau" type="number" step="0.1" value="${DEFAULT_PARAMS.tau}"
                                    style="width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;padding:2px 4px;"
                                    title="Diffusion time. Set to 0 for auto (1/λ_max).">
+                            <label>graph</label>
+                            <select id="urbanSpectralGraphMode"
+                                    style="width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;padding:2px 4px;"
+                                    title="knn = Euclidean proximity; road_knn = k-NN on OSM road-network distance (buildings across an impassable boundary become spectrally distant).">
+                                <option value="knn"${DEFAULT_PARAMS.graph_mode === 'knn' ? ' selected' : ''}>knn (Euclidean)</option>
+                                <option value="road_knn"${DEFAULT_PARAMS.graph_mode === 'road_knn' ? ' selected' : ''}>road_knn (road-aware)</option>
+                            </select>
+                            <label id="urbanSpectralNetTypeLabel" style="display:none;">network</label>
+                            <select id="urbanSpectralNetworkType"
+                                    style="display:none;width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;padding:2px 4px;"
+                                    title="OSM network_type for road_knn. Use 'all' in pedestrian-dominant fabrics (medinas, Venice).">
+                                <option value="drive"${DEFAULT_PARAMS.network_type === 'drive' ? ' selected' : ''}>drive</option>
+                                <option value="drive_service">drive_service</option>
+                                <option value="walk">walk</option>
+                                <option value="bike">bike</option>
+                                <option value="all">all</option>
+                            </select>
                         </div>
                     </details>
 
@@ -208,6 +227,22 @@
             q('urbanSpectralOverlayBtn').addEventListener('click', () => this.toggleOverlay());
             q('urbanSpectralClearBtn').addEventListener('click', () => this.clearOverlay());
 
+            // Show/hide the network_type selector when graph_mode toggles so
+            // the panel doesn't advertise a control that's meaningless in
+            // Euclidean mode.
+            const modeSel  = q('urbanSpectralGraphMode');
+            const netSel   = q('urbanSpectralNetworkType');
+            const netLabel = q('urbanSpectralNetTypeLabel');
+            const syncNetVis = () => {
+                const show = modeSel && modeSel.value === 'road_knn';
+                if (netSel)   netSel.style.display   = show ? '' : 'none';
+                if (netLabel) netLabel.style.display = show ? '' : 'none';
+            };
+            if (modeSel) {
+                modeSel.addEventListener('change', syncNetVis);
+                syncNetVis();
+            }
+
             // Simple accordion toggle in case the page doesn't provide one.
             const header = q('urbanSpectralPanel').querySelector('.accordion-header');
             const content = q('urbanSpectralContent');
@@ -232,11 +267,22 @@
             const k    = parseInt(q('urbanSpectralK').value,    10);
             const nMax = parseInt(q('urbanSpectralNmax').value, 10);
             const tau  = parseFloat(q('urbanSpectralTau').value);
-            return {
+            const modeEl = q('urbanSpectralGraphMode');
+            const netEl  = q('urbanSpectralNetworkType');
+            const graphMode   = modeEl ? modeEl.value : DEFAULT_PARAMS.graph_mode;
+            const networkType = netEl  ? netEl.value  : DEFAULT_PARAMS.network_type;
+            const params = {
                 k:     Number.isFinite(k)    ? k    : DEFAULT_PARAMS.k,
                 n_max: Number.isFinite(nMax) ? nMax : DEFAULT_PARAMS.n_max,
                 tau:   Number.isFinite(tau)  ? tau  : DEFAULT_PARAMS.tau,
+                graph_mode: graphMode,
             };
+            // Only include network_type in the payload when it's actually
+            // going to be used — keeps the server-side params log tidy.
+            if (graphMode === 'road_knn') {
+                params.network_type = networkType;
+            }
+            return params;
         }
 
         async run() {
