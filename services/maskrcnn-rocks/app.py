@@ -146,6 +146,18 @@ def _param(name: str, default, caster):
     return default
 
 
+def _class_names(default_label: str = "rock") -> Optional[list[str]]:
+    raw = _param("class_names", os.environ.get("CLASS_NAMES", ""), str)
+    if not raw:
+        return None
+    names = [n.strip() for n in raw.replace(";", ",").split(",") if n.strip()]
+    if not names:
+        return None
+    if names[0].lower() not in {"background", "__background__", "bg"}:
+        names = ["background", *names]
+    return names or ["background", default_label]
+
+
 # -------------------------------------------------------------------------
 # Routes
 # -------------------------------------------------------------------------
@@ -230,6 +242,7 @@ def api_predict():
     score_thr = _param("score_threshold", 0.5, float)
     mask_thr = _param("mask_threshold", 0.5, float)
     max_det = _param("max_detections", 200, int)
+    class_names = _class_names()
     return_annotated = _param("return_annotated", True,
                               lambda v: str(v).lower() in {"1", "true", "yes"})
 
@@ -243,6 +256,7 @@ def api_predict():
             mask_threshold=mask_thr,
             max_detections=max_det,
             label_name="rock",
+            class_names=class_names,
         )
         elapsed_ms = int((time.time() - t0) * 1000)
     except Exception as exc:
@@ -255,6 +269,7 @@ def api_predict():
         "model": asdict(entry),
         "inference_ms": elapsed_ms,
         "image_size": {"width": w, "height": h},
+        "class_names": class_names,
         "predictions": {
             "count": len(detections),
             "boxes":     [d.box       for d in detections],

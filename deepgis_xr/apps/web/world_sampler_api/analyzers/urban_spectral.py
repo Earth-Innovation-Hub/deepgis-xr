@@ -132,6 +132,131 @@ def _centroids_to_lonlat(cg) -> list[list[float]]:
     return [[float(p.x), float(p.y)] for p in pts]
 
 
+def _edges_and_polylines(
+    cg,
+    centroids_lonlat: list[list[float]],
+    include_polylines: bool,
+    max_edges: int | None = None,
+) -> tuple[list[dict], list[list[list[float]]]]:
+    """Extract the CityGraph adjacency as an edge list for the Cesium client.
+
+    Returns
+    -------
+    (edges, edge_polylines)
+        * ``edges`` — list of ``{'i', 'j', 'w'}`` dicts, one per unique
+          undirected edge (i < j) in ``cg.W``. Weights are the Gaussian
+          adjacency values kernelcal computed and are already in [0, 1],
+          so the client can use them directly as an alpha channel.
+        * ``edge_polylines`` — parallel to ``edges``; each entry is a
+          list of ``[lon, lat]`` pairs to draw.
+            - For ``graph_mode='knn'`` every polyline is a two-point
+              straight line between the two building centroids.
+            - For ``graph_mode='road_knn'`` polylines trace the actual
+              shortest path through the OSM road graph — centroid[i] →
+              snap_node[i] → intermediate road nodes → snap_node[j] →
+              centroid[j] — so the user can see the edge hugging the
+              streets instead of flying through buildings.
+
+    The polyline set is capped at ``max_edges`` (falsy → no cap) to keep
+    response size bounded on dense viewports.
+    """
+    W = cg.W
+    n = W.shape[0]
+
+    # Flat (i, j) upper-triangle enumeration. Using numpy here to avoid a
+    # ~N²/2 Python loop on medium viewports.
+    iu, ju = np.triu_indices(n, k=1)
+    mask   = W[iu, ju] > 0.0
+    iu, ju = iu[mask], ju[mask]
+    wts    = W[iu, ju]
+
+    # If we'd exceed max_edges, keep the strongest ones — they're the
+    # ones the Fiedler-difference coloring will highlight anyway.
+    if max_edges is not None and max_edges > 0 and len(iu) > max_edges:
+        keep = np.argsort(wts)[::-1][:max_edges]
+        iu, ju, wts = iu[keep], ju[keep], wts[keep]
+
+    edges: list[dict] = []
+    polylines: list[list[list[float]]] = []
+
+    # Road-path reconstruction needs the (optional) raw road graph and
+    # the per-building snap-node ids that kernelcal stashed on road_meta.
+    G_roads       = getattr(cg, 'raw_road_graph', None)
+    snap_node_ids = (cg.road_meta or {}).get('snap_node_ids') if hasattr(cg, 'road_meta') else None
+    road_mode     = (
+        getattr(cg, 'graph_mode', 'knn') == 'road_knn'
+        and G_roads is not None
+        and snap_node_ids is not None
+        and include_polylines
+    )
+    if road_mode:
+        # Lazy-import networkx only on the path that actually needs it;
+        # keeps the knn branch dependency-free.
+        import networkx as nx
+        # Reproject road-graph node coordinates back to WGS84 once so we
+        # don't hit the shapely CRS machinery inside the inner loop. We
+        # stashed ``lon``/``lat`` on the nodes inside fetch_road_graph_bbox
+        # before projecting; use them directly when present.
+        node_lonlat: dict = {}
+        missing: list = []
+        for nd, data in G_roads.nodes(data=True):
+            if 'lon' in data and 'lat' in data:
+                node_lonlat[nd] = [float(data['lon']), float(data['lat'])]
+            else:
+                missing.append(nd)
+        if missing:
+            # Fallback: reproject the UTM x/y back to WGS84 in one batch.
+            try:
+                import geopandas as gpd
+                from shapely.geometry import Point
+                utm_crs = G_roads.graph.get('crs')
+                if utm_crs is not None:
+                    pts = [Point(G_roads.nodes[n].get('x', 0.0),
+                                 G_roads.nodes[n].get('y', 0.0))
+                           for n in missing]
+                    wgs = gpd.GeoSeries(pts, crs=utm_crs).to_crs('EPSG:4326')
+                    for nd, p in zip(missing, wgs):
+                        node_lonlat[nd] = [float(p.x), float(p.y)]
+            except Exception:
+                # Missing coords → that edge falls back to a straight line.
+                pass
+
+    for idx in range(len(iu)):
+        i, j, w = int(iu[idx]), int(ju[idx]), float(wts[idx])
+        edges.append({'i': i, 'j': j, 'w': w})
+        if not include_polylines:
+            continue
+
+        # Defensive bounds check — centroids_lonlat might be empty if the
+        # caller passed include_centroids=false while still asking for edges.
+        ci = centroids_lonlat[i] if i < len(centroids_lonlat) else None
+        cj = centroids_lonlat[j] if j < len(centroids_lonlat) else None
+        if ci is None or cj is None:
+            polylines.append([])
+            continue
+
+        if not road_mode:
+            polylines.append([list(ci), list(cj)])
+            continue
+
+        si = snap_node_ids[i] if i < len(snap_node_ids) else None
+        sj = snap_node_ids[j] if j < len(snap_node_ids) else None
+        coords: list[list[float]] = [list(ci)]
+        if si is not None and sj is not None and si in node_lonlat and sj in node_lonlat:
+            try:
+                path = nx.shortest_path(G_roads, si, sj, weight='length')
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                path = [si, sj]
+            for nd in path:
+                p = node_lonlat.get(nd)
+                if p is not None:
+                    coords.append(p)
+        coords.append(list(cj))
+        polylines.append(coords)
+
+    return edges, polylines
+
+
 def _run_spectral_diagnostics(
     cg,
     mu2: float,
@@ -311,6 +436,19 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
     force_refresh        = bool(data.get('force_refresh', False))
     include_fiedler_vec  = bool(data.get('include_fiedler_vec', True))
     include_centroids    = bool(data.get('include_centroids',   True))
+    # Edge rendering toggles. ``include_edges`` switches on the (i, j, w)
+    # adjacency list; ``include_edge_polylines`` additionally emits a
+    # ``[[lon, lat], …]`` polyline per edge (road-aware in ``road_knn``
+    # mode). ``max_edges`` caps the response size on dense viewports.
+    include_edges          = bool(data.get('include_edges',          True))
+    include_edge_polylines = bool(data.get('include_edge_polylines', True))
+    try:
+        max_edges_raw = data.get('max_edges', 6000)
+        max_edges = int(max_edges_raw) if max_edges_raw is not None else None
+        if max_edges is not None and max_edges <= 0:
+            max_edges = None
+    except (TypeError, ValueError):
+        max_edges = 6000
 
     # Import kernelcal lazily: the server should still answer other
     # analyzer routes if kernelcal is missing.
@@ -399,6 +537,34 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
 
     centroids = _centroids_to_lonlat(cg) if include_centroids else []
 
+    # Edge list + (optionally) per-edge WGS84 polylines. We always need the
+    # centroids to anchor the polylines, so if the caller disabled
+    # ``include_centroids`` but asked for edges we still reproject them
+    # locally — the centroids just aren't echoed in the top-level payload.
+    edges: list[dict] = []
+    edge_polylines: list[list[list[float]]] = []
+    if include_edges:
+        centroids_for_edges = centroids or _centroids_to_lonlat(cg)
+        try:
+            edges, edge_polylines = _edges_and_polylines(
+                cg,
+                centroids_for_edges,
+                include_polylines=include_edge_polylines,
+                max_edges=max_edges,
+            )
+        except Exception as exc:
+            # Edge rendering is a visualization aid — never 500 the whole
+            # analysis because a networkx path lookup hiccupped. Log
+            # structurally and keep going.
+            import traceback
+            edges = []
+            edge_polylines = []
+            payload.setdefault('warnings', []).append({
+                'where':     'edges_and_polylines',
+                'message':   str(exc),
+                'traceback': traceback.format_exc().splitlines()[-3:],
+            })
+
     # Surface road-aware diagnostics on the response so the Cesium client
     # can render snap/reachability warnings without a second round-trip.
     # `effective_graph_mode` differs from the requested one when the road
@@ -406,6 +572,10 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
     # no drivable roads).
     effective_graph_mode = getattr(cg, 'graph_mode', 'knn')
     road_meta            = dict(getattr(cg, 'road_meta', {}) or {})
+    # snap_node_ids is a server-internal handle for _edges_and_polylines;
+    # the client doesn't need it (edge_polylines already carries the
+    # reconstructed geometry) and it can be ~1500 entries wide.
+    road_meta.pop('snap_node_ids', None)
 
     return JsonResponse({
         'status':       'ok',
@@ -417,6 +587,8 @@ def _analyze_viewport_urban_spectral(data: dict) -> JsonResponse:
         'centroids_lonlat': centroids,
         'graph_mode':   effective_graph_mode,
         'road_meta':    road_meta,
+        'edges':        edges,
+        'edge_polylines': edge_polylines,
         **payload,
         'timings': {
             'graph_build_s':  round(dt_build, 3),

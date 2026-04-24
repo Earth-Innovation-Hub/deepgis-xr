@@ -184,6 +184,7 @@ def _analyze_viewport_maskrcnn_rocks(
         api_scores = predictions.get('scores', []) or []
         api_labels = predictions.get('labels', []) or []
         api_areas = predictions.get('areas', []) or []
+        api_masks = predictions.get('masks_rle', []) or []
 
         img_width, img_height = image.width, image.height
 
@@ -205,6 +206,7 @@ def _analyze_viewport_maskrcnn_rocks(
             score = float(api_scores[i]) if i < len(api_scores) else 0.0
             label = api_labels[i] if i < len(api_labels) else 'rock'
             area = api_areas[i] if i < len(api_areas) else None
+            mask_rle = api_masks[i] if i < len(api_masks) else None
 
             detections_data.append({
                 'detection_id': i + 1,
@@ -212,6 +214,8 @@ def _analyze_viewport_maskrcnn_rocks(
                 'confidence': score,
                 'bbox': bbox,
                 'area': area,
+                'mask_rle': mask_rle,
+                'has_mask': mask_rle is not None,
             })
 
         # Persist annotated JPEG from the API if it shipped one, otherwise

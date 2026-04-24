@@ -50,6 +50,8 @@ from .http import (
     initialize_sampler, sample_locations, update_distribution,
     query_region, get_statistics, reset_sampler,
     get_sample_history, get_scored_locations, analyze_viewport,
+    get_vegetation_targets, save_annotation_game_round,
+    export_annotation_game_coco, export_annotation_game_graph,
 )
 
 from .analyzers import (
@@ -81,4 +83,8 @@ __all__ = [
     "get_sample_history",
     "get_scored_locations",
     "analyze_viewport",
+    "get_vegetation_targets",
+    "save_annotation_game_round",
+    "export_annotation_game_coco",
+    "export_annotation_game_graph",
 ]

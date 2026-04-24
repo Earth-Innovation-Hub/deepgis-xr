@@ -14,6 +14,10 @@ wired in `deepgis_xr/apps/web/urls.py`):
     GET   /webclient/sampler/history           get_sample_history
     GET   /webclient/sampler/scored            get_scored_locations
     POST  /webclient/sampler/analyze-viewport  analyze_viewport
+    POST  /webclient/sampler/vegetation-targets get_vegetation_targets
+    POST  /webclient/sampler/annotation-game/save save_annotation_game_round
+    POST  /webclient/sampler/annotation-game/export-coco export_annotation_game_coco
+    POST  /webclient/sampler/annotation-game/export-graph export_annotation_game_graph
 
 `analyze_viewport` dispatches per `model_type` to the seven internal
 `_analyze_viewport_<model>` branches, imported from the `analyzers/`
@@ -701,7 +705,15 @@ def analyze_viewport(request):
             text_prompt = data.get('text_prompt', 'object')
             box_threshold = data.get('box_threshold', 0.3)
             text_threshold = data.get('text_threshold', 0.25)
-            return _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold, text_threshold, scripts_dir)
+            return _analyze_viewport_grounding_dino(
+                image,
+                location,
+                text_prompt,
+                box_threshold,
+                text_threshold,
+                scripts_dir,
+                analysis_context=data.get('annotation_context') or {},
+            )
         elif analysis_type == 'grounded_sam':
             # Grounded-SAM-2 path (detection + high-quality segmentation)
             text_prompt = data.get('text_prompt', 'object')
@@ -730,3 +742,488 @@ def analyze_viewport(request):
             'message': str(e),
             'traceback': traceback.format_exc()
         }, status=500)
+
+
+def _json_body(request):
+    try:
+        return json.loads(request.body or b'{}')
+    except Exception:
+        return {}
+
+
+def _validate_small_bbox(bbox):
+    required = {'south', 'west', 'north', 'east'}
+    missing = required - set(bbox or {})
+    if missing:
+        return None, f"bbox missing keys: {sorted(missing)}"
+    try:
+        south = float(bbox['south'])
+        west = float(bbox['west'])
+        north = float(bbox['north'])
+        east = float(bbox['east'])
+    except (TypeError, ValueError) as exc:
+        return None, f"bbox values must be numeric: {exc}"
+    if not (south < north and west < east):
+        return None, 'bbox must satisfy south < north and west < east'
+    if (east - west) > 0.25 or (north - south) > 0.25:
+        return None, 'bbox too large for annotation-game targeting; zoom in first'
+    return (south, west, north, east), None
+
+
+def _gdf_to_features(gdf, limit=200):
+    from shapely.geometry import mapping
+
+    features = []
+    if gdf is None or getattr(gdf, 'empty', True):
+        return features
+    for idx, row in gdf.head(limit).iterrows():
+        geom = row.get('geometry')
+        if geom is None or geom.is_empty:
+            continue
+        centroid = geom.centroid
+        tags = {}
+        for key, value in row.items():
+            if key == 'geometry' or value is None:
+                continue
+            if isinstance(value, (str, int, float, bool)):
+                tags[key] = value
+        features.append({
+            'osm_id': str(idx),
+            'geometry': mapping(geom),
+            'centroid': {'lon': float(centroid.x), 'lat': float(centroid.y)},
+            'tags': tags,
+        })
+    return features
+
+
+def _fetch_osm_features(south, west, north, east, tags):
+    import osmnx as ox
+
+    if hasattr(ox, 'features_from_bbox'):
+        try:
+            return ox.features_from_bbox(north, south, east, west, tags=tags)
+        except TypeError:
+            return ox.features_from_bbox((north, south, east, west), tags=tags)
+    return ox.geometries_from_bbox(north, south, east, west, tags=tags)
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def get_vegetation_targets(request):
+    """Fetch OSM parking/building context for tree/shrub annotation tasks."""
+    data = _json_body(request)
+    bbox, error = _validate_small_bbox(data.get('bbox'))
+    if error:
+        return JsonResponse({'status': 'error', 'message': error}, status=400)
+
+    south, west, north, east = bbox
+    limit = int(data.get('limit', 30) or 30)
+    try:
+        parking_gdf = _fetch_osm_features(
+            south, west, north, east,
+            {'amenity': 'parking', 'parking': True},
+        )
+        building_gdf = _fetch_osm_features(
+            south, west, north, east,
+            {'building': True},
+        )
+    except Exception as exc:
+        return JsonResponse({
+            'status': 'error',
+            'message': f'OSM fetch failed: {exc}',
+            'bbox': {'south': south, 'west': west, 'north': north, 'east': east},
+        }, status=503)
+
+    parking = _gdf_to_features(parking_gdf, limit=limit)
+    buildings = _gdf_to_features(building_gdf, limit=limit * 4)
+
+    targets = []
+    for i, feature in enumerate(parking[:limit]):
+        center = feature['centroid']
+        targets.append({
+            'target_id': f"osm_parking_{i + 1}",
+            'kind': 'parking_lot',
+            'center': center,
+            'osm_feature': feature,
+            'nearby_building_count': len(buildings),
+            'score_prior': min(1.0, 0.35 + 0.03 * len(buildings)),
+            'prompt': data.get('prompt') or 'tree. shrub. bush. canopy.',
+        })
+
+    return JsonResponse({
+        'status': 'success',
+        'bbox': {'south': south, 'west': west, 'north': north, 'east': east},
+        'targets': targets,
+        'osm_context': {
+            'parking': parking,
+            'buildings': buildings,
+            'source': 'OpenStreetMap via OSMnx',
+        },
+    })
+
+
+def _decode_data_url_image(data_url, output_dir, task_id):
+    if not data_url:
+        return '', {}
+    import base64
+    import io
+    from pathlib import Path
+    from PIL import Image
+    from django.conf import settings
+
+    raw = data_url.split(',', 1)[1] if ',' in data_url else data_url
+    image = Image.open(io.BytesIO(base64.b64decode(raw))).convert('RGB')
+    rel_dir = Path('annotation_game') / 'captures'
+    abs_dir = Path(settings.MEDIA_ROOT) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    rel_path = rel_dir / f'{task_id}.jpg'
+    image.save(Path(settings.MEDIA_ROOT) / rel_path, quality=95)
+    return str(rel_path), {'width': image.width, 'height': image.height}
+
+
+def _polygon_centroid_norm(geometry, bbox=None):
+    try:
+        coords = geometry.get('coordinates', [[]])[0]
+        if coords:
+            xs = [float(p[0]) for p in coords]
+            ys = [float(p[1]) for p in coords]
+            return {'x': sum(xs) / len(xs), 'y': sum(ys) / len(ys)}
+    except Exception:
+        pass
+    if bbox:
+        x1, y1, x2, y2 = [float(v) for v in bbox]
+        return {'x': (x1 + x2) / 2.0, 'y': (y1 + y2) / 2.0}
+    return {'x': 0.5, 'y': 0.5}
+
+
+def _build_topology(corrections, osm_context, capture_pose):
+    buildings = (osm_context or {}).get('buildings', [])
+    vegetation_nodes = []
+    building_nodes = []
+    edges = []
+
+    for i, corr in enumerate(corrections or []):
+        if corr.get('status', 'accepted') == 'rejected':
+            continue
+        geom = corr.get('geometry') or {}
+        proposal = corr.get('proposal') or {}
+        centroid = _polygon_centroid_norm(geom, proposal.get('bbox'))
+        node_id = f"veg_{i + 1}"
+        vegetation_nodes.append({
+            'id': node_id,
+            'kind': corr.get('class_name') or proposal.get('class_name') or 'tree',
+            'centroid_image_norm': centroid,
+            'geometry_image_norm': geom,
+            'confidence': proposal.get('confidence'),
+            'capture_pose': capture_pose,
+        })
+
+    for i, building in enumerate(buildings):
+        node_id = f"building_{i + 1}"
+        building_nodes.append({
+            'id': node_id,
+            'osm_id': building.get('osm_id'),
+            'centroid_lonlat': building.get('centroid'),
+            'geometry': building.get('geometry'),
+            'tags': building.get('tags', {}),
+        })
+
+    # Until pixel-to-world projection is promoted into the backend, candidate
+    # edges are explicit placeholders with enough source geometry to recompute.
+    if building_nodes:
+        for veg in vegetation_nodes:
+            edges.append({
+                'source': veg['id'],
+                'target': building_nodes[0]['id'],
+                'kind': 'nearest_building_candidate',
+                'metric': 'requires_geographic_projection',
+            })
+
+    return {
+        'vegetation_nodes': vegetation_nodes,
+        'building_nodes': building_nodes,
+        'edges': edges,
+        'projection_status': 'image_space_preserved_geographic_projection_pending',
+    }
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def save_annotation_game_round(request):
+    """Persist a curated Grounding-DINO vegetation annotation-game round."""
+    data = _json_body(request)
+    task_id = data.get('task_id')
+    if not task_id:
+        import uuid
+        task_id = f"veg_game_{uuid.uuid4().hex[:12]}"
+
+    image_path, image_size = _decode_data_url_image(
+        data.get('image'), None, task_id
+    )
+    capture_pose = data.get('capture_pose') or {}
+    osm_context = data.get('osm_context') or {}
+    proposals = data.get('proposals') or []
+    corrections = data.get('corrections') or []
+    topology = _build_topology(corrections, osm_context, capture_pose)
+
+    accepted = [c for c in corrections if c.get('status', 'accepted') != 'rejected']
+    rejected = len(corrections) - len(accepted)
+    reward = min(1.0, max(-1.0, (len(accepted) * 0.2) - (rejected * 0.1)))
+
+    user = request.user if getattr(request, 'user', None) and request.user.is_authenticated else None
+    round_payload = {
+        'session_id': data.get('session_id') or 'vegetation-game',
+        'task_id': task_id,
+        'image_path': image_path,
+        'image_size': image_size or data.get('image_size') or {},
+        'capture_pose': capture_pose,
+        'prompt': data.get('prompt') or 'tree. shrub. bush. canopy.',
+        'osm_context': osm_context,
+        'proposals': proposals,
+        'corrections': corrections,
+        'topology': topology,
+        'reward': reward,
+        'metadata': data.get('metadata') or {},
+    }
+    round_path = _write_round_json(round_payload)
+    training_ids = _link_round_to_training_data(round_payload, user)
+
+    feedback_point = None
+    if capture_pose:
+        feedback_point = {
+            'lat': capture_pose.get('lat', 0),
+            'lon': capture_pose.get('lon', 0),
+            'alt': capture_pose.get('alt', 0),
+            'reward': reward,
+            'zoom': data.get('zoom') or altitude_to_zoom_level(capture_pose.get('alt', 0)),
+            'metadata': {
+                'task_id': task_id,
+                'accepted': len(accepted),
+                'rejected': rejected,
+                'source': 'annotation_game',
+            },
+        }
+
+    return JsonResponse({
+        'status': 'success',
+        'task_id': task_id,
+        'round_path': round_path,
+        'reward': reward,
+        'feedback_point': feedback_point,
+        'training_dataset_id': training_ids.get('training_dataset_id'),
+        'image_label_id': training_ids.get('image_label_id'),
+        'topology': topology,
+    })
+
+
+def _write_round_json(round_payload):
+    from pathlib import Path
+    from django.conf import settings
+    import json as json_module
+
+    rel_dir = Path('annotation_game') / 'rounds' / round_payload['session_id']
+    abs_dir = Path(settings.MEDIA_ROOT) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    rel_path = rel_dir / f"{round_payload['task_id']}.json"
+    with open(Path(settings.MEDIA_ROOT) / rel_path, 'w') as f:
+        json_module.dump(round_payload, f, indent=2)
+    return str(rel_path)
+
+
+def _link_round_to_training_data(round_payload, user):
+    """Best-effort bridge into existing TrainingDataset/ImageLabel tables."""
+    if not user or not round_payload.get('image_path'):
+        return {}
+    try:
+        from deepgis_xr.apps.core.models import (
+            CategoryLabel, CategoryType, Image, ImageLabel, ImageSourceType,
+            Labeler, TrainingDataset, TrainingLabel,
+        )
+
+        source, _ = ImageSourceType.objects.get_or_create(
+            description='DeepGIS-XR annotation game viewport'
+        )
+        categories = []
+        for name in ('tree', 'shrub'):
+            cat, _ = CategoryType.objects.get_or_create(
+                category_name=name,
+                defaults={'label_type': 'P'},
+            )
+            categories.append(cat)
+
+        image, _ = Image.objects.get_or_create(
+            name=round_payload['task_id'],
+            path=round_payload['image_path'],
+            defaults={
+                'description': 'Annotation game viewport capture',
+                'source': source,
+                'width': int(round_payload.get('image_size', {}).get('width', 1920) or 1920),
+                'height': int(round_payload.get('image_size', {}).get('height', 1080) or 1080),
+            },
+        )
+        image.categories.set(categories)
+
+        labeler, _ = Labeler.objects.get_or_create(user=user)
+        combined = {
+            'type': 'FeatureCollection',
+            'features': [
+                {
+                    'type': 'Feature',
+                    'geometry': c.get('geometry'),
+                    'properties': {
+                        'category': c.get('class_name', 'tree'),
+                        'status': c.get('status', 'accepted'),
+                        'proposal': c.get('proposal', {}),
+                    },
+                }
+                for c in round_payload.get('corrections', [])
+                if c.get('status', 'accepted') != 'rejected' and c.get('geometry')
+            ],
+        }
+        image_label = ImageLabel.objects.create(
+            image=image,
+            combined_label_shapes=json.dumps(combined),
+            labeler=labeler,
+            time_taken=int((round_payload.get('metadata') or {}).get('elapsed_ms', 0) / 1000) or None,
+        )
+        for cat in categories:
+            features = [
+                f for f in combined['features']
+                if f['properties']['category'] == cat.category_name
+            ]
+            if features:
+                CategoryLabel.objects.create(
+                    category=cat,
+                    label_shapes=json.dumps({'type': 'FeatureCollection', 'features': features}),
+                    parent_label=image_label,
+                )
+
+        dataset, _ = TrainingDataset.objects.get_or_create(
+            name='Vegetation Annotation Game Bootstrap',
+            created_by=user,
+            defaults={'description': 'Grounding-DINO-assisted tree/shrub annotations from DeepGIS-XR'},
+        )
+        TrainingLabel.objects.get_or_create(
+            dataset=dataset,
+            image_label=image_label,
+            defaults={
+                'source_prediction_id': round_payload['task_id'],
+                'corrections_made': {
+                    'prompt': round_payload.get('prompt'),
+                    'topology': round_payload.get('topology'),
+                },
+            },
+        )
+        return {
+            'training_dataset_id': dataset.id,
+            'image_label_id': image_label.id,
+        }
+    except Exception as exc:
+        return {'training_link_error': str(exc)}
+
+
+def _rounds_for_export(session_id=None):
+    from pathlib import Path
+    from django.conf import settings
+    import json as json_module
+
+    rounds_root = Path(settings.MEDIA_ROOT) / 'annotation_game' / 'rounds'
+    if session_id:
+        paths = sorted((rounds_root / session_id).glob('*.json'))
+    else:
+        paths = sorted(rounds_root.glob('*/*.json'))
+    rounds = []
+    for path in paths:
+        try:
+            rounds.append(json_module.loads(path.read_text()))
+        except Exception:
+            continue
+    return rounds
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def export_annotation_game_coco(request):
+    """Export accepted game corrections as COCO instance-segmentation JSON."""
+    data = _json_body(request)
+    session_id = data.get('session_id')
+    images = []
+    annotations = []
+    categories = [
+        {'id': 1, 'name': 'tree', 'supercategory': 'vegetation'},
+        {'id': 2, 'name': 'shrub', 'supercategory': 'vegetation'},
+    ]
+    cat_ids = {c['name']: c['id'] for c in categories}
+    ann_id = 1
+    for img_id, round_obj in enumerate(_rounds_for_export(session_id), 1):
+        width = int(round_obj.get('image_size', {}).get('width', 1) or 1)
+        height = int(round_obj.get('image_size', {}).get('height', 1) or 1)
+        images.append({
+            'id': img_id,
+            'file_name': round_obj.get('image_path'),
+            'width': width,
+            'height': height,
+            'task_id': round_obj.get('task_id'),
+        })
+        for corr in round_obj.get('corrections', []):
+            if corr.get('status', 'accepted') == 'rejected':
+                continue
+            proposal = corr.get('proposal') or {}
+            bbox = proposal.get('bbox') or corr.get('bbox') or [0, 0, width, height]
+            x1, y1, x2, y2 = [float(v) for v in bbox]
+            geom = corr.get('geometry') or {}
+            ring = (geom.get('coordinates') or [[]])[0]
+            segmentation = [[coord for point in ring for coord in [point[0] * width, point[1] * height]]] if ring else []
+            class_name = corr.get('class_name') or proposal.get('class_name') or 'tree'
+            annotations.append({
+                'id': ann_id,
+                'image_id': img_id,
+                'category_id': cat_ids.get(class_name, 1),
+                'bbox': [x1, y1, max(0.0, x2 - x1), max(0.0, y2 - y1)],
+                'area': max(0.0, x2 - x1) * max(0.0, y2 - y1),
+                'segmentation': segmentation,
+                'iscrowd': 0,
+                'source_task_id': round_obj.get('task_id'),
+            })
+            ann_id += 1
+
+    export = {'images': images, 'annotations': annotations, 'categories': categories}
+    path = _write_export_json(export, 'vegetation_bootstrap_coco', session_id)
+    return JsonResponse({'status': 'success', 'export_path': path, 'coco': export})
+
+
+@require_http_methods(["POST"])
+@csrf_exempt
+def export_annotation_game_graph(request):
+    """Export graph-ready vegetation/building topology JSON."""
+    data = _json_body(request)
+    session_id = data.get('session_id')
+    export = {
+        'session_id': session_id,
+        'rounds': [
+            {
+                'task_id': r.get('task_id'),
+                'capture_pose': r.get('capture_pose'),
+                'osm_context': r.get('osm_context'),
+                'topology': r.get('topology'),
+            }
+            for r in _rounds_for_export(session_id)
+        ],
+    }
+    path = _write_export_json(export, 'vegetation_building_graph', session_id)
+    return JsonResponse({'status': 'success', 'export_path': path, 'graph': export})
+
+
+def _write_export_json(payload, stem, session_id=None):
+    from pathlib import Path
+    from django.conf import settings
+    import json as json_module
+
+    rel_dir = Path('annotation_game') / 'exports'
+    abs_dir = Path(settings.MEDIA_ROOT) / rel_dir
+    abs_dir.mkdir(parents=True, exist_ok=True)
+    suffix = session_id or 'all'
+    rel_path = rel_dir / f'{stem}_{suffix}.json'
+    with open(Path(settings.MEDIA_ROOT) / rel_path, 'w') as f:
+        json_module.dump(payload, f, indent=2)
+    return str(rel_path)

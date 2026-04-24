@@ -16,6 +16,15 @@ class WorldSamplerUI {
         this.isAutoSurveyActive = false;
         this.autoSurveyInterval = null;
         this.samDataSource = null; // For SAM segmentation results
+        this.vegetationTargetDataSource = null;
+        this.vegetationGame = {
+            sessionId: `vegetation-game-${Date.now()}`,
+            targets: [],
+            selectedTarget: null,
+            osmContext: null,
+            lastCapture: null,
+            lastResult: null
+        };
         
         // Orbit mode state
         this.orbitActive = false;
@@ -247,6 +256,55 @@ class WorldSamplerUI {
                     </div>
                 </div>
                 
+                <!-- Vegetation Annotation Game -->
+                <div class="sampler-section">
+                    <h4 class="accordion-header" data-target="vegetationGameContent">
+                        <span><i class="fas fa-tree"></i> Vegetation Game</span>
+                        <i class="fas fa-chevron-down accordion-icon"></i>
+                    </h4>
+                    <div class="sampler-section-content compact-vegetation-game" id="vegetationGameContent">
+                        <div class="form-group veg-form-group">
+                            <label>Prompt</label>
+                            <input type="text" id="vegetationPrompt" class="form-control"
+                                   value="tree. shrub. bush. canopy.">
+                        </div>
+                        <div class="form-group veg-form-group">
+                            <label>Box Threshold <span id="vegetationBoxThresholdValue">0.30</span></label>
+                            <input type="range" id="vegetationBoxThreshold" class="form-range"
+                                   min="10" max="80" value="30">
+                        </div>
+                        <div class="veg-button-grid">
+                            <button class="btn btn-outline-info btn-sm" id="vegetationFindTargetsBtn">
+                                <i class="fas fa-parking"></i> Find OSM
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm" id="vegetationFlyTargetBtn">
+                                <i class="fas fa-location-arrow"></i> Fly
+                            </button>
+                        </div>
+                        <select id="vegetationTargetSelect" class="form-control mb-2">
+                            <option value="">Current viewport / no OSM target</option>
+                        </select>
+                        <button class="btn btn-success btn-sm w-100 mb-1" id="vegetationRunBtn">
+                            <i class="fas fa-search"></i> Run Tree/Shrub
+                        </button>
+                        <div id="vegetationGameStatus" class="feedback-info veg-status">
+                            <small>Find OSM targets, run proposals, then review.</small>
+                        </div>
+                        <div id="vegetationProposalList" class="vegetation-proposal-list"></div>
+                        <button class="btn btn-warning btn-sm w-100 mt-1" id="vegetationSaveRoundBtn" disabled>
+                            <i class="fas fa-save"></i> Save + Reward
+                        </button>
+                        <div class="btn-group w-100 mt-1 veg-export-group" role="group">
+                            <button class="btn btn-outline-secondary btn-sm" id="vegetationExportCocoBtn">
+                                COCO
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" id="vegetationExportGraphBtn">
+                                Graph
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- GPS Telemetry has been moved to Mission Planner panel -->
                 
                 <!-- Actions Section -->
@@ -466,6 +524,102 @@ class WorldSamplerUI {
                 max-height: 2000px;
                 padding: 15px;
                 transition: max-height 0.4s ease-in, padding 0.3s ease-in;
+            }
+            
+            #vegetationGameContent.compact-vegetation-game.expanded {
+                padding: 8px;
+                max-height: 900px;
+            }
+            
+            .compact-vegetation-game .veg-form-group {
+                margin-bottom: 6px;
+            }
+            
+            .compact-vegetation-game label {
+                font-size: 10px;
+                margin-bottom: 2px;
+                line-height: 1.1;
+            }
+            
+            .compact-vegetation-game .form-control {
+                padding: 4px 6px;
+                font-size: 11px;
+                min-height: 28px;
+            }
+            
+            .compact-vegetation-game .form-range {
+                height: 16px;
+                margin: 0;
+            }
+            
+            .compact-vegetation-game .btn {
+                padding: 4px 6px;
+                font-size: 11px;
+                line-height: 1.2;
+            }
+            
+            .veg-button-grid {
+                display: grid;
+                grid-template-columns: 1fr 0.55fr;
+                gap: 5px;
+                margin-bottom: 5px;
+            }
+            
+            .veg-status {
+                margin: 4px 0;
+                line-height: 1.2;
+            }
+            
+            .veg-status small {
+                font-size: 10px;
+            }
+            
+            .vegetation-proposal-list {
+                max-height: 150px;
+                overflow-y: auto;
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                border-radius: 4px;
+                padding: 3px 5px;
+                background: rgba(15, 23, 42, 0.35);
+                font-size: 10px;
+            }
+            
+            .vegetation-proposal-row {
+                display: grid;
+                grid-template-columns: 16px minmax(0, 1fr) 56px;
+                gap: 4px;
+                align-items: center;
+                padding: 3px 0;
+                border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+                font-size: 10px;
+                line-height: 1.15;
+            }
+            
+            .vegetation-proposal-row span {
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+            }
+            
+            .vegetation-proposal-row input[type="checkbox"] {
+                width: 12px;
+                height: 12px;
+                margin: 0;
+            }
+            
+            .vegetation-proposal-row .form-control {
+                padding: 2px 3px;
+                font-size: 10px;
+                min-height: 22px;
+            }
+            
+            .vegetation-proposal-row:last-child {
+                border-bottom: none;
+            }
+            
+            .veg-export-group .btn {
+                padding: 3px 4px;
+                font-size: 10px;
             }
             
             .form-group {
@@ -775,6 +929,17 @@ class WorldSamplerUI {
         
         // Refresh stats button
         safeAddListener('samplerRefreshStats', 'click', () => this.updateStatistics());
+        safeAddListener('vegetationFindTargetsBtn', 'click', () => this.fetchVegetationTargets());
+        safeAddListener('vegetationFlyTargetBtn', 'click', () => this.flyToSelectedVegetationTarget());
+        safeAddListener('vegetationRunBtn', 'click', () => this.runVegetationBootstrap());
+        safeAddListener('vegetationSaveRoundBtn', 'click', () => this.saveVegetationRound());
+        safeAddListener('vegetationExportCocoBtn', 'click', () => this.exportVegetationGame('coco'));
+        safeAddListener('vegetationExportGraphBtn', 'click', () => this.exportVegetationGame('graph'));
+        safeAddListener('vegetationTargetSelect', 'change', () => this.updateSelectedVegetationTarget());
+        safeAddListener('vegetationBoxThreshold', 'input', (e) => {
+            const value = document.getElementById('vegetationBoxThresholdValue');
+            if (value) value.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+        });
         
         // Survey navigation buttons
         safeAddListener('surveyPrev', 'click', () => this.navigateToPreviousSample());
@@ -1086,6 +1251,368 @@ class WorldSamplerUI {
         if (cameraHeight <= 0) return 28;
         const zoom = Math.log2(40075000 / cameraHeight);
         return Math.max(0, Math.min(28, Math.round(zoom)));
+    }
+    
+    getViewportBbox() {
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const ellipsoid = scene.globe.ellipsoid;
+        const corners = [
+            new Cesium.Cartesian2(0, 0),
+            new Cesium.Cartesian2(canvas.clientWidth, 0),
+            new Cesium.Cartesian2(canvas.clientWidth, canvas.clientHeight),
+            new Cesium.Cartesian2(0, canvas.clientHeight),
+            new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2)
+        ];
+        const points = [];
+        corners.forEach((screenPos) => {
+            let cartesian;
+            if (scene.pickPositionSupported) {
+                try {
+                    cartesian = scene.pickPosition(screenPos);
+                } catch (e) {
+                    cartesian = null;
+                }
+            }
+            if (!cartesian) {
+                cartesian = scene.camera.pickEllipsoid(screenPos, ellipsoid);
+            }
+            if (cartesian) {
+                const c = Cesium.Cartographic.fromCartesian(cartesian);
+                points.push({
+                    lon: Cesium.Math.toDegrees(c.longitude),
+                    lat: Cesium.Math.toDegrees(c.latitude)
+                });
+            }
+        });
+        if (points.length < 2) {
+            const c = this.viewer.camera.positionCartographic;
+            const lon = Cesium.Math.toDegrees(c.longitude);
+            const lat = Cesium.Math.toDegrees(c.latitude);
+            return { south: lat - 0.005, west: lon - 0.005, north: lat + 0.005, east: lon + 0.005 };
+        }
+        return {
+            south: Math.min(...points.map(p => p.lat)),
+            west: Math.min(...points.map(p => p.lon)),
+            north: Math.max(...points.map(p => p.lat)),
+            east: Math.max(...points.map(p => p.lon))
+        };
+    }
+    
+    setVegetationStatus(message, tone = 'info') {
+        const el = document.getElementById('vegetationGameStatus');
+        if (!el) return;
+        const color = tone === 'error' ? '#ef4444' : tone === 'success' ? '#10b981' : '#94a3b8';
+        el.innerHTML = `<small style="color: ${color};">${message}</small>`;
+    }
+    
+    async fetchVegetationTargets() {
+        const promptEl = document.getElementById('vegetationPrompt');
+        const prompt = promptEl ? promptEl.value.trim() : 'tree. shrub. bush. canopy.';
+        const bbox = this.getViewportBbox();
+        this.setVegetationStatus('Fetching OSM parking lots and nearby buildings...');
+        try {
+            const response = await fetch('/webclient/sampler/vegetation-targets', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({bbox, prompt, limit: 30})
+            });
+            const result = await response.json();
+            if (!response.ok || result.status !== 'success') {
+                throw new Error(result.message || `HTTP ${response.status}`);
+            }
+            this.vegetationGame.targets = result.targets || [];
+            this.vegetationGame.osmContext = result.osm_context || {};
+            this.populateVegetationTargets();
+            this.visualizeVegetationTargets(result.osm_context || {});
+            this.setVegetationStatus(`Loaded ${this.vegetationGame.targets.length} OSM parking targets and ${(result.osm_context?.buildings || []).length} buildings.`, 'success');
+        } catch (error) {
+            console.error('Failed to fetch vegetation targets:', error);
+            this.setVegetationStatus(`OSM target fetch failed: ${error.message}`, 'error');
+        }
+    }
+    
+    populateVegetationTargets() {
+        const select = document.getElementById('vegetationTargetSelect');
+        if (!select) return;
+        select.innerHTML = '<option value="">Current viewport / no OSM target</option>';
+        this.vegetationGame.targets.forEach((target, index) => {
+            const option = document.createElement('option');
+            option.value = String(index);
+            option.textContent = `${target.target_id} (${target.nearby_building_count || 0} buildings)`;
+            select.appendChild(option);
+        });
+        this.updateSelectedVegetationTarget();
+    }
+    
+    updateSelectedVegetationTarget() {
+        const select = document.getElementById('vegetationTargetSelect');
+        const idx = select && select.value !== '' ? parseInt(select.value, 10) : null;
+        this.vegetationGame.selectedTarget = Number.isInteger(idx) ? this.vegetationGame.targets[idx] : null;
+    }
+    
+    visualizeVegetationTargets(osmContext) {
+        if (this.vegetationTargetDataSource) {
+            this.viewer.dataSources.remove(this.vegetationTargetDataSource);
+            this.vegetationTargetDataSource = null;
+        }
+        const features = [];
+        (osmContext.parking || []).forEach((feature) => {
+            features.push({
+                type: 'Feature',
+                geometry: feature.geometry,
+                properties: {kind: 'parking_lot', osm_id: feature.osm_id}
+            });
+        });
+        (osmContext.buildings || []).forEach((feature) => {
+            features.push({
+                type: 'Feature',
+                geometry: feature.geometry,
+                properties: {kind: 'building', osm_id: feature.osm_id}
+            });
+        });
+        if (!features.length) return;
+        const cameraSnapshot = this.snapshotCamera();
+        Cesium.GeoJsonDataSource.load({type: 'FeatureCollection', features}, {
+            stroke: Cesium.Color.CYAN,
+            fill: Cesium.Color.CYAN.withAlpha(0.12),
+            strokeWidth: 2
+        }).then((dataSource) => {
+            this.vegetationTargetDataSource = dataSource;
+            dataSource.entities.values.forEach((entity) => {
+                const kind = entity.properties?.kind?.getValue?.() || '';
+                if (kind === 'building' && entity.polygon) {
+                    entity.polygon.material = Cesium.Color.ORANGE.withAlpha(0.18);
+                    entity.polygon.outlineColor = Cesium.Color.ORANGE;
+                }
+            });
+            this.addDataSourcePreservingCamera(dataSource, cameraSnapshot);
+        });
+    }
+    
+    flyToSelectedVegetationTarget() {
+        this.updateSelectedVegetationTarget();
+        const target = this.vegetationGame.selectedTarget;
+        if (!target || !target.center) {
+            this.showNotification('Select an OSM target first', 'warning');
+            return;
+        }
+        this.viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(target.center.lon, target.center.lat, 750),
+            duration: 1.5,
+            orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-90),
+                roll: 0
+            }
+        });
+    }
+    
+    snapshotCamera() {
+        return {
+            position: Cesium.Cartesian3.clone(this.viewer.camera.position),
+            heading: this.viewer.camera.heading,
+            pitch: this.viewer.camera.pitch,
+            roll: this.viewer.camera.roll
+        };
+    }
+    
+    restoreCameraSnapshot(snapshot) {
+        if (!snapshot) return;
+        this.viewer.camera.setView({
+            destination: snapshot.position,
+            orientation: {
+                heading: snapshot.heading,
+                pitch: snapshot.pitch,
+                roll: snapshot.roll
+            },
+            duration: 0
+        });
+        this.viewer.scene.requestRender();
+    }
+    
+    preserveCameraAfterAsyncRender(snapshot) {
+        // GeoJSON loading and entity styling finish asynchronously; restore a few
+        // times so Cesium cannot leave the view zoomed to a generated extent.
+        [0, 50, 250, 750].forEach((delay) => {
+            setTimeout(() => this.restoreCameraSnapshot(snapshot), delay);
+        });
+    }
+    
+    addDataSourcePreservingCamera(dataSource, snapshot = null) {
+        const cameraSnapshot = snapshot || this.snapshotCamera();
+        this.viewer.dataSources.add(dataSource);
+        this.preserveCameraAfterAsyncRender(cameraSnapshot);
+        return dataSource;
+    }
+    
+    async runVegetationBootstrap() {
+        const promptEl = document.getElementById('vegetationPrompt');
+        const thresholdEl = document.getElementById('vegetationBoxThreshold');
+        const prompt = promptEl ? promptEl.value.trim() : 'tree. shrub. bush. canopy.';
+        const boxThreshold = thresholdEl ? parseFloat(thresholdEl.value) / 100 : 0.3;
+        const saveBtn = document.getElementById('vegetationSaveRoundBtn');
+        if (saveBtn) saveBtn.disabled = true;
+        this.setVegetationStatus('Capturing viewport for vegetation bootstrap...');
+        try {
+            await this.prepareViewportForAnalysis();
+            const viewportData = await this.captureViewportImage();
+            const capturePose = viewportData.location;
+            this.lastCapturePose = capturePose;
+            const annotationContext = {
+                game: 'vegetation_bootstrap',
+                selected_target: this.vegetationGame.selectedTarget,
+                osm_context: this.vegetationGame.osmContext
+            };
+            this.setVegetationStatus(`Running Grounding DINO prompt: ${prompt}`);
+            const response = await fetch('/webclient/sampler/analyze-viewport', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    image: viewportData.image,
+                    location: capturePose,
+                    model_type: 'grounding_dino',
+                    text_prompt: prompt,
+                    box_threshold: boxThreshold,
+                    text_threshold: 0.25,
+                    annotation_context: annotationContext
+                })
+            });
+            const result = await response.json();
+            if (!response.ok || result.status !== 'success') {
+                throw new Error(result.message || `HTTP ${response.status}`);
+            }
+            result.capture_pose = capturePose;
+            this.vegetationGame.lastCapture = viewportData;
+            this.vegetationGame.lastResult = result;
+            const cameraBeforeDisplay = this.snapshotCamera();
+            this.displayZeroShotResults(result);
+            this.preserveCameraAfterAsyncRender(cameraBeforeDisplay);
+            this.renderVegetationProposalList(result);
+            if (saveBtn) saveBtn.disabled = false;
+            this.setVegetationStatus(`${result.num_detections || 0} proposals. Review, then save.`, 'success');
+        } catch (error) {
+            console.error('Vegetation bootstrap failed:', error);
+            this.setVegetationStatus(`Vegetation bootstrap failed: ${error.message}`, 'error');
+        }
+    }
+    
+    renderVegetationProposalList(result) {
+        const container = document.getElementById('vegetationProposalList');
+        if (!container) return;
+        const detections = result.detections || [];
+        const features = result.geojson?.features || [];
+        if (!detections.length) {
+            container.innerHTML = '<small>No proposals found.</small>';
+            return;
+        }
+        container.innerHTML = detections.map((det, index) => {
+            const label = (det.class_name || 'tree').toLowerCase().includes('shrub') ? 'shrub' : 'tree';
+            const confidence = Number(det.confidence || 0).toFixed(2);
+            const feature = features[index] || {};
+            const geom = encodeURIComponent(JSON.stringify(feature.geometry || null));
+            const proposal = encodeURIComponent(JSON.stringify(det));
+            return `
+                <div class="vegetation-proposal-row" data-geometry="${geom}" data-proposal="${proposal}">
+                    <input type="checkbox" class="veg-accept" checked>
+                    <span>${index + 1}. ${det.class_name || 'tree'} ${confidence}</span>
+                    <select class="veg-class form-control form-control-sm">
+                        <option value="tree" ${label === 'tree' ? 'selected' : ''}>tree</option>
+                        <option value="shrub" ${label === 'shrub' ? 'selected' : ''}>shrub</option>
+                    </select>
+                </div>
+            `;
+        }).join('');
+    }
+    
+    collectVegetationCorrections() {
+        const rows = Array.from(document.querySelectorAll('#vegetationProposalList .vegetation-proposal-row'));
+        return rows.map((row) => {
+            const accepted = row.querySelector('.veg-accept')?.checked;
+            const className = row.querySelector('.veg-class')?.value || 'tree';
+            const geometry = JSON.parse(decodeURIComponent(row.dataset.geometry || 'null'));
+            const proposal = JSON.parse(decodeURIComponent(row.dataset.proposal || '{}'));
+            return {
+                status: accepted ? 'accepted' : 'rejected',
+                class_name: className,
+                geometry,
+                proposal
+            };
+        });
+    }
+    
+    async saveVegetationRound() {
+        const capture = this.vegetationGame.lastCapture;
+        const result = this.vegetationGame.lastResult;
+        if (!capture || !result) {
+            this.showNotification('Run vegetation bootstrap before saving', 'warning');
+            return;
+        }
+        const corrections = this.collectVegetationCorrections();
+        const prompt = document.getElementById('vegetationPrompt')?.value.trim() || 'tree. shrub. bush. canopy.';
+        const taskId = `veg_${Date.now()}`;
+        try {
+            const response = await fetch('/webclient/sampler/annotation-game/save', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    session_id: this.vegetationGame.sessionId,
+                    task_id: taskId,
+                    image: capture.image,
+                    capture_pose: capture.location,
+                    image_size: result.image_size,
+                    prompt,
+                    osm_context: this.vegetationGame.osmContext || {},
+                    proposals: result.detections || [],
+                    corrections,
+                    metadata: {
+                        selected_target: this.vegetationGame.selectedTarget,
+                        result_session: result.saved_to?.session_dir,
+                        report_url: result.report_url
+                    },
+                    zoom: this.getCameraZoomLevel()
+                })
+            });
+            const saved = await response.json();
+            if (!response.ok || saved.status !== 'success') {
+                throw new Error(saved.message || saved.error || `HTTP ${response.status}`);
+            }
+            if (saved.feedback_point) {
+                await this.samplerClient.update({
+                    rule: 'reward',
+                    feedback_points: [saved.feedback_point],
+                    params: {learning_rate: 0.2, radius: 2500},
+                    session_id: this.vegetationGame.sessionId
+                });
+            }
+            this.setVegetationStatus(`Saved round ${saved.task_id}; reward ${Number(saved.reward).toFixed(2)} applied to sampler.`, 'success');
+            this.showNotification('Vegetation round saved and sampler rewarded', 'success');
+            await this.updateStatistics();
+        } catch (error) {
+            console.error('Failed to save vegetation round:', error);
+            this.setVegetationStatus(`Save failed: ${error.message}`, 'error');
+        }
+    }
+    
+    async exportVegetationGame(kind) {
+        const url = kind === 'graph'
+            ? '/webclient/sampler/annotation-game/export-graph'
+            : '/webclient/sampler/annotation-game/export-coco';
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({session_id: this.vegetationGame.sessionId})
+            });
+            const result = await response.json();
+            if (!response.ok || result.status !== 'success') {
+                throw new Error(result.message || result.error || `HTTP ${response.status}`);
+            }
+            this.setVegetationStatus(`${kind.toUpperCase()} export written to ${result.export_path}`, 'success');
+        } catch (error) {
+            console.error(`Failed to export ${kind}:`, error);
+            this.setVegetationStatus(`${kind.toUpperCase()} export failed: ${error.message}`, 'error');
+        }
     }
     
     async submitFeedback() {
@@ -2087,6 +2614,7 @@ class WorldSamplerUI {
             
             // Temporarily hide SAM result overlays to capture clean viewport
             let samDataSourceWasVisible = false;
+            const overlayRestoreCamera = this.snapshotCamera();
             if (this.samDataSource && this.viewer.dataSources.contains(this.samDataSource)) {
                 this.viewer.dataSources.remove(this.samDataSource);
                 samDataSourceWasVisible = true;
@@ -2106,7 +2634,7 @@ class WorldSamplerUI {
                 
                 // Restore SAM overlays if they were visible
                 if (samDataSourceWasVisible && this.samDataSource) {
-                    this.viewer.dataSources.add(this.samDataSource);
+                    this.addDataSourcePreservingCamera(this.samDataSource, overlayRestoreCamera);
                     console.log('[SAM] Restored SAM overlays after capture');
                 }
                 
@@ -2307,7 +2835,7 @@ class WorldSamplerUI {
             } catch (captureError) {
                 // Restore SAM overlays even if capture fails
                 if (samDataSourceWasVisible && this.samDataSource) {
-                    this.viewer.dataSources.add(this.samDataSource);
+                    this.addDataSourcePreservingCamera(this.samDataSource, overlayRestoreCamera);
                 }
                 throw captureError;
             }
@@ -2583,18 +3111,12 @@ class WorldSamplerUI {
                     `;
                 });
                 
-                // Add data source WITHOUT triggering auto-zoom
-                this.viewer.dataSources.add(this.samDataSource);
-                
-                // Force camera back to saved position in case Cesium moved it
-                this.viewer.camera.setView({
-                    destination: savedPosition,
-                    orientation: {
-                        heading: savedHeading,
-                        pitch: savedPitch,
-                        roll: savedRoll
-                    },
-                    duration: 0
+                // Add data source WITHOUT allowing async completion to move the camera.
+                this.addDataSourcePreservingCamera(this.samDataSource, {
+                    position: savedPosition,
+                    heading: savedHeading,
+                    pitch: savedPitch,
+                    roll: savedRoll
                 });
                 
                 const avgIoU = features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length;
@@ -2670,7 +3192,7 @@ class WorldSamplerUI {
                 }
             });
             
-            this.viewer.dataSources.add(this.samDataSource);
+            this.addDataSourcePreservingCamera(this.samDataSource);
             console.log(`Displayed ${entities.length} SAM segments (approximate method)`);
         }).catch(error => {
             console.error('Error loading SAM GeoJSON (approximate):', error);
@@ -2955,9 +3477,13 @@ class WorldSamplerUI {
                     }
                 });
                 
-                // Add data source WITHOUT triggering auto-zoom
-                // This prevents Cesium from flying to the data when camera has already been restored
-                this.viewer.dataSources.add(this.samDataSource);
+                // Add data source WITHOUT allowing async completion to move the camera.
+                this.addDataSourcePreservingCamera(this.samDataSource, {
+                    position: savedPosition,
+                    heading: savedHeading,
+                    pitch: savedPitch,
+                    roll: savedRoll
+                });
                 
                 // Debug entity positions
                 if (entities.length > 0 && entities[0].polygon) {
@@ -2971,17 +3497,6 @@ class WorldSamplerUI {
                         });
                     }
                 }
-                
-                // Force camera back to saved position in case Cesium moved it
-                this.viewer.camera.setView({
-                    destination: savedPosition,
-                    orientation: {
-                        heading: savedHeading,
-                        pitch: savedPitch,
-                        roll: savedRoll
-                    },
-                    duration: 0
-                });
                 
                 // Verify camera didn't move
                 const finalCartographic = Cesium.Cartographic.fromCartesian(this.viewer.camera.position);
@@ -3008,6 +3523,10 @@ class WorldSamplerUI {
         const canvas = scene.canvas;
         const viewportWidth = canvas.width;
         const viewportHeight = canvas.height;
+        const savedPosition = Cesium.Cartesian3.clone(camera.position);
+        const savedHeading = camera.heading;
+        const savedPitch = camera.pitch;
+        const savedRoll = camera.roll;
         
         const position = camera.positionCartographic;
         const height = position.height;
@@ -3130,18 +3649,12 @@ class WorldSamplerUI {
                 }
             });
             
-            // Add data source WITHOUT triggering auto-zoom
-            this.viewer.dataSources.add(this.samDataSource);
-            
-            // Force camera back to saved position in case Cesium moved it
-            this.viewer.camera.setView({
-                destination: savedPosition,
-                orientation: {
-                    heading: savedHeading,
-                    pitch: savedPitch,
-                    roll: savedRoll
-                },
-                duration: 0
+            // Add data source WITHOUT allowing async completion to move the camera.
+            this.addDataSourcePreservingCamera(this.samDataSource, {
+                position: savedPosition,
+                heading: savedHeading,
+                pitch: savedPitch,
+                roll: savedRoll
             });
             
             console.log(`Displayed ${entities.length} Zero-Shot detections (approximate method)`);

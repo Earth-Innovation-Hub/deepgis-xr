@@ -8,7 +8,23 @@
  *   - the Laplacian eigenspectrum as a pure-SVG sparkline,
  *   - a compact diagnostics strip (ΔH, Δ′, β₁, Δβ₁, λ_fiedler, N),
  *   - the Fiedler eigenvector on top of the globe as per-building points
- *     coloured by a diverging red/white/blue colormap.
+ *     coloured by a diverging red/white/blue colormap,
+ *   - and the kernelcal adjacency as polylines between those points
+ *     (straight chords in `graph_mode='knn'` mode, OSM road-path
+ *     reconstructions in `graph_mode='road_knn'` mode). Polyline hue
+ *     inherits the midpoint Fiedler colour of its two endpoints, and
+ *     alpha scales with the adjacency weight so the kernelcal strong-
+ *     bond backbone pops visually.
+ *
+ * Both vertices and edges are rendered via the Cesium Entity API
+ * (CustomDataSource + PointGraphics / PolylineGraphics) so they can
+ * clamp to the globe surface — terrain when a terrain provider is
+ * attached, 3D Tiles surface otherwise. Vertices use
+ * `heightReference: CLAMP_TO_GROUND` and edges use
+ * `polyline.clampToGround = true`. The previous primitive-API path
+ * (`PointPrimitiveCollection` + `PolylineCollection`) was faster but
+ * painted everything at WGS84 ellipsoid h=0, which sunk the overlay
+ * through terrain and through 3D Tiles buildings in tilted views.
  *
  * Stands alone so it can be included from any template that already
  * hosts a Cesium viewer and (optionally) the World Sampler UI.
@@ -102,7 +118,7 @@
             this.viewer = viewer;
             this.params = { ...DEFAULT_PARAMS };
             this.lastResult = null;
-            this.pointCollection = null;   // Cesium.PointPrimitiveCollection
+            this.dataSource = null;   // Cesium.CustomDataSource (entities)
             this._inflight = null;
             this._renderedAny = false;
 
@@ -499,42 +515,136 @@
         // Fiedler overlay on globe
         // ------------------------------------------------------------------
 
-        ensurePointCollection() {
-            if (this.pointCollection &&
-                !this.pointCollection.isDestroyed &&
-                this.viewer.scene.primitives.contains(this.pointCollection)) {
-                return this.pointCollection;
+        // Entity-API overlay container. We use a dedicated CustomDataSource
+        // (rather than PointPrimitive / PolylineCollection primitives) so
+        // both vertices and edges can honour terrain + 3D Tiles:
+        //   * vertices use heightReference: CLAMP_TO_GROUND
+        //   * edges   use polyline.clampToGround = true
+        // These paths are Entity-only in Cesium; the primitive APIs have
+        // no equivalent. Cost is ~O(N) more setup work than the primitive
+        // APIs, but Cesium batches Entity drawing internally so the final
+        // frame cost is essentially the same at N≈1500 vertices / 6000
+        // edges.
+        ensureDataSource() {
+            if (this.dataSource &&
+                this.viewer.dataSources.contains(this.dataSource)) {
+                return this.dataSource;
             }
-            this.pointCollection = new Cesium.PointPrimitiveCollection();
-            this.viewer.scene.primitives.add(this.pointCollection);
-            return this.pointCollection;
+            this.dataSource = new Cesium.CustomDataSource('urbanSpectralOverlay');
+            this.viewer.dataSources.add(this.dataSource);
+            return this.dataSource;
+        }
+
+        // Convert an edge polyline ([[lon, lat], ...]) to a Cartesian3[]
+        // for Cesium.PolylineGraphics. Heights are omitted (default 0.0)
+        // because clampToGround re-projects the whole polyline onto the
+        // globe surface anyway — any h we supplied here would be ignored.
+        _polylinePositions(lonLatList) {
+            const flat = new Array(lonLatList.length * 2);
+            for (let k = 0, m = 0; k < lonLatList.length; k++) {
+                flat[m++] = lonLatList[k][0];
+                flat[m++] = lonLatList[k][1];
+            }
+            return Cesium.Cartesian3.fromDegreesArray(flat);
         }
 
         renderOverlay(result) {
             if (!this.viewer || !Cesium) return;
-            const coll = this.ensurePointCollection();
-            coll.removeAll();
+            const ds = this.ensureDataSource();
+            ds.entities.removeAll();
 
-            const centroids = result.centroids_lonlat || [];
-            const fv        = result.fiedler_vec || [];
+            const centroids      = result.centroids_lonlat || [];
+            const fv             = result.fiedler_vec || [];
+            const edges          = result.edges || [];
+            const edgePolylines  = result.edge_polylines || [];
+            const graphMode      = result.graph_mode || 'knn';
+
             if (!centroids.length || !fv.length) return;
 
             const fvNorm = normalizeSigned(fv);
             const N      = Math.min(centroids.length, fvNorm.length);
 
-            for (let i = 0; i < N; i++) {
-                const [lon, lat] = centroids[i];
-                const { r, g, b } = colormap(fvNorm[i]);
-                coll.add({
-                    position:      Cesium.Cartesian3.fromDegrees(lon, lat),
-                    color:         Cesium.Color.fromBytes(r, g, b, 230),
-                    pixelSize:     7,
-                    outlineColor:  Cesium.Color.BLACK.withAlpha(0.45),
-                    outlineWidth:  1,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                });
+            // Batch Entity mutations inside suspendEvents so Cesium
+            // triggers a single redraw / collection-changed event at the
+            // end instead of one per add(). Meaningful win at N≈6000
+            // edges on lower-end GPUs.
+            ds.entities.suspendEvents();
+            try {
+                // --- edges first so vertices sit on top ---------------
+                // Colour strategy: edges inherit the midpoint Fiedler
+                // colour of their two endpoints (average of fvNorm[i] and
+                // fvNorm[j]). Alpha scales with edge weight so
+                // kernelcal's strong-bond backbone pops and the weaker
+                // tails fade into the basemap. This makes a single
+                // overlay tell two stories at once — where the spectral
+                // cut runs (hue) *and* which adjacency dominates the
+                // Laplacian (alpha).
+                if (edges.length && edgePolylines.length === edges.length) {
+                    // In road_knn mode each polyline already traces the
+                    // shortest OSM road path end-to-end; in knn mode
+                    // it's just a two-point chord. Width nudged up
+                    // slightly for road mode so the road-tracing shape
+                    // is legible at city-scale zoom.
+                    const baseWidth = graphMode === 'road_knn' ? 1.6 : 1.2;
+                    for (let e = 0; e < edges.length; e++) {
+                        const { i, j, w } = edges[e];
+                        if (w <= 0) continue;
+                        const lonLatList = edgePolylines[e];
+                        if (!lonLatList || lonLatList.length < 2) continue;
+                        const mid = 0.5 * ((fvNorm[i] || 0) + (fvNorm[j] || 0));
+                        const { r, g, b } = colormap(mid);
+                        // Alpha floor so weak edges still show faintly —
+                        // dropping them entirely hides the graph's bulk.
+                        const alpha = Math.min(240, 48 + Math.round(192 * w));
+                        ds.entities.add({
+                            polyline: {
+                                positions:     this._polylinePositions(lonLatList),
+                                width:         baseWidth,
+                                material:      Cesium.Color.fromBytes(r, g, b, alpha),
+                                // Drape the edge over terrain / 3D Tiles.
+                                // Without this, clampToGround=false would
+                                // fall back to h=0 (sea level), which is
+                                // exactly the bug Option A is fixing.
+                                clampToGround: true,
+                            },
+                        });
+                    }
+                }
+
+                // --- vertices -----------------------------------------
+                // heightReference = CLAMP_TO_GROUND makes each point
+                // sit on whatever Cesium rasterizes as the globe surface
+                // at that lon/lat — terrain if a terrain provider is
+                // attached, 3D Tiles surface otherwise (on current
+                // Cesium versions this includes Cesium OSM Buildings
+                // rooftops and Google Photorealistic Tiles). We
+                // intentionally drop the previous
+                // ``disableDepthTestDistance: POSITIVE_INFINITY`` knob
+                // so 3D buildings in front of a vertex occlude it in
+                // tilted views — that's the whole point of clamping to
+                // the 3D surface.
+                for (let i = 0; i < N; i++) {
+                    const [lon, lat] = centroids[i];
+                    const { r, g, b } = colormap(fvNorm[i]);
+                    ds.entities.add({
+                        position: Cesium.Cartesian3.fromDegrees(lon, lat),
+                        point: {
+                            color:           Cesium.Color.fromBytes(r, g, b, 230),
+                            pixelSize:       7,
+                            outlineColor:    Cesium.Color.BLACK.withAlpha(0.45),
+                            outlineWidth:    1,
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                        },
+                    });
+                }
+            } finally {
+                ds.entities.resumeEvents();
             }
-            coll.show = true;
+
+            ds.show = true;
+            if (this.viewer.scene.requestRenderMode) {
+                this.viewer.scene.requestRender();
+            }
 
             const btn = document.getElementById('urbanSpectralOverlayBtn');
             if (btn) {
@@ -547,21 +657,28 @@
         }
 
         toggleOverlay() {
-            if (!this.pointCollection) return;
-            this.pointCollection.show = !this.pointCollection.show;
+            if (!this.dataSource) return;
+            const show = !this.dataSource.show;
+            this.dataSource.show = show;
+            if (this.viewer.scene.requestRenderMode) {
+                this.viewer.scene.requestRender();
+            }
             const btn = document.getElementById('urbanSpectralOverlayBtn');
             if (!btn) return;
-            btn.innerHTML = this.pointCollection.show
+            btn.innerHTML = show
                 ? '<i class="fas fa-eye-slash"></i> Overlay'
                 : '<i class="fas fa-eye"></i> Overlay';
-            btn.style.background = this.pointCollection.show ? '#0ea5e9' : '#334155';
-            btn.style.color      = this.pointCollection.show ? 'white'   : '#cbd5e1';
+            btn.style.background = show ? '#0ea5e9' : '#334155';
+            btn.style.color      = show ? 'white'   : '#cbd5e1';
         }
 
         clearOverlay() {
-            if (this.pointCollection && !this.pointCollection.isDestroyed) {
-                this.pointCollection.removeAll();
-                this.pointCollection.show = false;
+            if (this.dataSource) {
+                this.dataSource.entities.removeAll();
+                this.dataSource.show = false;
+                if (this.viewer.scene.requestRenderMode) {
+                    this.viewer.scene.requestRender();
+                }
             }
             const btn = document.getElementById('urbanSpectralOverlayBtn');
             if (btn) {

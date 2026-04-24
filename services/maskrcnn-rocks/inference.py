@@ -83,6 +83,7 @@ def run_inference(
     mask_threshold: float = 0.5,
     max_detections: int = 200,
     label_name: str = "rock",
+    class_names: Optional[List[str]] = None,
 ) -> Tuple[List[Detection], Tuple[int, int]]:
     """Run the model and post-process outputs into Detection records."""
     _, _, h, w = image_tensor.shape
@@ -90,19 +91,29 @@ def run_inference(
 
     boxes = out["boxes"].cpu().numpy()
     scores = out["scores"].cpu().numpy()
+    labels = out.get("labels")
+    labels = labels.cpu().numpy() if labels is not None else None
     masks = out["masks"].cpu().numpy()  # N,1,H,W float in [0,1]
 
     keep = scores >= score_threshold
     boxes = boxes[keep][:max_detections]
     scores = scores[keep][:max_detections]
+    labels = labels[keep][:max_detections] if labels is not None else None
     masks = masks[keep][:max_detections]
 
     detections: List[Detection] = []
-    for box, score, mask in zip(boxes, scores, masks):
+    for idx, (box, score, mask) in enumerate(zip(boxes, scores, masks)):
         x1, y1, x2, y2 = box.tolist()
         bmask = (mask[0] >= mask_threshold).astype(np.uint8)
         rle = mask_utils.encode(np.asfortranarray(bmask))
         rle["counts"] = rle["counts"].decode("ascii")
+        class_id = int(labels[idx]) if labels is not None else 1
+        if class_names and 0 <= class_id < len(class_names):
+            resolved_label = class_names[class_id]
+        elif class_id > 0 and class_names and class_id - 1 < len(class_names):
+            resolved_label = class_names[class_id - 1]
+        else:
+            resolved_label = label_name
         detections.append(
             Detection(
                 box=[float(x1), float(y1), float(x2), float(y2)],
@@ -111,7 +122,7 @@ def run_inference(
                     float(x2) / w, float(y2) / h,
                 ],
                 score=float(score),
-                label=label_name,
+                label=resolved_label,
                 mask_rle=rle,
                 area=float(bmask.sum()),
             )

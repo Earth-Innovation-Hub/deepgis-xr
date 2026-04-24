@@ -75,6 +75,10 @@ urlpatterns = [
     path('webclient/sampler/history', world_sampler_api.get_sample_history, name='get_sample_history'),
     path('webclient/sampler/scored', world_sampler_api.get_scored_locations, name='get_scored_locations'),
     path('webclient/sampler/analyze-viewport', world_sampler_api.analyze_viewport, name='analyze_viewport'),
+    path('webclient/sampler/vegetation-targets', world_sampler_api.get_vegetation_targets, name='get_vegetation_targets'),
+    path('webclient/sampler/annotation-game/save', world_sampler_api.save_annotation_game_round, name='save_annotation_game_round'),
+    path('webclient/sampler/annotation-game/export-coco', world_sampler_api.export_annotation_game_coco, name='export_annotation_game_coco'),
+    path('webclient/sampler/annotation-game/export-graph', world_sampler_api.export_annotation_game_graph, name='export_annotation_game_graph'),
     
     # AI Analysis Report
     path('label/ai-analysis/report/<str:session_id>/', views.ai_analysis_report, name='ai_analysis_report'),

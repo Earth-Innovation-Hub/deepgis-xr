@@ -84,20 +84,25 @@ def _detections_to_geojson(detections_data, image_width, image_height):
             [norm_x1, norm_y1]  # Close the polygon
         ]]
         
+        properties = {
+            "detection_id": det['detection_id'],
+            "class_name": det['class_name'],
+            "category": det['class_name'],  # Frontend compatibility: used by displayZeroShotResults
+            "confidence": det['confidence'],
+            "class_id": det['detection_id'],  # Frontend compatibility: used by displayZeroShotResults
+            "bbox_pixels": bbox
+        }
+        for optional_key in ('area', 'mask_rle', 'has_mask'):
+            if optional_key in det:
+                properties[optional_key] = det[optional_key]
+
         feature = {
             "type": "Feature",
             "geometry": {
                 "type": "Polygon",
                 "coordinates": coordinates
             },
-            "properties": {
-                "detection_id": det['detection_id'],
-                "class_name": det['class_name'],
-                "category": det['class_name'],  # Frontend compatibility: used by displayZeroShotResults
-                "confidence": det['confidence'],
-                "class_id": det['detection_id'],  # Frontend compatibility: used by displayZeroShotResults
-                "bbox_pixels": bbox
-            }
+            "properties": properties
         }
         features.append(feature)
     

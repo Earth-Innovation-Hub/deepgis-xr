@@ -23,7 +23,15 @@ from ._helpers import (
 )
 
 
-def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold, text_threshold, scripts_dir):
+def _analyze_viewport_grounding_dino(
+    image,
+    location,
+    text_prompt,
+    box_threshold,
+    text_threshold,
+    scripts_dir,
+    analysis_context=None,
+):
     """
     Internal function to handle Grounding DINO (text-based detection) analysis.
     
@@ -71,6 +79,7 @@ def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold
         print(f"   Text prompt: '{text_prompt}'")
         print(f"   Box threshold: {box_threshold}")
         print(f"   Text threshold: {text_threshold}")
+        analysis_context = analysis_context or {}
         print(f"   Mode: {'Remote API' if use_remote_api else 'Local'}")
         
         if use_remote_api:
@@ -366,6 +375,7 @@ def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold
             'text_prompt': text_prompt,
             'box_threshold': box_threshold,
             'text_threshold': text_threshold,
+            'analysis_context': analysis_context,
             'image_size': [image.width, image.height],
             'num_detections': num_detections,
             'device_info': device_info,
@@ -386,6 +396,7 @@ def _analyze_viewport_grounding_dino(image, location, text_prompt, box_threshold
             'image_size': [image.width, image.height],
             'model_type': 'grounding_dino',
             'text_prompt': text_prompt,
+            'analysis_context': analysis_context,
             'device_info': device_info,
             'saved_to': {
                 'session_dir': str(session_dir.relative_to('/app/deepgis_results')),

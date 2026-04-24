@@ -195,15 +195,10 @@ async function positionCameraForLayer(viewer, layerInfo, metadata, options = {})
       
       return { targetCenter, targetZoom, targetBounds };
     } else {
-      // ENHANCED: Fallback when no center is available
-      const height = CoordinateUtils.zoomToHeight(targetZoom);
-      console.log(`Setting fallback camera view at zoom ${targetZoom}...`);
-      await CameraUtils.setCameraView(viewer, Cesium.Cartesian3.fromDegrees(0, 0, height), {
-        maxHeight: CONFIG.MAX_2D_VIEW_HEIGHT
-      });
-      console.log(`✓ Fallback camera view set and transition completed`);
-      
-      return { targetCenter: [0, 0], targetZoom, targetBounds: null };
+      // No reliable geospatial target is better than a surprising jump to 0,0.
+      // Keep the user's current viewport and let the layer render in place.
+      console.warn(`No valid center or bounds found for ${layerType} layer; preserving current camera view`);
+      return { targetCenter: null, targetZoom, targetBounds: null };
     }
   }
   
