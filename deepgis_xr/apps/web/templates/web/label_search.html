@@ -1360,6 +1360,7 @@
                 <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
                 <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
                 <option value="grounded_sam">Grounded-SAM-2 (Detection + Seg) 🎯🔍</option>
+                <option value="maskrcnn_rocks">MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
                 <option value="zero_shot">Zero-Shot (COCO)</option>
                 <option value="mask2former">Mask2Former (Accurate)</option>
                 <option value="prithvi">Prithvi-EO (Earth Observation) 🌍</option>
@@ -1454,6 +1455,27 @@
             <div class="form-group mb-3">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Threshold: <span id="gsTextThresholdValue">0.25</span></label>
                 <input type="range" class="form-range" id="gsTextThreshold" min="10" max="90" step="5" value="25">
+            </div>
+        </div>
+        <!-- MaskRCNN Rocks Options -->
+        <div id="maskrcnnRocksOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = server default):</label>
+                <input type="text" class="form-control form-control-sm" id="maskrcnnRocksModelId"
+                       value=""
+                       placeholder="e.g. bishop_hero_e0004"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Full registry: GET http://192.168.0.232:5002/api/models
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnRocksScoreValue">0.50</span></label>
+                <input type="range" class="form-range" id="maskrcnnRocksScore" min="10" max="95" step="5" value="50">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
+                <input type="number" class="form-control form-control-sm" id="maskrcnnRocksMaxDet" value="200" min="1" max="2000" step="10">
             </div>
         </div>
         <button class="btn btn-success w-100" id="analyzeViewportBtn">
@@ -2531,6 +2553,8 @@
                         document.getElementById('yolov8Options').style.display = type === 'yolov8' ? 'block' : 'none';
                         document.getElementById('groundingDinoOptions').style.display = type === 'grounding_dino' ? 'block' : 'none';
                         document.getElementById('groundedSamOptions').style.display = type === 'grounded_sam' ? 'block' : 'none';
+                        const maskrcnnRocksOpts = document.getElementById('maskrcnnRocksOptions');
+                        if (maskrcnnRocksOpts) maskrcnnRocksOpts.style.display = type === 'maskrcnn_rocks' ? 'block' : 'none';
                         document.getElementById('zeroShotOptions').style.display = type === 'zero_shot' ? 'block' : 'none';
                         document.getElementById('mask2formerOptions').style.display = type === 'mask2former' ? 'block' : 'none';
                         
@@ -2541,12 +2565,22 @@
                                 'yolov8': 'Ultra-fast detection with 80 COCO classes',
                                 'grounding_dino': 'Text-based open-vocabulary object detection',
                                 'grounded_sam': 'Detection + high-quality segmentation with text prompts',
+                                'maskrcnn_rocks': 'Rock instance segmentation using Bishop/Jezero Mask R-CNN checkpoints (remote GPU at :5002)',
                                 'zero_shot': 'Detects common objects (person, car, etc.)',
                                 'mask2former': 'State-of-the-art detection with 80 COCO categories',
                                 'prithvi': 'Earth observation foundation model for satellite imagery'
                             };
                             desc.textContent = descriptions[type] || '';
                         }
+                    });
+                }
+                
+                // MaskRCNN Rocks score-threshold slider
+                const mrScore = document.getElementById('maskrcnnRocksScore');
+                const mrScoreVal = document.getElementById('maskrcnnRocksScoreValue');
+                if (mrScore && mrScoreVal) {
+                    mrScore.addEventListener('input', (e) => {
+                        mrScoreVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
                     });
                 }
                 

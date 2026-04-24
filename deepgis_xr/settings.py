@@ -199,6 +199,11 @@ GROUNDING_DINO_API_URL = os.environ.get('GROUNDING_DINO_API_URL', None)
 # Example: GROUNDED_SAM_API_URL=http://192.168.0.232:5001
 GROUNDED_SAM_API_URL = os.environ.get('GROUNDED_SAM_API_URL', None)
 
+# MaskRCNN Rocks API - Rock instance-segmentation Mask R-CNN ensemble
+# (Bishop/Jezero-analog flagship model `bishop_hero_e0004` by default).
+# Example: MASKRCNN_ROCKS_API_URL=http://192.168.0.232:5002
+MASKRCNN_ROCKS_API_URL = os.environ.get('MASKRCNN_ROCKS_API_URL', None)
+
 # MIME type configuration for 3D model files
 import mimetypes
 mimetypes.add_type('application/octet-stream', '.glb')

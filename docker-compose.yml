@@ -20,6 +20,7 @@ services:
       # Remote AI Services
       - GROUNDING_DINO_API_URL=${GROUNDING_DINO_API_URL:-http://192.168.0.232:5000}
       - GROUNDED_SAM_API_URL=${GROUNDED_SAM_API_URL:-http://192.168.0.232:5001}
+      - MASKRCNN_ROCKS_API_URL=${MASKRCNN_ROCKS_API_URL:-http://192.168.0.232:5002}
       # GPU support
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:

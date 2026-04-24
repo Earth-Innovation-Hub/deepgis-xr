@@ -2161,6 +2161,15 @@ class WorldSamplerUI {
                     requestBody.box_threshold = boxThreshold ? parseFloat(boxThreshold.value) / 100 : 0.35;
                     requestBody.text_threshold = textThreshold ? parseFloat(textThreshold.value) / 100 : 0.25;
                     statusText.textContent = 'Running Grounded-SAM-2 (detection + segmentation)...';
+                } else if (analysisType === 'maskrcnn_rocks') {
+                    const modelIdEl = document.getElementById('maskrcnnRocksModelId');
+                    const scoreEl = document.getElementById('maskrcnnRocksScore');
+                    const maxDetEl = document.getElementById('maskrcnnRocksMaxDet');
+                    const modelId = modelIdEl ? modelIdEl.value.trim() : '';
+                    if (modelId) requestBody.model_id = modelId;
+                    requestBody.score_threshold = scoreEl ? parseFloat(scoreEl.value) / 100 : 0.5;
+                    requestBody.max_detections = maxDetEl ? parseInt(maxDetEl.value, 10) || 200 : 200;
+                    statusText.textContent = `Running MaskRCNN Rocks${modelId ? ' (' + modelId + ')' : ''}...`;
                 } else if (analysisType === 'prithvi') {
                     statusText.textContent = 'Extracting Earth Observation features with Prithvi...';
                 }
@@ -2215,7 +2224,7 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam') {
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam' || analysisType === 'maskrcnn_rocks') {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
@@ -2240,6 +2249,10 @@ class WorldSamplerUI {
                     }
                     if (analysisType === 'grounded_sam') {
                         modelName = 'Grounded-SAM-2';
+                    }
+                    if (analysisType === 'maskrcnn_rocks') {
+                        const mid = result.model_id || 'default';
+                        modelName = `MaskRCNN Rocks (${mid})`;
                     }
                     this.showNotification(
                         `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
@@ -3348,6 +3361,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const yolov8Options = document.getElementById('yolov8Options');
     const groundingDinoOptions = document.getElementById('groundingDinoOptions');
     const groundedSamOptions = document.getElementById('groundedSamOptions');
+    const maskrcnnRocksOptions = document.getElementById('maskrcnnRocksOptions');
     const analysisDescription = document.getElementById('analysisDescription');
     const zeroShotConfidenceSlider = document.getElementById('zeroShotConfidence');
     const zeroShotConfidenceValue = document.getElementById('zeroShotConfidenceValue');
@@ -3374,6 +3388,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             if (yolov8Options) yolov8Options.style.display = 'none';
             if (groundingDinoOptions) groundingDinoOptions.style.display = 'none';
             if (groundedSamOptions) groundedSamOptions.style.display = 'none';
+            if (maskrcnnRocksOptions) maskrcnnRocksOptions.style.display = 'none';
             
             if (analysisType === 'zero_shot') {
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
@@ -3399,6 +3414,11 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 if (groundedSamOptions) groundedSamOptions.style.display = 'block';
                 if (analysisDescription) {
                     analysisDescription.textContent = 'Grounding DINO + SAM 2 - Detection + high-quality instance segmentation (best quality, slower)';
+                }
+            } else if (analysisType === 'maskrcnn_rocks') {
+                if (maskrcnnRocksOptions) maskrcnnRocksOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'Rock instance segmentation - Bishop/Jezero Mask R-CNN ensemble on remote GPU (:5002). Pick a model_id or leave blank for the service default.';
                 }
             } else {
                 // SAM (default)
@@ -3459,6 +3479,16 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         mask2formerConfidenceSlider.addEventListener('input', (e) => {
             const value = parseFloat(e.target.value) / 100;
             mask2formerConfidenceValue.textContent = value.toFixed(2);
+        });
+    }
+    
+    // MaskRCNN Rocks score-threshold slider
+    const maskrcnnRocksScoreSlider = document.getElementById('maskrcnnRocksScore');
+    const maskrcnnRocksScoreValue = document.getElementById('maskrcnnRocksScoreValue');
+    if (maskrcnnRocksScoreSlider && maskrcnnRocksScoreValue) {
+        maskrcnnRocksScoreSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            maskrcnnRocksScoreValue.textContent = value.toFixed(2);
         });
     }
     

@@ -1,0 +1,12 @@
+uploads/
+results/
+tests/
+scripts/
+.git
+.gitignore
+README.md
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log

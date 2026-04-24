@@ -1,0 +1,61 @@
+version: "3.8"
+
+# Runs alongside groundingdino-api (:5000) and groundedsam2-api (:5001) on
+# tesseract.  This service binds the read-only maskrcnn archive in so the
+# container sees every curated + ablation checkpoint without bloating the
+# image size.
+
+services:
+  maskrcnn-rocks:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-rocks-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5002:5000"
+
+    volumes:
+      # Bind the canonical archive read-only.  The container's registry.py
+      # walks /opt/program/weights at startup and exposes every .param file.
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      # Persist uploads/results across container restarts.
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DEFAULT_MODEL_ID=bishop_hero_e0004
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432       # 32 MiB; raise if you send .npy
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-rocks"
+      - "com.dreams-lab.port=5002"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001"

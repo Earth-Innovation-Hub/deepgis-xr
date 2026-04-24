@@ -37,7 +37,7 @@ def ai_analysis_report(request, session_id):
     # Try to find the session directory
     # Use exact match instead of substring to avoid matching wrong directories
     session_dir = None
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             # Try exact match first (session_id should match directory name exactly)
@@ -65,20 +65,27 @@ def ai_analysis_report(request, session_id):
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
     
-    # Determine model type from directory name
-    model_type = 'unknown'
-    if 'sam_' in session_dir.name:
-        model_type = 'sam'
-    elif 'zero_shot_' in session_dir.name:
-        model_type = 'zero_shot'
-    elif 'mask2former_' in session_dir.name:
-        model_type = 'mask2former'
-    elif 'yolov8_' in session_dir.name:
-        model_type = 'yolov8'
-    elif 'grounding_dino_' in session_dir.name:
-        model_type = 'grounding_dino'
-    elif 'grounded_sam_' in session_dir.name:
+    # Determine model type from directory name. Order matters: match the
+    # most specific prefixes first, because short substrings like 'sam_'
+    # would otherwise swallow 'grounded_sam_…', and 'maskrcnn_rocks_…'
+    # must beat any 'sam_' substring match.
+    name = session_dir.name
+    if name.startswith('maskrcnn_rocks_'):
+        model_type = 'maskrcnn_rocks'
+    elif name.startswith('grounded_sam_'):
         model_type = 'grounded_sam'
+    elif name.startswith('grounding_dino_'):
+        model_type = 'grounding_dino'
+    elif name.startswith('mask2former_'):
+        model_type = 'mask2former'
+    elif name.startswith('yolov8_'):
+        model_type = 'yolov8'
+    elif name.startswith('zero_shot_'):
+        model_type = 'zero_shot'
+    elif name.startswith('sam_'):
+        model_type = 'sam'
+    else:
+        model_type = 'unknown'
     
     # Get file paths
     query_image_path = session_dir / 'query_image.png'
@@ -140,7 +147,7 @@ def serve_analysis_geojson(request, session_id):
     
     # Try to find the session directory
     session_dir = None
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             session_path = results_dir / session_id
@@ -204,7 +211,7 @@ def serve_analysis_image(request, session_id, image_type):
     session_dir = None
     
     # Find session directory - use exact match instead of substring
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             # Try exact match first
@@ -286,6 +293,17 @@ def generate_analysis_summary(metadata, geojson_data, model_type):
         summary_parts.append("**Mask2Former Object Detection Analysis**")
         summary_parts.append("Model: Mask2Former (pre-trained COCO)")
         summary_parts.append(f"Confidence threshold: {metadata.get('confidence_threshold', 'N/A')}")
+    elif model_type == 'maskrcnn_rocks':
+        summary_parts.append("**MaskRCNN Rocks Instance-Segmentation Analysis**")
+        model_used = metadata.get('model_used') or {}
+        model_id = metadata.get('model_id_requested') or (
+            model_used.get('id') if isinstance(model_used, dict) else None
+        ) or 'service default'
+        summary_parts.append(f"Model: {model_id}")
+        summary_parts.append(f"Score threshold: {metadata.get('score_threshold', 'N/A')}")
+        summary_parts.append(f"Max detections: {metadata.get('max_detections', 'N/A')}")
+        if metadata.get('inference_ms') is not None:
+            summary_parts.append(f"Inference time: {metadata.get('inference_ms')} ms (remote GPU)")
     
     # Location information
     location = metadata.get('location', {})

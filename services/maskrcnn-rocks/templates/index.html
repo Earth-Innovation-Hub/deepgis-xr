@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>maskrcnn-rocks-api</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+           margin: 2rem; color: #222; background: #fafafa; max-width: 960px; }
+    h1 { margin-bottom: 0.2rem; }
+    .sub { color: #666; margin-bottom: 1.5rem; }
+    fieldset { border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.25rem;
+               margin-bottom: 1.25rem; background: white; }
+    legend { padding: 0 0.5rem; font-weight: 600; }
+    label { display: block; margin-top: 0.5rem; font-size: 0.9rem; color: #333; }
+    input, select, button { padding: 0.4rem 0.6rem; font-size: 0.95rem;
+                            border: 1px solid #bbb; border-radius: 4px; }
+    button { background: #2b6cb0; color: white; border-color: #2b6cb0;
+             cursor: pointer; }
+    pre { background: #f1f1f1; padding: 0.75rem; border-radius: 4px;
+          overflow-x: auto; font-size: 0.85rem; }
+    img#annotated { max-width: 100%; border: 1px solid #ccc; margin-top: 1rem; }
+    code { background: #eee; padding: 1px 4px; border-radius: 3px; }
+    .muted { color: #888; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>maskrcnn-rocks-api</h1>
+  <div class="sub">
+    Rock-focused Mask R-CNN instance segmentation — default:
+    <code>{{ default_model }}</code>.  Companion to
+    <code>groundingdino-api:5000</code> and <code>groundedsam2-api:5001</code>.
+  </div>
+
+  <fieldset>
+    <legend>Quick test</legend>
+    <form id="f" enctype="multipart/form-data">
+      <label>Image file (JPG/PNG, or .npy for multi-channel)
+        <input type="file" name="file" required/>
+      </label>
+      <label>Model
+        <select name="model_id" id="model_id">
+          {% for m in registry %}
+          <option value="{{ m.id }}" {% if m.id == default_model %}selected{% endif %}>
+            {{ m.id }}  ({{ m.family }} / {{ m.variant }} / {{ m.declared_channels or "?" }}ch)
+          </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>score_threshold
+        <input name="score_threshold" value="0.5" step="0.05" type="number"/>
+      </label>
+      <label>mask_threshold
+        <input name="mask_threshold" value="0.5" step="0.05" type="number"/>
+      </label>
+      <label>max_detections
+        <input name="max_detections" value="200" type="number"/>
+      </label>
+      <button type="submit">Detect</button>
+    </form>
+    <div id="status" class="muted" style="margin-top: 1rem;"></div>
+    <img id="annotated" style="display:none"/>
+    <pre id="out" style="display:none"></pre>
+  </fieldset>
+
+  <fieldset>
+    <legend>Endpoints</legend>
+    <ul>
+      <li><code>GET /health</code></li>
+      <li><code>GET /api/info</code></li>
+      <li><code>GET /api/models</code></li>
+      <li><code>POST /api/predict</code> — multipart <code>file</code> +
+          <code>model_id</code> + thresholds</li>
+      <li><code>GET /api/result/&lt;file&gt;</code></li>
+    </ul>
+  </fieldset>
+
+  <script>
+    const f = document.getElementById('f');
+    const out = document.getElementById('out');
+    const status = document.getElementById('status');
+    const img = document.getElementById('annotated');
+    f.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      status.textContent = 'running...';
+      out.style.display = img.style.display = 'none';
+      const fd = new FormData(f);
+      const r = await fetch('/api/predict', { method: 'POST', body: fd });
+      const j = await r.json();
+      status.textContent = j.success
+        ? `${j.predictions.count} detections in ${j.inference_ms} ms (${j.model_id})`
+        : `error: ${j.error}`;
+      if (j.annotated_image) {
+        img.src = j.annotated_image;
+        img.style.display = 'block';
+      }
+      const preview = {...j};
+      delete preview.annotated_image;
+      preview.predictions = {...preview.predictions, masks_rle: '<truncated>'};
+      out.textContent = JSON.stringify(preview, null, 2);
+      out.style.display = 'block';
+    });
+  </script>
+</body>
+</html>

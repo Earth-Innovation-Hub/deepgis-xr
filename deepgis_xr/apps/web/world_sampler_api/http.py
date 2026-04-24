@@ -46,6 +46,7 @@ from .analyzers import (
     _analyze_viewport_grounding_dino,
     _analyze_viewport_grounded_sam,
     _analyze_viewport_prithvi,
+    _analyze_viewport_maskrcnn_rocks,
     _analyze_viewport_urban_spectral,
 )
 
@@ -710,6 +711,14 @@ def analyze_viewport(request):
         elif analysis_type == 'prithvi':
             # Prithvi-EO path (Earth Observation foundation model)
             return _analyze_viewport_prithvi(image, location, scripts_dir)
+        elif analysis_type == 'maskrcnn_rocks':
+            # MaskRCNN-Rocks path (remote rock instance-segmentation API on port 5002)
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_rocks(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
         else:
             # SAM path (default)
             return _analyze_viewport_sam(image, location, sam_model, min_area, scripts_dir)

@@ -1,0 +1,15 @@
+# Pinned to match the versions successfully used in the grounding-dino
+# container, adjusted for instance-segmentation needs.
+numpy<2.0
+opencv-python==4.9.0.80
+Pillow==10.3.0
+Flask==3.0.0
+Flask-Cors==4.0.0
+werkzeug==3.0.3
+# torch/torchvision come from the base image (2.3.0 / 0.18.0)
+pycocotools==2.0.7
+scikit-image==0.22.0
+supervision==0.22.0
+# torch and torchvision are already in the base image but listing for doc:
+#   torch==2.3.0
+#   torchvision==0.18.0
