@@ -21,6 +21,7 @@ services:
       - GROUNDING_DINO_API_URL=${GROUNDING_DINO_API_URL:-http://192.168.0.232:5000}
       - GROUNDED_SAM_API_URL=${GROUNDED_SAM_API_URL:-http://192.168.0.232:5001}
       - MASKRCNN_ROCKS_API_URL=${MASKRCNN_ROCKS_API_URL:-http://192.168.0.232:5002}
+      - MASKRCNN_HOUSE_API_URL=${MASKRCNN_HOUSE_API_URL:-http://192.168.0.232:5003}
       # GPU support
       - NVIDIA_VISIBLE_DEVICES=all
     volumes:
@@ -34,6 +35,14 @@ services:
       - yolo_models_volume:/app/models
       # Mount dreamslab-store for accessing training data
       - /mnt/dreamslab-store:/mnt/dreamslab-store:ro
+      # Overlay the in-development kernelcal.distinction_game subpackage
+      # onto the wheel-installed kernelcal in the image. PyPI/git wheel of
+      # kernelcal lags behind the local source where distinction_game lives;
+      # this read-only bind keeps the container's import path in sync with
+      # /home/jdas/kernelcal without requiring a docker rebuild on every
+      # kernelcal commit. Remove this line once kernelcal>=0.10 (with
+      # distinction_game) is published and pinned in requirements.txt.
+      - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.9/site-packages/kernelcal/distinction_game:ro
     ports:
       - "8060:8090"
     # Enable GPU access
