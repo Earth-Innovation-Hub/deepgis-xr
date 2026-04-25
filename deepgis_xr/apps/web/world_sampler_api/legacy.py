@@ -29,6 +29,7 @@ Everything that used to live here has been relocated:
     _create_grounding_dino_visualization  -> .analyzers._helpers
     _detections_to_geojson                -> .analyzers._helpers
     _masks_to_geojson_with_contours       -> .analyzers._helpers
+    _polygons_norm_to_geojson             -> .analyzers._helpers
 
 This file is kept on-disk for one more cycle so any stray
 `from deepgis_xr.apps.web.world_sampler_api.legacy import ...`
@@ -69,4 +70,5 @@ from .analyzers import (  # noqa: F401  re-exports
     _create_grounding_dino_visualization,
     _detections_to_geojson,
     _masks_to_geojson_with_contours,
+    _polygons_norm_to_geojson,
 )

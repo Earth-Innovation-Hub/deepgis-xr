@@ -21,6 +21,12 @@ Helpers:
     _masks_to_geojson_with_contours(detections, image_width, image_height)
         Convert per-instance binary masks to GeoJSON Polygon
         features via cv2.findContours. Used by grounded_sam.
+
+    _polygons_norm_to_geojson(detections, image_width, image_height)
+        Build GeoJSON polygons from pre-vectorized, normalized mask
+        contours (`mask_polygons_norm`). Used by maskrcnn_rocks, where
+        the upstream service already runs cv2.findContours on the GPU
+        host and ships ring lists in [0, 1] image space.
 """
 
 
@@ -111,6 +117,89 @@ def _detections_to_geojson(detections_data, image_width, image_height):
         "features": features
     }
 
+
+def _polygons_norm_to_geojson(detections_data, image_width, image_height):
+    """
+    Build a normalized GeoJSON FeatureCollection from detections that
+    carry pre-vectorized mask contours.
+
+    Each detection may include `mask_polygons_norm`, a list of rings,
+    where each ring is `[[x_norm, y_norm], ...]` already in [0, 1]
+    image space (the convention used by the maskrcnn-rocks service).
+    Rings are conventionally ordered largest-area first; we treat
+    rings[0] as the polygon exterior and the remainder as holes — the
+    same shape `displayZeroShotResults` on the frontend already
+    expects (`coordinates: [exterior, hole1, hole2, ...]`).
+
+    When a detection has no usable polygons we fall back to its
+    bounding box so the feature still renders. `has_mask` reflects
+    whether the geometry is mask-derived (used by the frontend to
+    upgrade outline / label styling).
+
+    Args:
+        detections_data: list of detection dicts with at minimum
+            `detection_id`, `class_name`, `confidence`, `bbox`, and
+            optionally `mask_polygons_norm` and `area`.
+        image_width / image_height: pixel dims; used only for the
+            bbox fallback (existing inputs are already normalized).
+
+    Returns:
+        dict — GeoJSON FeatureCollection.
+    """
+    features = []
+
+    for det in detections_data:
+        rings = det.get('mask_polygons_norm') or []
+        usable_rings = []
+        for ring in rings:
+            if not ring or len(ring) < 4:
+                # Need at least 3 distinct points + closure point.
+                continue
+            cleaned = [[float(x), float(y)] for x, y in ring]
+            if cleaned[0] != cleaned[-1]:
+                cleaned.append(cleaned[0])
+            usable_rings.append(cleaned)
+
+        if usable_rings:
+            coordinates = usable_rings  # [exterior, hole1, hole2, ...]
+            has_mask = True
+        else:
+            bbox = det.get('bbox') or [0.0, 0.0, image_width, image_height]
+            x1, y1, x2, y2 = bbox
+            coordinates = [[
+                [x1 / image_width, y1 / image_height],
+                [x2 / image_width, y1 / image_height],
+                [x2 / image_width, y2 / image_height],
+                [x1 / image_width, y2 / image_height],
+                [x1 / image_width, y1 / image_height],
+            ]]
+            has_mask = False
+
+        properties = {
+            'detection_id': det.get('detection_id'),
+            'class_name': det.get('class_name'),
+            'category': det.get('class_name'),
+            'confidence': det.get('confidence'),
+            'class_id': det.get('detection_id'),
+            'bbox_pixels': det.get('bbox', []),
+            'has_mask': has_mask,
+        }
+        if det.get('area') is not None:
+            properties['area'] = det['area']
+
+        features.append({
+            'type': 'Feature',
+            'geometry': {
+                'type': 'Polygon',
+                'coordinates': coordinates,
+            },
+            'properties': properties,
+        })
+
+    return {
+        'type': 'FeatureCollection',
+        'features': features,
+    }
 
 
 def _masks_to_geojson_with_contours(detections_data, image_width, image_height):

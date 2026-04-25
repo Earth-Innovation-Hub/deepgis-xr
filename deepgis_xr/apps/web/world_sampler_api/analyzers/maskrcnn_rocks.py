@@ -22,16 +22,24 @@ Upstream REST contract (see `services/maskrcnn-rocks/app.py`):
                                       mask_threshold?, max_detections?,
                                       return_annotated?
     Response.predictions = { count, boxes[pixel], boxes_norm,
-                             scores, labels, masks_rle, areas }
+                             scores, labels, masks_rle,
+                             masks_polygons_norm, areas }
     Response.annotated_image = "data:image/jpeg;base64,..."  (when
                                                                requested)
+
+`masks_polygons_norm` is what we actually plot on the Cesium viewport:
+the upstream service runs cv2.findContours on each binary mask and
+ships back a list of rings in [0, 1] image space, ready for
+projection. When that field is missing (older service builds) we
+fall back to bounding-box rectangles so existing labels still draw,
+but the resulting polygon is no longer pixel-precise.
 """
 
 from django.http import JsonResponse
 
 from ._helpers import (
     _create_grounding_dino_visualization,
-    _detections_to_geojson,
+    _polygons_norm_to_geojson,
 )
 
 
@@ -185,10 +193,12 @@ def _analyze_viewport_maskrcnn_rocks(
         api_labels = predictions.get('labels', []) or []
         api_areas = predictions.get('areas', []) or []
         api_masks = predictions.get('masks_rle', []) or []
+        api_polygons = predictions.get('masks_polygons_norm', []) or []
 
         img_width, img_height = image.width, image.height
 
         detections_data = []
+        masks_with_polygons = 0
         for i in range(num_detections):
             if i < len(api_boxes) and api_boxes[i]:
                 bbox = [float(v) for v in api_boxes[i]]
@@ -207,6 +217,12 @@ def _analyze_viewport_maskrcnn_rocks(
             label = api_labels[i] if i < len(api_labels) else 'rock'
             area = api_areas[i] if i < len(api_areas) else None
             mask_rle = api_masks[i] if i < len(api_masks) else None
+            polygons_norm = (
+                api_polygons[i] if i < len(api_polygons) else None
+            )
+            has_polygons = bool(polygons_norm)
+            if has_polygons:
+                masks_with_polygons += 1
 
             detections_data.append({
                 'detection_id': i + 1,
@@ -215,8 +231,20 @@ def _analyze_viewport_maskrcnn_rocks(
                 'bbox': bbox,
                 'area': area,
                 'mask_rle': mask_rle,
-                'has_mask': mask_rle is not None,
+                'mask_polygons_norm': polygons_norm,
+                # Reflects what we'll actually draw: True iff we have
+                # vector contours to render (not just an RLE bitmap we
+                # would otherwise downgrade to a bbox).
+                'has_mask': has_polygons,
             })
+
+        if num_detections > 0:
+            print(
+                f"  ↳ {masks_with_polygons}/{num_detections} masks have "
+                f"vector contours; "
+                f"{num_detections - masks_with_polygons} will fall back "
+                f"to bounding boxes"
+            )
 
         # Persist annotated JPEG from the API if it shipped one, otherwise
         # draw boxes locally to match the other analyzers' outputs.
@@ -241,7 +269,12 @@ def _analyze_viewport_maskrcnn_rocks(
             except Exception as viz_err:
                 print(f"Warning: could not render local visualization: {viz_err}")
 
-        geojson = _detections_to_geojson(detections_data, img_width, img_height)
+        # Use vectorized mask contours when present (real segmentation
+        # polygons on the viewport); detections without polygons fall
+        # through to bbox rectangles inside the helper.
+        geojson = _polygons_norm_to_geojson(
+            detections_data, img_width, img_height
+        )
 
         geojson_path = session_dir / 'detections.geojson'
         with open(geojson_path, 'w') as f:

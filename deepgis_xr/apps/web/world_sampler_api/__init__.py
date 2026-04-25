@@ -68,6 +68,7 @@ from .analyzers import (
     _create_grounding_dino_visualization,
     _detections_to_geojson,
     _masks_to_geojson_with_contours,
+    _polygons_norm_to_geojson,
 )
 # fmt: on
 

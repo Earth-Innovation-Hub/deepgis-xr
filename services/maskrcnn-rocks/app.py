@@ -10,6 +10,26 @@ REST contract (deliberately parallel to grounding-dino-api on port 5000):
     POST /api/predict           — run inference on a single image
     GET  /api/result/<file>     — fetch a saved annotated image
 
+POST /api/predict response shape (success):
+
+    {
+      "success": true,
+      "model_id": "...",
+      "image_size": {"width": W, "height": H},
+      "inference_ms": 123,
+      "predictions": {
+        "count": N,
+        "boxes":               [[x1,y1,x2,y2], ...],     # pixel coords
+        "boxes_norm":          [[x1,y1,x2,y2], ...],     # 0..1
+        "scores":              [...],
+        "labels":              [...],
+        "masks_rle":           [{"size": [H,W], "counts": "..."}, ...],
+        "masks_polygons_norm": [[ring, ring, ...], ...], # 0..1, see inference.py
+        "areas":               [...]
+      },
+      "annotated_image": "data:image/jpeg;base64,..."     # when requested
+    }
+
 POST /api/predict accepts EITHER:
   * multipart/form-data with
         file            — image or .npy tensor
@@ -272,12 +292,17 @@ def api_predict():
         "class_names": class_names,
         "predictions": {
             "count": len(detections),
-            "boxes":     [d.box       for d in detections],
-            "boxes_norm":[d.box_norm  for d in detections],
-            "scores":    [d.score     for d in detections],
-            "labels":    [d.label     for d in detections],
-            "masks_rle": [d.mask_rle  for d in detections],
-            "areas":     [d.area      for d in detections],
+            "boxes":     [d.box                 for d in detections],
+            "boxes_norm":[d.box_norm            for d in detections],
+            "scores":    [d.score               for d in detections],
+            "labels":    [d.label               for d in detections],
+            "masks_rle": [d.mask_rle            for d in detections],
+            # Normalized polygon contours of each mask, ready for
+            # GeoJSON projection on the consumer side. See
+            # `_mask_to_polygons_norm` in inference.py for the shape.
+            "masks_polygons_norm":
+                         [d.mask_polygons_norm  for d in detections],
+            "areas":     [d.area                for d in detections],
         },
     }
 

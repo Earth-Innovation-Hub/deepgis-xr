@@ -65,11 +65,6 @@ class Label3DView(BaseView):
         return context
 
 
-class MapLabelView(BaseView):
-    """Map-based labeling interface"""
-    template_name = 'web/map_label.html'
-
-
 class ViewLabelView(BaseView):
     """View existing labels"""
     template_name = 'web/view_label.html'
@@ -107,10 +102,6 @@ def label_3d(request):
 
 def label_3d_dev(request):
     return simple_render(request, 'web/label_3d_dev.html')
-
-
-def map_label(request):
-    return simple_render(request, 'web/map_label.html')
 
 
 def view_label(request):

@@ -624,13 +624,29 @@ class MissionWaypoint(models.Model):
 # ===== MASK2FORMER TRAINING MODELS =====
 
 class TrainingDataset(models.Model):
-    """Metadata for organizing labels into training datasets"""
+    """Metadata for organizing labels into training datasets.
+
+    The original purpose was Mask2Former retraining; ``kind`` widens that so
+    the same table also drives rock Mask R-CNN retraining (4-channel-stack
+    .npy tiles emitted by the rock label editor — see
+    `deepgis_xr.apps.web.views.rock_label`).
+    """
+    KIND_CHOICES = [
+        ('mask2former', 'Mask2Former (semantic)'),
+        ('rock_maskrcnn', 'Rock Mask R-CNN (400×400 tiles)'),
+    ]
+
     name = models.CharField(max_length=200, unique=True)
     description = models.TextField(blank=True)
+    kind = models.CharField(max_length=32, choices=KIND_CHOICES, default='mask2former')
+    # When num_annotations >= min_tiles_for_training and status=='draft',
+    # the rock_label save endpoint flips status to 'ready' and writes a
+    # RETRAIN_READY sentinel into the corpus directory.
+    min_tiles_for_training = models.PositiveIntegerField(default=50)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
+
     status = models.CharField(max_length=20, choices=[
         ('draft', 'Draft'),
         ('ready', 'Ready for Training'),

@@ -16,10 +16,9 @@ urlpatterns = [
     path('label/3d/search/', views.label_search, name='label_search'),  # DeepGIS Search viewer
     path('label/3d/moon/', views.label_moon_viewer, name='label_moon_viewer'),  # Moon viewer
     path('stl-viewer/', views.stl_viewer, name='stl_viewer'),
-    path('map-label/', views.map_label, name='map_label'),
     path('view-label/', views.view_label, name='view_label'),
     path('results/', views.results, name='results'),
-    
+
     # Webclient API endpoints
     path('webclient/getCategoryInfo', views.get_category_info, name='get_category_info'),
     path('webclient/getNewImage', views.get_new_image, name='get_new_image'),
@@ -28,11 +27,11 @@ urlpatterns = [
     path('webclient/createCategory', views.create_category, name='create_category'),
     path('webclient/getRasterInfo', views.get_raster_info, name='get_raster_info'),
     path('webclient/getTileserverLayers', views.get_tileserver_layers, name='get_tileserver_layers'),
-    
-    # Map label endpoints
+
+    # Used by /label/ legacy image labeller; shapefile export is admin-only.
     path('webclient/save-labels', views.save_labels, name='save_labels'),
     path('webclient/export-shapefile', views.export_shapefile, name='export_shapefile'),
-    
+
     # Grid detection endpoint
     path('webclient/detect-grid', views.detect_grid, name='detect_grid'),
     
@@ -44,12 +43,16 @@ urlpatterns = [
     path('api/elevation-proxy', views.elevation_proxy, name='elevation_proxy'),
     path('api/opentopography/lidar-search', views.opentopography_lidar_search, name='opentopography_lidar_search'),
     
-    # Semi-supervised labeling (Mask2Former / Segment Anything)
-    path('label/semi-supervised/', views.label_semi_supervised, name='label_semi_supervised'),
-    path('label/semi-supervised/api/generate-labels/', views.generate_assisted_labels, name='generate_assisted_labels'),
-    path('label/semi-supervised/api/save-labels/', views.save_assisted_labels, name='save_assisted_labels'),
-    path('label/semi-supervised/api/get-images/', views.get_label_images, name='get_label_images'),
-    
+    # Rock Mask R-CNN labeling pipeline (replaces /map-label/ + /label/semi-supervised/).
+    # Two surfaces feed the same 400x400 .npy training corpus:
+    #   A. Edit-in-2D from an AI analysis report -> /label/rocks/edit/<session_id>/
+    #   B. Cesium "Label Rocks" button -> POST capture -> redirect into the same editor
+    path('label/rocks/edit/<str:session_id>/', views.rock_label_edit, name='rock_label_edit'),
+    path('label/rocks/edit/<str:session_id>/save-tile/', views.rock_label_save_tile, name='rock_label_save_tile'),
+    path('label/rocks/capture/', views.rock_label_capture, name='rock_label_capture'),
+    path('label/rocks/datasets/', views.rock_dataset_list, name='rock_dataset_list'),
+    path('label/rocks/categories/', views.rock_category_list, name='rock_category_list'),
+
     # Training dataset management
     path('api/training/datasets/', views.list_training_datasets, name='list_training_datasets'),
     path('api/training/datasets/create/', views.create_training_dataset, name='create_training_dataset'),

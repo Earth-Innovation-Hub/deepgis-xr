@@ -1799,9 +1799,9 @@
         <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
         <button class="hud-quick-btn" id="quickShare" title="Share Current View"><i class="fas fa-share-alt"></i> Share</button>
         <button class="hud-quick-btn" id="quickQR" title="Show QR Code"><i class="fas fa-qrcode"></i> QR</button>
-        <a href="{% url 'map_label' %}" class="hud-quick-btn" id="quickTrain" title="Open Training Labeling Interface" onclick="return syncLocationTo2D()">
-            <i class="fas fa-graduation-cap"></i> Train
-        </a>
+        <button class="hud-quick-btn" id="quickLabelRocks" title="Capture viewport &amp; open the rock label editor (Workflow B)" onclick="captureForRockLabel(); return false;">
+            <i class="fas fa-mountain"></i> Label Rocks
+        </button>
     </div>
     
     <!-- QR Code Overlay -->
@@ -2852,64 +2852,58 @@
             }
             
             // Function to sync current location to 2D map
-            function syncLocationTo2D() {
-                console.log('syncLocationTo2D called');
-                console.log('window.AppState:', window.AppState);
-                
-                // Get viewer from AppState (loaded by main.js)
-                const viewer = window.AppState?.viewer;
-                
-                if (!viewer) {
-                    console.warn('Viewer not available in AppState, trying fallback...');
-                    // Fallback: try to get viewer from window or global scope
-                    const fallbackViewer = window.viewer;
-                    if (fallbackViewer && fallbackViewer.camera) {
-                        console.log('Using fallback viewer');
-                        const position = fallbackViewer.camera.positionCartographic;
-                        const lat = Cesium.Math.toDegrees(position.latitude);
-                        const lng = Cesium.Math.toDegrees(position.longitude);
-                        const alt = position.height;
-                        
-                        console.log(`Camera position: lat=${lat}, lng=${lng}, alt=${alt}`);
-                        
-                        // Format: #lat/lng/alt for map_label to parse
-                        const targetUrl = "{% url 'map_label' %}" + `#${lat}/${lng}/${alt}`;
-                        console.log('Navigating to:', targetUrl);
-                        window.location.href = targetUrl;
-                        return false;
+            // Workflow B entry — capture the current Cesium viewport, POST it
+            // to /label/rocks/capture/, then redirect into the rock label editor
+            // with no AI predictions pre-populated. The editor handles tile
+            // selection, polygon drawing, and saving 400×400 .npy training tiles.
+            async function captureForRockLabel() {
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (!viewer || !viewer.camera || !viewer.scene) {
+                    alert('Cesium viewer not ready yet — try again in a moment.');
+                    return;
+                }
+                try {
+                    const cam = viewer.camera.positionCartographic;
+                    const lat = Cesium.Math.toDegrees(cam.latitude);
+                    const lon = Cesium.Math.toDegrees(cam.longitude);
+                    const alt = cam.height;
+                    const heading = Cesium.Math.toDegrees(viewer.camera.heading);
+                    const pitch = Cesium.Math.toDegrees(viewer.camera.pitch);
+
+                    // Force a render so the off-screen canvas reflects the
+                    // current frame before we serialize it.
+                    viewer.scene.requestRender();
+                    await new Promise(r => setTimeout(r, 50));
+
+                    const dataUrl = viewer.scene.canvas.toDataURL('image/png');
+
+                    const csrfInput = document.querySelector('input[name=csrfmiddlewaretoken]');
+                    const csrf = csrfInput ? csrfInput.value
+                        : (document.cookie.split('; ').find(r => r.startsWith('csrftoken='))?.split('=')[1] || '');
+
+                    const resp = await fetch('/label/rocks/capture/', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': csrf,
+                        },
+                        body: JSON.stringify({
+                            image_b64: dataUrl,
+                            lat, lon, alt, heading, pitch,
+                        }),
+                    });
+                    const data = await resp.json();
+                    if (!resp.ok || !data.edit_url) {
+                        throw new Error(data.error || resp.statusText);
                     }
-                    console.error('No viewer found, allowing default navigation');
-                    return true; // Allow default if viewer not ready
+                    window.location.href = data.edit_url;
+                } catch (err) {
+                    console.error('captureForRockLabel failed', err);
+                    alert('Capture failed: ' + (err.message || err));
                 }
-                
-                if (viewer && viewer.camera) {
-                    const position = viewer.camera.positionCartographic;
-                    const lat = Cesium.Math.toDegrees(position.latitude);
-                    const lng = Cesium.Math.toDegrees(position.longitude);
-                    const alt = position.height;
-                    
-                    console.log(`Camera position: lat=${lat}, lng=${lng}, alt=${alt}`);
-                    
-                    // Format: #lat/lng/alt for map_label to parse
-                    const targetUrl = "{% url 'map_label' %}" + `#${lat}/${lng}/${alt}`;
-                    console.log('Navigating to:', targetUrl);
-                    window.location.href = targetUrl;
-                    return false; // Prevent default link behavior
-                }
-                
-                console.error('Viewer exists but no camera, allowing default navigation');
-                return true; // Allow default if viewer not ready
             }
-            
-            // Make function globally accessible immediately
-            window.syncLocationTo2D = syncLocationTo2D;
-            
-            // Also expose it in case it's called before this script runs
-            if (!window.syncLocationTo2D) {
-                console.warn('syncLocationTo2D not yet defined');
-            } else {
-                console.log('syncLocationTo2D is now globally available');
-            }
+            window.captureForRockLabel = captureForRockLabel;
             
             // Initialize when DOM is ready
             if (document.readyState === 'loading') {
@@ -2929,7 +2923,7 @@
             setTimeout(enforceFullWidthMap, 500);
             setTimeout(enforceFullWidthMap, 1500);
             
-            // Check for incoming location from URL hash (from map_label or ai_analysis_report)
+            // Check for incoming location from URL hash (e.g. from ai_analysis_report)
             function checkIncomingLocation() {
                 const hash = window.location.hash;
                 if (hash) {

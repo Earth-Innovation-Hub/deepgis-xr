@@ -36,7 +36,56 @@ class Detection:
     score: float
     label: str
     mask_rle: Optional[Dict[str, Any]]
+    # Vector contours of the binary mask, normalized to [0, 1] image coords.
+    # Shape: list of rings; each ring is [[x_norm, y_norm], ...] with the
+    # largest ring conventionally listed first. Empty when the mask has
+    # no contour above the simplification threshold.
+    mask_polygons_norm: List[List[List[float]]]
     area: float
+
+
+def _mask_to_polygons_norm(
+    bmask: np.ndarray,
+    epsilon_px: float = 1.0,
+    min_points: int = 3,
+) -> List[List[List[float]]]:
+    """Vectorize a binary mask into normalized polygon rings.
+
+    Uses `cv2.findContours(RETR_EXTERNAL)` to get outer rings only, then
+    `approxPolyDP` to drop colinear vertices. Coordinates are normalized
+    to [0, 1] using the mask's own (H, W), which equals the model input
+    size — i.e. the same frame the boxes are in. Rings are sorted by
+    descending pixel area so consumers can take rings[0] as the
+    "primary" polygon when they only render one.
+    """
+    if bmask.ndim != 2:
+        raise ValueError(f"expected 2D mask, got shape {bmask.shape}")
+    h, w = bmask.shape
+    if h == 0 or w == 0:
+        return []
+    contours, _ = cv2.findContours(
+        bmask.astype(np.uint8),
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_TC89_L1,
+    )
+    rings: List[Tuple[float, List[List[float]]]] = []
+    for c in contours:
+        if c is None or len(c) < min_points:
+            continue
+        approx = cv2.approxPolyDP(c, epsilon_px, closed=True)
+        if approx is None or len(approx) < min_points:
+            continue
+        pts = approx.reshape(-1, 2).astype(np.float64)
+        ring = [[float(x) / w, float(y) / h] for x, y in pts]
+        if ring[0] != ring[-1]:
+            ring.append(ring[0])
+        if len(ring) < min_points + 1:
+            continue
+        # Use abs() so a CW vs CCW orientation doesn't flip the sort.
+        area = float(abs(cv2.contourArea(approx)))
+        rings.append((area, ring))
+    rings.sort(key=lambda kv: kv[0], reverse=True)
+    return [ring for _, ring in rings]
 
 
 def load_image_any(raw_bytes: bytes, filename: str,
@@ -107,6 +156,7 @@ def run_inference(
         bmask = (mask[0] >= mask_threshold).astype(np.uint8)
         rle = mask_utils.encode(np.asfortranarray(bmask))
         rle["counts"] = rle["counts"].decode("ascii")
+        polygons_norm = _mask_to_polygons_norm(bmask)
         class_id = int(labels[idx]) if labels is not None else 1
         if class_names and 0 <= class_id < len(class_names):
             resolved_label = class_names[class_id]
@@ -124,6 +174,7 @@ def run_inference(
                 score=float(score),
                 label=resolved_label,
                 mask_rle=rle,
+                mask_polygons_norm=polygons_norm,
                 area=float(bmask.sum()),
             )
         )

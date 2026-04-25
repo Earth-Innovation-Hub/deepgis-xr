@@ -336,7 +336,8 @@ export async function initializeCesium(updateLoadingStatus) {
         });
       }
       
-      // Check for incoming location from URL hash (from map_label or previous session)
+      // Check for incoming location from URL hash (e.g. AI analysis report's
+      // "View in 3D" deep-link, or a previous Cesium session)
       const hash = window.location.hash;
       let initialPosition = null;
       
@@ -344,7 +345,7 @@ export async function initializeCesium(updateLoadingStatus) {
         const parts = hash.substring(1).split('/');
         if (parts.length >= 3) {
           const [p1, p2, p3] = parts.map(Number);
-          // Format: lat/lng/alt (from map_label or 3D viewer)
+          // Format: lat/lng/alt
           if (!isNaN(p1) && !isNaN(p2) && !isNaN(p3)) {
             initialPosition = {
               lat: p1,

@@ -12,9 +12,10 @@ Public handlers:
     get_dataset_details       GET  /api/training/datasets/<id>/
     add_label_to_dataset      POST /api/training/datasets/add-label/
 
-Note: `get_label_images` (served at /label/semi-supervised/api/get-images/)
-is semantically a semi-supervised labeling endpoint and stays in
-legacy.py until the semi-supervised module is split out.
+Both Mask2Former and rock-Mask-R-CNN training pipelines feed into the
+``TrainingDataset`` table, distinguished by the ``kind`` field. The
+rock-specific labeller lives at /label/rocks/edit/<session_id>/ (see
+:mod:`deepgis_xr.apps.web.views.rock_label`).
 """
 
 import json

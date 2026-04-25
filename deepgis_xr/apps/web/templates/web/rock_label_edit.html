@@ -1,0 +1,456 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rock Label Editor – {{ session_id }}</title>
+    {% csrf_token %}
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-0: #0f172a;
+            --bg-1: #1e293b;
+            --bg-2: rgba(15, 23, 42, 0.85);
+            --line: rgba(59, 130, 246, 0.3);
+            --tile-color: #10b981;
+            --tile-color-dim: rgba(16, 185, 129, 0.15);
+            --poly-pred: rgba(59, 130, 246, 0.85);
+            --poly-pred-fill: rgba(59, 130, 246, 0.18);
+            --poly-user: rgba(245, 158, 11, 0.95);
+            --poly-user-fill: rgba(245, 158, 11, 0.22);
+            --poly-approved: rgba(16, 185, 129, 0.95);
+            --poly-approved-fill: rgba(16, 185, 129, 0.18);
+            --poly-selected-stroke: #f43f5e;
+            --vertex-fill: #fbbf24;
+        }
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+        body {
+            background: var(--bg-0);
+            color: #e2e8f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        #appShell {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            grid-template-rows: 56px 1fr;
+            grid-template-areas:
+                "topbar topbar"
+                "stage  side";
+            height: 100vh;
+            width: 100vw;
+        }
+        #topbar {
+            grid-area: topbar;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 16px;
+            background: var(--bg-1);
+            border-bottom: 1px solid var(--line);
+            font-size: 0.9rem;
+        }
+        #topbar .session-id {
+            color: #94a3b8;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+        }
+        #topbar .spacer { flex: 1; }
+        .tool-btn {
+            background: rgba(30, 41, 59, 0.85);
+            border: 1px solid var(--line);
+            color: #cbd5e1;
+            border-radius: 6px;
+            padding: 6px 12px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tool-btn:hover { background: rgba(59, 130, 246, 0.25); border-color: #3b82f6; color: #fff; }
+        .tool-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+        .tool-btn.danger:hover { background: rgba(239, 68, 68, 0.3); border-color: #ef4444; color: #fff; }
+        .tool-btn.success { background: #16a34a; border-color: #16a34a; color: #fff; }
+        .tool-btn.success:hover { background: #15803d; }
+
+        #stage {
+            grid-area: stage;
+            position: relative;
+            overflow: hidden;
+            background: #050a14;
+        }
+        #canvasWrap {
+            position: absolute;
+            inset: 0;
+            overflow: auto;
+            cursor: grab;
+        }
+        #canvasWrap.dragging { cursor: grabbing; }
+        #canvasWrap.adding { cursor: crosshair; }
+        #canvasWrap.editing { cursor: crosshair; }
+        #canvas {
+            display: block;
+            background: #000;
+            image-rendering: pixelated;
+        }
+
+        #side {
+            grid-area: side;
+            background: var(--bg-1);
+            border-left: 1px solid var(--line);
+            padding: 16px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .panel {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .panel h6 {
+            color: #60a5fa;
+            margin: 0 0 10px;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .form-label {
+            color: #94a3b8;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .form-control, .form-select {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid var(--line);
+            color: #e2e8f0;
+            font-size: 0.85rem;
+        }
+        .form-control:focus, .form-select:focus {
+            background: rgba(30, 41, 59, 0.9);
+            border-color: #3b82f6;
+            color: #fff;
+            box-shadow: none;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            padding: 4px 0;
+            border-bottom: 1px dashed rgba(59, 130, 246, 0.15);
+        }
+        .stat-row:last-child { border-bottom: none; }
+        .stat-row .v { color: #60a5fa; font-weight: 600; }
+        .stat-row .v.warn { color: #f59e0b; }
+        .stat-row .v.ok { color: #10b981; }
+
+        .progress {
+            height: 8px;
+            background: rgba(15, 23, 42, 0.8);
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid var(--line);
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6, #10b981);
+            transition: width 0.3s ease;
+        }
+
+        .keyboard-hint {
+            color: #64748b;
+            font-size: 0.7rem;
+            line-height: 1.5;
+        }
+        .keyboard-hint kbd {
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid var(--line);
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-family: ui-monospace, monospace;
+            font-size: 0.7rem;
+            color: #cbd5e1;
+        }
+
+        #toast {
+            position: fixed;
+            top: 76px;
+            right: 24px;
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #3b82f6;
+            color: #e2e8f0;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            display: none;
+            z-index: 1000;
+            max-width: 360px;
+        }
+        #toast.success { border-color: #10b981; }
+        #toast.error { border-color: #ef4444; }
+
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            font-size: 0.75rem;
+            color: #94a3b8;
+        }
+        .legend .dot, .stat-row .dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+            display: inline-block;
+            margin-right: 6px;
+            vertical-align: middle;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        #modeBanner {
+            background: rgba(59, 130, 246, 0.12);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+            font-size: 0.78rem;
+            padding: 6px 10px;
+            border-radius: 6px;
+            margin-right: 8px;
+        }
+        #modeBanner.sam {
+            background: rgba(245, 158, 11, 0.12);
+            border-color: rgba(245, 158, 11, 0.5);
+            color: #fbbf24;
+        }
+        #modeBanner.maskrcnn {
+            background: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.5);
+            color: #6ee7b7;
+        }
+
+        .cat-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            color: #cbd5e1;
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: background 0.12s, transform 0.08s;
+            margin: 2px 4px 2px 0;
+        }
+        .cat-chip:hover { background: rgba(59, 130, 246, 0.18); }
+        .cat-chip.active {
+            background: rgba(59, 130, 246, 0.32);
+            color: #fff;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.7);
+        }
+        .cat-chip.staged {
+            background: rgba(245, 158, 11, 0.18);
+            color: #fde68a;
+        }
+        .cat-chip .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        #categoryHelp {
+            font-size: 0.72rem;
+            color: #64748b;
+            margin-top: 8px;
+            line-height: 1.4;
+        }
+        #categoryHelp.warn { color: #fbbf24; }
+
+        #categorySelectedLabel {
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            font-size: 0.78rem;
+            color: #60a5fa;
+        }
+    </style>
+</head>
+<body>
+
+<div id="appShell">
+    <header id="topbar">
+        <strong><i class="fas fa-mountain me-1"></i> Rock Label Editor</strong>
+        <span class="session-id">{{ session_id }}</span>
+        {% if model_type == 'sam' %}
+            <span id="modeBanner" class="sam" title="SAM produces class-agnostic masks. Each polygon needs a category before saving.">
+                <i class="fas fa-bolt"></i> SAM mode — assign category per polygon
+            </span>
+        {% elif model_type == 'maskrcnn_rocks' %}
+            <span id="modeBanner" class="maskrcnn" title="Mask R-CNN ships predictions labelled 'rock'. Override per-polygon when wrong.">
+                <i class="fas fa-cube"></i> Mask R-CNN — categories editable
+            </span>
+        {% else %}
+            <span id="modeBanner" title="Per-polygon category. Free text allowed.">
+                <i class="fas fa-tags"></i> {{ model_type }}
+            </span>
+        {% endif %}
+        <button class="tool-btn" id="btnSelect" data-tool="select" title="Select / move polygons (V)"><i class="fas fa-arrow-pointer"></i></button>
+        <button class="tool-btn" id="btnAdd" data-tool="add" title="Add new polygon (A)"><i class="fas fa-draw-polygon"></i> Add</button>
+        <button class="tool-btn" id="btnEdit" data-tool="edit" title="Edit polygon vertices (E)"><i class="fas fa-pen"></i> Edit</button>
+        <button class="tool-btn" id="btnTile" data-tool="tile" title="Move 400x400 tile box (T)"><i class="fas fa-square-full" style="opacity:0.5"></i><i class="fas fa-square" style="margin-left:-12px"></i> Tile</button>
+        <button class="tool-btn danger" id="btnDelete" title="Delete selected (Del)"><i class="fas fa-trash"></i></button>
+        <button class="tool-btn" id="btnApprove" title="Approve / un-approve selected (Y)"><i class="fas fa-check"></i></button>
+        <span class="spacer"></span>
+        <button class="tool-btn" id="btnFit" title="Fit image to viewport (F)"><i class="fas fa-expand"></i> Fit</button>
+        <button class="tool-btn" id="btnZoomIn" title="Zoom in (+)"><i class="fas fa-magnifying-glass-plus"></i></button>
+        <button class="tool-btn" id="btnZoomOut" title="Zoom out (-)"><i class="fas fa-magnifying-glass-minus"></i></button>
+        <button class="tool-btn success" id="btnSaveTile" title="Save current tile (Enter)"><i class="fas fa-save"></i> Save Tile</button>
+        <a href="/label/ai-analysis/report/{{ session_id }}/" class="tool-btn" title="Back to analysis report">
+            <i class="fas fa-arrow-left"></i> Report
+        </a>
+    </header>
+
+    <main id="stage">
+        <div id="canvasWrap">
+            <canvas id="canvas"></canvas>
+        </div>
+        <div id="toast"></div>
+    </main>
+
+    <aside id="side">
+        <div class="panel">
+            <h6><i class="fas fa-tags"></i> Category</h6>
+            <div class="mb-2">
+                <label class="form-label">Selected polygon</label>
+                <div id="categorySelectedLabel">no polygon selected</div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Category name (free text or chip)</label>
+                <input type="text" class="form-control form-control-sm" id="categoryInput"
+                       placeholder="rock, building, vegetation…" autocomplete="off">
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Quick chips</label>
+                <div id="categoryChips"></div>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Default for new polygons</label>
+                <input type="text" class="form-control form-control-sm" id="defaultCategoryInput"
+                       placeholder="rock" autocomplete="off">
+            </div>
+            <div id="categoryHelp"></div>
+            <small class="keyboard-hint d-block mt-2">
+                <kbd>C</kbd> focus category &nbsp;
+                <kbd>Shift</kbd>+click polygon to stamp the staged category onto it.
+            </small>
+        </div>
+
+        <div class="panel">
+            <h6><i class="fas fa-list"></i> Per-category counts</h6>
+            <div id="categoryBreakdown"></div>
+        </div>
+
+        <div class="panel">
+            <h6><i class="fas fa-database"></i> Training Dataset</h6>
+            <div class="mb-2">
+                <label class="form-label">Existing</label>
+                <select class="form-select form-select-sm" id="datasetSelect">
+                    <option value="">— Create new below —</option>
+                </select>
+            </div>
+            <div class="mb-2">
+                <label class="form-label">New dataset name</label>
+                <input type="text" class="form-control form-control-sm" id="datasetName" value="{{ default_dataset_name }}" placeholder="My rocks corpus">
+            </div>
+            <div class="mb-2">
+                <label class="form-label">Trigger retraining at N tiles</label>
+                <input type="number" class="form-control form-control-sm" id="datasetThreshold" value="50" min="5" max="10000" step="5">
+            </div>
+        </div>
+
+        <div class="panel">
+            <h6><i class="fas fa-th"></i> Tile (400 × 400)</h6>
+            <div class="stat-row"><span>Position</span><span class="v" id="statTilePos">—</span></div>
+            <div class="stat-row"><span>Polygons inside</span><span class="v" id="statPolysIn">0</span></div>
+            <small class="keyboard-hint d-block mt-2">
+                Drag the green box to choose what gets saved. Only polygons whose centroid falls inside the box become training masks for this tile.
+            </small>
+        </div>
+
+        <div class="panel">
+            <h6><i class="fas fa-chart-line"></i> Progress</h6>
+            <div class="stat-row"><span>This session saved</span><span class="v" id="statSavedSession">0</span></div>
+            <div class="stat-row"><span>Dataset total</span><span class="v" id="statSavedDataset">—</span></div>
+            <div class="stat-row"><span>Threshold</span><span class="v" id="statThreshold">50</span></div>
+            <div class="mt-2 progress"><div class="progress-bar" id="progressBar" style="width: 0%"></div></div>
+            <div id="retrainStatus" style="margin-top: 8px; font-size: 0.8rem; color: #10b981; display: none;">
+                <i class="fas fa-check-circle"></i> Threshold reached — RETRAIN_READY sentinel written.
+            </div>
+        </div>
+
+        <div class="panel">
+            <h6><i class="fas fa-eye"></i> Polygons</h6>
+            <div class="stat-row"><span>AI predictions</span><span class="v" id="statPred">0</span></div>
+            <div class="stat-row"><span>User-added</span><span class="v" id="statAdded">0</span></div>
+            <div class="stat-row"><span>Approved</span><span class="v ok" id="statApproved">0</span></div>
+            <div class="stat-row"><span>Deleted</span><span class="v warn" id="statDeleted">0</span></div>
+            <div class="legend mt-2">
+                <span><span class="dot" style="background: var(--poly-pred)"></span>AI</span>
+                <span><span class="dot" style="background: var(--poly-user)"></span>User</span>
+                <span><span class="dot" style="background: var(--poly-approved)"></span>Approved</span>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h6><i class="fas fa-keyboard"></i> Shortcuts</h6>
+            <div class="keyboard-hint">
+                <kbd>V</kbd> Select &nbsp;
+                <kbd>A</kbd> Add polygon &nbsp;
+                <kbd>E</kbd> Edit vertices &nbsp;
+                <kbd>T</kbd> Move tile box &nbsp;
+                <kbd>Y</kbd> Approve &nbsp;
+                <kbd>Del</kbd> Remove &nbsp;
+                <kbd>F</kbd> Fit &nbsp;
+                <kbd>Enter</kbd> Save tile &nbsp;
+                <kbd>+/-</kbd> Zoom &nbsp;
+                <kbd>Esc</kbd> Cancel
+            </div>
+            <div class="keyboard-hint mt-2">
+                In <strong>Add</strong> mode: click to drop vertices, double-click or press <kbd>Enter</kbd> to close.
+            </div>
+        </div>
+    </aside>
+</div>
+
+<script>
+    window.ROCK_LABEL_CTX = {
+        sessionId: {{ session_id|safe|stringformat:"r" }},
+        imageUrl: {{ image_url|safe|stringformat:"r" }},
+        imageWidth: {{ image_width }},
+        imageHeight: {{ image_height }},
+        tileSize: {{ tile_size }},
+        hasPredictions: {% if has_predictions %}true{% else %}false{% endif %},
+        initialPolygons: {{ initial_polygons_json|safe }},
+        metadata: {{ metadata_json|safe }},
+        defaultDatasetName: {{ default_dataset_name|safe|stringformat:"r" }},
+        modelType: {{ model_type|safe|stringformat:"r" }},
+        defaultCategory: {{ default_category|safe|stringformat:"r" }},
+        categoryChips: {{ category_chips_json|safe }},
+        categoryPalette: {{ category_palette_json|safe }},
+        urls: {
+            saveTile: "/label/rocks/edit/{{ session_id }}/save-tile/",
+            datasets: "/label/rocks/datasets/",
+            categories: "/label/rocks/categories/",
+        },
+    };
+</script>
+<script src="{% static 'web/js/rock-label-editor.js' %}"></script>
+</body>
+</html>
