@@ -132,9 +132,16 @@ def run_inference(
     mask_threshold: float = 0.5,
     max_detections: int = 200,
     label_name: str = "rock",
-    class_names: Optional[List[str]] = None,
+    label_names: Optional[List[str]] = None,
 ) -> Tuple[List[Detection], Tuple[int, int]]:
-    """Run the model and post-process outputs into Detection records."""
+    """Run the model and post-process outputs into Detection records.
+
+    ``label_names`` is a class-index-keyed table (index 0 is background).
+    When the model emits a class index that isn't covered by the table,
+    we fall back to ``f"{label_name}_{class_idx}"`` so the caller can
+    still tell predictions apart on a multi-class head whose taxonomy
+    isn't fully known yet.
+    """
     _, _, h, w = image_tensor.shape
     out = model(image_tensor)[0]
 
@@ -157,11 +164,11 @@ def run_inference(
         rle = mask_utils.encode(np.asfortranarray(bmask))
         rle["counts"] = rle["counts"].decode("ascii")
         polygons_norm = _mask_to_polygons_norm(bmask)
-        class_id = int(labels[idx]) if labels is not None else 1
-        if class_names and 0 <= class_id < len(class_names):
-            resolved_label = class_names[class_id]
-        elif class_id > 0 and class_names and class_id - 1 < len(class_names):
-            resolved_label = class_names[class_id - 1]
+        class_idx = int(labels[idx]) if labels is not None else None
+        if label_names and class_idx is not None and 0 <= class_idx < len(label_names):
+            resolved_label = label_names[class_idx]
+        elif class_idx is not None:
+            resolved_label = f"{label_name}_{class_idx}"
         else:
             resolved_label = label_name
         detections.append(

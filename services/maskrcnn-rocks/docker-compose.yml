@@ -36,7 +36,13 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
-      - DEFAULT_MODEL_ID=bishop_hero_e0004
+      - DEFAULT_MODEL_ID=bishop_ntl_rgb_e0049
+      # Override output labels without rebuilding, globally or by family.
+      # Examples:
+      #   MASKRCNN_LABELS=background,object
+      #   MASKRCNN_LABELS_TORNADO=background,damage_low,damage_mid,damage_high
+      - MASKRCNN_LABELS_BISHOP=background,rock
+      - DEFAULT_LABEL_NAME=rock
       - WEIGHTS_ROOT=/opt/program/weights
       - MAX_CONTENT_LENGTH=33554432       # 32 MiB; raise if you send .npy
 

@@ -78,8 +78,9 @@ log = logging.getLogger("maskrcnn-rocks")
 WEIGHTS_ROOT = os.environ.get("WEIGHTS_ROOT", "/opt/program/weights")
 UPLOAD_FOLDER = os.environ.get("UPLOAD_FOLDER", "/tmp/uploads")
 RESULTS_FOLDER = os.environ.get("RESULTS_FOLDER", "/tmp/results")
-DEFAULT_MODEL_ID = os.environ.get("DEFAULT_MODEL_ID", "bishop_hero_e0004")
+DEFAULT_MODEL_ID = os.environ.get("DEFAULT_MODEL_ID", "bishop_ntl_rgb_e0049")
 MAX_CONTENT_LENGTH = int(os.environ.get("MAX_CONTENT_LENGTH", 32 * 1024 * 1024))
+DEFAULT_LABEL_NAME = os.environ.get("DEFAULT_LABEL_NAME", "rock")
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
@@ -102,6 +103,54 @@ log.info("registry size: %d", len(REGISTRY))
 log.info("default model_id: %s", ACTIVE_DEFAULT)
 
 _MODEL_CACHE: Dict[str, Tuple[torch.nn.Module, Dict[str, Any]]] = {}
+
+
+def _labels_from_env(entry: ModelEntry) -> Optional[list[str]]:
+    """Read configurable class labels from env.
+
+    Supported forms (first non-empty wins):
+
+      MASKRCNN_LABELS_<FAMILY>=background,foo,bar
+      MASKRCNN_LABELS=background,foo,bar
+
+    The family key takes precedence so a single deployment can label
+    bishop and tornado checkpoints differently without rebuilds.
+    """
+    family_key = f"MASKRCNN_LABELS_{entry.family.upper()}"
+    raw = os.environ.get(family_key) or os.environ.get("MASKRCNN_LABELS")
+    if not raw:
+        return None
+    labels = [part.strip() for part in raw.split(",") if part.strip()]
+    return labels or None
+
+
+def _label_config(
+    entry: ModelEntry, meta: Dict[str, Any]
+) -> Tuple[str, Optional[list[str]]]:
+    """Return (fallback_label, label_names_table) for a registry family.
+
+    The archived checkpoints don't all carry their original class-name
+    table, so we keep labels honest: use known coarse domains and fall
+    back to ``<label>_<idx>`` for multi-class heads whose exact taxonomy
+    still needs provenance work.
+
+    Resolution order:
+      1. Env override (`_labels_from_env`).
+      2. Hard-coded family rule (currently: tornado damage classes).
+      3. Generic ``DEFAULT_LABEL_NAME`` with no table.
+    """
+    env_labels = _labels_from_env(entry)
+    if env_labels:
+        fallback = env_labels[1] if len(env_labels) > 1 else env_labels[0]
+        return fallback, env_labels
+
+    num_classes = int(meta.get("num_classes") or 0)
+    if entry.family == "tornado":
+        names = ["background"] + [
+            f"tornado_damage_class_{i}" for i in range(1, num_classes)
+        ]
+        return "tornado_damage", names
+    return DEFAULT_LABEL_NAME, None
 
 
 def _get_model(model_id: str) -> Tuple[torch.nn.Module, Dict[str, Any], ModelEntry]:
@@ -164,18 +213,6 @@ def _param(name: str, default, caster):
     if name in request.form:
         return caster(request.form[name])
     return default
-
-
-def _class_names(default_label: str = "rock") -> Optional[list[str]]:
-    raw = _param("class_names", os.environ.get("CLASS_NAMES", ""), str)
-    if not raw:
-        return None
-    names = [n.strip() for n in raw.replace(";", ",").split(",") if n.strip()]
-    if not names:
-        return None
-    if names[0].lower() not in {"background", "__background__", "bg"}:
-        names = ["background", *names]
-    return names or ["background", default_label]
 
 
 # -------------------------------------------------------------------------
@@ -262,7 +299,7 @@ def api_predict():
     score_thr = _param("score_threshold", 0.5, float)
     mask_thr = _param("mask_threshold", 0.5, float)
     max_det = _param("max_detections", 200, int)
-    class_names = _class_names()
+    fallback_label, label_names = _label_config(entry, meta)
     return_annotated = _param("return_annotated", True,
                               lambda v: str(v).lower() in {"1", "true", "yes"})
 
@@ -275,8 +312,8 @@ def api_predict():
             score_threshold=score_thr,
             mask_threshold=mask_thr,
             max_detections=max_det,
-            label_name="rock",
-            class_names=class_names,
+            label_name=fallback_label,
+            label_names=label_names,
         )
         elapsed_ms = int((time.time() - t0) * 1000)
     except Exception as exc:
@@ -289,7 +326,10 @@ def api_predict():
         "model": asdict(entry),
         "inference_ms": elapsed_ms,
         "image_size": {"width": w, "height": h},
-        "class_names": class_names,
+        # Echo the resolved label table (or null when none configured) so
+        # clients can render legends without re-deriving the env config.
+        "label_names": label_names,
+        "fallback_label": fallback_label,
         "predictions": {
             "count": len(detections),
             "boxes":     [d.box                 for d in detections],
