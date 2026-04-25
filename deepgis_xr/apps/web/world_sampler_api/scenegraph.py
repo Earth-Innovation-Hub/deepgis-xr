@@ -57,6 +57,7 @@ is one process boundary above them.
 from __future__ import annotations
 
 import json
+import math
 import time
 from datetime import datetime
 from pathlib import Path
@@ -84,6 +85,45 @@ from .scene_graph_adapters import (
 
 
 SCENEGRAPH_RESULTS_DIR = Path('/app/deepgis_results') / 'scenegraph_results'
+
+
+def _sanitize_json_floats(obj: Any) -> Any:
+    """Recursively replace non-finite floats (NaN / +Inf / -Inf) with
+    ``None`` so the result is RFC-8259-valid JSON.
+
+    Why this exists. Two downstream consumers reject Python's permissive
+    ``json.dumps(allow_nan=True)`` output:
+
+      1. JavaScript ``JSON.parse`` fails the entire document on the first
+         bare ``NaN`` / ``Infinity`` token, so the whole SceneGraph never
+         reaches the Cesium overlay.
+      2. SQLite's ``JSONField`` runs ``json_valid()`` as a column CHECK
+         constraint and rejects NaN/Infinity, so the DB persist fails
+         with ``CHECK constraint failed: scene_graphs``.
+
+    The dominant source of NaN in our pipeline is OSM tag round-tripping:
+    geopandas reports sparsely-populated columns (``traffic_signals``,
+    ``maxspeed``, ``bicycle``, …) as ``float('nan')`` when the tag is
+    absent on a feature, and those NaNs ride through into
+    ``KernelClaim.metadata`` and the final node payload. We chose
+    *normalize-then-emit* over ``allow_nan=False`` because the latter
+    would 500 the request (a single NaN in a 3 MB payload is enough);
+    silently mapping to ``None`` lets the structurally-valid scenes
+    still ship while flagging missing tag values exactly as a
+    JSON-aware client would expect (``null``).
+
+    Walks dicts, lists, and tuples; leaves int/bool/str/None untouched;
+    coerces ``float('nan'|'inf'|'-inf')`` to ``None``.
+    """
+    if isinstance(obj, float):
+        if math.isfinite(obj):
+            return obj
+        return None
+    if isinstance(obj, dict):
+        return {k: _sanitize_json_floats(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_json_floats(v) for v in obj]
+    return obj
 
 
 def _safe_lat_str(lat: float) -> str:
@@ -340,6 +380,11 @@ def build_scenegraph_view(request):
         'edge_proximity': edge_proximity,
     })
 
+    # Strip NaN / +Inf / -Inf so both the JS client and SQLite's
+    # JSONField check are happy. See _sanitize_json_floats() docstring;
+    # OSM tag round-trips are the empirically-dominant source.
+    graph_dict = _sanitize_json_floats(graph_dict)
+
     # 4. Persist artifacts.
     location = viewport_in.get('camera') or {}
     try:
@@ -405,14 +450,20 @@ def build_scenegraph_view(request):
         # primary deliverable to the frontend.
         print(f"[scenegraph] failed to persist DB row: {exc}")
 
-    return JsonResponse({
-        'status': 'success',
-        'session_id': session_id,
-        'scene_graph': graph_dict,
-        'saved_to': {
-            'session_dir': artifact_path,
-            'host_path': str(SCENEGRAPH_RESULTS_DIR / session_id).replace(
-                '/app/deepgis_results', './deepgis_results'
-            ),
+    return JsonResponse(
+        {
+            'status': 'success',
+            'session_id': session_id,
+            'scene_graph': graph_dict,
+            'saved_to': {
+                'session_dir': artifact_path,
+                'host_path': str(SCENEGRAPH_RESULTS_DIR / session_id).replace(
+                    '/app/deepgis_results', './deepgis_results'
+                ),
+            },
         },
-    })
+        # allow_nan=False makes any future regression (a NaN that
+        # _sanitize_json_floats missed) a loud 500 instead of a silent
+        # 200 with malformed JSON that JS rejects mid-parse.
+        json_dumps_params={'allow_nan': False},
+    )

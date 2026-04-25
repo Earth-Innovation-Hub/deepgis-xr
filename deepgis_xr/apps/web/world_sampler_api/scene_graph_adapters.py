@@ -36,6 +36,7 @@ distinction-vs-label discipline lives in ``Q_s``, not in the adapter.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 # kernelcal lives next to this repo on the dev box and is installed
@@ -231,6 +232,22 @@ def adapt_osm(
                 if len(ring_uv) < 3:
                     continue
                 geo_ring = [[float(p[0]), float(p[1])] for p in ring]
+                # OSM tag dump from geopandas spreads sparsely-populated
+                # columns across every feature with ``float('nan')`` for
+                # the empties (e.g. ``traffic_signals``, ``maxspeed``,
+                # ``bicycle`` on roads). Those NaNs are RFC-8259-invalid
+                # and bloat the payload to MBs of ``null`` keys; drop
+                # them at the source. The orchestrator's
+                # ``_sanitize_json_floats`` is still the safety net for
+                # any other adapter that forgets, but trimming here is
+                # what keeps the response compact.
+                tags_raw = f.get('tags') or {}
+                tags = {
+                    k: v for k, v in tags_raw.items()
+                    if v is not None
+                    and not (isinstance(v, float) and not math.isfinite(v))
+                    and v != ''
+                }
                 claims.append(
                     KernelClaim.from_polygon(
                         source_id='osm',
@@ -241,7 +258,7 @@ def adapt_osm(
                         image_size=image_size,
                         attributes={
                             'osm_id': f.get('osm_id'),
-                            'tags': dict(f.get('tags') or {}),
+                            'tags': tags,
                             'feature_kind': feature_kind,
                         },
                     )
