@@ -1416,34 +1416,123 @@ class WorldSamplerUI {
             roll: this.viewer.camera.roll
         };
     }
-    
-    restoreCameraSnapshot(snapshot) {
-        if (!snapshot) return;
-        this.viewer.camera.setView({
-            destination: snapshot.position,
-            orientation: {
-                heading: snapshot.heading,
-                pitch: snapshot.pitch,
-                roll: snapshot.roll
-            },
-            duration: 0
-        });
-        this.viewer.scene.requestRender();
-    }
-    
-    preserveCameraAfterAsyncRender(snapshot) {
-        // GeoJSON loading and entity styling finish asynchronously; restore a few
-        // times so Cesium cannot leave the view zoomed to a generated extent.
-        [0, 50, 250, 750].forEach((delay) => {
-            setTimeout(() => this.restoreCameraSnapshot(snapshot), delay);
-        });
-    }
-    
-    addDataSourcePreservingCamera(dataSource, snapshot = null) {
-        const cameraSnapshot = snapshot || this.snapshotCamera();
+
+    // The "camera-preserving" helpers below are intentional no-ops on the camera.
+    //
+    // History: this UI used to (a) save a camera snapshot, (b) call
+    // viewer.dataSources.add(...), (c) schedule one or more setView() calls to
+    // restore the snapshot on the next microtask / [0, 50, 250, 750] ms timers.
+    // The premise was "GeoJsonDataSource.load auto-zooms to its features", which
+    // is false in modern Cesium — only viewer.zoomTo / flyTo / selectedEntity /
+    // trackedEntity move the camera implicitly, and none of those run here.
+    //
+    // The "protective" setView calls were the actual cause of the visible
+    // post-Analyze "zoom-out": if the user nudged the wheel during the network
+    // round-trip, the snapshot we restored to was their PRE-analyze pose taken
+    // before they nudged, snapping the camera back to where it was several
+    // seconds ago. Worse, displayZeroShotResults's withCapturePose finally clause
+    // restored to the pose at the start of *display*, which combined with stray
+    // user input could leave the camera continents away from the capture site.
+    //
+    // We now keep the function names so call sites stay readable, but they only
+    // add the data source. Projection is decoupled from the live camera via
+    // computeViewportCornersGeo() + bilinearProjectFromCorners(), so we never
+    // need to move the camera to render results.
+    preserveCameraAfterAsyncRender(_snapshot) { /* no-op, kept for callers */ }
+
+    addDataSourcePreservingCamera(dataSource, _snapshot = null) {
         this.viewer.dataSources.add(dataSource);
-        this.preserveCameraAfterAsyncRender(cameraSnapshot);
         return dataSource;
+    }
+
+    /**
+     * Snapshot the four viewport corners as geographic coordinates using the
+     * current camera. Call this immediately after a clean render when the user
+     * is at the pose they want results aligned to (i.e. right after capture).
+     *
+     * Returns { tl, tr, br, bl, bbox } where each corner is { lon, lat } in
+     * degrees and bbox is { minLon, maxLon, minLat, maxLat }. Returns null if
+     * fewer than two corners can be picked (degenerate viewport, e.g. fully
+     * off-globe).
+     */
+    computeViewportCornersGeo() {
+        const scene = this.viewer.scene;
+        const canvas = scene.canvas;
+        const w = canvas.width;
+        const h = canvas.height;
+        const pickPositionSupported = scene.pickPositionSupported &&
+            scene.mode === Cesium.SceneMode.SCENE3D;
+
+        const pickAt = (x, y) => {
+            const sp = new Cesium.Cartesian2(x, y);
+            let cart = null;
+            if (pickPositionSupported) {
+                try { cart = scene.pickPosition(sp); } catch (e) { cart = null; }
+            }
+            if (!Cesium.defined(cart) && scene.globe) {
+                cart = scene.camera.pickEllipsoid(sp, scene.globe.ellipsoid);
+            }
+            if (!Cesium.defined(cart)) return null;
+            const c = Cesium.Cartographic.fromCartesian(cart);
+            return {
+                lon: Cesium.Math.toDegrees(c.longitude),
+                lat: Cesium.Math.toDegrees(c.latitude)
+            };
+        };
+
+        const tl = pickAt(0, 0);
+        const tr = pickAt(w, 0);
+        const br = pickAt(w, h);
+        const bl = pickAt(0, h);
+        const got = [tl, tr, br, bl].filter(Boolean);
+        if (got.length < 2) return null;
+
+        const lons = got.map(p => p.lon);
+        const lats = got.map(p => p.lat);
+        return {
+            tl, tr, br, bl,
+            bbox: {
+                minLon: Math.min(...lons),
+                maxLon: Math.max(...lons),
+                minLat: Math.min(...lats),
+                maxLat: Math.max(...lats)
+            }
+        };
+    }
+
+    /**
+     * Project a normalized image-space point (x_norm in [0,1] left→right,
+     * y_norm in [0,1] top→bottom) onto a geographic [lon, lat] using bilinear
+     * interpolation across the four pre-captured viewport corners. Handles
+     * arbitrary camera headings without touching the live camera state.
+     *
+     * Falls back to the bbox-based linear interp if any corner is missing,
+     * then to the centre point if the corners object is null.
+     */
+    bilinearProjectFromCorners(corners, x_norm, y_norm) {
+        if (!corners) return null;
+        const { tl, tr, br, bl, bbox } = corners;
+        if (tl && tr && br && bl) {
+            const u = x_norm;
+            const v = y_norm;
+            const wTL = (1 - u) * (1 - v);
+            const wTR = u * (1 - v);
+            const wBR = u * v;
+            const wBL = (1 - u) * v;
+            return [
+                tl.lon * wTL + tr.lon * wTR + br.lon * wBR + bl.lon * wBL,
+                tl.lat * wTL + tr.lat * wTR + br.lat * wBR + bl.lat * wBL
+            ];
+        }
+        if (bbox) {
+            const lonRange = bbox.maxLon - bbox.minLon;
+            const latRange = bbox.maxLat - bbox.minLat;
+            return [
+                bbox.minLon + x_norm * lonRange,
+                bbox.minLat + (1 - y_norm) * latRange
+            ];
+        }
+        return null;
     }
     
     async runVegetationBootstrap() {
@@ -1483,11 +1572,10 @@ class WorldSamplerUI {
                 throw new Error(result.message || `HTTP ${response.status}`);
             }
             result.capture_pose = capturePose;
+            result.world_corners = viewportData.world_corners;
             this.vegetationGame.lastCapture = viewportData;
             this.vegetationGame.lastResult = result;
-            const cameraBeforeDisplay = this.snapshotCamera();
             this.displayZeroShotResults(result);
-            this.preserveCameraAfterAsyncRender(cameraBeforeDisplay);
             this.renderVegetationProposalList(result);
             if (saveBtn) saveBtn.disabled = false;
             this.setVegetationStatus(`${result.num_detections || 0} proposals. Review, then save.`, 'success');
@@ -2483,10 +2571,18 @@ class WorldSamplerUI {
             pitch: Cesium.Math.toDegrees(camera.pitch),
             roll: Cesium.Math.toDegrees(camera.roll)
         };
-        
+
+        // Snapshot the four viewport corners as lon/lat using the camera at the
+        // exact moment of capture. We reuse this for projecting AI results back
+        // onto the globe later, so the display path never has to move the
+        // camera (which is what used to cause the post-Analyze "zoom-out").
+        const worldCorners = this.computeViewportCornersGeo();
+        this.lastCaptureCorners = worldCorners;
+
         return {
             image: imageData,
-            location: location
+            location: location,
+            world_corners: worldCorners
         };
     }
     
@@ -2612,31 +2708,23 @@ class WorldSamplerUI {
                 });
             });
             
-            // Temporarily hide SAM result overlays to capture clean viewport
-            let samDataSourceWasVisible = false;
-            const overlayRestoreCamera = this.snapshotCamera();
+            // Drop any prior overlay so the captured image is the raw globe.
+            // We don't bother re-adding the old overlay on success: a successful
+            // analysis replaces it with new results anyway, and on failure the
+            // user can re-run. This saves us the round-trip of removing then
+            // re-adding the same data source for nothing.
             if (this.samDataSource && this.viewer.dataSources.contains(this.samDataSource)) {
                 this.viewer.dataSources.remove(this.samDataSource);
-                samDataSourceWasVisible = true;
-                console.log('[SAM] Temporarily hiding SAM overlays for clean viewport capture');
+                console.log('[SAM] Dropped previous overlay for clean viewport capture');
             }
-            
+
             try {
-                // Force another render before capture (without SAM overlays)
                 this.viewer.scene.requestRender();
                 this.viewer.scene.render();
-                
-                // Small delay to ensure framebuffer is ready
+
                 await new Promise(resolve => setTimeout(resolve, 100));
-                
-                // Capture viewport (without SAM overlays)
+
                 const viewportData = await this.captureViewportImage();
-                
-                // Restore SAM overlays if they were visible
-                if (samDataSourceWasVisible && this.samDataSource) {
-                    this.addDataSourcePreservingCamera(this.samDataSource, overlayRestoreCamera);
-                    console.log('[SAM] Restored SAM overlays after capture');
-                }
                 
                 // Continue with analysis using clean viewport
             const capturePose = viewportData.location;
@@ -2762,6 +2850,7 @@ class WorldSamplerUI {
                     // The backend requests mask_format='geojson' and converts to normalized coordinates
                     // Frontend displays masks with visual indicators (🎯 icon, thicker outlines)
                     result.capture_pose = capturePose;
+                    result.world_corners = viewportData.world_corners;
                     this.displayZeroShotResults(result);
                     
                     // Show notification
@@ -2794,6 +2883,7 @@ class WorldSamplerUI {
                     
                     // Display SAM results
                     result.capture_pose = capturePose;
+                    result.world_corners = viewportData.world_corners;
                     this.displaySAMResults(result);
                     
                     // Show notification
@@ -2833,10 +2923,6 @@ class WorldSamplerUI {
                     statusDiv.appendChild(reportLink);
                 }
             } catch (captureError) {
-                // Restore SAM overlays even if capture fails
-                if (samDataSourceWasVisible && this.samDataSource) {
-                    this.addDataSourcePreservingCamera(this.samDataSource, overlayRestoreCamera);
-                }
                 throw captureError;
             }
             
@@ -2854,96 +2940,6 @@ class WorldSamplerUI {
     }
     
     /**
-     * Run projection-sensitive work using the original capture pose to avoid drift.
-     * Temporarily moves camera to capture position, does work, then restores.
-     * Uses instant transitions (duration: 0) to prevent visual jumps.
-     */
-    withCapturePose(capturePose, workFn) {
-        const camera = this.viewer.camera;
-        const scene = this.viewer.scene;
-        
-        if (!capturePose) {
-            console.warn('No capture pose available, using current camera position');
-            return workFn();
-        }
-        
-        // Store current camera state
-        const originalPose = {
-            position: Cesium.Cartesian3.clone(camera.position),
-            heading: camera.heading,
-            pitch: camera.pitch,
-            roll: camera.roll
-        };
-        
-        // Flag to track if we need to restore
-        let needsRestore = false;
-        
-        try {
-            // Move to capture pose INSTANTLY (no animation)
-            camera.setView({
-                destination: Cesium.Cartesian3.fromDegrees(
-                    capturePose.lon,
-                    capturePose.lat,
-                    capturePose.alt
-                ),
-                orientation: {
-                    heading: Cesium.Math.toRadians(capturePose.heading || 0),
-                    pitch: Cesium.Math.toRadians(capturePose.pitch || 0),
-                    roll: Cesium.Math.toRadians(capturePose.roll || 0)
-                },
-                duration: 0, // INSTANT - no animation to prevent flashing
-                endTransform: Cesium.Matrix4.IDENTITY
-            });
-            needsRestore = true;
-            
-            // Force immediate render at capture pose
-            scene.requestRender();
-            
-            // Do the projection work
-            const result = workFn();
-            
-            return result;
-            
-        } catch (error) {
-            console.error('Error in withCapturePose:', error);
-            throw error;
-        } finally {
-            // ALWAYS restore camera position (even if workFn throws)
-            if (needsRestore) {
-                try {
-                    camera.setView({
-                        destination: originalPose.position,
-                        orientation: {
-                            heading: originalPose.heading,
-                            pitch: originalPose.pitch,
-                            roll: originalPose.roll
-                        },
-                        duration: 0, // INSTANT - no animation
-                        endTransform: Cesium.Matrix4.IDENTITY
-                    });
-                    scene.requestRender();
-                } catch (restoreError) {
-                    console.error('Failed to restore camera after capture pose:', restoreError);
-                    // Last resort: try direct position/orientation setting
-                    try {
-                        camera.position = originalPose.position;
-                        camera.setView({
-                            orientation: {
-                                heading: originalPose.heading,
-                                pitch: originalPose.pitch,
-                                roll: originalPose.roll
-                            },
-                            duration: 0
-                        });
-                    } catch (fallbackError) {
-                        console.error('Camera restore fallback also failed:', fallbackError);
-                    }
-                }
-            }
-        }
-    }
-    
-    /**
      * Display SAM segmentation results on Cesium map
      * @param {Object} result - SAM analysis result
      */
@@ -2952,182 +2948,94 @@ class WorldSamplerUI {
             console.warn('No GeoJSON features in SAM results');
             return;
         }
-        
-        // Remove previous SAM results if any
+
         if (this.samDataSource) {
             this.viewer.dataSources.remove(this.samDataSource);
         }
-        
-        const capturePose = result.capture_pose || this.lastCapturePose || null;
-        
-        this.withCapturePose(capturePose, () => {
-            const camera = this.viewer.camera;
-            const scene = this.viewer.scene;
-            const canvas = scene.canvas;
-            const viewportWidth = canvas.width;
-            const viewportHeight = canvas.height;
-            const sceneMode = scene.mode;
-            const pickPositionSupported = scene.pickPositionSupported && sceneMode === Cesium.SceneMode.SCENE3D;
-            
-            // Get the four corners of the viewport in world coordinates
-            const corners = [
-                new Cesium.Cartesian2(0, 0),                    // Top-left
-                new Cesium.Cartesian2(viewportWidth, 0),       // Top-right
-                new Cesium.Cartesian2(viewportWidth, viewportHeight), // Bottom-right
-                new Cesium.Cartesian2(0, viewportHeight)       // Bottom-left
-            ];
-            
-            const worldCorners = corners.map(screenPos => {
-                let cartesian = null;
-                
-                // First try to pick from the terrain/globe if supported (3D only)
-                if (pickPositionSupported) {
-                    cartesian = scene.pickPosition(screenPos);
+
+        // Project results using the corner snapshot taken at capture time, so
+        // we never have to move the camera during display.
+        const corners = result.world_corners || this.lastCaptureCorners || null;
+        if (!corners) {
+            console.warn('No viewport corner snapshot available; falling back to approximate projection');
+            this.displaySAMResultsApproximate(result);
+            return;
+        }
+
+        const pixelToGeographic = (x_norm, y_norm) =>
+            this.bilinearProjectFromCorners(corners, x_norm, y_norm);
+
+        this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
+
+        const features = result.geojson.features.map((feature, index) => {
+            const props = feature.properties;
+            const coords = feature.geometry.coordinates[0];
+            const geographicCoords = coords.map(([x_norm, y_norm]) =>
+                pixelToGeographic(x_norm, y_norm)
+            ).filter(Boolean);
+
+            return {
+                type: 'Feature',
+                geometry: {
+                    type: 'Polygon',
+                    coordinates: [geographicCoords]
+                },
+                properties: {
+                    segment_id: props.segment_id || index + 1,
+                    area: props.area || 0,
+                    predicted_iou: props.iou || props.predicted_iou || 0,
+                    stability_score: props.stability || props.stability_score || 0
                 }
-                
-                // Fallback to ellipsoid pick if pickPosition fails
-                if (!Cesium.defined(cartesian) && scene.globe) {
-                    cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
-                }
-                
-                if (cartesian) {
-                    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                    return {
-                        lon: Cesium.Math.toDegrees(cartographic.longitude),
-                        lat: Cesium.Math.toDegrees(cartographic.latitude),
-                        height: cartographic.height
-                    };
-                }
-                return null;
-            }).filter(c => c !== null);
-            
-            if (worldCorners.length < 2) {
-                console.warn('Could not determine viewport bounds, using approximate conversion');
-                this.displaySAMResultsApproximate(result);
-                return;
-            }
-            
-            const lons = worldCorners.map(c => c.lon);
-            const lats = worldCorners.map(c => c.lat);
-            const minLon = Math.min(...lons);
-            const maxLon = Math.max(...lons);
-            const minLat = Math.min(...lats);
-            const maxLat = Math.max(...lats);
-            
-            const lonRange = maxLon - minLon;
-            const latRange = maxLat - minLat;
-            
-            this.samDataSource = new Cesium.GeoJsonDataSource('SAM Segments');
-            
-            const pixelToGeographic = (x_norm, y_norm) => {
-                const screenX = x_norm * viewportWidth;
-                const screenY = y_norm * viewportHeight;
-                const screenPos = new Cesium.Cartesian2(screenX, screenY);
-                
-                let cartesian = null;
-                if (pickPositionSupported) {
-                    cartesian = scene.pickPosition(screenPos);
-                }
-                
-                if (!Cesium.defined(cartesian) && scene.globe) {
-                    cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
-                }
-                
-                if (!Cesium.defined(cartesian)) {
-                    const lon = minLon + (x_norm * lonRange);
-                    // Y-axis flip: image origin (0,0) is top-left, but geographic coords have max latitude at top
-                    const lat = minLat + ((1 - y_norm) * latRange);
-                    return [lon, lat];
-                }
-                
-                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                return [
-                    Cesium.Math.toDegrees(cartographic.longitude),
-                    Cesium.Math.toDegrees(cartographic.latitude)
-                ];
             };
-            
-            const features = result.geojson.features.map((feature, index) => {
-                const props = feature.properties;
-                const coords = feature.geometry.coordinates[0];
-                const geographicCoords = coords.map(([x_norm, y_norm]) => 
-                    pixelToGeographic(x_norm, y_norm)
-                );
-                
-                return {
-                    type: 'Feature',
-                    geometry: {
-                        type: 'Polygon',
-                        coordinates: [geographicCoords]
-                    },
-                    properties: {
-                        segment_id: props.segment_id || index + 1,
-                        area: props.area || 0,
-                        predicted_iou: props.iou || props.predicted_iou || 0,
-                        stability_score: props.stability || props.stability_score || 0
-                    }
-                };
+        });
+
+        const convertedGeoJSON = {
+            type: 'FeatureCollection',
+            features: features
+        };
+
+        this.samDataSource.load(convertedGeoJSON).then(() => {
+            const entities = this.samDataSource.entities.values;
+            entities.forEach((entity, index) => {
+                const props = entity.properties;
+                const segmentId = props.segment_id?.getValue() || index + 1;
+                const area = props.area?.getValue() || 0;
+                const iou = props.predicted_iou?.getValue() || 0;
+
+                const hue = (segmentId * 137.508) % 360;
+                const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4);
+
+                if (entity.polygon) {
+                    entity.polygon.material = color;
+                    entity.polygon.outline = true;
+                    entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
+                    entity.polygon.outlineWidth = 2;
+                    entity.polygon.extrudedHeight = 0;
+                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                }
+
+                entity.description = `
+                    <table class="table table-sm" style="color: white;">
+                        <tr><td><strong>Segment ID:</strong></td><td>${segmentId}</td></tr>
+                        <tr><td><strong>Area:</strong></td><td>${area} pixels</td></tr>
+                        <tr><td><strong>Quality (IoU):</strong></td><td>${iou.toFixed(3)}</td></tr>
+                        <tr><td><strong>Stability:</strong></td><td>${(props.stability_score?.getValue() || 0).toFixed(3)}</td></tr>
+                    </table>
+                `;
             });
-            
-            const convertedGeoJSON = {
-                type: 'FeatureCollection',
-                features: features
-            };
-            
-            this.samDataSource.load(convertedGeoJSON).then(() => {
-                const entities = this.samDataSource.entities.values;
-                
-                // Lock camera position to prevent Cesium from auto-zooming to entities
-                const savedPosition = Cesium.Cartesian3.clone(this.viewer.camera.position);
-                const savedHeading = this.viewer.camera.heading;
-                const savedPitch = this.viewer.camera.pitch;
-                const savedRoll = this.viewer.camera.roll;
-                
-                entities.forEach((entity, index) => {
-                    const props = entity.properties;
-                    const segmentId = props.segment_id?.getValue() || index + 1;
-                    const area = props.area?.getValue() || 0;
-                    const iou = props.predicted_iou?.getValue() || 0;
-                    
-                    const hue = (segmentId * 137.508) % 360;
-                    const color = Cesium.Color.fromHsl(hue / 360, 0.7, 0.5, 0.4);
-                    
-                    if (entity.polygon) {
-                        entity.polygon.material = color;
-                        entity.polygon.outline = true;
-                        entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
-                        entity.polygon.outlineWidth = 2;
-                        entity.polygon.extrudedHeight = 0;
-                        entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
-                    }
-                    
-                    entity.description = `
-                        <table class="table table-sm" style="color: white;">
-                            <tr><td><strong>Segment ID:</strong></td><td>${segmentId}</td></tr>
-                            <tr><td><strong>Area:</strong></td><td>${area} pixels</td></tr>
-                            <tr><td><strong>Quality (IoU):</strong></td><td>${iou.toFixed(3)}</td></tr>
-                            <tr><td><strong>Stability:</strong></td><td>${(props.stability_score?.getValue() || 0).toFixed(3)}</td></tr>
-                        </table>
-                    `;
-                });
-                
-                // Add data source WITHOUT allowing async completion to move the camera.
-                this.addDataSourcePreservingCamera(this.samDataSource, {
-                    position: savedPosition,
-                    heading: savedHeading,
-                    pitch: savedPitch,
-                    roll: savedRoll
-                });
-                
-                const avgIoU = features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length;
-                this.showNotification(
-                    `SAM: ${result.num_segments} segments displayed (avg quality: ${avgIoU.toFixed(2)})`,
-                    'success'
-                );
-            }).catch(error => {
-                console.error('Error loading SAM GeoJSON:', error);
-                this.showNotification('Error displaying SAM results on map', 'error');
-            });
+
+            this.viewer.dataSources.add(this.samDataSource);
+
+            const avgIoU = features.length
+                ? features.reduce((sum, f) => sum + (f.properties.predicted_iou || 0), 0) / features.length
+                : 0;
+            this.showNotification(
+                `SAM: ${result.num_segments} segments displayed (avg quality: ${avgIoU.toFixed(2)})`,
+                'success'
+            );
+        }).catch(error => {
+            console.error('Error loading SAM GeoJSON:', error);
+            this.showNotification('Error displaying SAM results on map', 'error');
         });
     }
     
@@ -3192,7 +3100,7 @@ class WorldSamplerUI {
                 }
             });
             
-            this.addDataSourcePreservingCamera(this.samDataSource);
+            this.viewer.dataSources.add(this.samDataSource);
             console.log(`Displayed ${entities.length} SAM segments (approximate method)`);
         }).catch(error => {
             console.error('Error loading SAM GeoJSON (approximate):', error);
@@ -3208,167 +3116,63 @@ class WorldSamplerUI {
             console.warn('No GeoJSON features in Zero-Shot results');
             return;
         }
-        
-        // Check if camera has moved since capture
-        const capturePose = result.capture_pose || this.lastCapturePose;
-        if (capturePose) {
-            const currentPos = this.viewer.camera.positionCartographic;
-            const currentLon = Cesium.Math.toDegrees(currentPos.longitude);
-            const currentLat = Cesium.Math.toDegrees(currentPos.latitude);
-            const currentAlt = currentPos.height;
-            
-            const lonDiff = Math.abs(currentLon - capturePose.lon);
-            const latDiff = Math.abs(currentLat - capturePose.lat);
-            const altDiff = Math.abs(currentAlt - capturePose.alt);
-            
-            // Warn if camera has moved significantly (>1% of altitude or >0.001 degrees)
-            const altThreshold = capturePose.alt * 0.01; // 1% of altitude
-            if (lonDiff > 0.001 || latDiff > 0.001 || altDiff > altThreshold) {
-                console.warn('⚠️ Camera has moved since capture - detections may be misaligned!');
-                console.log('  Capture:', capturePose);
-                console.log('  Current:', { lon: currentLon, lat: currentLat, alt: currentAlt });
-                console.log('  Diff:', { lon: lonDiff, lat: latDiff, alt: altDiff });
-                
-                // Show warning to user
-                if (typeof this.showNotification === 'function') {
-                    this.showNotification(
-                        'Camera moved since capture - detections may be slightly misaligned',
-                        'warning'
-                    );
-                }
-            } else {
-                console.log('✓ Camera position stable - detections should align correctly');
-            }
-        }
-        
-        // Remove previous SAM/Zero-Shot results if any
+
         if (this.samDataSource) {
             this.viewer.dataSources.remove(this.samDataSource);
         }
-        
-        // Restore camera to capture pose for accurate coordinate mapping
-        this.withCapturePose(capturePose, () => {
-            const camera = this.viewer.camera;
-            const scene = this.viewer.scene;
-            const canvas = scene.canvas;
-            const viewportWidth = canvas.width;
-            const viewportHeight = canvas.height;
-            const pickPositionSupported = scene.pickPositionSupported && scene.mode === Cesium.SceneMode.SCENE3D;
-            
-            const corners = [
-                new Cesium.Cartesian2(0, 0),
-                new Cesium.Cartesian2(viewportWidth, 0),
-                new Cesium.Cartesian2(viewportWidth, viewportHeight),
-                new Cesium.Cartesian2(0, viewportHeight)
-            ];
-            
-            const worldCorners = corners.map(screenPos => {
-                let cartesian = null;
-                if (pickPositionSupported) {
-                    cartesian = scene.pickPosition(screenPos);
-                }
-                if (!Cesium.defined(cartesian) && scene.globe) {
-                    cartesian = scene.camera.pickEllipsoid(screenPos, scene.globe.ellipsoid);
-                }
-                if (cartesian) {
-                    const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                    return {
-                        lon: Cesium.Math.toDegrees(cartographic.longitude),
-                        lat: Cesium.Math.toDegrees(cartographic.latitude),
-                        height: cartographic.height
-                    };
-                }
-                return null;
-            }).filter(c => c !== null);
-            
-            if (worldCorners.length < 2) {
-                console.warn('Could not determine viewport bounds for Zero-Shot, using approximate');
-                this.displayZeroShotResultsApproximate(result);
-                return;
-            }
-            
-            const lons = worldCorners.map(c => c.lon);
-            const lats = worldCorners.map(c => c.lat);
-            const minLon = Math.min(...lons);
-            const maxLon = Math.max(...lons);
-            const minLat = Math.min(...lats);
-            const maxLat = Math.max(...lats);
-            
-            const lonRange = maxLon - minLon;
-            const latRange = maxLat - minLat;
-            
-            this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
-            
-            const pixelToGeographic = (x_norm, y_norm) => {
-                const screenX = x_norm * viewportWidth;
-                const screenY = y_norm * viewportHeight;
-                const screenPos = new Cesium.Cartesian2(screenX, screenY);
-                
-                let cartesian = null;
-                if (pickPositionSupported) {
-                    cartesian = scene.pickPosition(screenPos);
-                }
-                
-                if (!Cesium.defined(cartesian)) {
-                    const lon = minLon + (x_norm * lonRange);
-                    // Y-axis flip: image origin (0,0) is top-left, but geographic coords have max latitude at top
-                    const lat = minLat + ((1 - y_norm) * latRange);
-                    return [lon, lat];
-                }
-                
-                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                return [
-                    Cesium.Math.toDegrees(cartographic.longitude),
-                    Cesium.Math.toDegrees(cartographic.latitude)
-                ];
-            };
-            
+
+        // Project results using the corner snapshot taken at capture time, so
+        // we never have to move the camera during display.
+        const corners = result.world_corners || this.lastCaptureCorners || null;
+        if (!corners) {
+            console.warn('No viewport corner snapshot available; falling back to approximate projection');
+            this.displayZeroShotResultsApproximate(result);
+            return;
+        }
+
+        const pixelToGeographic = (x_norm, y_norm) =>
+            this.bilinearProjectFromCorners(corners, x_norm, y_norm);
+
+        this.samDataSource = new Cesium.GeoJsonDataSource('Zero-Shot Detections');
+
+        {
             const features = result.geojson.features.map((feature, index) => {
                 const props = feature.properties;
                 const geom = feature.geometry;
-                
+
                 // Transform ALL rings in the polygon (exterior + holes)
                 // coordinates structure: [ [exterior_ring], [hole1], [hole2], ... ]
-                const transformedCoords = geom.coordinates.map(ring => 
+                const transformedCoords = geom.coordinates.map(ring =>
                     ring.map(([x_norm, y_norm]) => pixelToGeographic(x_norm, y_norm))
+                        .filter(Boolean)
                 );
-                
-                // Debug first feature to verify coordinates
+
                 if (index === 0 && transformedCoords[0] && transformedCoords[0][0]) {
                     console.log('🔍 First entity coordinates:', {
                         firstPoint: transformedCoords[0][0],
                         numRings: transformedCoords.length,
-                        ringLength: transformedCoords[0].length,
-                        viewportBounds: { minLon, maxLon, minLat, maxLat }
+                        ringLength: transformedCoords[0].length
                     });
                 }
-                
+
                 return {
                     type: 'Feature',
                     geometry: {
                         type: 'Polygon',
-                        coordinates: transformedCoords  // Preserve all rings
+                        coordinates: transformedCoords
                     },
-                    properties: {
-                        ...props  // Use backend properties as-is (already correct)
-                    }
+                    properties: { ...props }
                 };
             });
-            
+
             const convertedGeoJSON = {
                 type: 'FeatureCollection',
                 features: features
             };
-            
+
             this.samDataSource.load(convertedGeoJSON).then(() => {
                 const entities = this.samDataSource.entities.values;
-                
-                // Lock camera position to prevent Cesium from auto-zooming to entities
-                const savedPosition = Cesium.Cartesian3.clone(this.viewer.camera.position);
-                const savedHeading = this.viewer.camera.heading;
-                const savedPitch = this.viewer.camera.pitch;
-                const savedRoll = this.viewer.camera.roll;
-                
+
                 const classColors = {
                     'person': Cesium.Color.RED,
                     'car': Cesium.Color.BLUE,
@@ -3473,45 +3277,15 @@ class WorldSamplerUI {
                         
                     } catch (error) {
                         console.error(`Error styling entity ${index}:`, error);
-                        // Continue processing other entities even if one fails
                     }
                 });
-                
-                // Add data source WITHOUT allowing async completion to move the camera.
-                this.addDataSourcePreservingCamera(this.samDataSource, {
-                    position: savedPosition,
-                    heading: savedHeading,
-                    pitch: savedPitch,
-                    roll: savedRoll
-                });
-                
-                // Debug entity positions
-                if (entities.length > 0 && entities[0].polygon) {
-                    const firstPoly = entities[0].polygon.hierarchy.getValue(Cesium.JulianDate.now());
-                    if (firstPoly && firstPoly.positions && firstPoly.positions.length > 0) {
-                        const firstCartographic = Cesium.Cartographic.fromCartesian(firstPoly.positions[0]);
-                        console.log('🌍 First entity actual position:', {
-                            lon: Cesium.Math.toDegrees(firstCartographic.longitude).toFixed(6),
-                            lat: Cesium.Math.toDegrees(firstCartographic.latitude).toFixed(6),
-                            height: firstCartographic.height.toFixed(2)
-                        });
-                    }
-                }
-                
-                // Verify camera didn't move
-                const finalCartographic = Cesium.Cartographic.fromCartesian(this.viewer.camera.position);
-                console.log('📷 Camera after restore:', {
-                    lon: Cesium.Math.toDegrees(finalCartographic.longitude).toFixed(6),
-                    lat: Cesium.Math.toDegrees(finalCartographic.latitude).toFixed(6),
-                    alt: finalCartographic.height.toFixed(2)
-                });
-                
+
+                this.viewer.dataSources.add(this.samDataSource);
                 console.log(`✅ Displayed ${entities.length} Zero-Shot detections on map`);
-                console.log('Viewport bounds:', { minLon, maxLon, minLat, maxLat });
             }).catch(error => {
                 console.error('Error loading Zero-Shot GeoJSON:', error);
             });
-        });
+        }
     }
     
     /**
@@ -3523,11 +3297,7 @@ class WorldSamplerUI {
         const canvas = scene.canvas;
         const viewportWidth = canvas.width;
         const viewportHeight = canvas.height;
-        const savedPosition = Cesium.Cartesian3.clone(camera.position);
-        const savedHeading = camera.heading;
-        const savedPitch = camera.pitch;
-        const savedRoll = camera.roll;
-        
+
         const position = camera.positionCartographic;
         const height = position.height;
         const metersPerPixel = height / Math.max(viewportHeight, viewportWidth);
@@ -3649,14 +3419,7 @@ class WorldSamplerUI {
                 }
             });
             
-            // Add data source WITHOUT allowing async completion to move the camera.
-            this.addDataSourcePreservingCamera(this.samDataSource, {
-                position: savedPosition,
-                heading: savedHeading,
-                pitch: savedPitch,
-                roll: savedRoll
-            });
-            
+            this.viewer.dataSources.add(this.samDataSource);
             console.log(`Displayed ${entities.length} Zero-Shot detections (approximate method)`);
         }).catch(error => {
             console.error('Error loading Zero-Shot GeoJSON (approximate):', error);
