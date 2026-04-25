@@ -54,6 +54,8 @@ from .http import (
     export_annotation_game_coco, export_annotation_game_graph,
 )
 
+from .scenegraph import build_scenegraph_view
+
 from .analyzers import (
     # per-model analyzer branches (C4: moved out of legacy.py)
     _analyze_viewport_sam,
@@ -63,6 +65,9 @@ from .analyzers import (
     _analyze_viewport_grounding_dino,
     _analyze_viewport_grounded_sam,
     _analyze_viewport_prithvi,
+    _analyze_viewport_maskrcnn_rocks,
+    _analyze_viewport_maskrcnn_house,
+    _analyze_viewport_urban_spectral,
 
     # shared analyzer helpers (grounding_dino + grounded_sam)
     _create_grounding_dino_visualization,
@@ -88,4 +93,5 @@ __all__ = [
     "save_annotation_game_round",
     "export_annotation_game_coco",
     "export_annotation_game_graph",
+    "build_scenegraph_view",
 ]

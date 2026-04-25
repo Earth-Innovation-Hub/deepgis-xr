@@ -82,6 +82,9 @@ urlpatterns = [
     path('webclient/sampler/annotation-game/save', world_sampler_api.save_annotation_game_round, name='save_annotation_game_round'),
     path('webclient/sampler/annotation-game/export-coco', world_sampler_api.export_annotation_game_coco, name='export_annotation_game_coco'),
     path('webclient/sampler/annotation-game/export-graph', world_sampler_api.export_annotation_game_graph, name='export_annotation_game_graph'),
+
+    # Distinction-Game SceneGraph orchestrator (kernelcal §4 / §11.4)
+    path('webclient/sampler/scenegraph/build', world_sampler_api.build_scenegraph_view, name='build_scenegraph'),
     
     # AI Analysis Report
     path('label/ai-analysis/report/<str:session_id>/', views.ai_analysis_report, name='ai_analysis_report'),

@@ -2786,6 +2786,15 @@ class WorldSamplerUI {
                     requestBody.score_threshold = scoreEl ? parseFloat(scoreEl.value) / 100 : 0.5;
                     requestBody.max_detections = maxDetEl ? parseInt(maxDetEl.value, 10) || 200 : 200;
                     statusText.textContent = `Running MaskRCNN Rocks${modelId ? ' (' + modelId + ')' : ''}...`;
+                } else if (analysisType === 'maskrcnn_house') {
+                    const modelIdEl = document.getElementById('maskrcnnHouseModelId');
+                    const scoreEl = document.getElementById('maskrcnnHouseScore');
+                    const maxDetEl = document.getElementById('maskrcnnHouseMaxDet');
+                    const modelId = modelIdEl ? modelIdEl.value.trim() : '';
+                    if (modelId) requestBody.model_id = modelId;
+                    requestBody.score_threshold = scoreEl ? parseFloat(scoreEl.value) / 100 : 0.5;
+                    requestBody.max_detections = maxDetEl ? parseInt(maxDetEl.value, 10) || 200 : 200;
+                    statusText.textContent = `Running MaskRCNN House${modelId ? ' (' + modelId + ')' : ''}...`;
                 } else if (analysisType === 'prithvi') {
                     statusText.textContent = 'Extracting Earth Observation features with Prithvi...';
                 }
@@ -2840,7 +2849,7 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam' || analysisType === 'maskrcnn_rocks') {
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam' || analysisType === 'maskrcnn_rocks' || analysisType === 'maskrcnn_house') {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
@@ -2870,6 +2879,10 @@ class WorldSamplerUI {
                     if (analysisType === 'maskrcnn_rocks') {
                         const mid = result.model_id || 'default';
                         modelName = `MaskRCNN Rocks (${mid})`;
+                    }
+                    if (analysisType === 'maskrcnn_house') {
+                        const mid = result.model_id || 'default';
+                        modelName = `MaskRCNN House (${mid})`;
                     }
                     this.showNotification(
                         `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
@@ -3547,6 +3560,288 @@ class WorldSamplerUI {
         };
         return icons[type] || 'info-circle';
     }
+
+    /**
+     * Distinction-Game SceneGraph orchestrator client.
+     *
+     * Captures the current viewport once, then for each kernel checked in
+     * the SceneGraph panel runs the existing /webclient/sampler/analyze-viewport
+     * endpoint with the same image. The per-kernel results plus the
+     * checked OSM ground-truth sources are POSTed to
+     * /webclient/sampler/scenegraph/build, which calls
+     * kernelcal.distinction_game.build_scene_graph and returns the fused
+     * SceneGraph. The fused nodes are then rendered as polygons coloured
+     * by argmax category (with posterior score driving opacity).
+     */
+    async buildSceneGraph() {
+        const statusDiv = document.getElementById('sceneGraphStatus');
+        const statusText = document.getElementById('sceneGraphStatusText');
+        const btn = document.getElementById('buildSceneGraphBtn');
+        if (!btn) return;
+
+        const setStatus = (msg, color) => {
+            if (statusDiv) statusDiv.style.display = 'block';
+            if (statusText) {
+                statusText.textContent = msg;
+                statusText.style.color = color || '#cbd5e1';
+            }
+        };
+
+        const kernelChecks = [
+            { id: 'sgKernelMrRocks',       kind: 'maskrcnn_rocks',  analysis: 'maskrcnn_rocks'  },
+            { id: 'sgKernelMrHouse',       kind: 'maskrcnn_house',  analysis: 'maskrcnn_house'  },
+            { id: 'sgKernelGroundingDino', kind: 'grounding_dino',  analysis: 'grounding_dino'  },
+            { id: 'sgKernelGroundedSam',   kind: 'grounded_sam',    analysis: 'grounded_sam'    },
+            { id: 'sgKernelSam',           kind: 'sam',             analysis: 'sam'             },
+        ];
+        const selectedKernels = kernelChecks.filter((k) => {
+            const el = document.getElementById(k.id);
+            return el && el.checked;
+        });
+
+        const gtSources = [];
+        if (document.getElementById('sgGtOsmBuildings')?.checked) gtSources.push('osm_buildings');
+        if (document.getElementById('sgGtOsmRoads')?.checked)     gtSources.push('osm_roads');
+
+        if (selectedKernels.length === 0 && gtSources.length === 0) {
+            setStatus('Pick at least one kernel or one ground-truth source.', '#f59e0b');
+            return;
+        }
+
+        btn.disabled = true;
+        try {
+            setStatus('Preparing viewport...');
+            await this.prepareViewportForAnalysis(statusText);
+            this.viewer.scene.requestRender();
+            this.viewer.scene.render();
+            await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+            setStatus('Capturing viewport...');
+            const viewportData = await this.captureViewportImage();
+            const corners = viewportData.world_corners;
+            if (!corners) {
+                throw new Error('Could not snapshot viewport corners (camera off-globe?).');
+            }
+            // Mirror computeViewportCornersGeo() output into the
+            // [NW, NE, SE, SW] array the orchestrator expects.
+            const cornersArr = [
+                [corners.tl.lon, corners.tl.lat],
+                [corners.tr.lon, corners.tr.lat],
+                [corners.br.lon, corners.br.lat],
+                [corners.bl.lon, corners.bl.lat],
+            ];
+            const canvas = this.viewer.scene.canvas;
+            const imageSize = [canvas.width, canvas.height];
+
+            const kernelResults = {};
+            for (let i = 0; i < selectedKernels.length; i++) {
+                const k = selectedKernels[i];
+                setStatus(`(${i + 1}/${selectedKernels.length}) Querying ${k.kind}...`);
+                try {
+                    const reqBody = {
+                        image: viewportData.image,
+                        location: viewportData.location,
+                        model_type: k.analysis,
+                    };
+                    if (k.analysis === 'sam') {
+                        const minAreaEl = document.getElementById('samMinArea');
+                        reqBody.sam_model = document.getElementById('samModelType')?.value || 'vit_b';
+                        reqBody.min_area = minAreaEl ? parseInt(minAreaEl.value, 10) || 100 : 100;
+                    } else if (k.analysis === 'grounding_dino') {
+                        const phrase = document.getElementById('gdTextPrompt')?.value
+                            || 'rock . building . car . tree . road';
+                        reqBody.text_prompt = phrase;
+                        reqBody.box_threshold = parseFloat(document.getElementById('gdBoxThreshold')?.value || 25) / 100;
+                        reqBody.text_threshold = parseFloat(document.getElementById('gdTextThreshold')?.value || 25) / 100;
+                    } else if (k.analysis === 'grounded_sam') {
+                        const phrase = document.getElementById('gsTextPrompt')?.value
+                            || 'rock . building . car . tree . road';
+                        reqBody.text_prompt = phrase;
+                        reqBody.box_threshold = parseFloat(document.getElementById('gsBoxThreshold')?.value || 25) / 100;
+                        reqBody.text_threshold = parseFloat(document.getElementById('gsTextThreshold')?.value || 25) / 100;
+                    } else if (k.analysis === 'maskrcnn_rocks') {
+                        const modelId = document.getElementById('maskrcnnRocksModelId')?.value?.trim();
+                        if (modelId) reqBody.model_id = modelId;
+                        reqBody.score_threshold = parseFloat(document.getElementById('maskrcnnRocksScore')?.value || 50) / 100;
+                        reqBody.max_detections = parseInt(document.getElementById('maskrcnnRocksMaxDet')?.value || 200, 10);
+                    } else if (k.analysis === 'maskrcnn_house') {
+                        const modelId = document.getElementById('maskrcnnHouseModelId')?.value?.trim();
+                        if (modelId) reqBody.model_id = modelId;
+                        reqBody.score_threshold = parseFloat(document.getElementById('maskrcnnHouseScore')?.value || 50) / 100;
+                        reqBody.max_detections = parseInt(document.getElementById('maskrcnnHouseMaxDet')?.value || 200, 10);
+                    }
+                    const r = await fetch('/webclient/sampler/analyze-viewport', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(reqBody),
+                    });
+                    if (!r.ok) {
+                        console.warn(`[SceneGraph] ${k.kind} HTTP ${r.status}`);
+                        kernelResults[k.kind] = {};
+                        continue;
+                    }
+                    const result = await r.json();
+                    if (result && result.status === 'success') {
+                        kernelResults[k.kind] = result;
+                    } else {
+                        console.warn(`[SceneGraph] ${k.kind} non-success:`, result?.message);
+                        kernelResults[k.kind] = {};
+                    }
+                } catch (err) {
+                    console.warn(`[SceneGraph] ${k.kind} threw:`, err);
+                    kernelResults[k.kind] = {};
+                }
+            }
+
+            setStatus('Fusing kernel claims under PHX_URBAN_V0...');
+            const buildBody = {
+                viewport: {
+                    image_size: imageSize,
+                    world_corners: cornersArr,
+                    camera: viewportData.location,
+                },
+                kernel_results: kernelResults,
+                ground_truth_sources: gtSources,
+                min_score: 0.2,
+                iou_threshold: 0.4,
+                edge_proximity: 0.06,
+            };
+            const buildResp = await fetch('/webclient/sampler/scenegraph/build', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(buildBody),
+            });
+            if (!buildResp.ok) {
+                const errBody = await buildResp.text();
+                throw new Error(`SceneGraph build failed (${buildResp.status}): ${errBody.substring(0, 200)}`);
+            }
+            const built = await buildResp.json();
+            if (!built || built.status !== 'success') {
+                throw new Error(built?.message || 'SceneGraph build returned non-success');
+            }
+
+            this.displaySceneGraph(built.scene_graph, corners);
+
+            const nNodes = built.scene_graph?.nodes?.length || 0;
+            const hist = built.scene_graph?.category_histogram || {};
+            const histStr = Object.entries(hist)
+                .filter(([, v]) => v > 0)
+                .map(([k, v]) => `${k}:${v}`)
+                .join(', ') || '(none)';
+            setStatus(`✓ ${nNodes} nodes — ${histStr}`, '#10b981');
+            this.showNotification(
+                `SceneGraph built: ${nNodes} nodes (${built.session_id})`,
+                'success'
+            );
+        } catch (err) {
+            console.error('[SceneGraph] build failed:', err);
+            setStatus(`✗ ${err.message || err}`, '#ef4444');
+            this.showNotification(`SceneGraph build failed: ${err.message || err}`, 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    /**
+     * Render a fused SceneGraph onto the globe. Each node becomes a
+     * filled polygon coloured by argmax category, with posterior score
+     * driving opacity. Geographic geometry is preferred (region.geo_polygon)
+     * but the normalised polygon is projected via the captured corners as
+     * a fallback so this works even for non-georeferenced kernels.
+     */
+    displaySceneGraph(sceneGraph, capturedCorners) {
+        if (!sceneGraph || !sceneGraph.nodes) return;
+        if (this.sceneGraphDataSource && this.viewer.dataSources.contains(this.sceneGraphDataSource)) {
+            this.viewer.dataSources.remove(this.sceneGraphDataSource);
+        }
+        const ds = new Cesium.GeoJsonDataSource('SceneGraph');
+        const colorByCategory = {
+            unknown:           Cesium.Color.GRAY,
+            building:          Cesium.Color.fromCssColorString('#3b82f6'), // blue
+            road:              Cesium.Color.fromCssColorString('#facc15'), // yellow
+            vehicle:           Cesium.Color.fromCssColorString('#ef4444'), // red
+            tree:              Cesium.Color.fromCssColorString('#16a34a'), // green
+            vegetation_other:  Cesium.Color.fromCssColorString('#84cc16'), // lime
+            pavement:          Cesium.Color.fromCssColorString('#a3a3a3'), // gray
+            bare_ground:       Cesium.Color.fromCssColorString('#a16207'), // brown
+            water:             Cesium.Color.fromCssColorString('#06b6d4'), // cyan
+            debris:            Cesium.Color.fromCssColorString('#f97316'), // orange
+        };
+
+        const features = [];
+        for (const node of sceneGraph.nodes) {
+            const region = node.region || {};
+            let ring = null;
+            if (region.geo_polygon && region.geo_polygon.length >= 3) {
+                ring = region.geo_polygon.map((p) => [p[0], p[1]]);
+            } else if (region.polygon && region.polygon.length >= 3 && capturedCorners) {
+                ring = region.polygon
+                    .map((p) => this.bilinearProjectFromCorners(capturedCorners, p[0], p[1]))
+                    .filter(Boolean);
+            }
+            if (!ring || ring.length < 3) continue;
+            // Ensure closed ring.
+            const first = ring[0];
+            const last = ring[ring.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
+            features.push({
+                type: 'Feature',
+                geometry: { type: 'Polygon', coordinates: [ring] },
+                properties: {
+                    node_id: node.id,
+                    category: node.category,
+                    score: node.score,
+                    sources: node.sources || [],
+                    n_claims: (node.attributes || {}).n_claims || 0,
+                    n_distinct_sources: (node.attributes || {}).n_distinct_sources || 0,
+                },
+            });
+        }
+
+        if (features.length === 0) {
+            console.warn('[SceneGraph] no renderable nodes');
+            return;
+        }
+        const fc = { type: 'FeatureCollection', features };
+        ds.load(fc).then(() => {
+            const entities = ds.entities.values;
+            entities.forEach((entity) => {
+                const props = entity.properties;
+                const category = props.category?.getValue() || 'unknown';
+                const score = props.score?.getValue() || 0.5;
+                const nSources = props.n_distinct_sources?.getValue() || 1;
+                const sourcesArr = props.sources?.getValue() || [];
+                const baseColor = colorByCategory[category] || Cesium.Color.WHITE;
+                const opacity = 0.25 + Math.min(0.6, score * 0.6);
+                if (entity.polygon) {
+                    entity.polygon.material = baseColor.withAlpha(opacity);
+                    entity.polygon.outline = true;
+                    entity.polygon.outlineColor = baseColor.withAlpha(0.95);
+                    entity.polygon.outlineWidth = 1 + nSources;
+                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                }
+                entity.label = {
+                    text: `${category} ${(score * 100).toFixed(0)}% [${sourcesArr.join(',')}]`,
+                    font: 'bold 12px sans-serif',
+                    fillColor: Cesium.Color.WHITE,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 2,
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+                    pixelOffset: new Cesium.Cartesian2(0, -10),
+                    showBackground: true,
+                    backgroundColor: Cesium.Color.BLACK.withAlpha(0.55),
+                    backgroundPadding: new Cesium.Cartesian2(6, 3),
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                };
+            });
+            this.sceneGraphDataSource = ds;
+            this.viewer.dataSources.add(ds);
+            console.log(`[SceneGraph] rendered ${entities.length} nodes`);
+        }).catch((err) => {
+            console.error('[SceneGraph] failed to load GeoJSON:', err);
+        });
+    }
 }
 
 
@@ -3638,6 +3933,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const groundingDinoOptions = document.getElementById('groundingDinoOptions');
     const groundedSamOptions = document.getElementById('groundedSamOptions');
     const maskrcnnRocksOptions = document.getElementById('maskrcnnRocksOptions');
+    const maskrcnnHouseOptions = document.getElementById('maskrcnnHouseOptions');
     const analysisDescription = document.getElementById('analysisDescription');
     const zeroShotConfidenceSlider = document.getElementById('zeroShotConfidence');
     const zeroShotConfidenceValue = document.getElementById('zeroShotConfidenceValue');
@@ -3665,6 +3961,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             if (groundingDinoOptions) groundingDinoOptions.style.display = 'none';
             if (groundedSamOptions) groundedSamOptions.style.display = 'none';
             if (maskrcnnRocksOptions) maskrcnnRocksOptions.style.display = 'none';
+            if (maskrcnnHouseOptions) maskrcnnHouseOptions.style.display = 'none';
             
             if (analysisType === 'zero_shot') {
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
@@ -3695,6 +3992,11 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 if (maskrcnnRocksOptions) maskrcnnRocksOptions.style.display = 'block';
                 if (analysisDescription) {
                     analysisDescription.textContent = 'Rock instance segmentation - Bishop/Jezero Mask R-CNN ensemble on remote GPU (:5002). Pick a model_id or leave blank for the service default.';
+                }
+            } else if (analysisType === 'maskrcnn_house') {
+                if (maskrcnnHouseOptions) maskrcnnHouseOptions.style.display = 'block';
+                if (analysisDescription) {
+                    analysisDescription.textContent = 'House / damage Mask R-CNN ensemble on remote GPU (:5003) — trained on UAV-oblique tornado imagery (Eureka, 6 classes). On overhead 3D-tile captures it tends to fire as a generic roof detector; the SceneGraph orchestrator interprets that via Q_s.';
                 }
             } else {
                 // SAM (default)
@@ -3767,7 +4069,35 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             maskrcnnRocksScoreValue.textContent = value.toFixed(2);
         });
     }
+
+    // MaskRCNN House score-threshold slider
+    const maskrcnnHouseScoreSlider = document.getElementById('maskrcnnHouseScore');
+    const maskrcnnHouseScoreValue = document.getElementById('maskrcnnHouseScoreValue');
+    if (maskrcnnHouseScoreSlider && maskrcnnHouseScoreValue) {
+        maskrcnnHouseScoreSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            maskrcnnHouseScoreValue.textContent = value.toFixed(2);
+        });
+    }
     
+    // Distinction-Game SceneGraph orchestrator button.
+    const sgBtn = document.getElementById('buildSceneGraphBtn');
+    if (sgBtn) {
+        const newSgBtn = sgBtn.cloneNode(true);
+        sgBtn.parentNode.replaceChild(newSgBtn, sgBtn);
+        newSgBtn.addEventListener('click', async () => {
+            if (!worldSamplerUI) {
+                console.warn('[SceneGraph] WorldSamplerUI not available');
+                return;
+            }
+            try {
+                await worldSamplerUI.buildSceneGraph();
+            } catch (err) {
+                console.error('[SceneGraph] orchestrator threw:', err);
+            }
+        });
+    }
+
     // Add click handler
     newBtn.addEventListener('click', async () => {
         // Use worldSamplerUI if available

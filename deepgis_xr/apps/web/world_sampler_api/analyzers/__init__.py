@@ -29,6 +29,7 @@ from .grounding_dino import _analyze_viewport_grounding_dino
 from .grounded_sam import _analyze_viewport_grounded_sam
 from .prithvi import _analyze_viewport_prithvi
 from .maskrcnn_rocks import _analyze_viewport_maskrcnn_rocks
+from .maskrcnn_house import _analyze_viewport_maskrcnn_house
 from .urban_spectral import _analyze_viewport_urban_spectral
 
 from ._helpers import (
@@ -47,6 +48,7 @@ __all__ = [
     "_analyze_viewport_grounded_sam",
     "_analyze_viewport_prithvi",
     "_analyze_viewport_maskrcnn_rocks",
+    "_analyze_viewport_maskrcnn_house",
     "_analyze_viewport_urban_spectral",
     "_create_grounding_dino_visualization",
     "_detections_to_geojson",

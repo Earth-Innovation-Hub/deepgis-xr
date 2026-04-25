@@ -204,6 +204,16 @@ GROUNDED_SAM_API_URL = os.environ.get('GROUNDED_SAM_API_URL', None)
 # Example: MASKRCNN_ROCKS_API_URL=http://192.168.0.232:5002
 MASKRCNN_ROCKS_API_URL = os.environ.get('MASKRCNN_ROCKS_API_URL', None)
 
+# MaskRCNN House API — Tornado/Eureka damage-detection Mask R-CNN ensemble
+# (Zhiang's `tornado_detector_eureka_aug_mult_e0039` by default; 6 classes:
+# background, house_undamaged, house_damage_{0..3}). Used as an additional
+# distinction kernel by the Distinction Game SceneGraph orchestrator —
+# nominally a "house" detector but in practice sometimes fires on rooftops
+# regardless of damage state, which is exactly the kind of label-vs-kernel
+# mismatch the Q_s refit is meant to absorb (see kernelcal docs §3.0).
+# Example: MASKRCNN_HOUSE_API_URL=http://192.168.0.232:5003
+MASKRCNN_HOUSE_API_URL = os.environ.get('MASKRCNN_HOUSE_API_URL', None)
+
 # MIME type configuration for 3D model files
 import mimetypes
 mimetypes.add_type('application/octet-stream', '.glb')

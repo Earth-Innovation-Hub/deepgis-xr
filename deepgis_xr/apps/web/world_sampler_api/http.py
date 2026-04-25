@@ -51,6 +51,7 @@ from .analyzers import (
     _analyze_viewport_grounded_sam,
     _analyze_viewport_prithvi,
     _analyze_viewport_maskrcnn_rocks,
+    _analyze_viewport_maskrcnn_house,
     _analyze_viewport_urban_spectral,
 )
 
@@ -729,6 +730,15 @@ def analyze_viewport(request):
             score_threshold = float(data.get('score_threshold', 0.5))
             max_detections = int(data.get('max_detections', 200))
             return _analyze_viewport_maskrcnn_rocks(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_house':
+            # MaskRCNN-House path (Tornado/Eureka damage detector on port 5003 by default).
+            # Same upstream Docker image as maskrcnn-rocks, different env-driven model.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_house(
                 image, location, model_id, score_threshold, max_detections, scripts_dir
             )
         else:
