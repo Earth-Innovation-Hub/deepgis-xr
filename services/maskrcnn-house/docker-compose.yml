@@ -1,0 +1,87 @@
+version: "3.8"
+
+# maskrcnn-house — sibling of services/maskrcnn-rocks that serves Zhiang Chen's
+# Eureka tornado-damage detectors out of the same Docker image. The two
+# services share `maskrcnn-rocks:latest`; only the default checkpoint and the
+# class-label table differ.
+#
+# Default checkpoint: `tornado_detector_eureka_aug_mult_e0039`
+#   * num_classes = 6, RGB input, ResNet-50 FPN, 44.0M params
+#   * Trained on Eureka 2018/2019 orthomosaics (Tipton KS, Brummer/Melvin
+#     houses + tree damage) with augmentation; epoch 39 = longest run
+#   * Eureka taxonomy from `eureka_train.py`: [background, nd, d0, d1, d2, d3]
+#     i.e. background + non-damaged + 4 ordinal damage levels
+#
+# Runs alongside (on tesseract / jdas@192.168.0.232):
+#   groundingdino-api    :5000
+#   groundedsam2-api     :5001
+#   maskrcnn-rocks-api   :5002   (bishop_ntl_rgb_e0049, [background, rock])
+#   maskrcnn-house-api   :5003   <-- this service
+#
+# To swap to the binary-damage head (3 classes = [background, non-damaged,
+# damaged]), set:
+#   DEFAULT_MODEL_ID=tornado_detector_eureka_aug_bin_e0031
+#   MASKRCNN_LABELS_TORNADO=background,house_undamaged,house_damaged
+
+services:
+  maskrcnn-house:
+    # Reuse the image built by services/maskrcnn-rocks. If the image is not
+    # present locally `docker compose up` will build it from that sibling
+    # directory using the shared Dockerfile and source.
+    build:
+      context: ../maskrcnn-rocks
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-house-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5003:5000"
+
+    volumes:
+      # Same canonical archive bind as maskrcnn-rocks — registry.discover()
+      # walks `/opt/program/weights` at startup and exposes every .param,
+      # so the house container sees the same registry as rocks.
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      # Default to the longest-trained, augmented multi-class detector.
+      - DEFAULT_MODEL_ID=tornado_detector_eureka_aug_mult_e0039
+      # Override the tornado family's class-name table. Resolved by
+      # _label_config() in app.py via the family key.
+      - MASKRCNN_LABELS_TORNADO=background,house_undamaged,house_damage_0,house_damage_1,house_damage_2,house_damage_3
+      - DEFAULT_LABEL_NAME=house
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-house"
+      - "com.dreams-lab.port=5003"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001,maskrcnn-rocks-api:5002"
