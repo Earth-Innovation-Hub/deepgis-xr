@@ -22,6 +22,7 @@ from django.utils.safestring import mark_safe
 
 from .models import (
     DistributionUpdate,
+    Observation,
     SampledLocation,
     SamplingSession,
     SceneGraph,
@@ -1799,3 +1800,120 @@ document.getElementById('search').addEventListener('input', ev => {
         # Defensive: fields are readonly so this shouldn't fire, but if
         # someone reorders readonly_fields this keeps it inert.
         return
+
+
+@admin.register(Observation)
+class ObservationAdmin(admin.ModelAdmin):
+    """
+    Admin panel for the earth_rover -> deepgis observation stream (PR-6).
+
+    Observations are produced by ``POST /api/v1/observe`` and consumed by
+    ``GET /api/v1/scene-graph``.  Each row carries a (potentially short)
+    binary payload of packed superquadrics + a server-side decoded view
+    in ECEF.  The admin lists the most recent observations with their
+    bbox so an operator can spot-check ingest health, then drill into a
+    single row to inspect SQ metadata, properties, and provenance.
+    """
+
+    list_display = (
+        'received_at',
+        'source_id',
+        'session_id',
+        'n_superquadrics',
+        'payload_size',
+        'bbox_short',
+        'src_frame_short',
+        'user',
+    )
+    list_filter = (
+        'source_id',
+        'session_id',
+        'received_at',
+    )
+    search_fields = (
+        'source_id',
+        'session_id',
+        'attributes',
+    )
+    readonly_fields = (
+        'received_at',
+        'sensor_timestamp',
+        'session_id',
+        'source_id',
+        'user',
+        'n_superquadrics',
+        'payload_size',
+        'src_frame',
+        'bbox_wgs84',
+        'superquadrics_ecef_pretty',
+        'attributes',
+    )
+    ordering = ('-received_at',)
+    list_per_page = 50
+
+    fieldsets = (
+        ('Provenance', {
+            'fields': (
+                ('received_at', 'sensor_timestamp'),
+                ('session_id', 'source_id'),
+                'user',
+            ),
+        }),
+        ('Producer frame + payload', {
+            'fields': (
+                'src_frame',
+                ('n_superquadrics', 'payload_size'),
+                'bbox_wgs84',
+            ),
+        }),
+        ('Decoded superquadrics (ECEF)', {
+            'fields': ('superquadrics_ecef_pretty',),
+            'classes': ('collapse',),
+        }),
+        ('Producer metadata', {
+            'fields': ('attributes',),
+            'classes': ('collapse',),
+        }),
+    )
+
+    def has_add_permission(self, request):
+        return False  # populated only by POST /api/v1/observe
+
+    def has_change_permission(self, request, obj=None):
+        return True  # readonly via readonly_fields, but allow viewing
+
+    def save_model(self, request, obj, form, change):
+        return  # observations are immutable
+
+    @admin.display(description='bbox WGS84')
+    def bbox_short(self, obj: Observation) -> str:
+        b = obj.bbox_wgs84 or {}
+        if not b:
+            return '—'
+        return (
+            f"lat[{_fmt_float(b.get('lat_min'), 4)}, {_fmt_float(b.get('lat_max'), 4)}] · "
+            f"lon[{_fmt_float(b.get('lon_min'), 4)}, {_fmt_float(b.get('lon_max'), 4)}]"
+        )
+
+    @admin.display(description='src frame')
+    def src_frame_short(self, obj: Observation) -> str:
+        f = obj.src_frame or {}
+        kind = f.get('kind') or '?'
+        params = f.get('params') or {}
+        if kind == 'utm':
+            return f"utm{params.get('zone', '?')}{params.get('hemisphere', 'N')}"
+        if kind in ('enu_local', 'ned_local'):
+            o = params.get('origin_lla') or [None, None, None]
+            return f"{kind}@{_fmt_float(o[0], 3)},{_fmt_float(o[1], 3)}"
+        return kind
+
+    @admin.display(description='superquadrics_ecef')
+    def superquadrics_ecef_pretty(self, obj: Observation) -> str:
+        try:
+            return mark_safe(
+                f"<pre style='max-height:480px; overflow:auto'>"
+                f"{json.dumps(obj.superquadrics_ecef or [], indent=2)[:200_000]}"
+                f"</pre>"
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            return f"(failed to render: {exc})"

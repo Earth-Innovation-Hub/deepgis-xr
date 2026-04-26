@@ -286,3 +286,132 @@ class SceneGraph(models.Model):
             f"(n_nodes={len(self.nodes or [])}, n_edges={len(self.edges or [])})"
         )
 
+
+class Observation(models.Model):
+    """
+    A single ``POST /api/observe`` payload from a streaming client
+    (typically the earth_rover, but any superquadric-emitting source).
+
+    The wire format is:
+
+    1. JSON envelope ``{source_id, timestamp, frame, n_superquadrics,
+       payload_size, payload_b64, parent_observation_id?, attributes}``,
+       or
+    2. ``application/octet-stream`` with a small JSON header in
+       ``X-Observation-Envelope`` and the raw concatenated SQ packet
+       bytes as the body.
+
+    The endpoint decodes the binary payload (using
+    ``kernelcal.distinction_game.geometry.codec.unpack_superquadric``),
+    transforms each SQ to ECEF (the canonical server frame), and
+    persists the row with an axis-aligned bbox in WGS84 for fast
+    spatial filtering by ``GET /api/v1/scene-graph``.
+
+    The raw ``payload`` bytes are kept verbatim so the same bytes can
+    be replayed for offline fusion or audit; a sanitized JSON view is
+    stored alongside so admins can inspect contents without binary
+    tooling.
+
+    Bandwidth context (matches kernelcal codec docstring): a single
+    earth_rover frame at 100 SQs/s with full appearance trailers tops
+    out at ~120 kbps; this model is sized to record a ~1-minute
+    rolling window per session in low MB.
+    """
+
+    session_id = models.CharField(
+        max_length=255,
+        db_index=True,
+        help_text="Stream / mission id; multiple observations share this.",
+    )
+
+    source_id = models.CharField(
+        max_length=128,
+        db_index=True,
+        help_text=(
+            "Logical source of the observation, e.g. 'earth_rover_01' "
+            "or 'osm_anchor'.  Used as the kernel-source key when "
+            "fusing with the distinction-game pipeline."
+        ),
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Authenticated user who pushed this observation.",
+    )
+
+    received_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    sensor_timestamp = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Sensor / SLAM timestamp from the producer.",
+    )
+
+    n_superquadrics = models.PositiveIntegerField(default=0)
+
+    src_frame = models.JSONField(
+        default=dict,
+        help_text=(
+            "FrameSpec.to_dict() of the producer frame "
+            "(e.g. UTM zone 12N, ENU local at lat0/lon0/alt0)."
+        ),
+    )
+
+    bbox_wgs84 = models.JSONField(
+        default=dict,
+        help_text=(
+            "Axis-aligned WGS84 bbox of all superquadric centroids "
+            "after server-side transform: "
+            "{lat_min, lat_max, lon_min, lon_max, alt_min, alt_max}."
+        ),
+    )
+
+    payload = models.BinaryField(
+        help_text=(
+            "Concatenated packed-superquadric bytes (32-byte SQ header "
+            "+ optional parent / property / spectrum trailers, per "
+            "kernelcal.distinction_game.geometry.codec)."
+        ),
+    )
+
+    payload_size = models.PositiveIntegerField(
+        default=0,
+        help_text="Length of the payload BLOB in bytes.",
+    )
+
+    superquadrics_ecef = models.JSONField(
+        default=list,
+        help_text=(
+            "Server-side decoded view of the SQs: list of "
+            "{class_idx, t_ecef:[X,Y,Z], R, scale, epsilon, parent_hash, "
+            "properties:{name:value}, spectrum?:{...}}.  Useful for "
+            "admin inspection, low-bandwidth clients, and integration "
+            "with the existing scene-graph collapse pipeline."
+        ),
+    )
+
+    attributes = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Free-form metadata from the producer: pose covariance, "
+            "GPS fix quality, mission tags, processing flags."
+        ),
+    )
+
+    class Meta:
+        db_table = "observations"
+        ordering = ["-received_at"]
+        indexes = [
+            models.Index(fields=["source_id", "-received_at"], name="obs_source_recv_idx"),
+            models.Index(fields=["session_id", "-received_at"], name="obs_session_recv_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"Observation {self.source_id}@{self.received_at:%Y-%m-%d %H:%M:%SZ} "
+            f"(n_sq={self.n_superquadrics}, {self.payload_size} B)"
+        )
