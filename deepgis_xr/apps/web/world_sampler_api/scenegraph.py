@@ -82,6 +82,14 @@ from .scene_graph_adapters import (
     adapt_kernel_result,
     adapt_osm,
 )
+from .scenegraph_city_graph import (
+    CityGraphUnavailable,
+    annotate_nodes_with_cg_idx,
+    attach_road_edges,
+    build_city_graph_for_bbox,
+    city_graph_to_osm_features,
+    spectral_block,
+)
 
 
 SCENEGRAPH_RESULTS_DIR = Path('/app/deepgis_results') / 'scenegraph_results'
@@ -294,8 +302,76 @@ def build_scenegraph_view(request):
         all_claims.extend(claims)
 
     # 2. Fetch + adapt OSM ground truth server-side.
+    #
+    # Optional Option-A merge with the urban-spectral pipeline: when the
+    # caller sets ``use_city_graph_regions=True``, build a kernelcal
+    # CityGraph for this bbox first and use *its* OSM-building rows as
+    # the source of OSM-building claims (each tagged with its CityGraph
+    # node index so we can splice road-aware edges + spectral diagnostics
+    # back in after fusion). Buildings from osmnx are otherwise duplicate
+    # work, so we elide them from ``_fetch_osm_for_bbox``.
+    use_city_graph_regions = bool(data.get('use_city_graph_regions', False))
+    cg_obj = None
+    cg_warning: Optional[str] = None
+    cg_options: Dict[str, Any] = {}
+    if use_city_graph_regions:
+        cg_options = {
+            'graph_mode':   str(data.get('graph_mode', 'road_knn')),
+            'k':            int(data.get('cg_k', 8)),
+            'n_max':        int(data.get('cg_n_max', 1500)),
+            'sigma_frac':   float(data.get('cg_sigma_frac', 0.05)),
+            'network_type': str(data.get('cg_network_type', 'drive')),
+            'simplify':     bool(data.get('cg_simplify_roads', True)),
+            'force_refresh': bool(data.get('cg_force_refresh', False)),
+            'timeout':      int(data.get('cg_timeout', 60)),
+        }
+        max_dist_raw = data.get('cg_max_network_dist')
+        if max_dist_raw is not None:
+            try:
+                cg_options['max_network_dist'] = float(max_dist_raw)
+            except (TypeError, ValueError):
+                pass
+        try:
+            cg_obj = build_city_graph_for_bbox(bbox_geo, **cg_options)
+        except CityGraphUnavailable as exc:
+            cg_warning = (
+                'kernelcal.urban not available — falling back to '
+                f'standard SceneGraph: {exc}'
+            )
+            print(f'[scenegraph] {cg_warning}')
+            cg_obj = None
+        except ValueError as exc:
+            cg_warning = f'invalid city-graph option: {exc}'
+            print(f'[scenegraph] {cg_warning}')
+            cg_obj = None
+        except Exception as exc:  # OSM Overpass timeouts, network errors, …
+            cg_warning = f'city-graph build failed: {exc}'
+            print(f'[scenegraph] {cg_warning}')
+            cg_obj = None
+
+    osm_buildings_in_gt = 'osm_buildings' in ground_truth_sources
+
+    # If we got a CityGraph, *force* osm_buildings into the kernel
+    # mix (it provides the region backbone) and skip the duplicate
+    # osmnx fetch in _fetch_osm_for_bbox.
+    if cg_obj is not None:
+        cg_features = city_graph_to_osm_features(cg_obj)
+        kernels_queried.append('osm_buildings')
+        bld_claims = adapt_osm(
+            cg_features,
+            corners_lonlat=corners,
+            image_size=(img_w, img_h) if img_w and img_h else None,
+            feature_kind='building',
+        )
+        per_kernel_counts['osm_buildings'] = len(bld_claims)
+        if not bld_claims:
+            silent.append('osm_buildings')
+        all_claims.extend(bld_claims)
+
+    osm_fetch_sources = [s for s in ground_truth_sources
+                         if not (s == 'osm_buildings' and cg_obj is not None)]
     osm_features = _fetch_osm_for_bbox(
-        bbox_geo, sources=ground_truth_sources
+        bbox_geo, sources=osm_fetch_sources
     )
     if 'osm_buildings' in osm_features:
         kernels_queried.append('osm_buildings')
@@ -369,7 +445,34 @@ def build_scenegraph_view(request):
             'kernels_queried': kernels_queried,
         }, status=500)
 
+    # Option-A splice: if we built a CityGraph, lift its road-aware
+    # adjacency onto graph.edges (alongside the centroid-IoU edges
+    # build_scene_graph just produced) and stash the spectral
+    # diagnostics under fusion_metadata['city_graph']. Failures here
+    # are non-fatal — the un-spliced SceneGraph is still a valid
+    # response.
+    cg_meta_block: Optional[Dict[str, Any]] = None
+    n_road_edges_added = 0
+    if cg_obj is not None:
+        try:
+            n_road_edges_added = attach_road_edges(graph, cg_obj)
+        except Exception as exc:
+            print(f'[scenegraph] attach_road_edges failed: {exc}')
+        try:
+            cg_meta_block = spectral_block(cg_obj)
+        except CityGraphUnavailable as exc:
+            cg_warning = (cg_warning or '') + f' spectral block skipped: {exc}'
+            print(f'[scenegraph] spectral_block unavailable: {exc}')
+        except Exception as exc:
+            print(f'[scenegraph] spectral_block failed: {exc}')
+
     graph_dict = graph.to_dict()
+
+    # Hoist OSM cg_node_idx tags from claim attributes onto each
+    # node['cg_node_idx'] for cheap client-side lookup. No-op when
+    # use_city_graph_regions=False.
+    n_cg_annotated = annotate_nodes_with_cg_idx(graph_dict)
+
     graph_dict.setdefault('fusion_metadata', {})
     graph_dict['fusion_metadata'].update({
         'per_kernel_claim_counts': per_kernel_counts,
@@ -379,6 +482,20 @@ def build_scenegraph_view(request):
         'iou_threshold': iou_threshold,
         'edge_proximity': edge_proximity,
     })
+    if use_city_graph_regions:
+        graph_dict['fusion_metadata']['use_city_graph_regions'] = True
+        graph_dict['fusion_metadata']['city_graph_options'] = cg_options
+        graph_dict['fusion_metadata']['n_cg_annotated_nodes'] = n_cg_annotated
+        graph_dict['fusion_metadata']['n_road_edges_added'] = n_road_edges_added
+        if cg_meta_block is not None:
+            graph_dict['fusion_metadata']['city_graph'] = cg_meta_block
+        if cg_warning:
+            graph_dict['fusion_metadata']['city_graph_warning'] = cg_warning
+        if cg_obj is None and cg_warning is None:
+            # User asked for it but we silently produced no city-graph.
+            graph_dict['fusion_metadata']['city_graph_warning'] = (
+                'No buildings in viewport — city-graph build returned None.'
+            )
 
     # Strip NaN / +Inf / -Inf so both the JS client and SQLite's
     # JSONField check are happy. See _sanitize_json_floats() docstring;

@@ -3693,7 +3693,18 @@ class WorldSamplerUI {
                 }
             }
 
-            setStatus('Fusing kernel claims under PHX_URBAN_V0...');
+            // Option-A merge with the urban-spectral pipeline. When the
+            // user has ticked "Use OSM road-graph regions", the
+            // orchestrator builds a kernelcal CityGraph for this bbox and
+            // splices its road-aware adjacency + Laplacian spectrum into
+            // the SceneGraph response. Off by default — keeps the
+            // baseline fast and additive.
+            const useCityGraph = !!document.getElementById('sgUseCityGraph')?.checked;
+            const graphMode = document.getElementById('sgGraphMode')?.value || 'road_knn';
+
+            setStatus(useCityGraph
+                ? `Fusing under PHX_URBAN_V0 + CityGraph (${graphMode})...`
+                : 'Fusing kernel claims under PHX_URBAN_V0...');
             const buildBody = {
                 viewport: {
                     image_size: imageSize,
@@ -3705,6 +3716,8 @@ class WorldSamplerUI {
                 min_score: 0.2,
                 iou_threshold: 0.4,
                 edge_proximity: 0.06,
+                use_city_graph_regions: useCityGraph,
+                graph_mode: graphMode,
             };
             const buildResp = await fetch('/webclient/sampler/scenegraph/build', {
                 method: 'POST',
@@ -3728,7 +3741,22 @@ class WorldSamplerUI {
                 .filter(([, v]) => v > 0)
                 .map(([k, v]) => `${k}:${v}`)
                 .join(', ') || '(none)';
-            setStatus(`✓ ${nNodes} nodes — ${histStr}`, '#10b981');
+            // Surface the Option-A merge stats when the orchestrator
+            // built a CityGraph (n_road_edges_added + Fiedler scalar).
+            const fmeta = built.scene_graph?.fusion_metadata || {};
+            let cgTail = '';
+            if (fmeta.use_city_graph_regions) {
+                const nRoadEdges = fmeta.n_road_edges_added || 0;
+                const cgBlock = fmeta.city_graph || null;
+                const lamF = cgBlock && typeof cgBlock.lam_fiedler === 'number'
+                    ? cgBlock.lam_fiedler.toFixed(3) : '?';
+                const nCgNodes = cgBlock?.n_nodes ?? '?';
+                cgTail = ` — CityGraph(${nCgNodes} bldgs, ${nRoadEdges} road-edges, λF=${lamF})`;
+                if (fmeta.city_graph_warning) {
+                    cgTail = ` — ⚠ ${fmeta.city_graph_warning}`;
+                }
+            }
+            setStatus(`✓ ${nNodes} nodes — ${histStr}${cgTail}`, '#10b981');
             this.showNotification(
                 `SceneGraph built: ${nNodes} nodes (${built.session_id})`,
                 'success'
@@ -4080,6 +4108,20 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         });
     }
     
+    // Distinction-Game SceneGraph orchestrator: Option-A toggle that
+    // enables the urban road-graph backbone. The graph_mode select is
+    // only meaningful when the checkbox is on, so gate it visually.
+    const sgUseCgEl = document.getElementById('sgUseCityGraph');
+    const sgGraphModeEl = document.getElementById('sgGraphMode');
+    if (sgUseCgEl && sgGraphModeEl) {
+        const syncCgMode = () => {
+            sgGraphModeEl.disabled = !sgUseCgEl.checked;
+            sgGraphModeEl.style.opacity = sgUseCgEl.checked ? '1' : '0.55';
+        };
+        sgUseCgEl.addEventListener('change', syncCgMode);
+        syncCgMode();
+    }
+
     // Distinction-Game SceneGraph orchestrator button.
     const sgBtn = document.getElementById('buildSceneGraphBtn');
     if (sgBtn) {

@@ -43,6 +43,13 @@ services:
       # kernelcal commit. Remove this line once kernelcal>=0.10 (with
       # distinction_game) is published and pinned in requirements.txt.
       - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.9/site-packages/kernelcal/distinction_game:ro
+      # Same overlay for kernelcal.urban — needed by the urban-spectral
+      # analyzer's road-aware k-NN path (buildings_to_graph_via_roads*)
+      # and by the SceneGraph orchestrator's Option-A merge
+      # (use_city_graph_regions=True). The published kernelcal wheel
+      # only carries Euclidean buildings_to_graph_from_bbox, so without
+      # this mount the road_knn pipeline 503's cleanly but never runs.
+      - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.9/site-packages/kernelcal/urban:ro
     ports:
       - "8060:8090"
     # Enable GPU access

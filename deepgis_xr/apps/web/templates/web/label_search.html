@@ -1533,6 +1533,22 @@
             <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgGtOsmBuildings" checked> OSM buildings</label>
             <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgGtOsmRoads"> OSM roads</label>
         </div>
+        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 6px;">
+            Region backbone (Option&nbsp;A — urban-spectral merge):
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label class="form-check">
+                <input class="form-check-input me-1" type="checkbox" id="sgUseCityGraph">
+                Use OSM road-graph regions
+            </label>
+            <select id="sgGraphMode" class="form-select form-select-sm"
+                    style="display:inline-block; width:auto; font-size:0.72rem; padding:2px 4px;"
+                    title="knn = Euclidean centroid k-NN; road_knn = shortest path along OSM streets"
+                    disabled>
+                <option value="road_knn" selected>road_knn (street-aware)</option>
+                <option value="knn">knn (Euclidean)</option>
+            </select>
+        </div>
         <button class="btn btn-info w-100" id="buildSceneGraphBtn" style="font-size: 0.85rem;">
             <i class="fas fa-project-diagram me-2"></i>Build Scene Graph
         </button>
@@ -1543,6 +1559,10 @@
             Calls each selected kernel on the same captured frame, then runs
             <code>kernelcal.distinction_game.build_scene_graph</code> to fuse
             claims under PHX_URBAN_V0. Colour = argmax category, opacity = posterior score.
+            Ticking <em>Use OSM road-graph regions</em> additionally builds a
+            <code>kernelcal.urban.CityGraph</code> from OSM buildings + the
+            road network and splices its road-aware adjacency + Laplacian
+            spectrum into the SceneGraph.
         </small>
     </div>
     
