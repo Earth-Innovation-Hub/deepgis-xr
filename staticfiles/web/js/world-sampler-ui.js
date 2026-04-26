@@ -16,6 +16,11 @@ class WorldSamplerUI {
         this.isAutoSurveyActive = false;
         this.autoSurveyInterval = null;
         this.samDataSource = null; // For SAM segmentation results
+        this.sceneGraphDataSource = null;
+        this.fusedSceneGraphDataSource = null;
+        this.currentSceneGraph = null;
+        this.currentSceneGraphCorners = null;
+        this.currentFusedSceneGraph = null;
         this.vegetationTargetDataSource = null;
         this.vegetationGame = {
             sessionId: `vegetation-game-${Date.now()}`,
@@ -3733,6 +3738,8 @@ class WorldSamplerUI {
                 throw new Error(built?.message || 'SceneGraph build returned non-success');
             }
 
+            this.currentSceneGraph = built.scene_graph;
+            this.currentSceneGraphCorners = corners;
             this.displaySceneGraph(built.scene_graph, corners);
 
             const nNodes = built.scene_graph?.nodes?.length || 0;
@@ -3778,11 +3785,31 @@ class WorldSamplerUI {
      * a fallback so this works even for non-georeferenced kernels.
      */
     displaySceneGraph(sceneGraph, capturedCorners) {
-        if (!sceneGraph || !sceneGraph.nodes) return;
-        if (this.sceneGraphDataSource && this.viewer.dataSources.contains(this.sceneGraphDataSource)) {
-            this.viewer.dataSources.remove(this.sceneGraphDataSource);
+        return this.displaySceneGraphDataSource(
+            sceneGraph,
+            capturedCorners,
+            'SceneGraph',
+            'sceneGraphDataSource',
+        );
+    }
+
+    displayFusedSceneGraph(sceneGraph, capturedCorners) {
+        return this.displaySceneGraphDataSource(
+            sceneGraph,
+            capturedCorners,
+            'Fused SceneGraph',
+            'fusedSceneGraphDataSource',
+        );
+    }
+
+    displaySceneGraphDataSource(sceneGraph, capturedCorners, dataSourceName, dataSourceProp) {
+        if (!sceneGraph || !sceneGraph.nodes) return Promise.resolve(null);
+        if (dataSourceProp === 'fusedSceneGraphDataSource') {
+            this.hideFusedSceneGraph();
+        } else {
+            this.hideSceneGraph();
         }
-        const ds = new Cesium.GeoJsonDataSource('SceneGraph');
+        const ds = new Cesium.GeoJsonDataSource(dataSourceName || 'SceneGraph');
         const colorByCategory = {
             unknown:           Cesium.Color.GRAY,
             building:          Cesium.Color.fromCssColorString('#3b82f6'), // blue
@@ -3796,6 +3823,45 @@ class WorldSamplerUI {
             debris:            Cesium.Color.fromCssColorString('#f97316'), // orange
         };
 
+        const cleanRing = (rawRing) => {
+            if (!rawRing || rawRing.length < 3) return null;
+            const eps = 1e-10;
+            const pts = [];
+            for (const p of rawRing) {
+                if (!p || p.length < 2) continue;
+                const lon = Number(p[0]);
+                const lat = Number(p[1]);
+                if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+                const prev = pts[pts.length - 1];
+                if (prev && Math.abs(prev[0] - lon) < eps && Math.abs(prev[1] - lat) < eps) {
+                    continue;
+                }
+                pts.push([lon, lat]);
+            }
+            if (pts.length > 1) {
+                const first = pts[0];
+                const last = pts[pts.length - 1];
+                if (Math.abs(first[0] - last[0]) < eps && Math.abs(first[1] - last[1]) < eps) {
+                    pts.pop();
+                }
+            }
+            const distinct = new Set(pts.map((p) => `${p[0].toFixed(10)},${p[1].toFixed(10)}`));
+            if (pts.length < 3 || distinct.size < 3) return null;
+
+            // Reject line-like masks: Cesium's polygon tessellator builds
+            // rhumb-line segments and throws if degenerate rings slip through.
+            let area2 = 0;
+            for (let i = 0; i < pts.length; i++) {
+                const a = pts[i];
+                const b = pts[(i + 1) % pts.length];
+                area2 += (a[0] * b[1]) - (b[0] * a[1]);
+            }
+            if (Math.abs(area2) < 1e-16) return null;
+
+            pts.push([pts[0][0], pts[0][1]]);
+            return pts;
+        };
+
         const features = [];
         for (const node of sceneGraph.nodes) {
             const region = node.region || {};
@@ -3807,11 +3873,8 @@ class WorldSamplerUI {
                     .map((p) => this.bilinearProjectFromCorners(capturedCorners, p[0], p[1]))
                     .filter(Boolean);
             }
-            if (!ring || ring.length < 3) continue;
-            // Ensure closed ring.
-            const first = ring[0];
-            const last = ring[ring.length - 1];
-            if (first[0] !== last[0] || first[1] !== last[1]) ring.push([first[0], first[1]]);
+            ring = cleanRing(ring);
+            if (!ring) continue;
             features.push({
                 type: 'Feature',
                 geometry: { type: 'Polygon', coordinates: [ring] },
@@ -3828,10 +3891,10 @@ class WorldSamplerUI {
 
         if (features.length === 0) {
             console.warn('[SceneGraph] no renderable nodes');
-            return;
+            return Promise.resolve(null);
         }
         const fc = { type: 'FeatureCollection', features };
-        ds.load(fc).then(() => {
+        return ds.load(fc).then(() => {
             const entities = ds.entities.values;
             entities.forEach((entity) => {
                 const props = entity.properties;
@@ -3863,12 +3926,166 @@ class WorldSamplerUI {
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 };
             });
-            this.sceneGraphDataSource = ds;
+            this[dataSourceProp || 'sceneGraphDataSource'] = ds;
             this.viewer.dataSources.add(ds);
-            console.log(`[SceneGraph] rendered ${entities.length} nodes`);
+            console.log(`[${dataSourceName || 'SceneGraph'}] rendered ${entities.length} nodes`);
+            return ds;
         }).catch((err) => {
             console.error('[SceneGraph] failed to load GeoJSON:', err);
+            return null;
         });
+    }
+
+    hideSceneGraph() {
+        if (this.sceneGraphDataSource && this.viewer.dataSources.contains(this.sceneGraphDataSource)) {
+            this.viewer.dataSources.remove(this.sceneGraphDataSource);
+        }
+        this.sceneGraphDataSource = null;
+        if (this.viewer?.scene) {
+            this.viewer.scene.requestRender();
+        }
+    }
+
+    hideFusedSceneGraph() {
+        if (this.fusedSceneGraphDataSource && this.viewer.dataSources.contains(this.fusedSceneGraphDataSource)) {
+            this.viewer.dataSources.remove(this.fusedSceneGraphDataSource);
+        }
+        this.fusedSceneGraphDataSource = null;
+        if (this.viewer?.scene) {
+            this.viewer.scene.requestRender();
+        }
+    }
+
+    setSceneGraphViewportVisible(visible) {
+        if (visible) {
+            if (this.currentSceneGraph) {
+                this.displaySceneGraph(this.currentSceneGraph, this.currentSceneGraphCorners);
+            } else {
+                this.showNotification('No current SceneGraph yet. Build one first.', 'info');
+            }
+        } else {
+            this.hideSceneGraph();
+        }
+    }
+
+    async setFusedSceneGraphViewportVisible(visible) {
+        if (!visible) {
+            this.hideFusedSceneGraph();
+            return;
+        }
+        try {
+            if (!this.currentFusedSceneGraph) {
+                const resp = await fetch('/webclient/sampler/scenegraph/fused/latest');
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok || payload.status !== 'success') {
+                    throw new Error(payload.message || `No fused SceneGraph available (${resp.status})`);
+                }
+                this.currentFusedSceneGraph = payload.fused_scene_graph;
+            }
+            await this.displayFusedSceneGraph(this.currentFusedSceneGraph, null);
+            const nNodes = this.currentFusedSceneGraph?.nodes?.length || 0;
+            this.showNotification(`Fused SceneGraph overlay shown (${nNodes} nodes)`, 'success');
+        } catch (err) {
+            console.error('[FusedSceneGraph] display failed:', err);
+            this.showNotification(`Fused SceneGraph unavailable: ${err.message || err}`, 'error');
+            const el = document.getElementById('sgShowFusedOnViewport');
+            if (el) el.checked = false;
+            this.hideFusedSceneGraph();
+        }
+    }
+
+    getFuseLatestN() {
+        const raw = parseInt(document.getElementById('sgFuseLatestN')?.value || '1', 10);
+        return Math.max(1, Math.min(Number.isFinite(raw) ? raw : 1, 5));
+    }
+
+    setFusedSceneGraphStatus(message, color) {
+        const statusDiv = document.getElementById('fusedSceneGraphStatus');
+        const statusText = document.getElementById('fusedSceneGraphStatusText');
+        if (statusDiv) statusDiv.style.display = 'block';
+        if (statusText) {
+            statusText.innerHTML = message;
+            statusText.style.color = color || '#cbd5e1';
+        }
+    }
+
+    formatFusePreviewRows(rows) {
+        if (!rows || rows.length === 0) return '(no rows)';
+        return rows.map((r) => {
+            const sid = (r.session_id || '').replace('scenegraph_', '');
+            const kernels = (r.kernels_used || []).join(',');
+            return `<div style="margin-top:3px;"><code>${sid}</code> · ${r.n_nodes || 0} nodes · ${kernels}</div>`;
+        }).join('');
+    }
+
+    async previewFusedSceneGraphInputs() {
+        const latest = this.getFuseLatestN();
+        this.setFusedSceneGraphStatus(`Previewing latest ${latest} SceneGraph row(s)...`);
+        try {
+            const resp = await fetch(`/webclient/sampler/scenegraph/fused/preview?latest=${latest}`);
+            const payload = await resp.json();
+            if (!resp.ok || payload.status !== 'success') {
+                throw new Error(payload.message || `Preview failed (${resp.status})`);
+            }
+            const fitName = payload.latest_fit_artifact?.name || '(no fit artifact found)';
+            this.setFusedSceneGraphStatus(
+                `<strong>Will fuse ${payload.n_scene_graphs} row(s)</strong> · `
+                + `${payload.n_input_nodes} input nodes · ${payload.n_input_edges} edges`
+                + `<div style="margin-top:4px;">Fit artifact: <code>${fitName}</code></div>`
+                + this.formatFusePreviewRows(payload.rows),
+                '#cbd5e1',
+            );
+            return payload;
+        } catch (err) {
+            console.error('[FusedSceneGraph] preview failed:', err);
+            this.setFusedSceneGraphStatus(`✗ ${err.message || err}`, '#ef4444');
+            this.showNotification(`Fuse preview failed: ${err.message || err}`, 'error');
+            return null;
+        }
+    }
+
+    async buildFusedSceneGraphFromFrontend() {
+        const latest = this.getFuseLatestN();
+        const btn = document.getElementById('buildFusedSceneGraphBtn');
+        if (btn) btn.disabled = true;
+        this.setFusedSceneGraphStatus(`Fusing latest ${latest} SceneGraph row(s) with PR-4 factor graph...`);
+        try {
+            const resp = await fetch('/webclient/sampler/scenegraph/fused/build', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    latest,
+                    spatial_degree_cap: 8,
+                    bp_max_iter: 12,
+                    bp_damping: 0.5,
+                    bp_tol: 1e-4,
+                }),
+            });
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok || payload.status !== 'success') {
+                throw new Error(payload.message || `Fuse failed (${resp.status})`);
+            }
+            this.currentFusedSceneGraph = payload.fused_scene_graph;
+            await this.displayFusedSceneGraph(this.currentFusedSceneGraph, null);
+            const checkbox = document.getElementById('sgShowFusedOnViewport');
+            if (checkbox) checkbox.checked = true;
+            const art = payload.artifact || {};
+            this.setFusedSceneGraphStatus(
+                `<strong>✓ Fused graph built</strong> · `
+                + `${art.n_input_nodes || 0} input nodes → ${art.n_fused_nodes || 0} fused nodes · `
+                + `${art.n_edges || 0} edges · BP ${art.converged ? 'converged' : 'not fully converged'}`
+                + `<div style="margin-top:4px;">Artifact: <code>${art.artifact_dir || art.timestamp || '(unknown)'}</code></div>`
+                + this.formatFusePreviewRows(payload.rows),
+                art.converged ? '#10b981' : '#f59e0b',
+            );
+            this.showNotification(`Fused SceneGraph built: ${art.n_fused_nodes || 0} nodes`, art.converged ? 'success' : 'warning');
+        } catch (err) {
+            console.error('[FusedSceneGraph] build failed:', err);
+            this.setFusedSceneGraphStatus(`✗ ${err.message || err}`, '#ef4444');
+            this.showNotification(`Fused SceneGraph build failed: ${err.message || err}`, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
     }
 }
 
@@ -4034,6 +4251,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 }
             }
         });
+        analysisTypeSelect.dispatchEvent(new Event('change'));
     }
     
     // Setup Grounding DINO threshold sliders
@@ -4120,6 +4338,41 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         };
         sgUseCgEl.addEventListener('change', syncCgMode);
         syncCgMode();
+    }
+
+    // PR-4 fused SceneGraph overlay: loads the latest factor-graph
+    // collapse artifact and displays it on the current Cesium viewport.
+    const sgShowFusedEl = document.getElementById('sgShowFusedOnViewport');
+    if (sgShowFusedEl) {
+        sgShowFusedEl.addEventListener('change', async (e) => {
+            if (!worldSamplerUI) {
+                console.warn('[SceneGraph] WorldSamplerUI not available');
+                return;
+            }
+            await worldSamplerUI.setFusedSceneGraphViewportVisible(!!e.target.checked);
+        });
+    }
+
+    const previewFusedBtn = document.getElementById('previewFusedSceneGraphBtn');
+    if (previewFusedBtn) {
+        previewFusedBtn.addEventListener('click', async () => {
+            if (!worldSamplerUI) {
+                console.warn('[FusedSceneGraph] WorldSamplerUI not available');
+                return;
+            }
+            await worldSamplerUI.previewFusedSceneGraphInputs();
+        });
+    }
+
+    const buildFusedBtn = document.getElementById('buildFusedSceneGraphBtn');
+    if (buildFusedBtn) {
+        buildFusedBtn.addEventListener('click', async () => {
+            if (!worldSamplerUI) {
+                console.warn('[FusedSceneGraph] WorldSamplerUI not available');
+                return;
+            }
+            await worldSamplerUI.buildFusedSceneGraphFromFrontend();
+        });
     }
 
     // Distinction-Game SceneGraph orchestrator button.

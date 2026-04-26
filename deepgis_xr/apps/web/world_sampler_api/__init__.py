@@ -55,6 +55,11 @@ from .http import (
 )
 
 from .scenegraph import build_scenegraph_view
+from .scene_graph_collapse import (
+    build_fused_scene_graph_view,
+    latest_fused_scene_graph_view,
+    preview_fused_scene_graph_view,
+)
 
 from .analyzers import (
     # per-model analyzer branches (C4: moved out of legacy.py)
@@ -94,4 +99,7 @@ __all__ = [
     "export_annotation_game_coco",
     "export_annotation_game_graph",
     "build_scenegraph_view",
+    "latest_fused_scene_graph_view",
+    "preview_fused_scene_graph_view",
+    "build_fused_scene_graph_view",
 ]

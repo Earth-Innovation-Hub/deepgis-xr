@@ -1356,11 +1356,11 @@
         <div class="form-group mb-3">
             <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Analysis Type:</label>
             <select class="form-select form-select-sm" id="analysisTypeSelect">
-                <option value="sam" selected>SAM (Universal Segmentation)</option>
+                <option value="sam">SAM (Universal Segmentation)</option>
                 <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
                 <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
                 <option value="grounded_sam">Grounded-SAM-2 (Detection + Seg) 🎯🔍</option>
-                <option value="maskrcnn_rocks">MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
+                <option value="maskrcnn_rocks" selected>MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
                 <option value="maskrcnn_house">MaskRCNN House (Tornado/Eureka) 🏠</option>
                 <option value="zero_shot">Zero-Shot (COCO)</option>
                 <option value="mask2former">Mask2Former (Accurate)</option>
@@ -1552,6 +1552,27 @@
         <button class="btn btn-info w-100" id="buildSceneGraphBtn" style="font-size: 0.85rem;">
             <i class="fas fa-project-diagram me-2"></i>Build Scene Graph
         </button>
+        <label class="form-check d-flex align-items-center mt-2 mb-0"
+               style="font-size: 0.75rem; color: #cbd5e1;">
+            <input class="form-check-input me-2" type="checkbox" id="sgShowFusedOnViewport">
+            Show latest fused SceneGraph (factor graph) on Cesium viewport
+        </label>
+        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 8px;">
+            Factor-graph fuse:
+        </div>
+        <div class="d-flex align-items-center gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label for="sgFuseLatestN" style="margin:0;">Latest rows</label>
+            <input type="number" class="form-control form-control-sm" id="sgFuseLatestN"
+                   value="1" min="1" max="5" step="1"
+                   style="width: 64px; background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+            <button class="btn btn-secondary btn-sm" id="previewFusedSceneGraphBtn" type="button"
+                    style="font-size: 0.72rem;">Preview</button>
+            <button class="btn btn-primary btn-sm" id="buildFusedSceneGraphBtn" type="button"
+                    style="font-size: 0.72rem;">Fuse + Show</button>
+        </div>
+        <div id="fusedSceneGraphStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(37, 99, 235, 0.15); border-radius: 4px; font-size: 0.72rem; color: #cbd5e1;">
+            <span id="fusedSceneGraphStatusText">Ready.</span>
+        </div>
         <div id="sceneGraphStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(59, 130, 246, 0.15); border-radius: 4px; font-size: 0.78rem; color: #cbd5e1;">
             <span id="sceneGraphStatusText">Building...</span>
         </div>

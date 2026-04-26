@@ -85,6 +85,9 @@ urlpatterns = [
 
     # Distinction-Game SceneGraph orchestrator (kernelcal §4 / §11.4)
     path('webclient/sampler/scenegraph/build', world_sampler_api.build_scenegraph_view, name='build_scenegraph'),
+    path('webclient/sampler/scenegraph/fused/latest', world_sampler_api.latest_fused_scene_graph_view, name='latest_fused_scenegraph'),
+    path('webclient/sampler/scenegraph/fused/preview', world_sampler_api.preview_fused_scene_graph_view, name='preview_fused_scenegraph'),
+    path('webclient/sampler/scenegraph/fused/build', world_sampler_api.build_fused_scene_graph_view, name='build_fused_scenegraph'),
     
     # AI Analysis Report
     path('label/ai-analysis/report/<str:session_id>/', views.ai_analysis_report, name='ai_analysis_report'),

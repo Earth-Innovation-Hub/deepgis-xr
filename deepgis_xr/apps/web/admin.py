@@ -388,6 +388,8 @@ class SceneGraphAdmin(admin.ModelAdmin):
         'n_edges_display',
         'edge_mode_display',
         'top_categories_display',
+        'last_fit_display',
+        'last_collapse_display',
         'view_links',
     ]
     list_filter = [
@@ -416,6 +418,10 @@ class SceneGraphAdmin(admin.ModelAdmin):
         'edge_mode_display',
         'top_categories_display',
         'city_graph_summary',
+        'last_fit_display',
+        'distinction_game_fit_panel',
+        'last_collapse_display',
+        'scene_graph_collapse_panel',
         'view_links',
     ]
     # All scene-graph rows are write-once outputs of the orchestrator;
@@ -448,6 +454,27 @@ class SceneGraphAdmin(admin.ModelAdmin):
                 'into this SceneGraph.'
             ),
         }),
+        ('Distinction-Game fit (PR-3)', {
+            'fields': ('distinction_game_fit_panel',),
+            'description': (
+                'Most recent <code>fit_distinction_game</code> artifact '
+                'whose contributing-rows index includes this SceneGraph '
+                '(i.e. the latest MaxCal Q_s + λ refit that learned '
+                'from this row). Generate new fits with the '
+                '<em>Run distinction-game fit on selected</em> action '
+                'or <code>python manage.py fit_distinction_game</code>.'
+            ),
+        }),
+        ('SceneGraph collapse (PR-4)', {
+            'fields': ('scene_graph_collapse_panel',),
+            'description': (
+                'Most recent factor-graph collapse artifact whose '
+                'contributing-rows index includes this SceneGraph. '
+                'Generate new fused graphs with the '
+                '<em>Collapse selected SceneGraphs</em> action or '
+                '<code>python manage.py collapse_scene_graphs</code>.'
+            ),
+        }),
         ('Viewport (raw)', {
             'fields': ('viewport_pretty',),
             'classes': ('collapse',),
@@ -463,6 +490,8 @@ class SceneGraphAdmin(admin.ModelAdmin):
         'action_render_pngs',
         'action_render_gallery',
         'action_delete_png_artifacts',
+        'action_run_distinction_game_fit',
+        'action_collapse_scene_graphs',
     ]
 
     # ── custom admin URL routes ────────────────────────────────────────
@@ -481,6 +510,11 @@ class SceneGraphAdmin(admin.ModelAdmin):
                 name='web_scenegraph_visualization',
             ),
             path(
+                '<path:object_id>/graph.html/',
+                self.admin_site.admin_view(self.serve_graph_visualization),
+                name='web_scenegraph_graph',
+            ),
+            path(
                 '<path:object_id>/rerender/',
                 self.admin_site.admin_view(self.rerender_visualization),
                 name='web_scenegraph_rerender',
@@ -494,6 +528,28 @@ class SceneGraphAdmin(admin.ModelAdmin):
                 'gallery.png/',
                 self.admin_site.admin_view(self.serve_gallery),
                 name='web_scenegraph_gallery',
+            ),
+            # Distinction-game fit artifact serving (PR-3).
+            path(
+                'fit-artifact/<path:rel_path>/',
+                self.admin_site.admin_view(self.serve_fit_artifact),
+                name='web_scenegraph_fit_artifact',
+            ),
+            path(
+                '<path:object_id>/last-fit/',
+                self.admin_site.admin_view(self.serve_last_fit_for_row),
+                name='web_scenegraph_last_fit',
+            ),
+            # Factor-graph collapse artifact serving (PR-4).
+            path(
+                'collapse-artifact/<path:rel_path>/',
+                self.admin_site.admin_view(self.serve_collapse_artifact),
+                name='web_scenegraph_collapse_artifact',
+            ),
+            path(
+                '<path:object_id>/last-collapse/',
+                self.admin_site.admin_view(self.serve_last_collapse_for_row),
+                name='web_scenegraph_last_collapse',
             ),
         ]
         # Custom routes must come first so ``<path:object_id>`` doesn't
@@ -654,11 +710,97 @@ class SceneGraphAdmin(admin.ModelAdmin):
         return mark_safe(''.join(chips))
     top_categories_display.short_description = 'Top categories'
 
+    def last_fit_display(self, obj):
+        """Compact column showing the latest distinction-game fit that
+        included this row.
+
+        Reads the on-disk fit artifact directory (no DB hit) and shows
+        a green chip with the artifact's timestamp + λ-summary if a
+        fit exists; a grey "—" otherwise. The chip is a link to the
+        artifact's ``fit.summary.txt`` so the auditor can drill in.
+        """
+        if not obj.session_id:
+            return format_html('<span style="color:#94a3b8;">—</span>')
+        try:
+            from .world_sampler_api.distinction_game_fit import (
+                latest_fit_for_session,
+            )
+        except Exception:
+            return format_html('<span style="color:#94a3b8;">—</span>')
+        entry = latest_fit_for_session(obj.session_id)
+        if not entry:
+            return format_html(
+                '<span style="color:#94a3b8;" title="No fit has consumed '
+                'this row yet.">—</span>'
+            )
+        url = (
+            reverse('admin:web_scenegraph_fit_artifact', args=[entry['name']])
+            + 'fit.summary.txt'
+        )
+        # Show a tiny λ summary: top-2 sources by weight.
+        sources = entry.get('sources') or []
+        lambdas = entry.get('lambdas') or []
+        pairs = sorted(
+            zip(sources, lambdas),
+            key=lambda kv: -float(kv[1] or 0.0),
+        )[:2]
+        chip_text = ', '.join(f'{s}={float(l):.2f}' for s, l in pairs)
+        return format_html(
+            '<a href="{}" target="_blank" '
+            'style="display:inline-block; padding:1px 6px; border-radius:3px;'
+            ' background:#16a34a; color:#fff; font-size:11px; '
+            ' font-family:monospace; text-decoration:none;" '
+            'title="{}">{}{}</a>',
+            url,
+            f'Fit {entry["name"]} — {len(entry.get("contributing_session_ids") or [])} rows',
+            entry['name'][:13],
+            f' · {chip_text}' if chip_text else '',
+        )
+    last_fit_display.short_description = 'Last fit'
+
+    def last_collapse_display(self, obj):
+        """Compact column showing the latest fused SceneGraph artifact."""
+        if not obj.session_id:
+            return format_html('<span style="color:#94a3b8;">—</span>')
+        try:
+            from .world_sampler_api.scene_graph_collapse import (
+                latest_collapse_for_session,
+            )
+        except Exception:
+            return format_html('<span style="color:#94a3b8;">—</span>')
+        entry = latest_collapse_for_session(obj.session_id)
+        if not entry:
+            return format_html(
+                '<span style="color:#94a3b8;" title="No collapse has consumed '
+                'this row yet.">—</span>'
+            )
+        url = (
+            reverse('admin:web_scenegraph_collapse_artifact', args=[entry['name']])
+            + 'fused.summary.txt'
+        )
+        label = (
+            f'{entry.get("n_input_nodes", 0)}→{entry.get("n_fused_nodes", 0)} '
+            f'· {entry.get("bp_n_iter", "?")} it'
+        )
+        return format_html(
+            '<a href="{}" target="_blank" '
+            'style="display:inline-block; padding:1px 6px; border-radius:3px;'
+            ' background:#2563eb; color:#fff; font-size:11px; '
+            ' font-family:monospace; text-decoration:none;" '
+            'title="{}">{}{}</a>',
+            url,
+            f'Collapse {entry["name"]} — {len(entry.get("contributing_session_ids") or [])} rows',
+            entry['name'][:13],
+            f' · {label}',
+        )
+    last_collapse_display.short_description = 'Last collapse'
+
     def view_links(self, obj):
         """Per-row action buttons: PNG, JSON, Cesium, re-render."""
         if not obj.pk:
             return ''
         png = reverse('admin:web_scenegraph_visualization', args=[obj.pk])
+        graph = reverse('admin:web_scenegraph_graph', args=[obj.pk])
         rerender = reverse('admin:web_scenegraph_rerender', args=[obj.pk])
         payload = reverse('admin:web_scenegraph_payload', args=[obj.pk])
 
@@ -678,10 +820,11 @@ class SceneGraphAdmin(admin.ModelAdmin):
             )
 
         core = format_html(
+            '<a href="{}" target="_blank">Graph</a> · '
             '<a href="{}" target="_blank">🖼 PNG</a> · '
             '<a href="{}">↻ Re-render</a> · '
             '<a href="{}" target="_blank">JSON</a>',
-            png, rerender, payload,
+            graph, png, rerender, payload,
         )
         return mark_safe(str(core) + str(cesium_link))
     view_links.short_description = 'Actions'
@@ -699,19 +842,31 @@ class SceneGraphAdmin(admin.ModelAdmin):
         if not obj.pk:
             return '(save first)'
         png = reverse('admin:web_scenegraph_visualization', args=[obj.pk])
+        graph = reverse('admin:web_scenegraph_graph', args=[obj.pk])
         rerender = reverse('admin:web_scenegraph_rerender', args=[obj.pk])
         return format_html(
             '<div style="background:#f8fafc; padding:8px; border:1px solid #e2e8f0;">'
+            '<iframe src="{}" '
+            'style="width:100%; height:680px; border:1px solid #cbd5e1;'
+            ' border-radius:6px; background:#0f172a;" '
+            'title="Interactive SceneGraph visualization for {}"></iframe>'
+            '<div style="margin-top:6px; font-size:11px; color:#475569;">'
+            '<a href="{}" target="_blank">open graph explorer →</a> · '
+            '<a href="{}" target="_blank">open PNG fallback →</a> · '
+            '<a href="{}">↻ Re-render PNG</a>'
+            '</div>'
+            '<details style="margin-top:8px;">'
+            '<summary style="cursor:pointer; color:#475569; font-size:11px;">PNG fallback</summary>'
             '<a href="{}" target="_blank">'
             '<img src="{}" style="max-width:100%; height:auto; display:block;'
+            ' margin-top:8px;'
             ' border:1px solid #cbd5e1;" '
             'alt="SceneGraph visualization for {}"/>'
             '</a>'
-            '<div style="margin-top:6px; font-size:11px; color:#475569;">'
-            '<a href="{}">↻ Re-render</a> · '
-            '<a href="{}" target="_blank">open full size →</a>'
-            '</div></div>',
-            png, png, obj.session_id, rerender, png,
+            '</details>'
+            '</div>',
+            graph, obj.session_id, graph, png, rerender,
+            png, png, obj.session_id,
         )
     visualization_preview.short_description = 'Visualization'
 
@@ -740,6 +895,147 @@ class SceneGraphAdmin(admin.ModelAdmin):
         return self._pretty_json(obj.fusion_metadata or {})
     fusion_metadata_pretty.short_description = 'Fusion metadata (JSON)'
 
+    def distinction_game_fit_panel(self, obj):
+        """Render the latest fit summary that included this row (full panel).
+
+        Surfaces λ per source + EM convergence + links to the on-disk
+        ``fit.json`` / ``fit.summary.txt`` artifact. Falls back to a
+        polite "no fit yet" marker when the row has not been included
+        in any fit run.
+        """
+        if not obj or not obj.session_id:
+            return format_html('<em>(save first)</em>')
+        try:
+            from .world_sampler_api.distinction_game_fit import (
+                latest_fit_for_session,
+            )
+        except Exception as exc:
+            return format_html(
+                '<span style="color:#dc2626;">Failed to load fit module: {}</span>',
+                str(exc),
+            )
+        entry = latest_fit_for_session(obj.session_id)
+        if not entry:
+            return format_html(
+                '<div style="color:#64748b;">'
+                'No <code>fit_distinction_game</code> run has consumed this '
+                'row yet. Use the admin action <em>Run distinction-game fit '
+                'on selected</em> or run '
+                '<code>python manage.py fit_distinction_game --session-ids {}</code>.'
+                '</div>',
+                obj.session_id,
+            )
+
+        sources = entry.get('sources') or []
+        lambdas = entry.get('lambdas') or []
+        n_sg = entry.get('n_scene_graphs') or 0
+        n_regs = entry.get('n_regions') or 0
+        n_anchored = entry.get('n_anchored_regions') or 0
+        converged = entry.get('converged')
+
+        rows_html = ''
+        for s, l in zip(sources, lambdas):
+            try:
+                lam_str = f'{float(l):.4f}'
+            except Exception:
+                lam_str = str(l)
+            rows_html += format_html(
+                '<tr><td style="padding:2px 12px 2px 0; color:#64748b;'
+                ' font-family:monospace;">{}</td>'
+                '<td style="font-family:monospace;">{}</td></tr>',
+                s, lam_str,
+            )
+
+        json_url = (
+            reverse('admin:web_scenegraph_fit_artifact', args=[entry['name']])
+            + 'fit.json'
+        )
+        txt_url = (
+            reverse('admin:web_scenegraph_fit_artifact', args=[entry['name']])
+            + 'fit.summary.txt'
+        )
+
+        return mark_safe(
+            f'<div>'
+            f'<div style="margin-bottom:6px;">'
+            f'<strong>Fit {entry["name"]}</strong> · '
+            f'{n_sg} scene graphs, {n_regs} regions '
+            f'({n_anchored} anchored) · '
+            f'<span style="color:{"#16a34a" if converged else "#f97316"};">'
+            f'{"converged" if converged else "did not fully converge"}</span>'
+            f'</div>'
+            f'<table style="border-collapse:collapse; margin-bottom:6px;">'
+            f'{rows_html}'
+            f'</table>'
+            f'<div style="font-size:11px;">'
+            f'<a href="{txt_url}" target="_blank">📄 fit.summary.txt</a> · '
+            f'<a href="{json_url}" target="_blank">{{ }} fit.json</a>'
+            f'</div>'
+            f'</div>'
+        )
+    distinction_game_fit_panel.short_description = 'Latest distinction-game fit'
+
+    def scene_graph_collapse_panel(self, obj):
+        """Render the latest factor-graph collapse summary for this row."""
+        if not obj or not obj.session_id:
+            return format_html('<em>(save first)</em>')
+        try:
+            from .world_sampler_api.scene_graph_collapse import (
+                latest_collapse_for_session,
+            )
+        except Exception as exc:
+            return format_html(
+                '<span style="color:#dc2626;">Failed to load collapse module: {}</span>',
+                str(exc),
+            )
+        entry = latest_collapse_for_session(obj.session_id)
+        if not entry:
+            return format_html(
+                '<div style="color:#64748b;">'
+                'No <code>collapse_scene_graphs</code> run has consumed this '
+                'row yet. Use the admin action <em>Collapse selected '
+                'SceneGraphs</em> or run '
+                '<code>python manage.py collapse_scene_graphs --session-ids {}</code>.'
+                '</div>',
+                obj.session_id,
+            )
+        json_url = (
+            reverse('admin:web_scenegraph_collapse_artifact', args=[entry['name']])
+            + 'fused.json'
+        )
+        txt_url = (
+            reverse('admin:web_scenegraph_collapse_artifact', args=[entry['name']])
+            + 'fused.summary.txt'
+        )
+        diag_url = (
+            reverse('admin:web_scenegraph_collapse_artifact', args=[entry['name']])
+            + 'bp_diagnostics.json'
+        )
+        converged = entry.get('converged')
+        return mark_safe(
+            f'<div>'
+            f'<div style="margin-bottom:6px;">'
+            f'<strong>Collapse {entry["name"]}</strong> · '
+            f'{entry.get("n_scene_graphs") or 0} scene graphs, '
+            f'{entry.get("n_input_nodes") or 0} input nodes → '
+            f'{entry.get("n_fused_nodes") or 0} fused nodes, '
+            f'{entry.get("n_edges") or 0} edges · '
+            f'<span style="color:{"#16a34a" if converged else "#f97316"};">'
+            f'{"BP converged" if converged else "BP did not fully converge"}</span>'
+            f'</div>'
+            f'<div style="font-size:11px; margin-bottom:4px;">'
+            f'BP iterations: {entry.get("bp_n_iter")}; '
+            f'max delta: {entry.get("bp_max_delta")}'
+            f'</div>'
+            f'<div style="font-size:11px;">'
+            f'<a href="{txt_url}" target="_blank">fused.summary.txt</a> · '
+            f'<a href="{json_url}" target="_blank">{{ }} fused.json</a> · '
+            f'<a href="{diag_url}" target="_blank">{{ }} bp_diagnostics.json</a>'
+            f'</div>'
+            f'</div>'
+        )
+    scene_graph_collapse_panel.short_description = 'Latest factor-graph collapse'
+
     # ── custom URL handlers ────────────────────────────────────────────
 
     def _render_one(self, row, *, force: bool = False):
@@ -750,6 +1046,380 @@ class SceneGraphAdmin(admin.ModelAdmin):
         if force or not target.exists():
             return render_scene_graph_png(row, target)
         return target
+
+    def _node_graph_xy(self, node, fallback_i: int, fallback_n: int):
+        """Return a stable 2D point from geo/image polygons for graph seeding."""
+        region = (node or {}).get('region') or {}
+        ring = region.get('geo_polygon') or region.get('polygon') or []
+        pts = []
+        for p in ring:
+            try:
+                if p is not None and len(p) >= 2:
+                    pts.append((float(p[0]), float(p[1])))
+            except (TypeError, ValueError):
+                continue
+        if pts:
+            return (
+                sum(p[0] for p in pts) / len(pts),
+                sum(p[1] for p in pts) / len(pts),
+            )
+
+        # Deterministic circle fallback for semantic-only nodes.
+        import math
+        theta = 2.0 * math.pi * (fallback_i / max(fallback_n, 1))
+        return (math.cos(theta), math.sin(theta))
+
+    def _graph_preview_payload(self, row, *, max_nodes: int = 360, max_edges: int = 1200):
+        """Compact node-link payload for the interactive admin graph view."""
+        from .world_sampler_api.scenegraph_viz import CATEGORY_COLORS
+
+        raw_nodes = list(row.nodes or [])
+        raw_edges = list(row.edges or [])
+        ranked = sorted(
+            enumerate(raw_nodes),
+            key=lambda item: float((item[1] or {}).get('score') or 0.0),
+            reverse=True,
+        )
+        kept_pairs = ranked[:max_nodes]
+        kept_ids = {
+            str((node or {}).get('id') or f'n{idx}')
+            for idx, node in kept_pairs
+        }
+
+        coords = {}
+        for out_i, (idx, node) in enumerate(kept_pairs):
+            node_id = str((node or {}).get('id') or f'n{idx}')
+            coords[node_id] = self._node_graph_xy(node, out_i, len(kept_pairs))
+
+        xs = [p[0] for p in coords.values()] or [0.0]
+        ys = [p[1] for p in coords.values()] or [0.0]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        span_x = max(max_x - min_x, 1e-9)
+        span_y = max(max_y - min_y, 1e-9)
+
+        nodes = []
+        for idx, node in kept_pairs:
+            node = node or {}
+            node_id = str(node.get('id') or f'n{idx}')
+            x, y = coords[node_id]
+            category = node.get('category') or 'unknown'
+            sources = node.get('sources') or []
+            claims = node.get('claims') or []
+            nodes.append({
+                'id': node_id,
+                'label': node_id,
+                'category': category,
+                'score': float(node.get('score') or 0.0),
+                'sources': sources,
+                'n_claims': len(claims),
+                'color': CATEGORY_COLORS.get(category, CATEGORY_COLORS['unknown']),
+                'x': 60.0 + 880.0 * ((x - min_x) / span_x),
+                'y': 60.0 + 520.0 * (1.0 - ((y - min_y) / span_y)),
+            })
+
+        links = []
+        for edge in sorted(
+            raw_edges,
+            key=lambda e: float((e or {}).get('weight') or 0.0),
+            reverse=True,
+        ):
+            if len(links) >= max_edges:
+                break
+            src = str((edge or {}).get('source') or '')
+            tgt = str((edge or {}).get('target') or '')
+            if src in kept_ids and tgt in kept_ids and src != tgt:
+                links.append({
+                    'source': src,
+                    'target': tgt,
+                    'relation': (edge or {}).get('relation') or 'adjacent',
+                    'weight': float((edge or {}).get('weight') or 1.0),
+                })
+
+        return {
+            'session_id': row.session_id,
+            'taxonomy_name': row.taxonomy_name,
+            'nodes': nodes,
+            'links': links,
+            'palette': CATEGORY_COLORS,
+            'stats': {
+                'total_nodes': len(raw_nodes),
+                'total_edges': len(raw_edges),
+                'shown_nodes': len(nodes),
+                'shown_edges': len(links),
+                'max_nodes': max_nodes,
+                'max_edges': max_edges,
+            },
+        }
+
+    def serve_graph_visualization(self, request, object_id):
+        """GET <id>/graph.html/ → self-contained interactive node-link view."""
+        row = get_object_or_404(SceneGraph, pk=object_id)
+        payload = self._graph_preview_payload(row)
+        data_json = json.dumps(payload, allow_nan=False).replace('</', '<\\/')
+        html = """
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SceneGraph Explorer</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; background:#0f172a; color:#e2e8f0; font:12px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  .bar { display:flex; gap:12px; align-items:center; padding:10px 12px; background:#111827; border-bottom:1px solid #334155; }
+  .title { font-weight:700; color:#f8fafc; }
+  .pill { padding:2px 8px; border-radius:999px; background:#1e293b; color:#cbd5e1; }
+  .wrap { display:grid; grid-template-columns:minmax(0,1fr) 270px; height:calc(100vh - 43px); min-height:560px; }
+  svg { width:100%; height:100%; background:radial-gradient(circle at 50% 40%, #172554 0%, #0f172a 48%, #020617 100%); cursor:grab; }
+  svg.dragging { cursor:grabbing; }
+  .side { border-left:1px solid #334155; background:#0b1120; padding:12px; overflow:auto; }
+  .side h3 { margin:0 0 8px; font-size:13px; color:#f8fafc; }
+  .muted { color:#94a3b8; }
+  .legend { display:grid; gap:5px; margin-top:12px; }
+  .legend-row { display:flex; align-items:center; gap:6px; }
+  .swatch { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  input { width:100%; box-sizing:border-box; margin:8px 0 10px; padding:7px 8px; border:1px solid #475569; border-radius:6px; background:#020617; color:#e2e8f0; }
+  button { margin-right:6px; padding:5px 8px; border:1px solid #475569; border-radius:6px; background:#1e293b; color:#e2e8f0; cursor:pointer; }
+  button:hover { background:#334155; }
+  line { stroke:#94a3b8; stroke-opacity:.18; }
+  circle { stroke:#f8fafc; stroke-opacity:.7; stroke-width:1; cursor:pointer; }
+  circle.dim, line.dim { opacity:.06; }
+  circle.selected { stroke:#fbbf24; stroke-width:3; }
+  text { fill:#cbd5e1; pointer-events:none; font-size:10px; paint-order:stroke; stroke:#020617; stroke-width:3px; }
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="title" id="title"></span>
+  <span class="pill" id="counts"></span>
+  <span class="muted">Drag nodes, wheel to zoom, click for details.</span>
+</div>
+<div class="wrap">
+  <svg id="graph" viewBox="0 0 1000 640" role="img" aria-label="SceneGraph node-link visualization"></svg>
+  <aside class="side">
+    <h3>Inspect</h3>
+    <input id="search" placeholder="Filter by id/category/source">
+    <div>
+      <button id="fit">Fit</button>
+      <button id="labels">Labels</button>
+      <button id="edges">Edges</button>
+    </div>
+    <p id="details" class="muted">Click a node to inspect it.</p>
+    <h3>Legend</h3>
+    <div class="legend" id="legend"></div>
+  </aside>
+</div>
+<script>
+const DATA = __GRAPH_DATA__;
+const svg = document.getElementById('graph');
+const ns = 'http://www.w3.org/2000/svg';
+const byId = new Map(DATA.nodes.map(n => [n.id, n]));
+let showLabels = DATA.nodes.length <= 180;
+let showEdges = true;
+let selected = null;
+let view = {x:0, y:0, w:1000, h:640};
+
+document.getElementById('title').textContent = `SceneGraph: ${DATA.session_id}`;
+document.getElementById('counts').textContent =
+  `${DATA.stats.shown_nodes}/${DATA.stats.total_nodes} nodes · ${DATA.stats.shown_edges}/${DATA.stats.total_edges} edges`;
+
+for (const [cat, color] of Object.entries(DATA.palette)) {
+  const row = document.createElement('div');
+  row.className = 'legend-row';
+  row.innerHTML = `<span class="swatch" style="background:${color}"></span><span>${cat}</span>`;
+  document.getElementById('legend').appendChild(row);
+}
+
+const linkG = document.createElementNS(ns, 'g');
+const nodeG = document.createElementNS(ns, 'g');
+const labelG = document.createElementNS(ns, 'g');
+svg.append(linkG, nodeG, labelG);
+
+for (const l of DATA.links) {
+  const a = byId.get(l.source), b = byId.get(l.target);
+  if (!a || !b) continue;
+  const el = document.createElementNS(ns, 'line');
+  el.dataset.source = l.source;
+  el.dataset.target = l.target;
+  el.dataset.weight = l.weight;
+  l.el = el;
+  linkG.appendChild(el);
+}
+
+for (const n of DATA.nodes) {
+  n.vx = 0; n.vy = 0;
+  const c = document.createElementNS(ns, 'circle');
+  c.setAttribute('r', 4 + Math.min(8, Math.max(0, n.score * 8)));
+  c.setAttribute('fill', n.color);
+  c.dataset.id = n.id;
+  c.addEventListener('pointerdown', ev => startNodeDrag(ev, n));
+  c.addEventListener('click', ev => { ev.stopPropagation(); selectNode(n); });
+  n.el = c;
+  nodeG.appendChild(c);
+
+  const t = document.createElementNS(ns, 'text');
+  t.textContent = n.category;
+  n.labelEl = t;
+  labelG.appendChild(t);
+}
+
+function tick() {
+  const nodes = DATA.nodes, links = DATA.links;
+  for (const n of nodes) {
+    n.vx += (500 - n.x) * 0.0008;
+    n.vy += (320 - n.y) * 0.0008;
+  }
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j];
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d2 = dx * dx + dy * dy + 0.01;
+      if (d2 > 36000) continue;
+      const f = Math.min(1.8, 48 / d2);
+      a.vx -= dx * f; a.vy -= dy * f;
+      b.vx += dx * f; b.vy += dy * f;
+    }
+  }
+  for (const l of links) {
+    const a = byId.get(l.source), b = byId.get(l.target);
+    if (!a || !b) continue;
+    let dx = b.x - a.x, dy = b.y - a.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const target = 46 + 18 / Math.max(0.2, Math.min(4, l.weight || 1));
+    const f = (d - target) * 0.004;
+    dx /= d; dy /= d;
+    a.vx += dx * f; a.vy += dy * f;
+    b.vx -= dx * f; b.vy -= dy * f;
+  }
+  for (const n of nodes) {
+    if (n.fixed) continue;
+    n.vx *= 0.86; n.vy *= 0.86;
+    n.x = Math.max(12, Math.min(988, n.x + n.vx));
+    n.y = Math.max(12, Math.min(628, n.y + n.vy));
+  }
+  draw();
+}
+
+function draw() {
+  for (const l of DATA.links) {
+    const a = byId.get(l.source), b = byId.get(l.target);
+    if (!a || !b || !l.el) continue;
+    l.el.setAttribute('x1', a.x); l.el.setAttribute('y1', a.y);
+    l.el.setAttribute('x2', b.x); l.el.setAttribute('y2', b.y);
+  }
+  linkG.style.display = showEdges ? '' : 'none';
+  labelG.style.display = showLabels ? '' : 'none';
+  for (const n of DATA.nodes) {
+    n.el.setAttribute('cx', n.x); n.el.setAttribute('cy', n.y);
+    n.labelEl.setAttribute('x', n.x + 8); n.labelEl.setAttribute('y', n.y + 4);
+  }
+}
+
+let ticks = 0;
+function animate() {
+  if (ticks++ < 160) {
+    tick();
+    requestAnimationFrame(animate);
+  } else {
+    draw();
+  }
+}
+animate();
+
+function selectNode(n) {
+  selected = n;
+  for (const x of DATA.nodes) x.el.classList.toggle('selected', x === n);
+  const linked = new Set([n.id]);
+  for (const l of DATA.links) {
+    if (l.source === n.id) linked.add(l.target);
+    if (l.target === n.id) linked.add(l.source);
+  }
+  for (const x of DATA.nodes) x.el.classList.toggle('dim', !linked.has(x.id));
+  for (const l of DATA.links) l.el?.classList.toggle('dim', l.source !== n.id && l.target !== n.id);
+  document.getElementById('details').innerHTML =
+    `<strong>${n.id}</strong><br>category: <code>${n.category}</code><br>` +
+    `score: ${n.score.toFixed(3)}<br>sources: ${(n.sources || []).join(', ') || '—'}<br>` +
+    `claims: ${n.n_claims || 0}<br>neighbors: ${linked.size - 1}`;
+}
+
+svg.addEventListener('click', () => {
+  selected = null;
+  for (const x of DATA.nodes) x.el.classList.remove('selected', 'dim');
+  for (const l of DATA.links) l.el?.classList.remove('dim');
+  document.getElementById('details').textContent = 'Click a node to inspect it.';
+});
+
+function startNodeDrag(ev, n) {
+  ev.stopPropagation();
+  n.fixed = true;
+  n.el.setPointerCapture(ev.pointerId);
+  const move = e => {
+    const p = svgPoint(e);
+    n.x = p.x; n.y = p.y; n.vx = 0; n.vy = 0; draw();
+  };
+  const up = () => {
+    n.fixed = false;
+    n.el.removeEventListener('pointermove', move);
+    n.el.removeEventListener('pointerup', up);
+  };
+  n.el.addEventListener('pointermove', move);
+  n.el.addEventListener('pointerup', up);
+}
+
+function svgPoint(ev) {
+  const p = svg.createSVGPoint();
+  p.x = ev.clientX; p.y = ev.clientY;
+  return p.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+svg.addEventListener('wheel', ev => {
+  ev.preventDefault();
+  const k = ev.deltaY > 0 ? 1.12 : 0.88;
+  const p = svgPoint(ev);
+  view.x = p.x - (p.x - view.x) * k;
+  view.y = p.y - (p.y - view.y) * k;
+  view.w *= k; view.h *= k;
+  svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
+}, {passive:false});
+
+let pan = null;
+svg.addEventListener('pointerdown', ev => {
+  if (ev.target !== svg) return;
+  pan = {x:ev.clientX, y:ev.clientY, vx:view.x, vy:view.y};
+  svg.classList.add('dragging');
+});
+svg.addEventListener('pointermove', ev => {
+  if (!pan) return;
+  const sx = view.w / svg.clientWidth, sy = view.h / svg.clientHeight;
+  view.x = pan.vx - (ev.clientX - pan.x) * sx;
+  view.y = pan.vy - (ev.clientY - pan.y) * sy;
+  svg.setAttribute('viewBox', `${view.x} ${view.y} ${view.w} ${view.h}`);
+});
+svg.addEventListener('pointerup', () => { pan = null; svg.classList.remove('dragging'); });
+
+document.getElementById('fit').onclick = () => {
+  view = {x:0, y:0, w:1000, h:640};
+  svg.setAttribute('viewBox', '0 0 1000 640');
+};
+document.getElementById('labels').onclick = () => { showLabels = !showLabels; draw(); };
+document.getElementById('edges').onclick = () => { showEdges = !showEdges; draw(); };
+document.getElementById('search').addEventListener('input', ev => {
+  const q = ev.target.value.toLowerCase().trim();
+  for (const n of DATA.nodes) {
+    const hay = `${n.id} ${n.category} ${(n.sources || []).join(' ')}`.toLowerCase();
+    n.el.classList.toggle('dim', q && !hay.includes(q));
+    n.labelEl.classList.toggle('dim', q && !hay.includes(q));
+  }
+});
+</script>
+</body>
+</html>
+"""
+        return HttpResponse(
+            html.replace('__GRAPH_DATA__', data_json),
+            content_type='text/html; charset=utf-8',
+        )
 
     def serve_visualization(self, request, object_id):
         """GET <id>/visualization.png/ → PNG bytes (lazy-rendered, cached)."""
@@ -805,6 +1475,97 @@ class SceneGraphAdmin(admin.ModelAdmin):
                 'artifact_path':   row.artifact_path,
             },
             json_dumps_params={'allow_nan': False, 'indent': 2},
+        )
+
+    def serve_fit_artifact(self, request, rel_path):
+        """GET fit-artifact/<dir>/<filename> → file from the on-disk fit
+        artifact tree.
+
+        Restricts service to the configured fit-artifact root so a
+        ``..`` traversal cannot escape it. Recognises ``fit.json``
+        (served as JSON), ``fit.summary.txt`` (text/plain), and
+        ``contributing_rows.json`` (JSON); other names get a generic
+        download response with text/plain.
+        """
+        from .world_sampler_api.distinction_game_fit import (
+            DISTINCTION_GAME_FIT_DIR,
+        )
+        target = (DISTINCTION_GAME_FIT_DIR / rel_path).resolve()
+        try:
+            target.relative_to(DISTINCTION_GAME_FIT_DIR.resolve())
+        except ValueError:
+            raise Http404('Path outside the fit-artifact root.')
+        if not target.exists() or not target.is_file():
+            raise Http404(f'Artifact file not found: {rel_path}')
+        if target.name == 'fit.json' or target.name == 'contributing_rows.json':
+            return FileResponse(open(target, 'rb'), content_type='application/json')
+        if target.suffix == '.txt' or target.name == 'fit.summary.txt':
+            return FileResponse(open(target, 'rb'), content_type='text/plain; charset=utf-8')
+        return FileResponse(open(target, 'rb'), content_type='text/plain; charset=utf-8')
+
+    def serve_last_fit_for_row(self, request, object_id):
+        """Bounce to the latest fit artifact directory listing for this row.
+
+        Convenience link for clicking from a row's change page directly
+        into the on-disk artifact (without requiring the user to know
+        which timestamped folder to look in).
+        """
+        from .world_sampler_api.distinction_game_fit import (
+            latest_fit_for_session,
+        )
+        row = get_object_or_404(SceneGraph, pk=object_id)
+        entry = latest_fit_for_session(row.session_id)
+        if not entry:
+            self.message_user(
+                request,
+                f'No fit has consumed {row.session_id} yet.',
+                level=messages.WARNING,
+            )
+            return HttpResponseRedirect(
+                reverse('admin:web_scenegraph_change', args=[object_id])
+            )
+        return HttpResponseRedirect(
+            reverse('admin:web_scenegraph_fit_artifact', args=[entry['name']])
+            + 'fit.summary.txt'
+        )
+
+    def serve_collapse_artifact(self, request, rel_path):
+        """GET collapse-artifact/<dir>/<filename> from fused artifact root."""
+        from .world_sampler_api.scene_graph_collapse import (
+            FUSED_SCENE_GRAPH_DIR,
+        )
+        target = (FUSED_SCENE_GRAPH_DIR / rel_path).resolve()
+        try:
+            target.relative_to(FUSED_SCENE_GRAPH_DIR.resolve())
+        except ValueError:
+            raise Http404('Path outside the collapse-artifact root.')
+        if not target.exists() or not target.is_file():
+            raise Http404(f'Artifact file not found: {rel_path}')
+        if target.suffix == '.json':
+            return FileResponse(open(target, 'rb'), content_type='application/json')
+        if target.suffix == '.txt':
+            return FileResponse(open(target, 'rb'), content_type='text/plain; charset=utf-8')
+        return FileResponse(open(target, 'rb'), content_type='text/plain; charset=utf-8')
+
+    def serve_last_collapse_for_row(self, request, object_id):
+        """Bounce to the latest collapse summary for this row."""
+        from .world_sampler_api.scene_graph_collapse import (
+            latest_collapse_for_session,
+        )
+        row = get_object_or_404(SceneGraph, pk=object_id)
+        entry = latest_collapse_for_session(row.session_id)
+        if not entry:
+            self.message_user(
+                request,
+                f'No collapse has consumed {row.session_id} yet.',
+                level=messages.WARNING,
+            )
+            return HttpResponseRedirect(
+                reverse('admin:web_scenegraph_change', args=[object_id])
+            )
+        return HttpResponseRedirect(
+            reverse('admin:web_scenegraph_collapse_artifact', args=[entry['name']])
+            + 'fused.summary.txt'
         )
 
     def serve_gallery(self, request):
@@ -908,6 +1669,122 @@ class SceneGraphAdmin(admin.ModelAdmin):
         )
     action_delete_png_artifacts.short_description = (
         'Delete cached PNG artifacts (force re-render on next view)'
+    )
+
+    def action_run_distinction_game_fit(self, request, queryset):
+        """Run :func:`fit_distinction_game` on the selected SceneGraph rows.
+
+        Behaves identically to the
+        ``python manage.py fit_distinction_game --session-ids ...``
+        command: assembles the rows into a kernelcal payload, runs the
+        EM fit, writes a versioned artifact under
+        ``/app/deepgis_results/distinction_game_fits/<timestamp>/``,
+        and links the auditor straight to ``fit.summary.txt`` via the
+        admin success message.
+        """
+        rows = list(queryset)
+        if not rows:
+            self.message_user(
+                request, 'No rows selected.', level=messages.WARNING,
+            )
+            return
+        try:
+            from .world_sampler_api.distinction_game_fit import (
+                run_fit_for_rows,
+            )
+        except Exception as exc:
+            self.message_user(
+                request,
+                f'Failed to import distinction-game fit module: {exc}',
+                level=messages.ERROR,
+            )
+            return
+        try:
+            artifact = run_fit_for_rows(
+                rows,
+                label=f'admin_{request.user.username or "anon"}',
+            )
+        except Exception as exc:
+            self.message_user(
+                request,
+                f'Fit failed: {exc}',
+                level=messages.ERROR,
+            )
+            return
+
+        url = (
+            reverse(
+                'admin:web_scenegraph_fit_artifact',
+                args=[artifact.artifact_dir.name],
+            )
+            + 'fit.summary.txt'
+        )
+        lam_summary = ', '.join(
+            f'{s}={l:.3f}' for s, l in artifact.lambdas.items()
+        ) or '(no lambdas)'
+        self.message_user(
+            request,
+            mark_safe(
+                f'Distinction-game fit complete: {artifact.n_regions} regions '
+                f'({artifact.n_anchored_regions} anchored) over {len(rows)} rows '
+                f'· λ → {lam_summary} · '
+                f'<a href="{url}" target="_blank">view summary →</a>'
+            ),
+            level=messages.SUCCESS if artifact.converged else messages.WARNING,
+        )
+    action_run_distinction_game_fit.short_description = (
+        'Run distinction-game Q_s + λ fit on selected rows (PR-3)'
+    )
+
+    def action_collapse_scene_graphs(self, request, queryset):
+        """Run the PR-4 factor-graph collapse on selected SceneGraph rows."""
+        rows = list(queryset)
+        if not rows:
+            self.message_user(
+                request, 'No rows selected.', level=messages.WARNING,
+            )
+            return
+        try:
+            from .world_sampler_api.scene_graph_collapse import (
+                run_collapse_for_rows,
+            )
+        except Exception as exc:
+            self.message_user(
+                request,
+                f'Failed to import SceneGraph collapse module: {exc}',
+                level=messages.ERROR,
+            )
+            return
+        try:
+            artifact = run_collapse_for_rows(
+                rows,
+                label=f'admin_{request.user.username or "anon"}',
+            )
+        except Exception as exc:
+            self.message_user(
+                request,
+                f'Collapse failed: {exc}',
+                level=messages.ERROR,
+            )
+            return
+        url = (
+            reverse(
+                'admin:web_scenegraph_collapse_artifact',
+                args=[artifact.artifact_dir.name],
+            )
+            + 'fused.summary.txt'
+        )
+        self.message_user(
+            request,
+            mark_safe(
+                f'SceneGraph collapse complete: {artifact.n_input_nodes} input '
+                f'nodes → {artifact.n_fused_nodes} fused nodes over {len(rows)} '
+                f'rows · <a href="{url}" target="_blank">view summary →</a>'
+            ),
+            level=messages.SUCCESS if artifact.converged else messages.WARNING,
+        )
+    action_collapse_scene_graphs.short_description = (
+        'Collapse selected SceneGraphs into one fused graph (PR-4)'
     )
 
     # ── safety: scene graphs are write-once orchestrator output ────────

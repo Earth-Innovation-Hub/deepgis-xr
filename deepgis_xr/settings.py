@@ -118,7 +118,7 @@ USE_I18N = True
 USE_TZ = True
 
 # Static and Media Files
-STATIC_URL = '/static/deepgis/'
+STATIC_URL = os.environ.get('STATIC_URL', '/label/static/deepgis/')
 STATIC_ROOT = os.path.join(BASE_DIR, 'static')
 # Single source of truth for frontend assets is BASE_DIR/staticfiles/ (tracked in git).
 # deepgis_xr/static/ holds vendored libs (paperjs, jquery) — also untracked; see
@@ -172,6 +172,18 @@ AUTH_USER_MODEL = 'deepgis_auth.User'
 LOGIN_URL = 'auth:phone_login'
 LOGIN_REDIRECT_URL = 'index'
 LOGOUT_REDIRECT_URL = 'index'
+SESSION_COOKIE_NAME = os.environ.get('SESSION_COOKIE_NAME', 'deepgis_xr_sessionid')
+CSRF_COOKIE_NAME = os.environ.get('CSRF_COOKIE_NAME', 'deepgis_xr_csrftoken')
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        'CSRF_TRUSTED_ORIGINS',
+        'https://deepgis.org,http://deepgis.org',
+    ).split(',')
+    if origin.strip()
+]
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
 
 # Authentication backends
 AUTHENTICATION_BACKENDS = [
