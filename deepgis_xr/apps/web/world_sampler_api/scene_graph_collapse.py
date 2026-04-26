@@ -9,6 +9,7 @@ timestamped artifact that the admin and CLI can inspect.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ from .distinction_game_fit import (
     list_fit_artifacts,
     scene_graph_row_to_kc_dict,
 )
+
+log = logging.getLogger(__name__)
 
 
 FUSED_SCENE_GRAPH_DIR = Path('/app/deepgis_results') / 'fused_scene_graphs'
@@ -127,6 +130,69 @@ def _lambdas_from_fit(payload: Mapping[str, Any]) -> Dict[str, float]:
     return out
 
 
+def _fill_anchor_lambdas(
+    lambdas: Dict[str, float],
+    q_s_table: Mapping[str, Any],
+    fit_payload: Mapping[str, Any],
+    *,
+    default_anchor_lambda: float = 1.0,
+) -> Dict[str, float]:
+    """Insert λ=1.0 for sources present in ``q_s_table`` but missing
+    from the fit's λ vector.
+
+    ``fit_distinction_game`` defaults to
+    ``exclude_anchor_sources_from_fit=True`` so anchor sources (typically
+    ``osm``) never get a λ written into ``mix.lambdas``. Without this
+    fill-in those anchor claims would be silently dropped from the
+    fused unary likelihood (see :class:`UnaryPerceptualFactor`: any
+    claim whose ``λ == 0`` is skipped). We restore them with a neutral
+    weight so that the anchor evidence still informs the fused
+    posterior, mirroring its anchor role during fitting.
+
+    The anchor set is read from
+    ``fit_payload['used_osm_anchor_sources']`` (the top-level key
+    written by :class:`DistinctionGameFit.to_dict`). Any other source
+    that has a ``Q_s`` entry but no λ is also backfilled — the only
+    way that happens in practice is when a kernel gained a ``Q_s``
+    prior but was excluded from the fit.
+    """
+    if not lambdas:
+        return lambdas
+    out = dict(lambdas)
+    anchor_sources = set(
+        str(s) for s in ((fit_payload or {}).get('used_osm_anchor_sources') or [])
+    )
+    backfilled: List[str] = []
+    for sid in q_s_table:
+        if sid in out:
+            continue
+        # Anchor sources are filled with the configured default; any
+        # other Q_s-only source is also filled so the operator gets a
+        # warning chance instead of silent zero-weighted evidence.
+        out[sid] = float(default_anchor_lambda)
+        backfilled.append(sid)
+    if backfilled:
+        anchors_filled = [s for s in backfilled if s in anchor_sources]
+        non_anchors_filled = [s for s in backfilled if s not in anchor_sources]
+        if anchors_filled:
+            log.info(
+                "scene_graph_collapse: backfilled \u03bb=%.3f for anchor "
+                "sources missing from fit: %s",
+                default_anchor_lambda,
+                sorted(anchors_filled),
+            )
+        if non_anchors_filled:
+            log.warning(
+                "scene_graph_collapse: backfilled \u03bb=%.3f for "
+                "non-anchor sources that have Q_s but no fitted \u03bb "
+                "(%s); consider re-running fit_distinction_game with "
+                "these sources included.",
+                default_anchor_lambda,
+                sorted(non_anchors_filled),
+            )
+    return out
+
+
 def _write_summary(artifact_dir: Path, art: CollapseArtifact, payload: Mapping[str, Any]) -> None:
     diag = payload.get('bp_diagnostics') or {}
     prov = payload.get('provenance') or {}
@@ -182,6 +248,7 @@ def run_collapse_for_rows(
     fit_payload = _load_fit_payload(fit_artifact_dir)
     q_s_table = _q_s_table_from_fit(fit_payload)
     lambdas = _lambdas_from_fit(fit_payload)
+    lambdas = _fill_anchor_lambdas(lambdas, q_s_table, fit_payload)
     taxonomy = next(iter(q_s_table.values())).taxonomy
 
     sg_dicts = [scene_graph_row_to_kc_dict(r) for r in rows]
@@ -436,12 +503,26 @@ def build_fused_scene_graph_view(request):
             'rows': [_row_preview(r) for r in rows],
         }, status=500)
 
+    diag = artifact.payload.get('bp_diagnostics') or {}
     return JsonResponse(
         {
             'status': 'success',
             'artifact': artifact.to_dict(),
             'rows': [_row_preview(r) for r in rows],
             'fused_scene_graph': artifact.payload,
+            'bp': {
+                'converged': bool(diag.get('converged', False)),
+                'n_iter': diag.get('n_iter'),
+                'max_delta': diag.get('max_delta'),
+                'n_variables': diag.get('n_variables'),
+                'n_factors': diag.get('n_factors'),
+                'n_spatial_edges_used': diag.get('n_spatial_edges_used'),
+                'n_spatial_edges_skipped_degree_cap': diag.get(
+                    'n_spatial_edges_skipped_degree_cap'
+                ),
+                'n_unknown_source_claims': diag.get('n_unknown_source_claims', 0),
+                'unknown_sources': diag.get('unknown_sources') or [],
+            },
         },
         json_dumps_params={'allow_nan': False},
     )
