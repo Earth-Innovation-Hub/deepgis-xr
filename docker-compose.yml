@@ -57,6 +57,10 @@ services:
       # only carries Euclidean buildings_to_graph_from_bbox, so without
       # this mount the road_knn pipeline 503's cleanly but never runs.
       - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.9/site-packages/kernelcal/urban:ro
+      # Keep kernelcal.fluid in lockstep with the urban overlay.  Recent
+      # kernelcal.urban.adapter imports SparseFluidGraph from kernelcal.fluid;
+      # the wheel-installed fluid package can lag behind and omit that symbol.
+      - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.9/site-packages/kernelcal/fluid:ro
     ports:
       - "8060:8090"
     # Enable GPU access
