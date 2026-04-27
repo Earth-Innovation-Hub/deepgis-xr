@@ -19,13 +19,23 @@ wired in `deepgis_xr/apps/web/urls.py`):
     POST  /webclient/sampler/annotation-game/export-coco export_annotation_game_coco
     POST  /webclient/sampler/annotation-game/export-graph export_annotation_game_graph
 
-`analyze_viewport` dispatches per `model_type` to the seven internal
+`analyze_viewport` dispatches per `model_type` to the per-model
 `_analyze_viewport_<model>` branches, imported from the `analyzers/`
-subpackage below. The dispatch is still an explicit if/elif chain
-inside the handler; it will move to `ANALYZER_REGISTRY.dispatch(
-model_type, ...)` when the Analyzer ABC lands in a follow-up commit
-(that change is what unblocks the kernelcal ModelKernelSelector
-thread).
+subpackage below. The remote-MaskRCNN family (`maskrcnn_rocks`,
+`maskrcnn_house`, `maskrcnn_hypolith`, `maskrcnn_litter`,
+`maskrcnn_roadkill`, `maskrcnn_newlife`,
+`maskrcnn_brent_moon_craters`, `maskrcnn_harish_moon_craters`) all
+share a single ``services/maskrcnn-rocks/`` Docker image at runtime;
+each branch differs only in env-driven model + label config and the
+port it answers on (5002–5009). The new branches use the
+``analyzers/_maskrcnn_remote.py`` helper to share HTTP plumbing;
+``maskrcnn_rocks`` and ``maskrcnn_house`` keep their own inline
+implementations until the Analyzer ABC refactor folds them in.
+
+The dispatch is still an explicit if/elif chain inside the handler;
+it will move to ``ANALYZER_REGISTRY.dispatch(model_type, ...)`` when
+the Analyzer ABC lands in a follow-up commit (that change is what
+unblocks the kernelcal ModelKernelSelector thread).
 """
 
 from django.http import JsonResponse
@@ -52,6 +62,12 @@ from .analyzers import (
     _analyze_viewport_prithvi,
     _analyze_viewport_maskrcnn_rocks,
     _analyze_viewport_maskrcnn_house,
+    _analyze_viewport_maskrcnn_hypolith,
+    _analyze_viewport_maskrcnn_litter,
+    _analyze_viewport_maskrcnn_roadkill,
+    _analyze_viewport_maskrcnn_newlife,
+    _analyze_viewport_maskrcnn_brent_moon_craters,
+    _analyze_viewport_maskrcnn_harish_moon_craters,
     _analyze_viewport_urban_spectral,
 )
 
@@ -739,6 +755,64 @@ def analyze_viewport(request):
             score_threshold = float(data.get('score_threshold', 0.5))
             max_detections = int(data.get('max_detections', 200))
             return _analyze_viewport_maskrcnn_house(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_hypolith':
+            # MaskRCNN-Hypolith path (Gobabeb-Namib hypolith detector on port 5004).
+            # Default DEFAULT_MODEL_ID=gobabeb_hero_e0011, classes background,hypolith.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_hypolith(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_litter':
+            # MaskRCNN-Litter path (DeepGIS litter-dynamics detector on port 5005).
+            # Default DEFAULT_MODEL_ID=litter_dynamics_hero_e0008, classes background,litter.
+            # NOTE: shares weights with maskrcnn_newlife — see analyzer docstring.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_litter(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_roadkill':
+            # MaskRCNN-Roadkill path (Sarah's roadkill detector on port 5006).
+            # Default DEFAULT_MODEL_ID=roadkill__sarah_e0004, classes background,roadkill.
+            # Caveat: only 4 epochs of training — preview-quality, not production.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_roadkill(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_newlife':
+            # MaskRCNN-NewLife path (DeepGIS biology ground-imagery detector on port 5007).
+            # Default DEFAULT_MODEL_ID=new_life_hero_e0008, classes background,organism.
+            # NOTE: shares weights with maskrcnn_litter — see analyzer docstring.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_newlife(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_brent_moon_craters':
+            # MaskRCNN-Brent-Moon-Craters path (Brent's lunar LROC-NAC detector on port 5008).
+            # Default DEFAULT_MODEL_ID=moon_craters_brent_brent_e0009, classes background,crater.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_brent_moon_craters(
+                image, location, model_id, score_threshold, max_detections, scripts_dir
+            )
+        elif analysis_type == 'maskrcnn_harish_moon_craters':
+            # MaskRCNN-Harish-Moon-Craters path (Harish Anand's lunar LROC-NAC detector on port 5009).
+            # Default DEFAULT_MODEL_ID=hanand_stragglers_download.openuas.us_e0099,
+            # classes background,crater. Companion to maskrcnn_brent_moon_craters.
+            model_id = (data.get('model_id') or '').strip()
+            score_threshold = float(data.get('score_threshold', 0.5))
+            max_detections = int(data.get('max_detections', 200))
+            return _analyze_viewport_maskrcnn_harish_moon_craters(
                 image, location, model_id, score_threshold, max_detections, scripts_dir
             )
         else:

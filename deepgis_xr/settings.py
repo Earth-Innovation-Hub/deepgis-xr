@@ -226,6 +226,66 @@ MASKRCNN_ROCKS_API_URL = os.environ.get('MASKRCNN_ROCKS_API_URL', None)
 # Example: MASKRCNN_HOUSE_API_URL=http://192.168.0.232:5003
 MASKRCNN_HOUSE_API_URL = os.environ.get('MASKRCNN_HOUSE_API_URL', None)
 
+# Remaining six remote Mask R-CNN sibling services — same upstream
+# `services/maskrcnn-rocks/` Docker image as the rocks/house pair, each
+# configured with a different env-driven `DEFAULT_MODEL_ID` and
+# `MASKRCNN_LABELS_<FAMILY>` so the analyzer branches can dispatch to
+# distinct domains without rebuilding the image. Bundles for these
+# weights live under `/mnt/22tb-hdd/maskrcnn/deployable-self-contained/`
+# (see top-level `deployable_models.json` for the index).
+
+# MaskRCNN Hypolith API — Gobabeb-Namib hypolithic-microbe detector
+# (default `gobabeb_hero_e0011`, classes background,hypolith).
+# Example: MASKRCNN_HYPOLITH_API_URL=http://192.168.0.232:5004
+MASKRCNN_HYPOLITH_API_URL = os.environ.get('MASKRCNN_HYPOLITH_API_URL', None)
+
+# MaskRCNN Litter API — DeepGIS litter-dynamics detector
+# (default `litter_dynamics_hero_e0008`, classes background,litter).
+# NOTE: underlying weight is byte-identical to the one served by
+# MASKRCNN_NEWLIFE_API_URL — predictions will match until distinct
+# trained heads are recovered. See
+# `analyzers/maskrcnn_litter.py` docstring.
+# Example: MASKRCNN_LITTER_API_URL=http://192.168.0.232:5005
+MASKRCNN_LITTER_API_URL = os.environ.get('MASKRCNN_LITTER_API_URL', None)
+
+# MaskRCNN Roadkill API — Sarah's DeepGIS roadkill detector
+# (default `roadkill__sarah_e0004`, classes background,roadkill).
+# Caveat: only 4 epochs of training — treat detections as candidates
+# for human review, not as ground-truth labels.
+# Example: MASKRCNN_ROADKILL_API_URL=http://192.168.0.232:5006
+MASKRCNN_ROADKILL_API_URL = os.environ.get('MASKRCNN_ROADKILL_API_URL', None)
+
+# MaskRCNN NewLife API — DeepGIS biology ground-imagery detector
+# (default `new_life_hero_e0008`, classes background,organism).
+# NOTE: shares weights with MASKRCNN_LITTER_API_URL — see above.
+# The "organism" class is a coarse placeholder; refine via
+# MASKRCNN_LABELS_NEW_LIFE on the upstream container once the AGU 2021
+# taxonomy is recovered.
+# Example: MASKRCNN_NEWLIFE_API_URL=http://192.168.0.232:5007
+MASKRCNN_NEWLIFE_API_URL = os.environ.get('MASKRCNN_NEWLIFE_API_URL', None)
+
+# MaskRCNN Brent Moon Craters API — Brent's lunar LROC-NAC crater
+# detector (default `moon_craters_brent_brent_e0009`, classes
+# background,crater). Companion to MASKRCNN_HARISH_MOON_CRATERS_API_URL
+# below; both services run simultaneously so Brent's 9-epoch run and
+# Harish's 99-epoch run can be compared side-by-side on the same
+# viewport.
+# Example: MASKRCNN_BRENT_MOON_CRATERS_API_URL=http://192.168.0.232:5008
+MASKRCNN_BRENT_MOON_CRATERS_API_URL = os.environ.get(
+    'MASKRCNN_BRENT_MOON_CRATERS_API_URL', None,
+)
+
+# MaskRCNN Harish Moon Craters API — Harish Anand's lunar LROC-NAC
+# crater detector (default
+# `hanand_stragglers_download.openuas.us_e0099`, classes
+# background,crater). Bundle ships two sweep siblings (`e0099` best,
+# `e0011` early) plus a lighter ResNet-18-FPN backbone variant; all
+# reachable per-request via the `model_id` form field.
+# Example: MASKRCNN_HARISH_MOON_CRATERS_API_URL=http://192.168.0.232:5009
+MASKRCNN_HARISH_MOON_CRATERS_API_URL = os.environ.get(
+    'MASKRCNN_HARISH_MOON_CRATERS_API_URL', None,
+)
+
 # MIME type configuration for 3D model files
 import mimetypes
 mimetypes.add_type('application/octet-stream', '.glb')

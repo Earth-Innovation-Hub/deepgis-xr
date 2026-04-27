@@ -30,6 +30,16 @@ from .grounded_sam import _analyze_viewport_grounded_sam
 from .prithvi import _analyze_viewport_prithvi
 from .maskrcnn_rocks import _analyze_viewport_maskrcnn_rocks
 from .maskrcnn_house import _analyze_viewport_maskrcnn_house
+from .maskrcnn_hypolith import _analyze_viewport_maskrcnn_hypolith
+from .maskrcnn_litter import _analyze_viewport_maskrcnn_litter
+from .maskrcnn_roadkill import _analyze_viewport_maskrcnn_roadkill
+from .maskrcnn_newlife import _analyze_viewport_maskrcnn_newlife
+from .maskrcnn_brent_moon_craters import (
+    _analyze_viewport_maskrcnn_brent_moon_craters,
+)
+from .maskrcnn_harish_moon_craters import (
+    _analyze_viewport_maskrcnn_harish_moon_craters,
+)
 from .urban_spectral import _analyze_viewport_urban_spectral
 
 from ._helpers import (
@@ -49,6 +59,12 @@ __all__ = [
     "_analyze_viewport_prithvi",
     "_analyze_viewport_maskrcnn_rocks",
     "_analyze_viewport_maskrcnn_house",
+    "_analyze_viewport_maskrcnn_hypolith",
+    "_analyze_viewport_maskrcnn_litter",
+    "_analyze_viewport_maskrcnn_roadkill",
+    "_analyze_viewport_maskrcnn_newlife",
+    "_analyze_viewport_maskrcnn_brent_moon_craters",
+    "_analyze_viewport_maskrcnn_harish_moon_craters",
     "_analyze_viewport_urban_spectral",
     "_create_grounding_dino_visualization",
     "_detections_to_geojson",
