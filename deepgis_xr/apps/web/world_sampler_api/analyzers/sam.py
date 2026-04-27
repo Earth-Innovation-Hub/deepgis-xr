@@ -19,16 +19,150 @@ from django.http import JsonResponse
 def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
     """Internal function to handle SAM analysis."""
     try:
-        import sys
+        import io
         from pathlib import Path
-        import numpy as np
         import json
         from datetime import datetime
-        import importlib
-        import torch
         from PIL import Image
         from django.conf import settings
-        
+
+        api_url = getattr(settings, 'SAM_API_URL', None)
+        use_remote_api = api_url is not None and api_url.strip() != ''
+
+        # Create organized directory structure for saving results. The remote
+        # and local paths intentionally share the same artifact layout so the
+        # existing AI report view keeps working while SAM inference moves off
+        # the Django web container.
+        sam_results_dir = Path('/app/deepgis_results') / 'sam_results'
+        sam_results_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        lat_str = f"{location.get('lat', 0):.6f}".replace('.', 'p').replace('-', 'n')
+        lon_str = f"{location.get('lon', 0):.6f}".replace('.', 'p').replace('-', 'n')
+        alt_str = f"{location.get('alt', 0):.0f}m"
+        folder_name = f"sam_{timestamp}_lat{lat_str}_lon{lon_str}_alt{alt_str}_model{model_type}"
+        session_dir = sam_results_dir / folder_name
+        session_dir.mkdir(parents=True, exist_ok=True)
+        session_id = folder_name
+
+        query_image_path = session_dir / 'query_image.png'
+        image.save(query_image_path)
+
+        if use_remote_api:
+            try:
+                import base64
+                import requests
+
+                img_buffer = io.BytesIO()
+                if image.mode in ('RGBA', 'LA', 'P'):
+                    rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                    if image.mode == 'P':
+                        image = image.convert('RGBA')
+                    rgb_image.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
+                    rgb_image.save(img_buffer, format='JPEG', quality=95)
+                else:
+                    image.save(img_buffer, format='JPEG', quality=95)
+                img_buffer.seek(0)
+
+                response = requests.post(
+                    f"{api_url.rstrip('/')}/api/predict",
+                    files={'file': ('viewport.jpg', img_buffer, 'image/jpeg')},
+                    data={
+                        'model_type': model_type,
+                        'min_area': min_area,
+                        'max_segments': 200,
+                        'return_visualization': 'true',
+                    },
+                    timeout=240,
+                )
+                if response.status_code != 200:
+                    try:
+                        error_detail = response.json()
+                    except Exception:
+                        error_detail = response.text[:500]
+                    return JsonResponse({
+                        'status': 'error',
+                        'message': f'SAM API error: HTTP {response.status_code}',
+                        'detail': error_detail,
+                        'api_url': api_url,
+                    }, status=502)
+
+                api_result = response.json()
+                if not api_result.get('success', False):
+                    return JsonResponse({
+                        'status': 'error',
+                        'message': f"SAM API error: {api_result.get('error', 'unknown error')}",
+                        'detail': api_result,
+                        'api_url': api_url,
+                    }, status=500)
+
+                geojson = api_result.get('geojson') or {'type': 'FeatureCollection', 'features': []}
+                segments_data = api_result.get('segments') or []
+                visualization_path = None
+                visualization_b64 = api_result.get('visualization_image')
+                if visualization_b64:
+                    visualization_path = session_dir / 'segmentation_visualization.jpg'
+                    with open(visualization_path, 'wb') as f:
+                        f.write(base64.b64decode(visualization_b64))
+
+                geojson_path = session_dir / 'segments.geojson'
+                with open(geojson_path, 'w') as f:
+                    json.dump(geojson, f, indent=2)
+
+                device_info = {
+                    'mode': 'remote_api',
+                    'api_url': api_url,
+                    'device': 'remote_gpu',
+                    'cache_policy_applied': api_result.get('cache_policy_applied'),
+                    'inference_ms': api_result.get('inference_ms'),
+                }
+                metadata = {
+                    'timestamp': timestamp,
+                    'location': location,
+                    'model_type': model_type,
+                    'min_area': min_area,
+                    'image_size': [image.width, image.height],
+                    'num_segments': api_result.get('num_segments', len(segments_data)),
+                    'device_info': device_info,
+                    'session_dir': str(session_dir.relative_to('/app/deepgis_results')),
+                }
+                metadata_path = session_dir / 'metadata.json'
+                with open(metadata_path, 'w') as f:
+                    json.dump(metadata, f, indent=2)
+
+                return JsonResponse({
+                    'status': 'success',
+                    'num_segments': api_result.get('num_segments', len(segments_data)),
+                    'segments': segments_data,
+                    'geojson': geojson,
+                    'location': location,
+                    'image_size': [image.width, image.height],
+                    'model_type': model_type,
+                    'device_info': device_info,
+                    'saved_to': {
+                        'session_dir': str(session_dir.relative_to('/app/deepgis_results')),
+                        'query_image': str(query_image_path.relative_to('/app/deepgis_results')),
+                        'visualization': str(visualization_path.relative_to('/app/deepgis_results')) if visualization_path else None,
+                        'geojson': str(geojson_path.relative_to('/app/deepgis_results')),
+                        'metadata': str(metadata_path.relative_to('/app/deepgis_results')),
+                        'host_path': str(session_dir).replace('/app/deepgis_results', './deepgis_results')
+                    },
+                    'report_url': f'/label/ai-analysis/report/{session_id}/'
+                })
+            except requests.exceptions.ConnectionError:
+                print(f"Warning: SAM API unavailable at {api_url}; falling back to local SAM")
+            except requests.exceptions.Timeout:
+                return JsonResponse({
+                    'status': 'error',
+                    'message': 'SAM API request timed out',
+                    'api_url': api_url,
+                }, status=504)
+
+        import sys
+        import numpy as np
+        import importlib
+        import torch
+
         # Check if SAM library is available FIRST (before importing the wrapper)
         try:
             from segment_anything import sam_model_registry, SamAutomaticMaskGenerator

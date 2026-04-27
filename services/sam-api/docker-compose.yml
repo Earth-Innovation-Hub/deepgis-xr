@@ -1,0 +1,59 @@
+version: "3.8"
+
+services:
+  sam-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sam-api:latest
+    container_name: sam-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # Classic SAM runs on port 5010, so keep the same even/odd
+              # convention: even AI service ports use physical GPU 0.
+              # Docker exposes the selected physical GPU as cuda:0 inside.
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+    ports:
+      - "5010:5000"
+
+    volumes:
+      - ./checkpoints:/opt/program/checkpoints:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=0
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - DEFAULT_MODEL_TYPE=vit_b
+      - SAM_CHECKPOINT_DIR=/opt/program/checkpoints
+      - SAM_EAGER_WARMUP=false
+      - SAM_UNLOAD_AFTER_PREDICT=true
+      - SAM_EMPTY_CACHE_AFTER_PREDICT=true
+      - SAM_MAX_SEGMENTS=200
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=sam-api"
+      - "com.dreams-lab.port=5010"
