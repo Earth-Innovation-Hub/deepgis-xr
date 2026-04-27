@@ -1362,6 +1362,12 @@
                 <option value="grounded_sam">Grounded-SAM-2 (Detection + Seg) 🎯🔍</option>
                 <option value="maskrcnn_rocks" selected>MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
                 <option value="maskrcnn_house">MaskRCNN House (Tornado/Eureka) 🏠</option>
+                <option value="maskrcnn_hypolith">MaskRCNN Hypolith (Gobabeb/Namib) 🦠</option>
+                <option value="maskrcnn_litter">MaskRCNN Litter (DeepGIS dynamics) 🗑️</option>
+                <option value="maskrcnn_roadkill">MaskRCNN Roadkill (Sarah preview, e0004) 🦝</option>
+                <option value="maskrcnn_newlife">MaskRCNN NewLife (DeepGIS biology) 🌱</option>
+                <option value="maskrcnn_brent_moon_craters">MaskRCNN Moon Craters — Brent (LROC NAC) 🌑</option>
+                <option value="maskrcnn_harish_moon_craters">MaskRCNN Moon Craters — Harish (LROC NAC, e0099) 🌒</option>
                 <option value="zero_shot">Zero-Shot (COCO)</option>
                 <option value="mask2former">Mask2Former (Accurate)</option>
                 <option value="prithvi">Prithvi-EO (Earth Observation) 🌍</option>
@@ -1407,11 +1413,11 @@
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
                 <input type="text" class="form-control form-control-sm" id="groundingDinoPrompt" 
-                       value="rock . boulder . crater . debris"
-                       placeholder="Describe objects: rock . boulder . crater"
+                       value="building . roof . road . vehicle . parking lot . field . crop row . orchard . irrigation canal . tree . shrub . grass . wetland . water . bare soil . rock . boulder . outcrop . crater . debris . erosion channel"
+                       placeholder="Describe objects: building . road . field . tree . rock . crater"
                        style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
                 <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Separate classes with dots (e.g., "car . person . tree")
+                    Shared DINO/SAM vocabulary: urban, agricultural, ecological, and geological classes.
                 </small>
             </div>
             <div class="form-group mb-2">
@@ -1442,11 +1448,11 @@
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
                 <input type="text" class="form-control form-control-sm" id="groundedSamPrompt" 
-                       value="rock . boulder . crater . debris"
-                       placeholder="Describe objects to detect and segment"
+                       value="building . roof . road . vehicle . parking lot . field . crop row . orchard . irrigation canal . tree . shrub . grass . wetland . water . bare soil . rock . boulder . outcrop . crater . debris . erosion channel"
+                       placeholder="Detect and segment: building . road . field . tree . rock . crater"
                        style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
                 <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Combines detection + high-quality segmentation
+                    Uses the same vocabulary as Grounding DINO, with SAM-2 masks added.
                 </small>
             </div>
             <div class="form-group mb-2">
@@ -1498,6 +1504,35 @@
             <div class="form-group mb-3">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
                 <input type="number" class="form-control form-control-sm" id="maskrcnnHouseMaxDet" value="200" min="1" max="2000" step="10">
+            </div>
+        </div>
+        <!--
+            Shared options panel for the six MaskRCNN sibling services
+            (hypolith / litter / roadkill / newlife / brent + harish moon
+            craters). All six branches accept the same triplet of inputs
+            (model_id, score_threshold, max_detections), so we keep one
+            panel and let the toggle code repoint the registry hint to
+            the right port (5004-5009). Placeholder model_id is updated
+            per-branch in the analysisTypeSelect change handler below.
+        -->
+        <div id="maskrcnnSiblingOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = service default):</label>
+                <input type="text" class="form-control form-control-sm" id="maskrcnnSiblingModelId"
+                       value=""
+                       placeholder=""
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small id="maskrcnnSiblingRegistryHint" style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Full registry: GET http://192.168.0.232:5004/api/models
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnSiblingScoreValue">0.50</span></label>
+                <input type="range" class="form-range" id="maskrcnnSiblingScore" min="10" max="95" step="5" value="50">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
+                <input type="number" class="form-control form-control-sm" id="maskrcnnSiblingMaxDet" value="200" min="1" max="2000" step="10">
             </div>
         </div>
         <button class="btn btn-success w-100" id="analyzeViewportBtn">
@@ -2642,6 +2677,47 @@
                     }
                 });
                 
+                // Configuration for the six MaskRCNN sibling services running
+                // alongside rocks (:5002) / house (:5003). Centralising this
+                // table keeps the dropdown, the request builder and the
+                // SceneGraph orchestrator in agreement on port + placeholder.
+                // If you add another sibling service, extend this map plus
+                // the matching elif branches in world-sampler-ui.js.
+                window.MASKRCNN_SIBLING_CONFIG = window.MASKRCNN_SIBLING_CONFIG || {
+                    'maskrcnn_hypolith': {
+                        port: 5004,
+                        placeholder: 'e.g. epoch_0011 (Gobabeb hypolith)',
+                        description: 'Hypolith detection — Gobabeb/Namib Mask R-CNN (remote GPU at :5004). Single class "hypolith"; trained on Joshua Tree + Atacama + Namib desert ground-level imagery.'
+                    },
+                    'maskrcnn_litter': {
+                        port: 5005,
+                        placeholder: 'e.g. epoch_0008 (DeepGIS litter)',
+                        description: 'Litter / debris detection — DeepGIS dynamics Mask R-CNN (remote GPU at :5005). Note: epoch_0008.param weights are byte-identical to NewLife — predictions may overlap until distinct checkpoints are recovered.'
+                    },
+                    'maskrcnn_roadkill': {
+                        port: 5006,
+                        placeholder: 'e.g. roadkill_epoch_0004_sarah',
+                        description: 'Roadkill detection — Sarah preview Mask R-CNN (remote GPU at :5006). Single class "roadkill"; e0004 checkpoint, low training corpus — treat as a triage filter, not ground truth.'
+                    },
+                    'maskrcnn_newlife': {
+                        port: 5007,
+                        placeholder: 'e.g. epoch_0008 (DeepGIS newlife)',
+                        description: 'New-life / organism detection — DeepGIS biology Mask R-CNN (remote GPU at :5007). Note: epoch_0008.param weights are byte-identical to Litter — predictions may overlap until distinct checkpoints are recovered.'
+                    },
+                    'maskrcnn_brent_moon_craters': {
+                        port: 5008,
+                        placeholder: 'e.g. download_openuas_us__epoch_0099 (Brent)',
+                        description: 'Lunar crater detection — Brent\'s Mask R-CNN on LROC NAC tiles (remote GPU at :5008). Class "crater"; tuned for Moon imagery, not Mars.'
+                    },
+                    'maskrcnn_harish_moon_craters': {
+                        port: 5009,
+                        placeholder: 'e.g. download_openuas_us__epoch_0099 (Harish)',
+                        description: 'Lunar crater detection — Harish\'s Mask R-CNN on LROC NAC tiles (remote GPU at :5009). Class "crater"; complementary checkpoint to Brent\'s for cross-checking.'
+                    }
+                };
+                window.MASKRCNN_SIBLING_TYPES = window.MASKRCNN_SIBLING_TYPES ||
+                    new Set(Object.keys(window.MASKRCNN_SIBLING_CONFIG));
+
                 // Analysis type toggle (for AI panel)
                 const analysisSelect = document.getElementById('analysisTypeSelect');
                 if (analysisSelect) {
@@ -2655,9 +2731,21 @@
                         if (maskrcnnRocksOpts) maskrcnnRocksOpts.style.display = type === 'maskrcnn_rocks' ? 'block' : 'none';
                         const maskrcnnHouseOpts = document.getElementById('maskrcnnHouseOptions');
                         if (maskrcnnHouseOpts) maskrcnnHouseOpts.style.display = type === 'maskrcnn_house' ? 'block' : 'none';
+                        const maskrcnnSiblingOpts = document.getElementById('maskrcnnSiblingOptions');
+                        const isSibling = window.MASKRCNN_SIBLING_TYPES.has(type);
+                        if (maskrcnnSiblingOpts) maskrcnnSiblingOpts.style.display = isSibling ? 'block' : 'none';
+                        if (isSibling) {
+                            const cfg = window.MASKRCNN_SIBLING_CONFIG[type];
+                            const modelIdInput = document.getElementById('maskrcnnSiblingModelId');
+                            const registryHint = document.getElementById('maskrcnnSiblingRegistryHint');
+                            if (modelIdInput) modelIdInput.placeholder = cfg.placeholder;
+                            if (registryHint) {
+                                registryHint.textContent = `Full registry: GET http://192.168.0.232:${cfg.port}/api/models`;
+                            }
+                        }
                         document.getElementById('zeroShotOptions').style.display = type === 'zero_shot' ? 'block' : 'none';
                         document.getElementById('mask2formerOptions').style.display = type === 'mask2former' ? 'block' : 'none';
-                        
+
                         const desc = document.getElementById('analysisDescription');
                         if (desc) {
                             const descriptions = {
@@ -2671,11 +2759,12 @@
                                 'mask2former': 'State-of-the-art detection with 80 COCO categories',
                                 'prithvi': 'Earth observation foundation model for satellite imagery'
                             };
-                            desc.textContent = descriptions[type] || '';
+                            const siblingCfg = window.MASKRCNN_SIBLING_CONFIG[type];
+                            desc.textContent = (siblingCfg && siblingCfg.description) || descriptions[type] || '';
                         }
                     });
                 }
-                
+
                 // MaskRCNN Rocks score-threshold slider
                 const mrScore = document.getElementById('maskrcnnRocksScore');
                 const mrScoreVal = document.getElementById('maskrcnnRocksScoreValue');
@@ -2691,6 +2780,17 @@
                 if (mhScore && mhScoreVal) {
                     mhScore.addEventListener('input', (e) => {
                         mhScoreVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
+                    });
+                }
+
+                // MaskRCNN Sibling services (hypolith / litter / roadkill /
+                // newlife / brent + harish moon craters) share a single
+                // score-threshold slider since the panel is reused.
+                const msScore = document.getElementById('maskrcnnSiblingScore');
+                const msScoreVal = document.getElementById('maskrcnnSiblingScoreValue');
+                if (msScore && msScoreVal) {
+                    msScore.addEventListener('input', (e) => {
+                        msScoreVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
                     });
                 }
                 

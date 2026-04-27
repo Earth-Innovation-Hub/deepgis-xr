@@ -2800,6 +2800,23 @@ class WorldSamplerUI {
                     requestBody.score_threshold = scoreEl ? parseFloat(scoreEl.value) / 100 : 0.5;
                     requestBody.max_detections = maxDetEl ? parseInt(maxDetEl.value, 10) || 200 : 200;
                     statusText.textContent = `Running MaskRCNN House${modelId ? ' (' + modelId + ')' : ''}...`;
+                } else if (window.MASKRCNN_SIBLING_TYPES && window.MASKRCNN_SIBLING_TYPES.has(analysisType)) {
+                    // Sibling MaskRCNN services (hypolith / litter / roadkill /
+                    // newlife / brent + harish moon craters) all read from
+                    // the shared options panel — the analysisType drives the
+                    // backend dispatch (see http.py → analyzers/maskrcnn_*.py)
+                    // and that's what selects the right port (5004-5009).
+                    const modelIdEl = document.getElementById('maskrcnnSiblingModelId');
+                    const scoreEl = document.getElementById('maskrcnnSiblingScore');
+                    const maxDetEl = document.getElementById('maskrcnnSiblingMaxDet');
+                    const modelId = modelIdEl ? modelIdEl.value.trim() : '';
+                    if (modelId) requestBody.model_id = modelId;
+                    requestBody.score_threshold = scoreEl ? parseFloat(scoreEl.value) / 100 : 0.5;
+                    requestBody.max_detections = maxDetEl ? parseInt(maxDetEl.value, 10) || 200 : 200;
+                    const friendly = analysisType
+                        .replace(/^maskrcnn_/, '')
+                        .replace(/_/g, ' ');
+                    statusText.textContent = `Running MaskRCNN ${friendly}${modelId ? ' (' + modelId + ')' : ''}...`;
                 } else if (analysisType === 'prithvi') {
                     statusText.textContent = 'Extracting Earth Observation features with Prithvi...';
                 }
@@ -2854,7 +2871,8 @@ class WorldSamplerUI {
                     : 'CPU';
                 
                 // Handle results based on analysis type
-                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam' || analysisType === 'maskrcnn_rocks' || analysisType === 'maskrcnn_house') {
+                const _isSiblingType = window.MASKRCNN_SIBLING_TYPES && window.MASKRCNN_SIBLING_TYPES.has(analysisType);
+                if (analysisType === 'zero_shot' || analysisType === 'mask2former' || analysisType === 'yolov8' || analysisType === 'grounding_dino' || analysisType === 'grounded_sam' || analysisType === 'maskrcnn_rocks' || analysisType === 'maskrcnn_house' || _isSiblingType) {
                     const numDetections = result.num_detections || 0;
                     statusText.textContent = `✓ Found ${numDetections} objects (${deviceText})`;
                     statusText.style.color = '#10b981';
@@ -2888,6 +2906,14 @@ class WorldSamplerUI {
                     if (analysisType === 'maskrcnn_house') {
                         const mid = result.model_id || 'default';
                         modelName = `MaskRCNN House (${mid})`;
+                    }
+                    if (_isSiblingType) {
+                        const mid = result.model_id || 'default';
+                        const friendly = analysisType
+                            .replace(/^maskrcnn_/, '')
+                            .replace(/_/g, ' ')
+                            .replace(/\b\w/g, (c) => c.toUpperCase());
+                        modelName = `MaskRCNN ${friendly} (${mid})`;
                     }
                     this.showNotification(
                         `${modelName}: Found ${numDetections} objects in viewport${deviceNote}`,
@@ -4195,6 +4221,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
     const gsTextThresholdSlider = document.getElementById('gsTextThreshold');
     const gsTextThresholdValue = document.getElementById('gsTextThresholdValue');
     
+    const maskrcnnSiblingOptions = document.getElementById('maskrcnnSiblingOptions');
     if (analysisTypeSelect) {
         analysisTypeSelect.addEventListener('change', (e) => {
             const analysisType = e.target.value;
@@ -4207,7 +4234,8 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             if (groundedSamOptions) groundedSamOptions.style.display = 'none';
             if (maskrcnnRocksOptions) maskrcnnRocksOptions.style.display = 'none';
             if (maskrcnnHouseOptions) maskrcnnHouseOptions.style.display = 'none';
-            
+            if (maskrcnnSiblingOptions) maskrcnnSiblingOptions.style.display = 'none';
+
             if (analysisType === 'zero_shot') {
                 if (zeroShotOptions) zeroShotOptions.style.display = 'block';
                 if (analysisDescription) {
@@ -4242,6 +4270,24 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
                 if (maskrcnnHouseOptions) maskrcnnHouseOptions.style.display = 'block';
                 if (analysisDescription) {
                     analysisDescription.textContent = 'House / damage Mask R-CNN ensemble on remote GPU (:5003) — trained on UAV-oblique tornado imagery (Eureka, 6 classes). On overhead 3D-tile captures it tends to fire as a generic roof detector; the SceneGraph orchestrator interprets that via Q_s.';
+                }
+            } else if (window.MASKRCNN_SIBLING_TYPES && window.MASKRCNN_SIBLING_TYPES.has(analysisType)) {
+                // Sibling MaskRCNN services (hypolith / litter / roadkill /
+                // newlife / brent + harish moon craters) all share one
+                // options panel; just retarget the placeholder + registry
+                // hint to the right port from the global config table.
+                if (maskrcnnSiblingOptions) maskrcnnSiblingOptions.style.display = 'block';
+                const cfg = window.MASKRCNN_SIBLING_CONFIG && window.MASKRCNN_SIBLING_CONFIG[analysisType];
+                if (cfg) {
+                    const modelIdInput = document.getElementById('maskrcnnSiblingModelId');
+                    const registryHint = document.getElementById('maskrcnnSiblingRegistryHint');
+                    if (modelIdInput) modelIdInput.placeholder = cfg.placeholder;
+                    if (registryHint) {
+                        registryHint.textContent = `Full registry: GET http://192.168.0.232:${cfg.port}/api/models`;
+                    }
+                    if (analysisDescription) {
+                        analysisDescription.textContent = cfg.description;
+                    }
                 }
             } else {
                 // SAM (default)
@@ -4325,7 +4371,19 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
             maskrcnnHouseScoreValue.textContent = value.toFixed(2);
         });
     }
-    
+
+    // MaskRCNN Sibling score-threshold slider — shared across the six
+    // sibling services (hypolith / litter / roadkill / newlife / brent +
+    // harish moon craters), since the panel itself is shared.
+    const maskrcnnSiblingScoreSlider = document.getElementById('maskrcnnSiblingScore');
+    const maskrcnnSiblingScoreValue = document.getElementById('maskrcnnSiblingScoreValue');
+    if (maskrcnnSiblingScoreSlider && maskrcnnSiblingScoreValue) {
+        maskrcnnSiblingScoreSlider.addEventListener('input', (e) => {
+            const value = parseFloat(e.target.value) / 100;
+            maskrcnnSiblingScoreValue.textContent = value.toFixed(2);
+        });
+    }
+
     // Distinction-Game SceneGraph orchestrator: Option-A toggle that
     // enables the urban road-graph backbone. The graph_mode select is
     // only meaningful when the checkbox is on, so gate it visually.

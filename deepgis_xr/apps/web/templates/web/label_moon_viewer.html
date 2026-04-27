@@ -3768,6 +3768,30 @@
                     }
                 });
                 
+                // Lunar-crater MaskRCNN sibling services. We only register
+                // the two moon-relevant branches here; the full sibling
+                // registry (hypolith / litter / roadkill / newlife) lives
+                // in label_search.html. Both files write to the same
+                // window.MASKRCNN_SIBLING_CONFIG so world-sampler-ui.js
+                // sees a consistent table whichever viewer is loaded.
+                window.MASKRCNN_SIBLING_CONFIG = window.MASKRCNN_SIBLING_CONFIG || {};
+                window.MASKRCNN_SIBLING_CONFIG['maskrcnn_brent_moon_craters'] = {
+                    port: 5008,
+                    placeholder: 'e.g. download_openuas_us__epoch_0099 (Brent)',
+                    description: 'Lunar crater detection — Brent\'s Mask R-CNN on LROC NAC tiles (remote GPU at :5008). Class "crater"; tuned for Moon imagery.'
+                };
+                window.MASKRCNN_SIBLING_CONFIG['maskrcnn_harish_moon_craters'] = {
+                    port: 5009,
+                    placeholder: 'e.g. download_openuas_us__epoch_0099 (Harish)',
+                    description: 'Lunar crater detection — Harish\'s Mask R-CNN on LROC NAC tiles (remote GPU at :5009). Complementary to Brent\'s checkpoint for cross-checking.'
+                };
+                window.MASKRCNN_SIBLING_TYPES = window.MASKRCNN_SIBLING_TYPES ||
+                    new Set(Object.keys(window.MASKRCNN_SIBLING_CONFIG));
+                // Make sure the moon-only keys are in the set even if the
+                // set was already initialised with a smaller subset earlier.
+                window.MASKRCNN_SIBLING_TYPES.add('maskrcnn_brent_moon_craters');
+                window.MASKRCNN_SIBLING_TYPES.add('maskrcnn_harish_moon_craters');
+
                 // Analysis type toggle (for AI panel)
                 const analysisSelect = document.getElementById('analysisTypeSelect');
                 if (analysisSelect) {
@@ -3777,17 +3801,43 @@
                         document.getElementById('yolov8Options').style.display = type === 'yolov8' ? 'block' : 'none';
                         document.getElementById('zeroShotOptions').style.display = type === 'zero_shot' ? 'block' : 'none';
                         document.getElementById('mask2formerOptions').style.display = type === 'mask2former' ? 'block' : 'none';
-                        
+                        const groundingDinoOpts = document.getElementById('groundingDinoOptions');
+                        if (groundingDinoOpts) groundingDinoOpts.style.display = type === 'grounding_dino' ? 'block' : 'none';
+                        const maskrcnnSiblingOpts = document.getElementById('maskrcnnSiblingOptions');
+                        const isSibling = window.MASKRCNN_SIBLING_TYPES.has(type);
+                        if (maskrcnnSiblingOpts) maskrcnnSiblingOpts.style.display = isSibling ? 'block' : 'none';
+                        if (isSibling) {
+                            const cfg = window.MASKRCNN_SIBLING_CONFIG[type];
+                            const modelIdInput = document.getElementById('maskrcnnSiblingModelId');
+                            const registryHint = document.getElementById('maskrcnnSiblingRegistryHint');
+                            if (modelIdInput) modelIdInput.placeholder = cfg.placeholder;
+                            if (registryHint) {
+                                registryHint.textContent = `Full registry: GET http://192.168.0.232:${cfg.port}/api/models`;
+                            }
+                        }
+
                         const desc = document.getElementById('analysisDescription');
                         if (desc) {
                             const descriptions = {
                                 'sam': 'Segments all visible regions using Segment Anything Model',
                                 'yolov8': 'Ultra-fast detection with 80 COCO classes',
+                                'grounding_dino': 'Text-based open-vocabulary object detection',
                                 'zero_shot': 'Detects common objects (person, car, etc.)',
                                 'mask2former': 'State-of-the-art detection with 80 COCO categories'
                             };
-                            desc.textContent = descriptions[type] || '';
+                            const siblingCfg = window.MASKRCNN_SIBLING_CONFIG[type];
+                            desc.textContent = (siblingCfg && siblingCfg.description) || descriptions[type] || '';
                         }
+                    });
+                }
+
+                // MaskRCNN sibling score-threshold slider (shared by Brent
+                // + Harish lunar-crater services in this viewer).
+                const msScore = document.getElementById('maskrcnnSiblingScore');
+                const msScoreVal = document.getElementById('maskrcnnSiblingScoreValue');
+                if (msScore && msScoreVal) {
+                    msScore.addEventListener('input', (e) => {
+                        msScoreVal.textContent = (parseFloat(e.target.value) / 100).toFixed(2);
                     });
                 }
                 
@@ -4442,6 +4492,8 @@
                 <option value="sam" selected>SAM (Universal Segmentation)</option>
                 <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
                 <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
+                <option value="maskrcnn_brent_moon_craters">MaskRCNN Moon Craters — Brent (LROC NAC) 🌑</option>
+                <option value="maskrcnn_harish_moon_craters">MaskRCNN Moon Craters — Harish (LROC NAC, e0099) 🌒</option>
                 <option value="zero_shot">Zero-Shot (COCO)</option>
                 <option value="mask2former">Mask2Former (Accurate)</option>
                 <option value="prithvi">Prithvi-EO (Earth Observation) 🌍</option>
@@ -4487,11 +4539,11 @@
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
                 <input type="text" class="form-control form-control-sm" id="groundingDinoPrompt" 
-                       value="rock . boulder . crater . debris"
-                       placeholder="Describe objects: rock . boulder . crater"
+                       value="crater . small crater . boulder . rock . outcrop . ridge . rille . scarp . regolith . debris . shadow"
+                       placeholder="Describe lunar features: crater . boulder . ridge . rille"
                        style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
                 <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Separate classes with dots (e.g., "car . person . tree")
+                    Lunar/geologic vocabulary, separated with dots.
                 </small>
             </div>
             <div class="form-group mb-2">
@@ -4515,6 +4567,34 @@
             <div class="form-group mb-3">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="mask2formerConfidenceValue">0.50</span></label>
                 <input type="range" class="form-range" id="mask2formerConfidence" min="0" max="100" step="5" value="50">
+            </div>
+        </div>
+        <!--
+            Shared options panel for the Brent + Harish lunar-crater MaskRCNN
+            sibling services (:5008 / :5009). Other sibling services
+            (hypolith / litter / roadkill / newlife) live in label_search.html
+            since they are not lunar-relevant. The element IDs match what
+            world-sampler-ui.js looks for, so the same dispatch path serves
+            both the Earth search panel and this Moon viewer.
+        -->
+        <div id="maskrcnnSiblingOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = service default):</label>
+                <input type="text" class="form-control form-control-sm" id="maskrcnnSiblingModelId"
+                       value=""
+                       placeholder=""
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small id="maskrcnnSiblingRegistryHint" style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Full registry: GET http://192.168.0.232:5008/api/models
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnSiblingScoreValue">0.50</span></label>
+                <input type="range" class="form-range" id="maskrcnnSiblingScore" min="10" max="95" step="5" value="50">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
+                <input type="number" class="form-control form-control-sm" id="maskrcnnSiblingMaxDet" value="200" min="1" max="2000" step="10">
             </div>
         </div>
         <button class="btn btn-success w-100" id="analyzeViewportBtn">
