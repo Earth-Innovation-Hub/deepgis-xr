@@ -1,0 +1,79 @@
+version: "3.8"
+
+# maskrcnn-hypolith — sibling of services/maskrcnn-rocks pinned to the
+# Gobabeb (Namib desert) hypolith Mask R-CNN run. Image and code are
+# shared with maskrcnn-rocks; only DEFAULT_MODEL_ID and the family
+# label table differ.
+#
+# Default checkpoint: `gobabeb_hero_e0011`
+#   * /mnt/22tb-hdd/maskrcnn/terrestrial/gobabeb_namib/epoch_0011.param
+#   * Latest terrestrial trained .param in the archive (2021-08-03)
+#   * Hypolith research at Gobabeb Namib Research Institute
+#   * 26 sibling ablation checkpoints in the same `gobabeb_*` family
+#     (rock_*/c3_*/dem_*) are also reachable by model_id without restart
+#
+# Service grid on tesseract (jdas@192.168.0.232):
+#   groundingdino-api               :5000
+#   groundedsam2-api                :5001
+#   maskrcnn-rocks-api              :5002   (bishop_ntl_rgb_e0049, [background, rock])
+#   maskrcnn-house-api              :5003   (tornado_detector_eureka_aug_mult_e0039)
+#   maskrcnn-hypolith-api           :5004   <-- this service
+#   maskrcnn-litter-api             :5005
+#   maskrcnn-roadkill-api           :5006
+#   maskrcnn-newlife-api            :5007
+#   maskrcnn-brent-moon-craters-api :5008
+#   maskrcnn-harish-moon-craters-api:5009
+
+services:
+  maskrcnn-hypolith:
+    build:
+      context: ../maskrcnn-rocks
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-hypolith-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5004:5000"
+
+    volumes:
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DEFAULT_MODEL_ID=gobabeb_hero_e0011
+      - MASKRCNN_LABELS_GOBABEB=background,hypolith
+      - DEFAULT_LABEL_NAME=hypolith
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-hypolith"
+      - "com.dreams-lab.port=5004"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001,maskrcnn-rocks-api:5002,maskrcnn-house-api:5003"

@@ -1,0 +1,68 @@
+version: "3.8"
+
+# maskrcnn-litter — sibling of services/maskrcnn-rocks pinned to the
+# DeepGIS litter-dynamics Mask R-CNN run.
+#
+# Default checkpoint: `litter_dynamics_hero_e0008`
+#   * /mnt/22tb-hdd/maskrcnn/terrestrial/deepgis_litter_dynamics/epoch_0008.param
+#   * Temporal-litter run; siblings in the registry under the
+#     `agu_litter` and `agu_litter_raw` families are selectable per
+#     /api/predict request via model_id without restarting the service.
+
+services:
+  maskrcnn-litter:
+    build:
+      context: ../maskrcnn-rocks
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-litter-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5005:5000"
+
+    volumes:
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DEFAULT_MODEL_ID=litter_dynamics_hero_e0008
+      - MASKRCNN_LABELS_LITTER_DYNAMICS=background,litter
+      # Sibling families share the "litter" label so swapping
+      # DEFAULT_MODEL_ID across them keeps the output schema stable.
+      - MASKRCNN_LABELS_AGU_LITTER=background,litter
+      - MASKRCNN_LABELS_AGU_LITTER_RAW=background,litter
+      - DEFAULT_LABEL_NAME=litter
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-litter"
+      - "com.dreams-lab.port=5005"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001,maskrcnn-rocks-api:5002,maskrcnn-house-api:5003,maskrcnn-hypolith-api:5004"

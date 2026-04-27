@@ -1,0 +1,64 @@
+version: "3.8"
+
+# maskrcnn-roadkill — sibling of services/maskrcnn-rocks pinned to the
+# DeepGIS roadkill Mask R-CNN run (Sarah, 2020-ish, 4 epochs).
+#
+# Default checkpoint: `roadkill__sarah_e0004`
+#   * /mnt/22tb-hdd/maskrcnn/terrestrial/deepgis_roadkill/roadkill_epoch_0004_sarah.param
+#   * Low-epoch experimental head; treat as preview-quality until a
+#     longer run is trained. The container is wired up so a longer
+#     replacement just needs DEFAULT_MODEL_ID swapped in env.
+
+services:
+  maskrcnn-roadkill:
+    build:
+      context: ../maskrcnn-rocks
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-roadkill-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5006:5000"
+
+    volumes:
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DEFAULT_MODEL_ID=roadkill__sarah_e0004
+      - MASKRCNN_LABELS_ROADKILL=background,roadkill
+      - DEFAULT_LABEL_NAME=roadkill
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-roadkill"
+      - "com.dreams-lab.port=5006"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001,maskrcnn-rocks-api:5002,maskrcnn-house-api:5003,maskrcnn-hypolith-api:5004,maskrcnn-litter-api:5005"

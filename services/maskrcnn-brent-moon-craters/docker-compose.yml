@@ -1,0 +1,72 @@
+version: "3.8"
+
+# maskrcnn-brent-moon-craters — sibling of services/maskrcnn-rocks
+# pinned to Brent's lunar LROC-NAC crater Mask R-CNN run.
+#
+# Default checkpoint: `moon_craters_brent_brent_e0009`
+#   * /mnt/22tb-hdd/maskrcnn/deployable-self-contained/moon_craters_brent/weights/brent_epoch_0009.param
+#   * Lunar LROC NAC orbital imagery, Brent's specific labels (2021-03)
+#   * Trained against the same LROC-NAC tile catalog as the
+#     `lroc_nacr` family; this service exists to keep Brent's run
+#     reachable as a named distinct kernel for distinction-game-fit
+#     comparisons against the longer 551-epoch lroc_nacr run.
+
+services:
+  maskrcnn-brent-moon-craters:
+    build:
+      context: ../maskrcnn-rocks
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-brent-moon-craters-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5008:5000"
+
+    volumes:
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DEFAULT_MODEL_ID=moon_craters_brent_brent_e0009
+      - MASKRCNN_LABELS_MOON_CRATERS_BRENT=background,crater
+      # The standalone `brent_*` family alias used by the registry
+      # before the `deployable-self-contained` rename — kept in case
+      # the older registry id resolves.
+      - MASKRCNN_LABELS_BRENT=background,crater
+      - DEFAULT_LABEL_NAME=crater
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-brent-moon-craters"
+      - "com.dreams-lab.port=5008"
+      - "com.dreams-lab.body=moon"
+      - "com.dreams-lab.author=brent"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001,maskrcnn-rocks-api:5002,maskrcnn-house-api:5003,maskrcnn-hypolith-api:5004,maskrcnn-litter-api:5005,maskrcnn-roadkill-api:5006,maskrcnn-newlife-api:5007"

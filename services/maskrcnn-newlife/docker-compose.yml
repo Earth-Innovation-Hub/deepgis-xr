@@ -1,0 +1,65 @@
+version: "3.8"
+
+# maskrcnn-newlife — sibling of services/maskrcnn-rocks pinned to the
+# DeepGIS new_life Mask R-CNN run (biology ground imagery).
+#
+# Default checkpoint: `new_life_hero_e0008`
+#   * /mnt/22tb-hdd/maskrcnn/terrestrial/deepgis_new_life/epoch_0008.param
+#   * Generic "organism" segmentation on biology field imagery; the
+#     original taxonomy isn't carried in the .param state-dict. We expose
+#     a single coarse class so downstream callers don't depend on a
+#     fixed-cardinality head while we recover the source labels.
+
+services:
+  maskrcnn-newlife:
+    build:
+      context: ../maskrcnn-rocks
+      dockerfile: Dockerfile
+    image: maskrcnn-rocks:latest
+    container_name: maskrcnn-newlife-api
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    ports:
+      - "5007:5000"
+
+    volumes:
+      - /mnt/22tb-hdd/maskrcnn:/opt/program/weights:ro
+      - ./uploads:/tmp/uploads
+      - ./results:/tmp/results
+
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=INFO
+      - DEFAULT_MODEL_ID=new_life_hero_e0008
+      - MASKRCNN_LABELS_NEW_LIFE=background,organism
+      - DEFAULT_LABEL_NAME=organism
+      - WEIGHTS_ROOT=/opt/program/weights
+      - MAX_CONTENT_LENGTH=33554432
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    labels:
+      - "com.dreams-lab.service=maskrcnn-newlife"
+      - "com.dreams-lab.port=5007"
+      - "com.dreams-lab.peers=groundingdino-api:5000,groundedsam2-api:5001,maskrcnn-rocks-api:5002,maskrcnn-house-api:5003,maskrcnn-hypolith-api:5004,maskrcnn-litter-api:5005,maskrcnn-roadkill-api:5006"
