@@ -27,7 +27,7 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: all
+              device_ids: ["1"]
               capabilities: [gpu]
 
     ports:
@@ -39,7 +39,16 @@ services:
       - ./results:/tmp/results
 
     environment:
+      # Physical GPU pin for tesseract: even MaskRCNN ports -> GPU 0, odd ports -> GPU 1.
+      # The selected physical device is exposed inside the container as cuda:0.
+      - NVIDIA_VISIBLE_DEVICES=1
       - CUDA_VISIBLE_DEVICES=0
+      # Keep VRAM low: do not pre-load the default model, and release
+      # the loaded Mask R-CNN module after each prediction. This trades
+      # request latency for predictable GPU memory recovery.
+      - MASKRCNN_EAGER_WARMUP=false
+      - MASKRCNN_UNLOAD_AFTER_PREDICT=true
+      - MASKRCNN_EMPTY_CACHE_AFTER_PREDICT=true
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=INFO
       - DEFAULT_MODEL_ID=hanand_stragglers_download.openuas.us_e0099
