@@ -27,7 +27,142 @@ Helpers:
         contours (`mask_polygons_norm`). Used by maskrcnn_rocks, where
         the upstream service already runs cv2.findContours on the GPU
         host and ships ring lists in [0, 1] image space.
+
+    _unavailable_response(image, location, model_type, reason, ...)
+        Graceful-degradation envelope returned when a remote AI
+        service is missing/unreachable/overloaded. See its docstring
+        for the full rationale; in short, this returns HTTP 200 with
+        the same shape as a successful empty response so frontend
+        code that checks `response.ok` and `result.status ===
+        'success'` continues to render (as "0 detections") instead of
+        throwing an error toast on every viewport change. Callers
+        that want to surface an "AI offline" badge can read
+        `result.degraded === true` and `result.unavailable_reason`.
 """
+
+
+from django.http import JsonResponse
+
+
+def _unavailable_response(
+    *,
+    image,
+    location,
+    model_type,
+    reason,
+    message,
+    api_url=None,
+    suggestion=None,
+    detail=None,
+    retry_after=30,
+):
+    """
+    Build a graceful-degradation envelope for analyze-viewport.
+
+    The original behaviour was to return ``status=503`` with
+    ``{"status": "error", "message": "..."}`` whenever the remote AI
+    host (e.g. ``192.168.0.232:5002``) was unreachable, the env URL
+    was unset, or a request timed out. Because the frontend
+    (``staticfiles/web/js/world-sampler-ui.js``) hits this endpoint
+    on every viewport change, that turned a transient network blip
+    or a one-off un-configured deployment into an error toast on
+    every map drag — and worse, it was indistinguishable from an
+    actual model crash.
+
+    Returning an *empty success* response with a ``degraded`` flag
+    instead has three properties we want:
+
+    1. **All current call sites keep working without UI changes.**
+       The two strict callers in ``world-sampler-ui.js`` check
+       ``response.ok && result.status === 'success'``; both pass.
+       The one already-graceful caller (SceneGraph kernel
+       orchestration) treats an empty result the same as a successful
+       run with no detections, so the kernel just contributes nothing
+       to the fused graph that round.
+
+    2. **AI-offline UX becomes opt-in, not forced.** Frontend code
+       that *wants* to render a "remote AI unreachable" badge can
+       branch on ``result.degraded`` / ``result.unavailable_reason``;
+       legacy code paths see a normal empty response.
+
+    3. **Operators still see what happened.** The server log line
+       printed by the analyzer (``Cannot connect to ... at ...``) is
+       unchanged, and the response body still carries the underlying
+       reason, suggestion, and api_url for debugging.
+
+    Reserved for the *unavailability* failure modes only:
+
+    * ``not_configured``    — settings env var is unset/blank
+    * ``connection_error``  — TCP refused / host unreachable
+    * ``timeout``           — request exceeded its deadline
+
+    Genuine upstream failures — HTTP 5xx from a reachable service,
+    unhandled exceptions inside the analyzer — should still surface
+    as a hard error so they don't get masked. Those paths
+    deliberately keep their original 5xx + ``status="error"``
+    response.
+
+    Args:
+        image:        PIL image (or ``None``); used only to fill
+                      ``image_size`` so frontend layout code that
+                      reads it doesn't divide by zero.
+        location:     The ``{lat, lon, alt}`` dict echoed back to the
+                      caller; pass through whatever was in the
+                      request.
+        model_type:   The ``model_type`` the request asked for, e.g.
+                      ``'maskrcnn_rocks'`` or ``'grounding_dino'``.
+        reason:       One of ``'not_configured' | 'connection_error'
+                      | 'timeout'``.
+        message:      Human-readable summary for logs / debug
+                      surfaces; preserved from the original 5xx
+                      message for continuity.
+        api_url:      Optional remote URL the request was aimed at;
+                      surfaced in ``device_info.api_url`` for debug.
+        suggestion:   Optional operator-facing hint (e.g. "Ensure
+                      the maskrcnn-rocks-api container is running on
+                      the GPU host"). Echoed verbatim.
+        detail:       Optional underlying error string (e.g. the
+                      ``ConnectionError`` repr); preserved so logs
+                      stay diagnosable.
+        retry_after:  Seconds advertised in the ``Retry-After``
+                      header for HTTP-aware clients. The default of
+                      30s matches typical Cesium tile-load cadence.
+
+    Returns:
+        ``JsonResponse`` with status code 200 and a ``Retry-After``
+        header.
+    """
+
+    img_w = getattr(image, 'width', 0) if image is not None else 0
+    img_h = getattr(image, 'height', 0) if image is not None else 0
+
+    payload = {
+        'status': 'success',
+        'degraded': True,
+        'unavailable_reason': reason,
+        'message': message,
+        'num_detections': 0,
+        'detections': [],
+        'geojson': {'type': 'FeatureCollection', 'features': []},
+        'location': location or {},
+        'image_size': [img_w, img_h],
+        'model_type': model_type,
+        'device_info': {
+            'mode': 'remote_api',
+            'api_url': api_url,
+            'device': 'remote_gpu',
+            'available': False,
+            'unavailable_reason': reason,
+        },
+    }
+    if suggestion:
+        payload['suggestion'] = suggestion
+    if detail:
+        payload['detail'] = detail
+
+    response = JsonResponse(payload)
+    response['Retry-After'] = str(int(retry_after))
+    return response
 
 
 def _create_grounding_dino_visualization(image, detections_data, session_dir):

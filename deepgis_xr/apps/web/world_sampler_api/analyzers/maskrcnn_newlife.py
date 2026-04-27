@@ -29,6 +29,7 @@ _BRANCH = RemoteMaskRCNNBranch(
     folder_prefix='maskrcnn_newlife',
     container_name='maskrcnn-newlife-api',
     suggested_default_url='http://192.168.0.232:5007',
+    default_model_id='new_life_hero_e0008',
     log_emoji='🌱',
 )
 

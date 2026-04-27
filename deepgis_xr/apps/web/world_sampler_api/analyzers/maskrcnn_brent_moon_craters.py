@@ -27,6 +27,7 @@ _BRANCH = RemoteMaskRCNNBranch(
     folder_prefix='maskrcnn_brent_moon_craters',
     container_name='maskrcnn-brent-moon-craters-api',
     suggested_default_url='http://192.168.0.232:5008',
+    default_model_id='moon_craters_brent_brent_e0009',
     log_emoji='🌑',
 )
 

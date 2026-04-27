@@ -34,6 +34,7 @@ _BRANCH = RemoteMaskRCNNBranch(
     folder_prefix='maskrcnn_hypolith',
     container_name='maskrcnn-hypolith-api',
     suggested_default_url='http://192.168.0.232:5004',
+    default_model_id='gobabeb_hero_e0011',
     log_emoji='🦠',
 )
 

@@ -80,7 +80,8 @@ class RemoteMaskRCNNBranch:
     settings_key: str
     """Django settings attribute the helper reads to find the remote
     service URL (e.g. ``MASKRCNN_HYPOLITH_API_URL``). Falsy/missing
-    values are surfaced as a 503 with a configuration hint.
+    values fall back to ``settings.MASKRCNN_API_URL`` (the unified
+    service) before surfacing a graceful ``not_configured`` envelope.
     """
 
     display_label: str
@@ -120,10 +121,73 @@ class RemoteMaskRCNNBranch:
     ``http://192.168.0.232:5004``).
     """
 
+    default_model_id: Optional[str] = None
+    """Family-default checkpoint id from the upstream service registry
+    (e.g. ``gobabeb_hero_e0011`` for the hypolith family). Only used
+    when the request resolves to the **unified** ``MASKRCNN_API_URL``
+    endpoint and the caller did not supply an explicit ``model_id``;
+    in that case the helper injects this id into the form payload so
+    the unified container picks the right checkpoint for the family.
+    Ignored on the legacy per-family path (``settings_key`` set), where
+    each container already has its own ``DEFAULT_MODEL_ID`` env var.
+    """
+
     log_emoji: str = "🤖"
     """Single-character glyph prefixed to the start-of-run log line.
     Cosmetic only — drop or change without breaking anything.
     """
+
+
+def resolve_remote_maskrcnn_url(branch: 'RemoteMaskRCNNBranch'):
+    """
+    Resolve which remote-MaskRCNN URL this branch should hit.
+
+    Precedence:
+
+    1. ``settings.<branch.settings_key>`` (the legacy per-family URL,
+       e.g. ``settings.MASKRCNN_HYPOLITH_API_URL``). If set, this wins
+       — the operator has explicitly pinned this family to a dedicated
+       container instance, so honour it. The helper does NOT inject
+       a default model_id on this path because the per-family
+       container already runs with its own ``DEFAULT_MODEL_ID`` env
+       var; injecting another one would override the operator's
+       choice.
+
+    2. ``settings.MASKRCNN_API_URL`` (the unified URL, fronting one
+       container that exposes the full registry). If set and the
+       per-family URL is unset, route there. The helper will inject
+       ``branch.default_model_id`` into the request payload when the
+       caller did not pass an explicit ``model_id``, so the unified
+       container picks the right checkpoint for this family.
+
+    3. Neither set — return ``(None, None)``. The caller surfaces a
+       graceful ``not_configured`` envelope.
+
+    This precedence is intentional. It lets an operator roll the
+    unified container out one family at a time: drop the per-family
+    URL, set the unified URL globally, and the family migrates with
+    no other code change. Setting both is also fine — the per-family
+    URL takes precedence so a stuck rollback is one env-var edit.
+
+    Returns:
+        (url_or_none, model_id_default_or_none)
+
+        ``url_or_none`` is the resolved remote URL (or None).
+        ``model_id_default_or_none`` is the family default checkpoint
+        id to inject when the caller didn't pass one — only non-None
+        on the unified path; always None on the per-family path.
+    """
+    from django.conf import settings as _settings
+
+    per_family = getattr(_settings, branch.settings_key, None)
+    if per_family and per_family.strip():
+        return per_family, None
+
+    unified = getattr(_settings, 'MASKRCNN_API_URL', None)
+    if unified and unified.strip():
+        return unified, branch.default_model_id
+
+    return None, None
 
 
 def run_remote_maskrcnn_branch(
@@ -166,19 +230,32 @@ def run_remote_maskrcnn_branch(
         from ._helpers import (
             _create_grounding_dino_visualization,
             _polygons_norm_to_geojson,
+            _unavailable_response,
         )
 
-        api_url: Optional[str] = getattr(settings, branch.settings_key, None)
-        if not api_url or not api_url.strip():
-            return JsonResponse({
-                'status': 'error',
-                'message': f'{branch.display_label} API is not configured',
-                'suggestion': (
+        # Resolve the remote URL through the unified-aware helper so
+        # operators can flip MASKRCNN_API_URL on as the consolidation
+        # rollout progresses without touching code. ``unified_model_id``
+        # is non-None only when we routed to the unified URL; in that
+        # case we inject it as the form-data ``model_id`` so the
+        # unified container picks this family's default checkpoint
+        # (rather than the unified container's global default, which
+        # would otherwise apply across all families).
+        api_url, unified_model_id = resolve_remote_maskrcnn_url(branch)
+        if not api_url:
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type=branch.model_type,
+                reason='not_configured',
+                message=f'{branch.display_label} API is not configured',
+                suggestion=(
                     f'Set {branch.settings_key} '
-                    f'(e.g. {branch.suggested_default_url}) in the web '
-                    f'container environment.'
+                    f'(e.g. {branch.suggested_default_url}) or set '
+                    f'MASKRCNN_API_URL to a unified maskrcnn container '
+                    f'in the web container environment.'
                 ),
-            }, status=503)
+            )
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         lat_str = (
@@ -240,8 +317,15 @@ def run_remote_maskrcnn_branch(
             'max_detections': max_detections,
             'return_annotated': 'true',
         }
-        if model_id:
-            form_data['model_id'] = model_id
+        # Caller's explicit model_id wins; otherwise, on the unified
+        # path, fall back to the family default declared on the
+        # RemoteMaskRCNNBranch. On the legacy per-family path
+        # (unified_model_id is None) we inject nothing — the per-family
+        # container's ``DEFAULT_MODEL_ID`` env var already encodes the
+        # right choice.
+        effective_model_id = model_id or unified_model_id
+        if effective_model_id:
+            form_data['model_id'] = effective_model_id
 
         try:
             response = requests.post(
@@ -251,28 +335,44 @@ def run_remote_maskrcnn_branch(
                 timeout=180,
             )
         except requests.exceptions.ConnectionError as e:
-            return JsonResponse({
-                'status': 'error',
-                'message': (
+            print(
+                f"⚠ {branch.display_label}: cannot connect to {api_url} "
+                f"({e}); degrading gracefully"
+            )
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type=branch.model_type,
+                reason='connection_error',
+                message=(
                     f'Cannot connect to {branch.display_label} API at '
                     f'{api_url}'
                 ),
-                'suggestion': (
+                api_url=api_url,
+                suggestion=(
                     f'Ensure the {branch.container_name} container is '
                     f'running on the GPU host'
                 ),
-                'debug': {'api_url': api_url, 'error': str(e)},
-            }, status=503)
+                detail=str(e),
+            )
         except requests.exceptions.Timeout:
-            return JsonResponse({
-                'status': 'error',
-                'message': f'{branch.display_label} API request timed out',
-                'suggestion': (
+            print(
+                f"⚠ {branch.display_label}: request to {api_url} timed out; "
+                f"degrading gracefully"
+            )
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type=branch.model_type,
+                reason='timeout',
+                message=f'{branch.display_label} API request timed out',
+                api_url=api_url,
+                suggestion=(
                     'The image may be too large or the model is still '
                     'warming up'
                 ),
-                'api_url': api_url,
-            }, status=504)
+                retry_after=60,
+            )
         except Exception as e:
             import traceback
             return JsonResponse({

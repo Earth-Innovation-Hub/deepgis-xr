@@ -131,3 +131,126 @@ elif analysis_type == "maskrcnn_rocks":
 | `scripts/client.py`     | CLI client (sibling of `grounding_dino_api_client.py`)      |
 | `scripts/sanity_check_registry.py` | standalone registry dump                         |
 | `tests/test_registry.py`| pytest on the filename parser                                |
+| `scripts/port_shim.py`  | backward-compat proxy for legacy 5003-5009 ports (see below) |
+| `nginx-port-shims.conf` | reference-only sketch for an nginx-based shim (use the python one) |
+
+## Unified-service rollout (consolidating ports 5003-5009)
+
+This image was originally deployed eight times — one container per
+family, each with its own `DEFAULT_MODEL_ID` env var, on ports
+5002-5009. The web container (`deepgis-xr/web`) had a matching
+`MASKRCNN_*_API_URL` env var per family.
+
+Because every instance ran the **same image** with the **same
+registry** (the registry walks `WEIGHTS_ROOT` and discovers all
+checkpoints), running eight copies wastes ~8x GPU memory for nothing.
+Consolidation runs **one** container with all weight bundles mounted
+and lets the per-request `model_id` form field select the family.
+
+### Web-side (this repo)
+
+Already done. The deepgis-xr analyzer dispatch
+(`deepgis_xr/apps/web/world_sampler_api/analyzers/_maskrcnn_remote.py::resolve_remote_maskrcnn_url`)
+prefers `MASKRCNN_API_URL` over `MASKRCNN_*_API_URL` and injects the
+family default `model_id` automatically. To use it:
+
+```bash
+# .env
+MASKRCNN_API_URL=http://192.168.0.232:5002
+# Optional: drop per-family URLs as each family is migrated.
+# MASKRCNN_HYPOLITH_API_URL=
+# ...
+```
+
+The per-family URLs take precedence when set, so rollout can be
+gradual: leave them all set, set `MASKRCNN_API_URL` too, then drop
+them one by one once the unified container has been verified for
+each family in production.
+
+### Server-side rollout on `192.168.0.232`
+
+1. **Bring up the unified container** on 5002 with all eight family
+   weight bundles bind-mounted, and no `DEFAULT_MODEL_ID` (the
+   container falls back to the registry default — typically the rocks
+   flagship — but every family is selectable via `model_id`):
+
+   ```bash
+   docker run -d --name maskrcnn-unified \
+       --gpus all -p 5002:8000 \
+       -v /mnt/22tb-hdd/maskrcnn:/weights:ro \
+       maskrcnn-rocks:latest
+   ```
+
+2. **Verify the registry**:
+
+   ```bash
+   curl http://192.168.0.232:5002/api/models | jq '.models | length'
+   # Expect 50+ entries spanning all eight families.
+   curl -F 'file=@viewport.jpg' \
+        -F 'model_id=gobabeb_hero_e0011' \
+        http://192.168.0.232:5002/api/predict | jq '.predictions.count'
+   ```
+
+3. **Shim the legacy ports** for non-Django direct clients (operator
+   curls, external scripts) using `scripts/port_shim.py`. One process
+   per legacy port, all proxying to 5002:
+
+   ```bash
+   for port in 5003 5004 5005 5006 5007 5008 5009; do
+     SHIM_LISTEN_PORT=$port \
+     SHIM_UPSTREAM=http://127.0.0.1:5002 \
+     systemd-run --unit=maskrcnn-shim-$port \
+       /usr/bin/python3 /opt/deepgis-xr/scripts/port_shim.py
+   done
+   ```
+
+   Or as a systemd template unit; see `port_shim.py` docstring.
+
+4. **Stop the per-family containers** one at a time, verifying the
+   shim picks up traffic for that port:
+
+   ```bash
+   docker stop maskrcnn-hypolith-api && docker rm $_
+   curl -F 'file=@viewport.jpg' http://192.168.0.232:5004/api/predict
+   #   ^ now goes through the shim; should still return hypolith
+   #   detections because the shim injects model_id=gobabeb_hero_e0011.
+   ```
+
+5. **Set `MASKRCNN_API_URL` on the deepgis-xr web container** and
+   restart it. From this point on, the web client routes directly to
+   :5002 (skipping the shims entirely):
+
+   ```bash
+   # .env on 192.168.0.186
+   MASKRCNN_API_URL=http://192.168.0.232:5002
+   docker compose up -d --no-deps web celery_worker
+   ```
+
+6. **Retire the shims** once production traffic confirms no client
+   is hitting 5003-5009 directly. Drop the per-family
+   `MASKRCNN_*_API_URL` lines from the deepgis-xr `.env` last.
+
+### Family default model_ids (the "single contract")
+
+These three lists must stay in lockstep:
+
+  * `default_model_id=` in
+    `deepgis_xr/apps/web/world_sampler_api/analyzers/maskrcnn_*.py`
+  * `_DEFAULT_MODEL_ID_*` constants in `maskrcnn_rocks.py` /
+    `maskrcnn_house.py`
+  * `FAMILY_DEFAULTS` dict in `services/maskrcnn-rocks/scripts/port_shim.py`
+  * `map $server_port $family_default_model_id` in
+    `services/maskrcnn-rocks/nginx-port-shims.conf`
+
+If you change a family's canonical checkpoint, update all four.
+
+| port | family            | default `model_id`                              |
+|------|-------------------|--------------------------------------------------|
+| 5002 | rocks             | `bishop_hero_e0004`                              |
+| 5003 | house             | `tornado_detector_eureka_aug_mult_e0039`         |
+| 5004 | hypolith          | `gobabeb_hero_e0011`                             |
+| 5005 | litter            | `litter_dynamics_hero_e0008`                     |
+| 5006 | roadkill          | `roadkill__sarah_e0004`                          |
+| 5007 | newlife           | `new_life_hero_e0008`                            |
+| 5008 | brent moon craters| `moon_craters_brent_brent_e0009`                 |
+| 5009 | harish moon craters | `hanand_stragglers_download.openuas.us_e0099` |

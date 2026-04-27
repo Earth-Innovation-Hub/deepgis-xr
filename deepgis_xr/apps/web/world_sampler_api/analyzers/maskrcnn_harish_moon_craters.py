@@ -29,6 +29,7 @@ _BRANCH = RemoteMaskRCNNBranch(
     folder_prefix='maskrcnn_harish_moon_craters',
     container_name='maskrcnn-harish-moon-craters-api',
     suggested_default_url='http://192.168.0.232:5009',
+    default_model_id='hanand_stragglers_download.openuas.us_e0099',
     log_emoji='🌒',
 )
 

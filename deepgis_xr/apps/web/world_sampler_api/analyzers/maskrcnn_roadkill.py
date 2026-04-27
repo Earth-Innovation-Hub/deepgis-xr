@@ -27,6 +27,7 @@ _BRANCH = RemoteMaskRCNNBranch(
     folder_prefix='maskrcnn_roadkill',
     container_name='maskrcnn-roadkill-api',
     suggested_default_url='http://192.168.0.232:5006',
+    default_model_id='roadkill__sarah_e0004',
     log_emoji='🦝',
 )
 

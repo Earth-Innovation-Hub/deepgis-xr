@@ -17,7 +17,7 @@ segment_anything, torch, cv2, PIL, numpy) are function-local.
 
 from django.http import JsonResponse
 
-from ._helpers import _masks_to_geojson_with_contours
+from ._helpers import _masks_to_geojson_with_contours, _unavailable_response
 
 
 def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, text_threshold, scripts_dir):
@@ -40,11 +40,14 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
         # Check if remote API is configured
         api_url = getattr(settings, 'GROUNDED_SAM_API_URL', None)
         if not api_url or api_url.strip() == '':
-            return JsonResponse({
-                'status': 'error',
-                'message': 'Grounded-SAM API URL not configured',
-                'suggestion': 'Set GROUNDED_SAM_API_URL environment variable'
-            }, status=503)
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type='grounded_sam',
+                reason='not_configured',
+                message='Grounded-SAM API URL not configured',
+                suggestion='Set GROUNDED_SAM_API_URL environment variable',
+            )
         
         # Create organized directory structure for saving results
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -142,17 +145,35 @@ def _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, 
             print(f"✓ API response received: {num_detections} detections")
             
         except requests.exceptions.ConnectionError as e:
-            return JsonResponse({
-                'status': 'error',
-                'message': f'Cannot connect to Grounded-SAM API at {api_url}',
-                'suggestion': 'Ensure the Grounded-SAM-2 Docker container is running'
-            }, status=503)
+            print(
+                f"⚠ Grounded-SAM: cannot connect to {api_url} ({e}); "
+                f"degrading gracefully"
+            )
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type='grounded_sam',
+                reason='connection_error',
+                message=f'Cannot connect to Grounded-SAM API at {api_url}',
+                api_url=api_url,
+                suggestion='Ensure the Grounded-SAM-2 Docker container is running',
+                detail=str(e),
+            )
         except requests.exceptions.Timeout:
-            return JsonResponse({
-                'status': 'error',
-                'message': 'Grounded-SAM API request timed out',
-                'suggestion': 'Segmentation takes longer - wait or reduce image size'
-            }, status=504)
+            print(
+                f"⚠ Grounded-SAM: request to {api_url} timed out; "
+                f"degrading gracefully"
+            )
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type='grounded_sam',
+                reason='timeout',
+                message='Grounded-SAM API request timed out',
+                api_url=api_url,
+                suggestion='Segmentation takes longer - wait or reduce image size',
+                retry_after=90,
+            )
         
         # Parse detections and convert to our format
         img_width = image.width

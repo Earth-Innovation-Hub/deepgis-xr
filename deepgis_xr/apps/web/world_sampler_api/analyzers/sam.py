@@ -15,6 +15,8 @@ web process on boot.
 
 from django.http import JsonResponse
 
+from ._helpers import _unavailable_response
+
 
 def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
     """Internal function to handle SAM analysis."""
@@ -152,11 +154,21 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
             except requests.exceptions.ConnectionError:
                 print(f"Warning: SAM API unavailable at {api_url}; falling back to local SAM")
             except requests.exceptions.Timeout:
-                return JsonResponse({
-                    'status': 'error',
-                    'message': 'SAM API request timed out',
-                    'api_url': api_url,
-                }, status=504)
+                print(
+                    f"⚠ SAM: request to {api_url} timed out; "
+                    f"degrading gracefully (no local fallback after timeout — "
+                    f"the remote burn already exceeded the deadline)"
+                )
+                return _unavailable_response(
+                    image=image,
+                    location=location,
+                    model_type=model_type,
+                    reason='timeout',
+                    message='SAM API request timed out',
+                    api_url=api_url,
+                    suggestion='Reduce viewport resolution or wait — the remote model is likely overloaded',
+                    retry_after=120,
+                )
 
         import sys
         import numpy as np

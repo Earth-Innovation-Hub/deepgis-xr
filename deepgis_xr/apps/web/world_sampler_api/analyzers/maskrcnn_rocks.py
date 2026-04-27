@@ -40,7 +40,13 @@ from django.http import JsonResponse
 from ._helpers import (
     _create_grounding_dino_visualization,
     _polygons_norm_to_geojson,
+    _unavailable_response,
 )
+# Default checkpoint for the rocks family in the upstream registry.
+# Used to inject ``model_id`` when routing through the unified
+# MASKRCNN_API_URL — without it the unified container's global
+# default would apply to ALL families. See RemoteMaskRCNNBranch.
+_DEFAULT_MODEL_ID_ROCKS = 'bishop_hero_e0004'
 
 
 def _analyze_viewport_maskrcnn_rocks(
@@ -65,17 +71,34 @@ def _analyze_viewport_maskrcnn_rocks(
         from django.conf import settings
         import requests
 
+        # URL resolution mirrors _maskrcnn_remote.resolve_remote_maskrcnn_url:
+        # per-family URL wins, then the unified MASKRCNN_API_URL, then
+        # graceful "not_configured". The unified path injects the family
+        # default model_id so the unified container loads the rocks
+        # checkpoint instead of whatever its global default is.
         api_url = getattr(settings, 'MASKRCNN_ROCKS_API_URL', None)
+        unified_model_id = None
         if not api_url or not api_url.strip():
-            return JsonResponse({
-                'status': 'error',
-                'message': 'MaskRCNN Rocks API is not configured',
-                'suggestion': (
+            unified_url = getattr(settings, 'MASKRCNN_API_URL', None)
+            if unified_url and unified_url.strip():
+                api_url = unified_url
+                unified_model_id = _DEFAULT_MODEL_ID_ROCKS
+            else:
+                api_url = None
+        if not api_url:
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type='maskrcnn_rocks',
+                reason='not_configured',
+                message='MaskRCNN Rocks API is not configured',
+                suggestion=(
                     'Set MASKRCNN_ROCKS_API_URL '
-                    '(e.g. http://192.168.0.232:5002) in the web container '
+                    '(e.g. http://192.168.0.232:5002) or set MASKRCNN_API_URL '
+                    'to a unified maskrcnn container in the web container '
                     'environment.'
                 ),
-            }, status=503)
+            )
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         lat_str = f"lat{location.get('lat', 0):.6f}".replace('.', 'p').replace('-', 'n')
@@ -125,8 +148,11 @@ def _analyze_viewport_maskrcnn_rocks(
             'max_detections': max_detections,
             'return_annotated': 'true',
         }
-        if model_id:
-            form_data['model_id'] = model_id
+        # Caller's explicit model_id wins; otherwise inject the unified
+        # default (only set when we routed to MASKRCNN_API_URL).
+        effective_model_id = model_id or unified_model_id
+        if effective_model_id:
+            form_data['model_id'] = effective_model_id
 
         try:
             response = requests.post(
@@ -136,19 +162,35 @@ def _analyze_viewport_maskrcnn_rocks(
                 timeout=180,
             )
         except requests.exceptions.ConnectionError as e:
-            return JsonResponse({
-                'status': 'error',
-                'message': f'Cannot connect to MaskRCNN Rocks API at {api_url}',
-                'suggestion': 'Ensure the maskrcnn-rocks-api container is running on the GPU host',
-                'debug': {'api_url': api_url, 'error': str(e)},
-            }, status=503)
+            print(
+                f"⚠ MaskRCNN-Rocks: cannot connect to {api_url} ({e}); "
+                f"degrading gracefully"
+            )
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type='maskrcnn_rocks',
+                reason='connection_error',
+                message=f'Cannot connect to MaskRCNN Rocks API at {api_url}',
+                api_url=api_url,
+                suggestion='Ensure the maskrcnn-rocks-api container is running on the GPU host',
+                detail=str(e),
+            )
         except requests.exceptions.Timeout:
-            return JsonResponse({
-                'status': 'error',
-                'message': 'MaskRCNN Rocks API request timed out',
-                'suggestion': 'The image may be too large or the model is still warming up',
-                'api_url': api_url,
-            }, status=504)
+            print(
+                f"⚠ MaskRCNN-Rocks: request to {api_url} timed out; "
+                f"degrading gracefully"
+            )
+            return _unavailable_response(
+                image=image,
+                location=location,
+                model_type='maskrcnn_rocks',
+                reason='timeout',
+                message='MaskRCNN Rocks API request timed out',
+                api_url=api_url,
+                suggestion='The image may be too large or the model is still warming up',
+                retry_after=60,
+            )
         except Exception as e:
             import traceback
             return JsonResponse({

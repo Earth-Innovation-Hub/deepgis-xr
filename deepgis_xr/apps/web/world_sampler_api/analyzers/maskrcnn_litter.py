@@ -29,6 +29,7 @@ _BRANCH = RemoteMaskRCNNBranch(
     folder_prefix='maskrcnn_litter',
     container_name='maskrcnn-litter-api',
     suggested_default_url='http://192.168.0.232:5005',
+    default_model_id='litter_dynamics_hero_e0008',
     log_emoji='🗑️',
 )
 

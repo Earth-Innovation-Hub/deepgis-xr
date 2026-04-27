@@ -20,6 +20,7 @@ from django.http import JsonResponse
 from ._helpers import (
     _create_grounding_dino_visualization,
     _detections_to_geojson,
+    _unavailable_response,
 )
 
 
@@ -163,22 +164,35 @@ def _analyze_viewport_grounding_dino(
                 print(f"✓ API response received: {num_detections} detections")
                 
             except requests.exceptions.ConnectionError as e:
-                return JsonResponse({
-                    'status': 'error',
-                    'message': f'Cannot connect to Grounding DINO API at {api_url}',
-                    'suggestion': 'Ensure the Grounding DINO Docker container is running',
-                    'debug': {
-                        'api_url': api_url,
-                        'error': str(e)
-                    }
-                }, status=503)
+                print(
+                    f"⚠ Grounding DINO: cannot connect to {api_url} ({e}); "
+                    f"degrading gracefully"
+                )
+                return _unavailable_response(
+                    image=image,
+                    location=location,
+                    model_type='grounding_dino',
+                    reason='connection_error',
+                    message=f'Cannot connect to Grounding DINO API at {api_url}',
+                    api_url=api_url,
+                    suggestion='Ensure the Grounding DINO Docker container is running',
+                    detail=str(e),
+                )
             except requests.exceptions.Timeout:
-                return JsonResponse({
-                    'status': 'error',
-                    'message': 'Grounding DINO API request timed out',
-                    'suggestion': 'The image may be too large or the server is under heavy load',
-                    'api_url': api_url
-                }, status=504)
+                print(
+                    f"⚠ Grounding DINO: request to {api_url} timed out; "
+                    f"degrading gracefully"
+                )
+                return _unavailable_response(
+                    image=image,
+                    location=location,
+                    model_type='grounding_dino',
+                    reason='timeout',
+                    message='Grounding DINO API request timed out',
+                    api_url=api_url,
+                    suggestion='The image may be too large or the server is under heavy load',
+                    retry_after=60,
+                )
             except Exception as e:
                 import traceback
                 return JsonResponse({
