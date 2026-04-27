@@ -112,8 +112,15 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 
 2. **Start with Docker Compose**
    ```bash
-   docker-compose up -d
+   docker compose up -d
    ```
+   Brings up four services by default: `web` (Django + gunicorn, GPU),
+   `redis` (Celery broker for the admin-only model-training queue),
+   `celery_worker` (single replica, GPU-pinned), and `tileserver`. The
+   optional `db` (Postgres 16) service is gated behind a profile —
+   bring it up with `docker compose --profile postgres up -d db` and
+   follow `docs/migration-sqlite-to-postgres.md` if you're moving off
+   the SQLite default.
 
 3. **Access the application**
    - Main application: http://localhost:8060
@@ -160,8 +167,17 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
 **Backend:**
 - Django 3.2 LTS (Python 3.9 web framework) — migration to 4.2 LTS tracked on roadmap
 - Django REST Framework 3.12 (API endpoints)
-- PostgreSQL (via `psycopg2-binary`) / SQLite (dev)
-- Celery 5.6 + Redis (async tasks, world-sampler background jobs)
+- gunicorn 23 — production WSGI server in the web container (workers=2,
+  threads=4, timeout=600, configurable via `GUNICORN_*` env vars).
+  `manage.py runserver` is reserved for local development only.
+- SQLite (default; the legacy 1.7 GB dev DB lives at `db.sqlite3`) →
+  PostgreSQL 16 (opt-in via `DATABASE_URL`; the compose `db` service is
+  gated behind the `postgres` profile, with `dj-database-url` and
+  `psycopg2-binary` already in `requirements.txt`). Cutover runbook:
+  `docs/migration-sqlite-to-postgres.md`.
+- Celery 5.6 + Redis 7 — admin-only model-training task queue
+  (`apps/api/v1/views/training.py::train_model_task`). The world sampler
+  itself is synchronous; Celery is **not** used for per-viewport requests.
 - Twilio + `django-phonenumber-field` (phone-number authentication)
 - **Flask** 3.x — separate topology-tile server at `services/topology/`
 
@@ -174,13 +190,27 @@ DeepGIS-XR is a comprehensive geospatial visualization and analysis platform tha
   plan preserved in the refactoring note will be revisited in Tier D.)*
 
 **AI/ML:**
-- Segment Anything Model (SAM) — Meta AI, local inference
-- Grounding DINO — IDEA Research, remote API (port 5000)
+- Segment Anything Model (SAM) — Meta AI, local in-container inference
+  with optional fallback to a remote `sam` service (port 5010)
+- Grounding DINO — IDEA Research, remote API (port 5000) with optional
+  in-process local fallback when the remote is unreachable
 - Grounded-SAM-2 — remote API (port 5001)
-- YOLOv8 — Ultralytics, local inference
-- Mask R-CNN / Mask2Former — Detectron2, local inference
+- YOLOv8 — Ultralytics, local inference (`ultralytics`)
+- Mask2Former — Facebook Research, local inference (`transformers`)
+- Mask R-CNN — eight remote Flask services on the GPU host
+  (`services/maskrcnn-rocks/` Docker image, one container per family:
+  rocks, house, hypolith, litter, roadkill, newlife, brent-moon,
+  harish-moon). **Phase-1 of the consolidation** is wired in the
+  analyzer dispatch: set `MASKRCNN_API_URL` to a single unified
+  container that exposes the full registry and the analyzers route
+  there with the correct family `model_id` injected per-request; the
+  per-family `MASKRCNN_*_API_URL` vars take precedence when set so
+  rollout can be gradual. Detectron2 is no longer installed in the
+  web image (it had no in-process callers after the Tier-E cleanup).
 - PyTorch 2.5.1 + CUDA 12.1 (deep learning framework)
-- `kernelcal` — Kernel Dynamics / MaxCal integration (integration in progress)
+- `kernelcal` — Kernel Dynamics / MaxCal integration (in progress;
+  bind-mount overlays `distinction_game`, `urban`, `fluid` until the
+  wheel is published with these subpackages)
 
 **Infrastructure:**
 - Docker & Docker Compose (containerization)
@@ -261,7 +291,20 @@ on the roadmap below.
 
 - `POST /webclient/sampler/analyze-viewport` - Analyze viewport with AI
   - **Parameters:**
-    - `model_type`: `'sam'`, `'yolov8'`, `'grounding_dino'`, `'zero_shot'`, or `'mask2former'`
+    - `model_type` — one of (live as of April 2026):
+      - **Local inference** (in the web container, GPU/CPU):
+        `'sam'`, `'yolov8'`, `'mask2former'`, `'zero_shot'`,
+        `'prithvi'`, `'urban_spectral'`
+      - **Remote text-prompted** (Flask services on the GPU host):
+        `'grounding_dino'`, `'grounded_sam'`
+      - **Remote Mask R-CNN families** (one upstream image, eight
+        defaults): `'maskrcnn_rocks'`, `'maskrcnn_house'`,
+        `'maskrcnn_hypolith'`, `'maskrcnn_litter'`, `'maskrcnn_roadkill'`,
+        `'maskrcnn_newlife'`, `'maskrcnn_brent_moon_craters'`,
+        `'maskrcnn_harish_moon_craters'`. Set `MASKRCNN_API_URL` to
+        consolidate behind a single container with all families served
+        from one process; per-family `MASKRCNN_*_API_URL` vars take
+        precedence when set so rollout can be gradual.
     - `image`: Base64-encoded viewport image
     - `location`: Camera position metadata
     - **SAM options:**
@@ -271,13 +314,38 @@ on the roadmap below.
       - `yolo_model`: `'yolov8n'`, `'yolov8s'`, `'yolov8m'`, `'yolov8l'`, `'yolov8x'`
       - `confidence_threshold`: 0.0-1.0
       - `class_filter`: Comma-separated class names (e.g., `"person,car,truck"`)
-    - **Grounding DINO options:**
+    - **Grounding DINO / Grounded-SAM options:**
       - `text_prompt`: Dot-separated object descriptions (e.g., `"rock . boulder . crater"`)
       - `box_threshold`: Detection confidence threshold (default: 0.3)
       - `text_threshold`: Text matching threshold (default: 0.25)
+    - **Mask R-CNN options** (any `maskrcnn_*` family):
+      - `model_id`: explicit checkpoint id from the upstream registry
+        (overrides the family default; see
+        `services/maskrcnn-rocks/README.md` for the canonical defaults
+        per family)
+      - `score_threshold`: 0.0-1.0
+      - `max_detections`: int (default 100)
     - **Zero-Shot/Mask2Former options:**
       - `confidence_threshold`: 0.0-1.0
-  - **Returns:** GeoJSON with segments/detections, metadata, saved file paths
+  - **Returns:** GeoJSON FeatureCollection with detections, metadata,
+    and saved on-host artefact paths.
+  - **Graceful degradation contract.** When a remote AI service is
+    *unconfigured*, *unreachable*, or *times out*, the endpoint returns
+    **HTTP 200** (not 503) with an empty `FeatureCollection` plus:
+    - `degraded: true`
+    - `unavailable_reason`: one of `"not_configured"`,
+      `"connection_error"`, `"timeout"`
+    - `device_info.available: false`
+    - a `Retry-After` HTTP header (30 s default; 60 s on timeout)
+
+    This keeps the frontend's per-viewport-change poll loop from
+    spamming error toasts during transient outages — clients that
+    check `response.ok && result.status === 'success'` see a normal
+    empty response and continue rendering. Clients that *want* an "AI
+    offline" badge can opt in by reading `result.degraded === true`.
+    Genuine HTTP 5xx from a *reachable* upstream and unhandled
+    exceptions inside the analyzer still surface as 502/500 — those
+    are bugs, not unavailability, and they are deliberately not masked.
 
 ### Labeling API
 
@@ -294,42 +362,55 @@ The AI Viewport Analysis system supports multiple detection models, including re
 ### System Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         DeepGIS-XR Frontend                         │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  AI Viewport Analysis Panel                                   │  │
-│  │  ┌────────────────────────────────────────────────────────┐  │  │
-│  │  │ Analysis Type: [Grounding DINO (Open Vocab) ▼]         │  │  │
-│  │  │ Text Prompt:   [rock . boulder . crater . debris    ]  │  │  │
-│  │  │ Box Threshold: [═══════●═══] 0.30                      │  │  │
-│  │  │ Text Threshold:[══════●════] 0.25                      │  │  │
-│  │  │ [  🧠 Analyze Viewport  ]                              │  │  │
-│  │  └────────────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │ POST /webclient/sampler/analyze-viewport
-                               │ {image, location, model_type, text_prompt, ...}
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    DeepGIS-XR Django Backend                        │
-│  world_sampler_api.py::analyze_viewport()                          │
-│     ├── model_type == 'sam'           → Local SAM inference        │
-│     ├── model_type == 'yolov8'        → Local YOLOv8 inference     │
-│     ├── model_type == 'grounding_dino'→ Remote API call ──────┐    │
-│     ├── model_type == 'zero_shot'     → Local Mask R-CNN      │    │
-│     └── model_type == 'mask2former'   → Local Mask2Former     │    │
-└──────────────────────────────┬────────────────────────────────│────┘
-                               │                                │
-                               ▼                                ▼
-┌──────────────────────────────────────┐  ┌───────────────────────────┐
-│     Local GPU/CPU Processing         │  │  Remote Grounding DINO    │
-│  ┌────────────────────────────────┐  │  │  API Server               │
-│  │ • SAM (vit_b, vit_l, vit_h)   │  │  │  ┌─────────────────────┐  │
-│  │ • YOLOv8 (n, s, m, l, x)      │  │  │  │ POST /predict       │  │
-│  │ • Mask R-CNN (COCO)           │  │  │  │ POST /predict_batch │  │
-│  │ • Mask2Former (COCO)          │  │  │  │ GET  /health        │  │
-│  └────────────────────────────────┘  │  │  └─────────────────────┘  │
-└──────────────────────────────────────┘  └───────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         DeepGIS-XR Frontend                          │
+│  AI Viewport Analysis panel — text prompts, sliders, model picker    │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             │ POST /webclient/sampler/analyze-viewport
+                             │ {image, location, model_type, model_id?, …}
+                             ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│         DeepGIS-XR Django Backend (gunicorn, GPU-attached)           │
+│  apps/web/world_sampler_api/http.py::analyze_viewport()              │
+│   └─ analyzers/ANALYZER_REGISTRY[model_type] → dispatches to:        │
+│                                                                      │
+│      LOCAL inference (in the web container):                         │
+│        sam · yolov8 · mask2former · zero_shot ·                      │
+│        prithvi · urban_spectral                                      │
+│                                                                      │
+│      REMOTE inference (Flask services on the GPU host):              │
+│        grounding_dino · grounded_sam · sam (remote)                  │
+│        maskrcnn_{rocks · house · hypolith · litter ·                 │
+│                  roadkill · newlife ·                                │
+│                  brent_moon_craters · harish_moon_craters}           │
+│                                                                      │
+│      Mask R-CNN dispatch (resolve_remote_maskrcnn_url):              │
+│        ① if MASKRCNN_*_API_URL set for this family → use it          │
+│        ② else if MASKRCNN_API_URL set → use it + inject family       │
+│           default into the per-request `model_id` form field         │
+│        ③ else → _unavailable_response("not_configured")              │
+│                                                                      │
+│   On AI-down (not_configured · connection_error · timeout):          │
+│      → HTTP 200 + {status:"success", degraded:true,                  │
+│                    detections:[], unavailable_reason, …}             │
+│        Retry-After: 30s (60s on timeout)                             │
+└────────────────────────────┬─────────────────────────────────────────┘
+                             ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│     Remote AI host 192.168.0.232 (Flask + CUDA)                      │
+│       :5000  grounding_dino       :5006  maskrcnn_roadkill           │
+│       :5001  grounded_sam_2       :5007  maskrcnn_newlife            │
+│       :5002  maskrcnn_rocks       :5008  maskrcnn_brent_moon         │
+│       :5003  maskrcnn_house       :5009  maskrcnn_harish_moon        │
+│       :5004  maskrcnn_hypolith    :5010  sam (classic v1)            │
+│       :5005  maskrcnn_litter                                         │
+│                                                                      │
+│       Phase-1 consolidation: collapse :5002–:5009 to ONE container   │
+│       on :5002 with all eight weight bundles mounted; legacy direct  │
+│       callers preserved by services/maskrcnn-rocks/scripts/          │
+│       port_shim.py (Python stdlib, no nginx-lua) which injects the   │
+│       correct model_id and proxies to the unified upstream.          │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Remote AI APIs
@@ -467,23 +548,70 @@ Press `H` to view all shortcuts in-app. Key shortcuts include:
 
 ### Environment Variables
 
-```bash
-DEBUG=True
-DJANGO_SETTINGS_MODULE=deepgis_xr.settings
-NVIDIA_VISIBLE_DEVICES=all  # For GPU support
+The full, authoritative list lives in
+[`.env.example`](./.env.example). Copy it to `.env` and edit. The
+operationally important knobs are:
 
-# Remote AI Services (optional - defaults in docker-compose.yml)
-# GROUNDING_DINO_API_URL=http://192.168.0.232:5000
+```bash
+# Core (production posture by default)
+DEBUG=False
+DJANGO_SETTINGS_MODULE=deepgis_xr.settings
+SECRET_KEY=                      # generate with: openssl rand -hex 32
+ALLOWED_HOSTS=deepgis.org,localhost,127.0.0.1
+NVIDIA_VISIBLE_DEVICES=all       # GPU passthrough
+
+# Web — gunicorn (defaults match the Dockerfile CMD)
+GUNICORN_WORKERS=2
+GUNICORN_THREADS=4
+GUNICORN_TIMEOUT=600
+
+# Database — leave unset for the legacy SQLite default; flip to
+# `postgres://deepgis:deepgis@db:5432/deepgis` after running
+# `docs/migration-sqlite-to-postgres.md`. The bundled `db` service is
+# off until you `docker compose --profile postgres up -d db`.
+# DATABASE_URL=postgres://deepgis:deepgis@db:5432/deepgis
+POSTGRES_DB=deepgis
+POSTGRES_USER=deepgis
+POSTGRES_PASSWORD=deepgis
+
+# Celery broker / result backend (auto-wired by the redis service)
+REDIS_URL=redis://redis:6379/0
+
+# Remote AI services (Flask containers on a separate GPU host)
+# Phase-1 consolidation: set this to point all Mask R-CNN families at
+# a single upstream container; per-family vars below override it.
+# MASKRCNN_API_URL=http://192.168.0.232:5002
+GROUNDING_DINO_API_URL=http://192.168.0.232:5000
+GROUNDED_SAM_API_URL=http://192.168.0.232:5001
+SAM_API_URL=http://192.168.0.232:5010
+# MASKRCNN_ROCKS_API_URL=http://192.168.0.232:5002
+# … see .env.example for the full eight-family list (5002–5009)
 ```
 
 ### Docker Configuration
 
-The `docker-compose.yml` includes:
-- **Web service**: Django application with GPU support
-- **Tile server**: MapTiler TileServer GL for tile serving
-- **Volume mounts**: 
-  - `dreams_laboratory/scripts` - ML model scripts
-  - `deepgis_results` - AI analysis results (shared with host)
+The `docker-compose.yml` ships the following services.
+
+**Default (`docker compose up -d`):**
+
+| Service          | Image                       | Role                                                                                      |
+|------------------|-----------------------------|-------------------------------------------------------------------------------------------|
+| `web`            | built locally (`Dockerfile`)| Django + DRF behind gunicorn (workers=2, threads=4, timeout=600); GPU-attached; runs `manage.py migrate --noinput` once on boot |
+| `redis`          | `redis:7-alpine`            | Celery broker + result backend (healthchecked, no host port)                              |
+| `celery_worker`  | reuses the `web` image      | Single replica (`--concurrency=1` because the training task takes the whole GPU); waits on `redis` healthcheck |
+| `tileserver`     | `maptiler/tileserver-gl`    | Serves MBTiles raster + vector tiles                                                      |
+
+**Optional (profile-gated):**
+
+| Service | Image               | Profile    | Notes                                                                                         |
+|---------|---------------------|------------|-----------------------------------------------------------------------------------------------|
+| `db`    | `postgres:16-alpine`| `postgres` | Bring up only when you're ready to migrate off SQLite. Runbook: `docs/migration-sqlite-to-postgres.md`. |
+
+**Volume mounts:**
+
+- `dreams_laboratory/scripts` — ML model scripts (read-only)
+- `deepgis_results` — AI analysis artefacts (shared with host)
+- `redis_data`, `postgres_data` — named volumes for service persistence
 
 ### GPU Support
 
@@ -495,6 +623,42 @@ To enable GPU for AI features:
 ---
 
 ## 📊 Recent Updates
+
+### April 2026 — Ops hardening + graceful AI dispatch (post-Tier-E prep)
+
+- **Ops hardening.** Web container now serves through gunicorn 23
+  (workers=2, threads=4, timeout=600 — all `GUNICORN_*` overridable);
+  `DEBUG` defaults to `False`; `manage.py migrate --noinput` runs once
+  on container start. Compose file ships `redis` (the broker the
+  training queue had been quietly assuming) and a single-replica
+  `celery_worker` so `train_model_task.delay(…)` actually runs end-to-
+  end. Postgres 16 is wired and waiting behind the `postgres` profile
+  with `dj-database-url` + `psycopg2-binary` already in
+  `requirements.txt`; cutover from the legacy 1.7 GB `db.sqlite3` is
+  operator-driven via `docs/migration-sqlite-to-postgres.md` — nothing
+  is forced.
+- **Graceful AI-down responses.** `analyze-viewport` no longer returns
+  hard 503s when a remote AI service is unconfigured / unreachable /
+  timing out. New `_unavailable_response(...)` helper (in
+  `analyzers/_helpers.py`) returns HTTP 200 with
+  `{status:"success", degraded:true, detections:[], unavailable_reason,
+  …}` plus a `Retry-After` header (30 s default; 60 s on timeout) so
+  the frontend's per-viewport-change poll loop stops spamming error
+  toasts during transient outages. Reserved for unavailability only —
+  real upstream 5xx and analyzer crashes still surface as 502/500.
+- **Unified Mask R-CNN dispatch (phase 1).** The eight
+  `MASKRCNN_*_API_URL` services on `:5002–:5009` all run the same
+  `services/maskrcnn-rocks/` Docker image with different
+  `DEFAULT_MODEL_ID`s. New analyzer dispatch helper
+  (`resolve_remote_maskrcnn_url`) prefers a single `MASKRCNN_API_URL`
+  when set and injects the family default into the per-request
+  `model_id` form field; the per-family vars take precedence so
+  rollout is gradual. Backward-compat for legacy direct clients on
+  the old port range is provided by
+  `services/maskrcnn-rocks/scripts/port_shim.py` — a stdlib-only
+  Python proxy (no nginx-lua) that injects the correct `model_id` and
+  forwards to the unified upstream. Phase 2 (operator-side) collapses
+  to one upstream container with all weight bundles mounted.
 
 ### April 2026 — Refactor tiers A–D landed, Tier E prep landed
 
@@ -650,6 +814,16 @@ for the full plan.
       Django 5.0/5.1 is tracked separately (needs Python 3.10+).
 - [ ] **Tier F** — `kernelcal` integration: MaxCal World Sampler, Model-Kernel
       Selector, terrain diagnostics endpoint
+- [~] **Tier G — ops hardening + AI dispatch consolidation** (Apr 2026):
+      gunicorn + `DEBUG=False` + `redis` + `celery_worker` services
+      shipped; Postgres 16 wired behind a `postgres` profile with a
+      cutover runbook (`docs/migration-sqlite-to-postgres.md`);
+      `_unavailable_response` graceful-degradation contract added to
+      `analyze-viewport`; Mask R-CNN dispatch consolidated behind
+      `MASKRCNN_API_URL` + per-family fallback + `port_shim.py`.
+      **Phase 2** (operator-side, pending): collapse
+      `services/maskrcnn-rocks/` to one upstream container with all
+      eight weight bundles mounted; SQLite → Postgres data cutover.
 
 ### 🔄 Q1 2026 - Near Term
 - [ ] **Mars Terrain Viewer**: Extend lunar capabilities to Mars with HiRISE/CTX imagery
