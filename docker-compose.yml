@@ -1,4 +1,23 @@
-version: '3.9'
+# DeepGIS-XR docker-compose
+#
+# Services:
+#   web         - Django WSGI app served by gunicorn (was: runserver in dev).
+#                 GPU-enabled.
+#   redis       - Celery broker + result backend. Required for the
+#                 admin-only model-training endpoint
+#                 (apps/api/v1/views/training.py uses @shared_task + .delay).
+#                 Without redis, .delay() at module-import time logs a
+#                 ConnectionError but does not crash; calling the endpoint
+#                 returns 500. Adding redis makes that surface work as
+#                 designed without changing any Python code.
+#   celery_worker - Single Celery worker that actually executes the
+#                 training job. Without this, redis just queues tasks
+#                 nothing consumes.
+#   tileserver  - tileserver-gl for MBTiles raster/vector tiles.
+#   db          - PostgreSQL 16. NOT started by default (profile: postgres).
+#                 Bring up with `docker compose --profile postgres up -d`
+#                 and follow the SQLite -> Postgres migration runbook in
+#                 STATUS.md before flipping DATABASE_URL on the web service.
 
 services:
   web:
@@ -11,13 +30,31 @@ services:
       - DEBUG=${DEBUG:-False}
       - DJANGO_SETTINGS_MODULE=deepgis_xr.settings
       - ALLOWED_HOSTS=${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      # Database. Leave DATABASE_URL unset to keep the legacy SQLite path
+      # (settings.py falls back to BASE_DIR/db.sqlite3). Set
+      # DATABASE_URL=postgres://deepgis:deepgis@db:5432/deepgis to switch
+      # to the bundled `db` service after running the runbook.
+      - DATABASE_URL=${DATABASE_URL:-}
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
       - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
       - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - VECTOR_TILES_URL=${VECTOR_TILES_URL:-https://vector_tiles:8080}
       - RASTER_TILES_URL=${RASTER_TILES_URL:-https://raster_tiles:8081}
+      # Gunicorn tuning (see Dockerfile CMD for rationale).
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-4}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-600}
       # Remote AI Services
+      #
+      # Unified entry point (preferred): one maskrcnn-rocks Docker container
+      # serves all model families via the per-request `model_id` form field
+      # of POST /api/predict. Set MASKRCNN_API_URL to that single endpoint
+      # and the analyzer dispatch will round-robin model_id by model_type.
+      # The per-family URLs below are kept for backward compatibility — they
+      # take precedence when set, so you can roll the unified service out
+      # incrementally one family at a time.
+      - MASKRCNN_API_URL=${MASKRCNN_API_URL:-}
       - GROUNDING_DINO_API_URL=${GROUNDING_DINO_API_URL:-http://192.168.0.232:5000}
       - GROUNDED_SAM_API_URL=${GROUNDED_SAM_API_URL:-http://192.168.0.232:5001}
       - SAM_API_URL=${SAM_API_URL:-http://192.168.0.232:5010}
@@ -63,6 +100,9 @@ services:
       - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.9/site-packages/kernelcal/fluid:ro
     ports:
       - "8060:8090"
+    depends_on:
+      redis:
+        condition: service_healthy
     # Enable GPU access
     deploy:
       resources:
@@ -71,10 +111,86 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+    # `migrate --noinput` runs once on container start, then `exec` hands
+    # PID 1 over to gunicorn so signals (SIGTERM from `docker stop`) reach
+    # the WSGI server cleanly. Worker/thread/timeout knobs read from env
+    # vars defined above; defaults match Dockerfile CMD.
     command: >
       bash -c "
-        python manage.py migrate &&
-        python manage.py runserver 0.0.0.0:8090
+        python manage.py migrate --noinput &&
+        exec gunicorn deepgis_xr.wsgi:application
+          --bind 0.0.0.0:8090
+          --workers ${GUNICORN_WORKERS:-2}
+          --threads ${GUNICORN_THREADS:-4}
+          --timeout ${GUNICORN_TIMEOUT:-600}
+          --access-logfile -
+          --error-logfile -
+      "
+
+  # Celery broker / result backend. Tiny memory footprint; the only consumer
+  # today is the admin-only model-training task in apps/api/v1/views/training.
+  # Pinned to redis 7.x to match the redis==7.0.1 client library in
+  # requirements.txt (compatibility window: redis-server 6.x and 7.x both
+  # speak the same protocol the redis-py client uses, but pinning to 7
+  # avoids drift).
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    # No host port exposure on purpose — only the web container talks to it.
+
+  # Celery worker. Without this, redis simply queues training tasks that
+  # nothing consumes; the start_training endpoint returns a task_id and the
+  # task_status endpoint forever reports state=PENDING. Single replica is
+  # sufficient for the current workload (one training job at a time, manual
+  # admin trigger). Reuses the web image so all Django apps & ML libs are
+  # available; concurrency=1 because train_model_task allocates the GPU.
+  celery_worker:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - DEBUG=${DEBUG:-False}
+      - DJANGO_SETTINGS_MODULE=deepgis_xr.settings
+      - DATABASE_URL=${DATABASE_URL:-}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+      - ../dreams_laboratory/scripts:/app/dreams_laboratory_scripts:ro
+      - ./deepgis_results:/app/deepgis_results
+      - yolo_models_volume:/app/models
+      - /mnt/dreamslab-store:/mnt/dreamslab-store:ro
+      - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.9/site-packages/kernelcal/distinction_game:ro
+      - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.9/site-packages/kernelcal/urban:ro
+      - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.9/site-packages/kernelcal/fluid:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # `--concurrency 1` because train_model_task takes the whole GPU.
+    # `-l info` keeps logs readable; switch to `-l warning` to quiet down.
+    command: >
+      bash -c "
+        exec celery -A deepgis_xr worker
+          --concurrency=1
+          --loglevel=info
+          --hostname=worker@%h
       "
 
   tileserver:
@@ -88,6 +204,46 @@ services:
       - TILESERVER_GL_DATA_PATH=/data
     command: ["-p", "80", "--verbose"]
 
+  # Optional Postgres backend. Not started by default — gated behind the
+  # `postgres` profile so the existing SQLite-backed deployment keeps
+  # working unchanged. To roll forward:
+  #
+  #   docker compose --profile postgres up -d db
+  #   docker compose exec db pg_isready -U deepgis
+  #   # follow the SQLite -> Postgres migration runbook in STATUS.md
+  #   #   1. dumpdata from sqlite
+  #   #   2. set DATABASE_URL=postgres://deepgis:deepgis@db:5432/deepgis
+  #   #      in .env
+  #   #   3. docker compose up -d --no-deps web   # picks up new DATABASE_URL
+  #   #   4. docker compose exec web python manage.py migrate --run-syncdb
+  #   #   5. docker compose exec web python manage.py loaddata <dump>
+  #
+  # 1.7 GB SQLite dump -> Postgres ingest takes ~minutes on commodity HW;
+  # don't try to run it inside an HTTP request lifecycle. The runbook is the
+  # source of truth for the exact dumpdata flags (natural_foreign,
+  # natural_primary, exclude=contenttypes,auth.permission,sessions).
+  db:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-deepgis}
+      - POSTGRES_USER=${POSTGRES_USER:-deepgis}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deepgis}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Exposed for one-shot dumpdata/loaddata work from the host. Drop
+      # this line in a hardened deployment.
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deepgis} -d ${POSTGRES_DB:-deepgis}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   media_volume:
   yolo_models_volume:
+  redis_data:
+  postgres_data:

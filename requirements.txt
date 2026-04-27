@@ -27,11 +27,22 @@ vine==5.1.0
 tzdata==2025.3
 
 # --- Database / server ---------------------------------------------------------
-# psycopg2-binary, whitenoise, gunicorn intentionally absent:
-#   - DATABASES uses sqlite3 (see deepgis_xr/settings.py); no Postgres in compose.
-#   - settings.py serves staticfiles/ via STATICFILES_DIRS — collectstatic disabled.
-#   - Dev/container both run `manage.py runserver` (see docker-compose.yml).
-# Re-add when production switches to Postgres + WhiteNoise/Gunicorn.
+# Production server: gunicorn behind the compose `web` service. The Dockerfile
+# CMD and compose `command:` both invoke gunicorn explicitly; `runserver` is
+# only used for `manage.py runserver` during local development.
+gunicorn==23.0.0
+# Postgres driver — present so that flipping DATABASE_URL=postgres://... in .env
+# is sufficient to switch backends without rebuilding the image. The default
+# settings.py path still uses sqlite3 (see DATABASES dispatch in settings.py)
+# until the operator runs the migrate-to-postgres runbook in STATUS.md.
+psycopg2-binary==2.9.10
+# Lets settings.py parse a single DATABASE_URL env var into a Django DATABASES
+# dict (sqlite3, postgres, mysql all supported). Keeps compose / .env / k8s
+# manifests using one URL-style variable instead of five DB_* fields.
+dj-database-url==2.3.0
+# WhiteNoise still intentionally absent: settings.py serves staticfiles/ via
+# STATICFILES_DIRS in both dev and prod (collectstatic disabled by design).
+# Re-add when fronting with a CDN.
 
 # --- Imaging / media -----------------------------------------------------------
 Pillow==11.3.0

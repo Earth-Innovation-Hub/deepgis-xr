@@ -101,5 +101,21 @@ RUN chmod +x manage.py
 # Expose port
 EXPOSE 8090
 
-# Run the application
-CMD ["python3.9", "manage.py", "runserver", "0.0.0.0:8090"]
+# Run the application via gunicorn (production WSGI server).
+#
+# Worker count is intentionally low because the analyze-viewport pipeline can
+# burn 90+ s on a single request when the remote AI host is warm-loading a
+# checkpoint; thread count carries the read-light Django/HTTP work in
+# parallel, and --timeout 600 absorbs slow remote inference without
+# triggering the worker timeout (the default 30 s would kill in-flight
+# AI requests). When the optional `manage.py runserver` workflow is needed
+# for local debugging, the docker-compose `command:` override for the web
+# service is the right place to flip back to runserver — do not edit this
+# CMD.
+CMD ["sh", "-c", "exec gunicorn deepgis_xr.wsgi:application \
+    --bind 0.0.0.0:8090 \
+    --workers ${GUNICORN_WORKERS:-2} \
+    --threads ${GUNICORN_THREADS:-4} \
+    --timeout ${GUNICORN_TIMEOUT:-600} \
+    --access-logfile - \
+    --error-logfile -"]

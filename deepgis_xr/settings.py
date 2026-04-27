@@ -31,7 +31,14 @@ if SCRIPTS_DIR.exists() and str(SCRIPTS_DIR) not in sys.path:
 
 # Core Settings
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-your-secret-key-here')
-DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
+# DEBUG defaults to False so that an unset / mistyped env var produces a
+# production-safe posture (DisallowedHost, no traceback page, no static-file
+# autoreload). Local development must set DEBUG=True explicitly via .env or
+# the container env, which docker-compose.yml does for the `web` service when
+# the operator opts in. The previous default (True) leaked stack traces and
+# wide-open CORS to anyone who deployed without setting the variable; that
+# is the wrong direction for the default.
+DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
 # Application definition
@@ -92,12 +99,45 @@ TEMPLATES = [
 WSGI_APPLICATION = 'deepgis_xr.wsgi.application'
 
 # Database
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+#
+# Backend selection is driven by the ``DATABASE_URL`` env var:
+#
+#   * unset / blank      -> SQLite at ``BASE_DIR/db.sqlite3`` (legacy default;
+#                           the 1.7 GB dev DB lives here today)
+#   * ``postgres://...`` -> PostgreSQL (compose ships a ``db`` service, see
+#                           docker-compose.yml; psycopg2-binary in
+#                           requirements.txt)
+#   * any other URL accepted by ``dj_database_url.parse`` (sqlite, mysql, ...)
+#
+# This indirection exists so that flipping the deployment from SQLite to
+# Postgres is a one-line ``.env`` change plus the migration runbook in
+# ``STATUS.md`` — no settings.py edit, no image rebuild. ``conn_max_age=600``
+# keeps a small connection pool warm for Postgres without affecting SQLite
+# (which ignores the field).
+_DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+if _DATABASE_URL:
+    try:
+        import dj_database_url
+    except ImportError as exc:  # pragma: no cover — defensive
+        raise ImportError(
+            "DATABASE_URL is set but dj-database-url is not installed. "
+            "Add `dj-database-url` to requirements.txt or unset DATABASE_URL "
+            "to fall back to the SQLite default."
+        ) from exc
+    DATABASES = {
+        'default': dj_database_url.parse(
+            _DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -214,6 +254,18 @@ GROUNDED_SAM_API_URL = os.environ.get('GROUNDED_SAM_API_URL', None)
 # Classic SAM API - automatic mask generation with Meta Segment Anything v1
 # Example: SAM_API_URL=http://192.168.0.232:5010
 SAM_API_URL = os.environ.get('SAM_API_URL', None)
+
+# Unified MaskRCNN API — single Flask container that serves the full model
+# registry across all eight families (rocks, house, hypolith, litter,
+# roadkill, newlife, brent_moon_craters, harish_moon_craters). When set,
+# every analyzer that today uses a per-family ``MASKRCNN_*_API_URL``
+# routes here instead, injecting the family's ``default_model_id`` into
+# the form payload so the unified container picks the correct
+# checkpoint. The per-family URLs below take precedence when set, so
+# rollout can be gradual: leave the per-family URLs alone, drop them
+# one at a time as each family is migrated to the unified container.
+# Example: MASKRCNN_API_URL=http://192.168.0.232:5002
+MASKRCNN_API_URL = os.environ.get('MASKRCNN_API_URL', None)
 
 # MaskRCNN Rocks API - Rock instance-segmentation Mask R-CNN ensemble
 # (Bishop/Jezero-analog flagship model `bishop_hero_e0004` by default).
