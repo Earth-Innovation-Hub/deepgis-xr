@@ -228,6 +228,11 @@ deepgis-xr/
 │   │   ├── auth/                     # phone-based auth (Twilio)
 │   │   ├── core/                     # core models, admin, image processing
 │   │   ├── ml/                       # ML helpers
+│   │   ├── tile_catalog/             # Site→Dataset→Timestep→Product registry
+│   │   │   ├── models.py, admin.py, serializers.py, views.py, urls.py
+│   │   │   └── management/commands/
+│   │   │       ├── seed_tile_catalog.py        # idempotent bootstrap
+│   │   │       └── validate_tile_catalog.py    # /data.json drift sentry
 │   │   └── web/                      # main web app
 │   │       ├── views/                       # request handlers (Tier B split)
 │   │       │   ├── pages.py, missions.py, auth_ajax.py, ai_reports.py,
@@ -352,6 +357,43 @@ on the roadmap below.
 - `POST /label/semi-supervised/api/generate-labels/` - Generate assisted labels
 - `POST /label/semi-supervised/api/save-labels/` - Save labels
 - `GET /label/semi-supervised/api/get-images/` - Get label images
+
+### Tile Catalog API
+
+- `GET /api/v1/tile-catalog/` — hierarchical layer registry consumed
+  by the Cesium frontend.
+
+  Returns a JSON tree of `Site → Dataset → Timestep → Product` for
+  every active `Product` in the database, denormalised so the
+  frontend can render the layer panel without further round-trips.
+  Versioned (`"version": 1`); response shape:
+
+  ```json
+  {
+    "version": 1,
+    "generated_at": "2026-04-27T...",
+    "sites": [
+      { "slug": "phx_wildfire", "name": "Phoenix wildfire site",
+        "bounds": [...], "default_zoom": 18,
+        "datasets": [
+          { "slug": "wildfire_orthos", "kind": "timeseries",
+            "timesteps": [
+              { "label": "2020-08", "sort_key": "2020-08-02",
+                "products": [
+                  { "layer_id": "bf_aug_2020_raster", "kind": "orthophoto",
+                    "label": "Orthophoto (Aug 2020)", "default_opacity": 0.7 }
+                ]}
+            ]}
+        ]},
+      { "slug": "bishop_ca", "...": "..." }
+    ]
+  }
+  ```
+
+  Edited via the Django admin at `/label/admin/tile_catalog/`.
+  Bootstrap with `python manage.py seed_tile_catalog`; audit drift
+  against `tileserver-gl /data.json` with
+  `python manage.py validate_tile_catalog`.
 
 ---
 
@@ -623,6 +665,58 @@ To enable GPU for AI features:
 ---
 
 ## 📊 Recent Updates
+
+### April 2026 — Tile catalog: hierarchical layer UX (Tier F)
+
+The flat raster/vector checkbox lists in the layer panel have been
+replaced with a hierarchical `Site → Dataset → Timestep → Product`
+catalog backed by a new Django app (`apps.tile_catalog`) and a single
+`GET /api/v1/tile-catalog/` endpoint. Per the data shape that emerged
+from the April tileserver audit — one timeseries site (PHX wildfire,
+5 dates) and one single-shot site (Bishop, CA) live today, with
+Hawaii / Italy / others queued for activation — the new panel
+reorganises the UI around three independent axes:
+
+1. **Site picker (Tier 1).** Pill row at the top of the layers
+   panel: each site shows a layer count and a fly-to button.
+   Selecting one collapses every other site out of the way.
+2. **Time scrubber (Tier 2 timeseries).** For multi-date sites,
+   horizontal ticks (one per `Timestep`, sorted by `sort_key`) with
+   per-tick coverage dots — small colored dots showing which product
+   kinds (orthophoto / vector / 3D mesh / …) exist at that timestep.
+   Pin-by-click; prev/next stepper buttons; readout below shows the
+   active timestep label.
+3. **Product-kind axis (Tier 2).** One master toggle + opacity
+   slider per kind. Toggling "orthophoto" on once and scrubbing
+   through Aug 2020 → Feb 2021 swaps the underlying tile layer at
+   each transition automatically — what used to be five separate
+   checkboxes is now one toggle plus a time pin.
+
+Plus three modes that compose with the above:
+
+- **Comparison modes (per-dataset).** A `single | swipe | overlay`
+  selector. Swipe uses Cesium's `splitDirection` to render A on the
+  left and B on the right of a draggable vertical split; shift-click
+  any timestep to move the B pin. Overlay blends both at half opacity
+  so spatial differences read visually. Mode selector lives inside
+  the timeseries panel because it's per-dataset, not per-site.
+- **Viewport filter (global).** A "filter to viewport" switch on the
+  top control bar; when on, the panel hides any site whose bounds
+  don't intersect the camera viewport, and re-evaluates on every
+  `camera.moveEnd`. Day-to-day clutter killer once the catalog grows
+  past a handful of sites.
+- **Uncategorized layers.** Layers `tileserver-gl` serves that the
+  catalog doesn't know about appear in a collapsed "Uncategorized"
+  group at the bottom — reachable, but the visual cue is "please
+  curate this in the admin." `python manage.py validate_tile_catalog`
+  reports drift in both directions for CI / cron use.
+
+Editing happens entirely through the Django admin
+(`/label/admin/tile_catalog/`), which uses inline forms so opening a
+Site shows its Datasets, opening a Dataset shows its Timesteps, and
+so on. Initial bootstrap is `python manage.py seed_tile_catalog`
+(idempotent; admin edits survive subsequent runs unless
+`--force-update` is passed).
 
 ### April 2026 — Ops hardening + graceful AI dispatch (post-Tier-E prep)
 
