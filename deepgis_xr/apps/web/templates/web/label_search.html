@@ -34,6 +34,7 @@
     <!-- Application Styles -->
     {% load static %}
     <link rel="stylesheet" href="{% static 'web/styles/main.css' %}">
+    <link rel="stylesheet" href="{% static 'web/styles/tile-catalog.css' %}">
     
     <!-- HUD Style Layout -->
     <style>
@@ -1270,6 +1271,10 @@
 
     <!-- ========== HUD BOTTOM TOOLBAR ========== -->
     <div class="hud-toolbar" id="hudToolbar">
+        <button class="hud-btn" id="hudLayersBtn" data-panel="layersPanel" title="Site / Dataset / Time-step layer catalog">
+            <i class="fas fa-layer-group"></i>
+            <span>Layers</span>
+        </button>
         <button class="hud-btn" id="hudViewBtn" data-panel="viewPanel">
             <i class="fas fa-eye"></i>
             <span>View</span>
@@ -1309,7 +1314,20 @@
     </div>
 
     <!-- ========== HUD FLOATING PANELS ========== -->
-    
+
+    <!-- Layers Panel (Site -> Dataset -> Timestep -> Product hierarchy).
+         The mount node #tileCatalogMount is populated by main.js once the
+         tile-catalog endpoint (/api/v1/tile-catalog/) responds. -->
+    <div class="hud-panel" id="layersPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-layer-group"></i> Layers</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('layersPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="tileCatalogMount">
+            <small style="color: #94a3b8;">Loading catalog&hellip;</small>
+        </div>
+    </div>
+
     <!-- View Panel -->
     <div class="hud-panel" id="viewPanel">
         <div class="hud-panel-header">
