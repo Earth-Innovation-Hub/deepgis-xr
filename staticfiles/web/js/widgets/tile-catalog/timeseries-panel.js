@@ -23,6 +23,14 @@ import {
   toggleVectorLayer,
 } from '../../core/layer-management.js';
 import { cssSafe, escapeHtml } from './index.js';
+import {
+  findImageryLayer,
+  setLayerSplitDirection,
+  setSplitPosition,
+  clearComparison,
+  applySwipe,
+  applyOverlay,
+} from './comparison.js';
 
 const KIND_BADGES = {
   orthophoto:   { icon: 'fa-image',         color: 'primary',   label: 'orthophoto' },
@@ -90,7 +98,9 @@ function kindRank(kind) {
 function getOrInitState(dataset) {
   let state = AppState.catalog.timeseriesState[dataset.slug];
   if (!state) {
-    const firstTs = (dataset.timesteps || [])[0];
+    const tss = dataset.timesteps || [];
+    const firstTs = tss[0];
+    const lastTs  = tss[tss.length - 1];
     state = {
       activeTimestepLabel: firstTs ? firstTs.label : null,
       enabledKinds: new Set(),
@@ -99,6 +109,16 @@ function getOrInitState(dataset) {
       // Last activated layer per kind, so we can toggle it off when the
       // scrubber moves to a different timestep.
       activeLayerByKind: {},
+      // ----- Comparison-mode state (Phase 4) -----
+      // 'single' | 'swipe' | 'overlay'
+      comparisonMode: 'single',
+      // The "B" timestep used in swipe / overlay. Defaults to the last
+      // timestep so the user immediately sees a meaningful comparison.
+      compareTimestepLabel: tss.length >= 2 && lastTs ? lastTs.label : null,
+      // Where the vertical split sits in swipe mode (0..1).
+      splitPosition: 0.5,
+      // Saved-opacity table so we can restore after leaving overlay mode.
+      _preComparisonOpacity: {},
     };
     AppState.catalog.timeseriesState[dataset.slug] = state;
   }
@@ -143,6 +163,8 @@ export function renderTimeseriesPanel(container, { site, dataset }) {
   const dsKey   = cssSafe(dataset.slug);
   const dsHasMultiple = idx.variantKinds.size > 0;
 
+  const inComparison = state.comparisonMode !== 'single' && state.compareTimestepLabel;
+
   container.innerHTML = `
     <div class="tc-dataset-header">
       <strong>${escapeHtml(dataset.name)}</strong>
@@ -150,11 +172,21 @@ export function renderTimeseriesPanel(container, { site, dataset }) {
       ${dataset.description ? `<div><small class="text-muted">${escapeHtml(dataset.description)}</small></div>` : ''}
     </div>
 
+    <div class="tc-mode-selector" data-dataset="${escapeHtml(dataset.slug)}">
+      <small class="text-muted me-2">Compare:</small>
+      ${['single', 'swipe', 'overlay'].map(m => `
+        <button type="button" class="btn btn-sm tc-mode-pill ${state.comparisonMode === m ? 'active' : ''}"
+                data-mode="${m}" title="${modeTooltip(m)}">
+          ${modeIcon(m)} ${m}
+        </button>
+      `).join('')}
+    </div>
+
     <div class="tc-scrubber" id="tc_scrub_${dsKey}">
       <div class="tc-scrubber-controls">
         <button type="button" class="btn btn-link btn-sm tc-scrubber-prev p-0"
                 title="Previous timestep"><i class="fas fa-caret-left"></i></button>
-        <div class="tc-scrubber-track">
+        <div class="tc-scrubber-track ${inComparison ? 'comparing' : ''}">
           ${timesteps.map((ts, i) => renderTick(ts, i, timesteps.length, idx, state)).join('')}
         </div>
         <button type="button" class="btn btn-link btn-sm tc-scrubber-next p-0"
@@ -163,8 +195,20 @@ export function renderTimeseriesPanel(container, { site, dataset }) {
       <div class="tc-scrubber-readout">
         <i class="fas fa-clock me-1"></i>
         <strong class="tc-active-ts-label">${escapeHtml(state.activeTimestepLabel || '?')}</strong>
+        ${inComparison ? `
+          <span class="text-muted mx-1">vs</span>
+          <strong class="tc-compare-ts-label">${escapeHtml(state.compareTimestepLabel || '?')}</strong>
+        ` : ''}
         <small class="text-muted ms-2 tc-active-ts-desc"></small>
       </div>
+      ${state.comparisonMode === 'swipe' ? `
+        <div class="tc-split-control">
+          <small class="text-muted me-1">Split:</small>
+          <input type="range" class="form-range tc-split-slider"
+                 min="0" max="100" value="${Math.round(state.splitPosition * 100)}"
+                 style="height: 4px;">
+        </div>
+      ` : ''}
     </div>
 
     <div class="tc-kind-list">
@@ -188,10 +232,16 @@ export function renderTimeseriesPanel(container, { site, dataset }) {
 
   wireScrubber(container, dataset, idx, state, timesteps);
   wireKindRows(container, dataset, idx, state, timesteps);
+  wireModeSelector(container, dataset, idx, state, timesteps);
+
+  // Re-apply comparison mode after every render, in case the user
+  // toggled a kind while in swipe/overlay mode.
+  applyComparisonState(dataset, idx, state, timesteps);
 }
 
 function renderTick(ts, i, total, idx, state) {
-  const isActive = ts.label === state.activeTimestepLabel;
+  const isActive  = ts.label === state.activeTimestepLabel;
+  const isCompare = state.comparisonMode !== 'single' && ts.label === state.compareTimestepLabel;
   const tickKey = cssSafe(`${ts.label}_${i}`);
   // What kinds are available at this timestep? Render small dots so
   // the user sees ahead-of-time which timesteps lack a particular kind.
@@ -204,18 +254,40 @@ function renderTick(ts, i, total, idx, state) {
     return `<span class="tc-tick-dot bg-${meta.color}" title="${escapeHtml(meta.label)} available"></span>`;
   }).join('');
 
+  const cls = ['tc-tick'];
+  if (isActive)  cls.push('active');
+  if (isCompare) cls.push('compare');
+
   return `
     <button type="button"
-            class="tc-tick ${isActive ? 'active' : ''}"
+            class="${cls.join(' ')}"
             data-timestep-label="${escapeHtml(ts.label)}"
             data-tick-key="${tickKey}"
-            title="${escapeHtml(ts.label)}${ts.description ? ' — ' + escapeHtml(ts.description) : ''}">
+            title="${escapeHtml(ts.label)}${ts.description ? ' — ' + escapeHtml(ts.description) : ''}${isCompare ? ' (B / compare pin)' : ''}">
       <span class="tc-tick-rail"></span>
       <span class="tc-tick-knob"></span>
       <span class="tc-tick-label">${escapeHtml(ts.label)}</span>
       <span class="tc-tick-dots">${dots}</span>
     </button>
   `;
+}
+
+function modeIcon(mode) {
+  switch (mode) {
+    case 'single':  return '<i class="fas fa-circle"></i>';
+    case 'swipe':   return '<i class="fas fa-columns"></i>';
+    case 'overlay': return '<i class="fas fa-clone"></i>';
+    default:        return '';
+  }
+}
+
+function modeTooltip(mode) {
+  switch (mode) {
+    case 'single':  return 'Show only the active timestep.';
+    case 'swipe':   return 'Show A on the left and B on the right of a vertical split. Drag the slider to move the split.';
+    case 'overlay': return 'Blend A and B at half opacity to see where they differ.';
+    default:        return '';
+  }
 }
 
 function renderKindRow(kind, idx, state, dsKey) {
@@ -332,8 +404,16 @@ function renderVariantList(node, dataset, idx, state, timesteps) {
 function wireScrubber(container, dataset, idx, state, timesteps) {
   const ticks = container.querySelectorAll('.tc-tick');
   ticks.forEach(tick => {
-    tick.addEventListener('click', () => {
+    tick.addEventListener('click', (e) => {
       const newLabel = tick.dataset.timestepLabel;
+      // Shift-click (or right-click) sets the B (compare) pin in
+      // swipe / overlay mode; otherwise it's a normal A pin move.
+      if (state.comparisonMode !== 'single' && (e.shiftKey || e.altKey)) {
+        if (newLabel === state.activeTimestepLabel) return;
+        state.compareTimestepLabel = newLabel;
+        renderTimeseriesPanel(container, { site: null, dataset });
+        return;
+      }
       if (newLabel === state.activeTimestepLabel) return;
       transitionTimestep({ container, dataset, idx, state, timesteps, newLabel });
     });
@@ -347,6 +427,35 @@ function wireScrubber(container, dataset, idx, state, timesteps) {
   if (nextBtn) {
     nextBtn.addEventListener('click', () => stepScrubber({ container, dataset, idx, state, timesteps, delta: +1 }));
   }
+
+  const splitSlider = container.querySelector('.tc-split-slider');
+  if (splitSlider) {
+    splitSlider.addEventListener('input', (e) => {
+      state.splitPosition = parseInt(e.target.value, 10) / 100;
+      setSplitPosition(AppState.viewer, state.splitPosition);
+    });
+  }
+}
+
+function wireModeSelector(container, dataset, idx, state, timesteps) {
+  container.querySelectorAll('.tc-mode-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const newMode = btn.dataset.mode;
+      if (newMode === state.comparisonMode) return;
+
+      // Leaving comparison: restore opacity from snapshot, clear split.
+      if (newMode === 'single') {
+        restoreFromComparison(state);
+      } else if (state.compareTimestepLabel == null) {
+        // Initialise compare pin to a sensible default if the user
+        // entered comparison without one set yet.
+        state.compareTimestepLabel = (timesteps[timesteps.length - 1] || {}).label || null;
+      }
+
+      state.comparisonMode = newMode;
+      renderTimeseriesPanel(container, { site: null, dataset });
+    });
+  });
 }
 
 function stepScrubber({ container, dataset, idx, state, timesteps, delta }) {
@@ -447,6 +556,128 @@ function swapLayer(kind, oldProduct, newProduct, state) {
   if (newProduct) {
     activateLayer(kind, newProduct, state);
   }
+}
+
+// --------------------------------------------------------------------- //
+// Comparison-mode application                                            //
+// --------------------------------------------------------------------- //
+
+/**
+ * After a render, reconcile the actual Cesium imagery state with
+ * state.comparisonMode. Single mode = clear all split state. Swipe and
+ * overlay activate the second timestep's products and apply the
+ * appropriate split direction / alpha.
+ *
+ * Only raster layers participate in split mode (Cesium's split is
+ * per-imagery-layer, not per-vector-renderer); vector layers stay on
+ * normally in all modes.
+ */
+function applyComparisonState(dataset, idx, state, timesteps) {
+  // Step 1: ensure all "B" layers reflect the current state. We
+  // maintain state._compareLayerByKind so we can swap them in/out
+  // without leaking activations.
+  if (state.comparisonMode === 'single') {
+    teardownCompareLayers(state);
+    setSplitPosition(AppState.viewer, 0.5);
+    return;
+  }
+
+  ensureCompareLayers(state, idx);
+
+  // Step 2: apply split / overlay to every (A, B) raster pair.
+  const pairs = enumeratePairs(state);
+  if (state.comparisonMode === 'swipe') {
+    for (const { aLayer, bLayer } of pairs) applySwipe(aLayer, bLayer);
+    setSplitPosition(AppState.viewer, state.splitPosition ?? 0.5);
+  } else if (state.comparisonMode === 'overlay') {
+    state._preComparisonOpacity = state._preComparisonOpacity || {};
+    for (const { aLayer, bLayer, aLayerId, bLayerId } of pairs) {
+      if (aLayer && state._preComparisonOpacity[aLayerId] == null) {
+        state._preComparisonOpacity[aLayerId] = aLayer.alpha;
+      }
+      if (bLayer && state._preComparisonOpacity[bLayerId] == null) {
+        state._preComparisonOpacity[bLayerId] = bLayer.alpha;
+      }
+      applyOverlay(aLayer, bLayer);
+    }
+  }
+}
+
+function ensureCompareLayers(state, idx) {
+  state._compareLayerByKind = state._compareLayerByKind || {};
+  const wantedB = {}; // kind -> Product
+
+  for (const kind of state.enabledKinds) {
+    if (isVectorKind(kind)) continue; // split applies to imagery only
+    const kindMap = idx.byKindAndTs.get(kind);
+    if (!kindMap) continue;
+    const bProduct = kindMap.get(state.compareTimestepLabel);
+    if (bProduct) wantedB[kind] = bProduct;
+  }
+
+  // Activate any B products that aren't already on.
+  for (const [kind, product] of Object.entries(wantedB)) {
+    const existing = state._compareLayerByKind[kind];
+    if (existing && existing.layerId === product.layerId) continue;
+    if (existing) {
+      toggleOverlayLayer(AppState.viewer, existing.layerId, false).catch(() => {});
+    }
+    toggleOverlayLayer(AppState.viewer, product.layerId, true).catch(err =>
+      console.error('[tile-catalog] compare-B activate failed:', err)
+    );
+    state._compareLayerByKind[kind] = { layerId: product.layerId };
+  }
+
+  // Deactivate any B products no longer wanted (kind disabled or B-pin moved).
+  for (const kind of Object.keys(state._compareLayerByKind)) {
+    if (!wantedB[kind]) {
+      const stale = state._compareLayerByKind[kind];
+      toggleOverlayLayer(AppState.viewer, stale.layerId, false).catch(() => {});
+      delete state._compareLayerByKind[kind];
+    }
+  }
+}
+
+function teardownCompareLayers(state) {
+  if (!state._compareLayerByKind) return;
+  for (const kind of Object.keys(state._compareLayerByKind)) {
+    const stale = state._compareLayerByKind[kind];
+    toggleOverlayLayer(AppState.viewer, stale.layerId, false).catch(() => {});
+  }
+  state._compareLayerByKind = {};
+  // Clear any split state on the A layers.
+  for (const kind of state.enabledKinds) {
+    const a = state.activeLayerByKind[kind];
+    if (!a || a.isVector) continue;
+    const aLayer = findImageryLayer(AppState.viewer, a.layerId, AppState.currentLayers);
+    setLayerSplitDirection(aLayer, 'none');
+  }
+}
+
+function restoreFromComparison(state) {
+  // Restore alpha on A and B layers we touched in overlay mode.
+  if (state._preComparisonOpacity) {
+    for (const [layerId, alpha] of Object.entries(state._preComparisonOpacity)) {
+      const layer = findImageryLayer(AppState.viewer, layerId, AppState.currentLayers);
+      if (layer && alpha != null) layer.alpha = alpha;
+    }
+    state._preComparisonOpacity = {};
+  }
+  teardownCompareLayers(state);
+}
+
+function enumeratePairs(state) {
+  const out = [];
+  for (const kind of state.enabledKinds) {
+    if (isVectorKind(kind)) continue;
+    const a = state.activeLayerByKind[kind];
+    const b = state._compareLayerByKind?.[kind];
+    if (!a || !b) continue;
+    const aLayer = findImageryLayer(AppState.viewer, a.layerId, AppState.currentLayers);
+    const bLayer = findImageryLayer(AppState.viewer, b.layerId, AppState.currentLayers);
+    out.push({ aLayer, bLayer, aLayerId: a.layerId, bLayerId: b.layerId });
+  }
+  return out;
 }
 
 function isVectorKind(kind) {

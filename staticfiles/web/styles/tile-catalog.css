@@ -104,6 +104,51 @@
   color: #d8e0e8;
 }
 
+/* ----- Comparison-mode selector (Phase 4) -------------------------- */
+.tc-mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.tc-mode-pill {
+  background: rgba(255, 255, 255, 0.04);
+  color: #d8e0e8;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 0.18rem 0.5rem;
+  font-size: 0.72em;
+  border-radius: 999px;
+  text-transform: capitalize;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  transition: all 120ms ease-in-out;
+}
+
+.tc-mode-pill:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.tc-mode-pill.active {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: #8b5cf6;
+  color: #fff;
+}
+
+.tc-split-control {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.3rem;
+}
+
+.tc-split-control .form-range {
+  flex: 1 1 auto;
+}
+
 /* ----- Time scrubber (Phase 3) ------------------------------------- */
 .tc-scrubber {
   background: rgba(255, 255, 255, 0.025);
@@ -184,6 +229,37 @@
   box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
   width: 12px;
   height: 12px;
+}
+
+.tc-tick.compare .tc-tick-knob {
+  background: #f59e0b; /* amber: B-pin / compare timestep */
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+  width: 12px;
+  height: 12px;
+}
+
+.tc-tick.compare {
+  color: #fff;
+  font-weight: 500;
+}
+
+.tc-active-ts-label {
+  color: #c4b5fd; /* purple-light: A pin */
+}
+
+.tc-compare-ts-label {
+  color: #fcd34d; /* amber-light: B pin */
+}
+
+.tc-scrubber-track.comparing::after {
+  /* Subtle indicator that two pins are in play. */
+  content: 'shift+click for B pin';
+  position: absolute;
+  bottom: -1.3em;
+  right: 0;
+  font-size: 0.62em;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
 }
 
 .tc-tick-knob {
