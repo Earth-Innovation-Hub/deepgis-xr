@@ -63,6 +63,7 @@ INSTALLED_APPS = [
     'deepgis_xr.apps.api',
     'deepgis_xr.apps.ml',
     'deepgis_xr.apps.web',
+    'deepgis_xr.apps.tile_catalog.apps.TileCatalogConfig',
 ]
 
 # Middleware

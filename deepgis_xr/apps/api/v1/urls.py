@@ -1,8 +1,12 @@
-from django.urls import path
+from django.urls import include, path
 
 from .views import observe, prediction, training
 
 urlpatterns = [
+    # Tile catalog (Site -> Dataset -> Timestep -> Product hierarchy)
+    path('tile-catalog/', include('deepgis_xr.apps.tile_catalog.urls')),
+
+
     # Prediction endpoints
     path('predict/tile/',
          prediction.predict_tile,
