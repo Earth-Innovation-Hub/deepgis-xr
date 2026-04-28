@@ -62,9 +62,20 @@ export const CONFIG = {
     AUTO_LOAD_MAX_RETRIES: 50
   },
   SERVERS: {
-    MBTILES_SERVER: window.location.protocol === 'https:' 
-      ? 'https://mbtiles.deepgis.org' 
-      : 'http://mbtiles.deepgis.org',
+    // MBTILES_SERVER picks the closest reachable tileserver-gl. In production
+    // (deepgis.org) we use the public mbtiles subdomain. On localhost we
+    // prefer localhost:8091 (the docker-compose-exposed tileserver) because
+    // the public subdomain doesn't permit cross-origin requests from
+    // arbitrary localhost ports. window.MBTILES_SERVER_OVERRIDE wins if set.
+    MBTILES_SERVER: (() => {
+      if (window.MBTILES_SERVER_OVERRIDE) return window.MBTILES_SERVER_OVERRIDE;
+      const host = window.location.hostname;
+      const isLocalhost = host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0';
+      if (isLocalhost) return `${window.location.protocol}//${host}:8091`;
+      return window.location.protocol === 'https:'
+        ? 'https://mbtiles.deepgis.org'
+        : 'http://mbtiles.deepgis.org';
+    })(),
     TOPOLOGY_SERVER: window.location.protocol === 'https:'
       ? 'https://localhost:8092'
       : 'http://localhost:8092'

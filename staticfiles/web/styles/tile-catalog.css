@@ -1,0 +1,197 @@
+/* Tile Catalog Panel
+ * Hierarchical Site -> Dataset -> Timestep -> Product UI that replaces
+ * the flat raster/vector checkbox lists. Owned by widgets/tile-catalog/.
+ *
+ * Color palette inherits from the existing dark sidebar styling
+ * (see sidebar.css). Borders + spacing match .layer-group.
+ */
+
+.tile-catalog-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ----- Tier 1: site picker pill row -------------------------------- */
+.tc-tier1-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-bottom: 0.4rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tc-site-pill {
+  background: rgba(255, 255, 255, 0.04);
+  color: #d8e0e8;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  padding: 0.20rem 0.55rem;
+  font-size: 0.78em;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  transition: all 120ms ease-in-out;
+}
+
+.tc-site-pill:hover {
+  background: rgba(255, 255, 255, 0.10);
+  border-color: rgba(139, 92, 246, 0.5);
+}
+
+.tc-site-pill.active {
+  background: rgba(139, 92, 246, 0.25);
+  border-color: #8b5cf6;
+  color: #fff;
+}
+
+.tc-site-pill .badge {
+  font-size: 0.62em;
+  padding: 0.2em 0.45em;
+}
+
+/* ----- Tier 2: site cards stack ------------------------------------ */
+.tc-tier2-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tc-site-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tc-site-card.collapsed .tc-site-body {
+  display: none;
+}
+
+.tc-site-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.3rem;
+}
+
+.tc-site-title {
+  font-size: 0.92em;
+  font-weight: 500;
+  color: #e8edf3;
+}
+
+.tc-site-actions .btn {
+  color: #b8c2cc;
+}
+
+.tc-site-actions .btn:hover {
+  color: #8b5cf6;
+}
+
+/* ----- Datasets within a site -------------------------------------- */
+.tc-dataset {
+  border-left: 2px solid rgba(139, 92, 246, 0.4);
+  padding-left: 0.5rem;
+  margin: 0.4rem 0;
+}
+
+.tc-dataset-header {
+  font-size: 0.85em;
+  margin-bottom: 0.35rem;
+  color: #d8e0e8;
+}
+
+/* ----- Timesteps (Phase 2 fallback rendering) ---------------------- */
+.tc-timeseries-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.tc-timestep {
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+  padding: 0.35rem 0.5rem;
+}
+
+.tc-timestep-header {
+  font-size: 0.82em;
+  margin-bottom: 0.25rem;
+  color: #d4d8de;
+}
+
+/* ----- Product rows (checkbox + opacity) --------------------------- */
+.tc-product-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.tc-product-row {
+  padding: 0.15rem 0.1rem;
+  border-radius: 2px;
+}
+
+.tc-product-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tc-product-label {
+  cursor: pointer;
+}
+
+.tc-opacity-slider {
+  margin-left: 1.6rem;
+  margin-top: 0.15rem;
+}
+
+.tc-opacity-slider .form-range {
+  width: 100%;
+}
+
+/* ----- Orphan layers ----------------------------------------------- */
+.tc-orphan-group {
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.10);
+}
+
+.tc-orphan-group summary {
+  list-style: none;
+  color: #b8c2cc;
+}
+
+.tc-orphan-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.tc-orphan-group summary::before {
+  content: "▸ ";
+  display: inline-block;
+  transition: transform 120ms;
+}
+
+.tc-orphan-group[open] summary::before {
+  content: "▾ ";
+}
+
+.tc-orphan-row {
+  margin-bottom: 0.1rem;
+}
+
+/* ----- Status / control bar --------------------------------------- */
+.tc-control-bar:empty {
+  display: none;
+}
+
+.tc-status:empty {
+  display: none;
+}
+
+.tc-status {
+  margin-top: 0.4rem;
+}

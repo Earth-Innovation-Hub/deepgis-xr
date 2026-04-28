@@ -8,6 +8,8 @@ import { AppState } from './state.js';
 import { initializeCesium, toggleOSMBuildings } from './core/cesium-init.js';
 import featureLayers, { setFeatureLayerEnabled, renderFeatureLayerToggles } from './core/feature-layers.js';
 import { initializeAvailableLayers, loadBaseRasterLayer, toggleOverlayLayer } from './core/layer-management.js';
+import { loadCatalog } from './core/catalog.js';
+import { renderCatalogPanel } from './widgets/tile-catalog/index.js';
 import { toggleTerrain, changeBaseMap } from './core/base-map.js';
 import { updateStatusIndicator, showSnackBar, logLayerOperation } from './core/ui-helpers.js';
 import { optimizeMemorySettings } from './core/memory-manager.js';
@@ -222,9 +224,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     updateLoadingStatus('Loading available data...', 90);
     
-    // Initialize available layers
+    // Discover layers from tileserver-gl (populates AppState.availableLayers).
+    // This also keeps the legacy flat overlayLayersList / vectorLayersList
+    // mounts working if the catalog is unreachable.
     await initializeAvailableLayers();
-    
+
+    // Load the hierarchical catalog (Site -> Dataset -> Timestep -> Product)
+    // and mount the three-tier UI in #tileCatalogMount. If the catalog
+    // endpoint is unreachable, loadCatalog() flags an error and the
+    // panel renders all layers in an "Uncategorized" group.
+    try {
+      await loadCatalog();
+      const mount = document.getElementById('tileCatalogMount');
+      if (mount) renderCatalogPanel(mount);
+    } catch (err) {
+      console.warn('[main] tile catalog mount failed:', err);
+    }
+
     AppState.isInitialized = true;
     
     updateLoadingStatus('Complete!', 100);

@@ -15,6 +15,23 @@ export const AppState = {
     osmBuildings: null  // OSM 3D Buildings tileset
   },
   availableLayers: {},
+  // Hierarchical catalog (Site -> Dataset -> Timestep -> Product) loaded
+  // from GET /api/v1/tile-catalog/. Populated by core/catalog.js. The
+  // flat availableLayers above remains the source of truth for tile-
+  // serving metadata (bounds, format, zoom range); this catalog adds
+  // grouping, ordering, and per-product display metadata on top.
+  catalog: {
+    version: null,
+    sites: [],            // [{slug, name, bounds, default_zoom, datasets: [...]}, ...]
+    activeSiteSlug: null, // currently-selected Tier-1 site (null = none)
+    productIndex: {},     // layer_id -> { site, dataset, timestep, product }
+    orphanLayers: [],     // layer ids in availableLayers but not in catalog
+    error: null,
+  },
+  // UI mode for layer comparison: 'single' | 'swipe' | 'difference'
+  comparisonMode: 'single',
+  // Filter Tier-1 to layers whose bounds intersect the current camera viewport.
+  viewportFilterEnabled: false,
   measurements: [],
   histogram_chart: null,
   isInitialized: false,
