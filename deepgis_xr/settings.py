@@ -152,10 +152,7 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
-# USE_L10N was removed: it became the default (True) in Django 4.0 and
-# the setting itself is removed in Django 5.0. Keeping this line out
-# silences the 4.x deprecation warning without changing behaviour on
-# Django 3.2.24 (where True is also the effective default).
+# USE_L10N was removed in Django 5.0; localization is always on.
 USE_TZ = True
 
 # Static and Media Files
@@ -173,6 +170,20 @@ STATICFILES_DIRS = [
 
 MEDIA_URL = '/media/deepgis/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+
+# Storages dict — Django 4.2 introduced the unified STORAGES setting and
+# Django 5.x deprecates the legacy STATICFILES_STORAGE / DEFAULT_FILE_STORAGE
+# scalars. We declare these explicitly even though the values match Django's
+# own defaults, so a future bump (e.g. swapping in ManifestStaticFilesStorage
+# behind a CDN, or S3Boto3Storage for media) is a one-line change here.
+STORAGES = {
+    'default': {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    },
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
