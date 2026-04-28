@@ -75,8 +75,8 @@ services:
       - ../dreams_laboratory/scripts:/app/dreams_laboratory_scripts:ro
       # Mount deepgis_results for SAM analysis results (shared with host)
       - ./deepgis_results:/app/deepgis_results
-      # Named volume for YOLO models (auto-downloaded on first use)
-      - yolo_models_volume:/app/models
+      # YOLO weights volume removed: ultralytics is no longer installed in
+      # this image; YOLOv8 inference is dispatched to a remote service.
       # Mount dreamslab-store for accessing training data
       - /mnt/dreamslab-store:/mnt/dreamslab-store:ro
       # Overlay the in-development kernelcal.distinction_game subpackage
@@ -86,18 +86,18 @@ services:
       # /home/jdas/kernelcal without requiring a docker rebuild on every
       # kernelcal commit. Remove this line once kernelcal>=0.10 (with
       # distinction_game) is published and pinned in requirements.txt.
-      - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.9/site-packages/kernelcal/distinction_game:ro
+      - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.10/site-packages/kernelcal/distinction_game:ro
       # Same overlay for kernelcal.urban — needed by the urban-spectral
       # analyzer's road-aware k-NN path (buildings_to_graph_via_roads*)
       # and by the SceneGraph orchestrator's Option-A merge
       # (use_city_graph_regions=True). The published kernelcal wheel
       # only carries Euclidean buildings_to_graph_from_bbox, so without
       # this mount the road_knn pipeline 503's cleanly but never runs.
-      - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.9/site-packages/kernelcal/urban:ro
+      - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.10/site-packages/kernelcal/urban:ro
       # Keep kernelcal.fluid in lockstep with the urban overlay.  Recent
       # kernelcal.urban.adapter imports SparseFluidGraph from kernelcal.fluid;
       # the wheel-installed fluid package can lag behind and omit that symbol.
-      - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.9/site-packages/kernelcal/fluid:ro
+      - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.10/site-packages/kernelcal/fluid:ro
     ports:
       - "8060:8090"
     depends_on:
@@ -168,11 +168,11 @@ services:
       - media_volume:/app/media
       - ../dreams_laboratory/scripts:/app/dreams_laboratory_scripts:ro
       - ./deepgis_results:/app/deepgis_results
-      - yolo_models_volume:/app/models
+      # YOLO weights volume removed (ultralytics not installed in image).
       - /mnt/dreamslab-store:/mnt/dreamslab-store:ro
-      - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.9/site-packages/kernelcal/distinction_game:ro
-      - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.9/site-packages/kernelcal/urban:ro
-      - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.9/site-packages/kernelcal/fluid:ro
+      - /home/jdas/kernelcal/kernelcal/distinction_game:/opt/venv/lib/python3.10/site-packages/kernelcal/distinction_game:ro
+      - /home/jdas/kernelcal/kernelcal/urban:/opt/venv/lib/python3.10/site-packages/kernelcal/urban:ro
+      - /home/jdas/kernelcal/kernelcal/fluid:/opt/venv/lib/python3.10/site-packages/kernelcal/fluid:ro
     depends_on:
       redis:
         condition: service_healthy
@@ -261,6 +261,5 @@ services:
 
 volumes:
   media_volume:
-  yolo_models_volume:
   redis_data:
   postgres_data:

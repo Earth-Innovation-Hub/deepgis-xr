@@ -1,6 +1,20 @@
-# DeepGIS XR Docker image with YOLOv8 support
-# YOLOv8 (Ultralytics) is a pure Python package - no custom CUDA compilation needed
-FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu20.04
+# DeepGIS XR web image — Django + DRF + GIS stack with PyTorch/CUDA reserved
+# for the in-process Mask R-CNN training endpoint (apps/ml/services/trainer.py)
+# that runs in the celery_worker GPU job. ML model packages (ultralytics,
+# segment-anything, etc.) and their weight files (*.pt / *.pth) are
+# intentionally excluded — every served model (YOLOv8, SAM, Grounding-DINO,
+# Grounded-SAM, all Mask R-CNN families) runs as a remote service on
+# 192.168.0.232 and is reached via HTTP. See SAM_API_URL / GROUNDING_DINO_API_URL
+# / MASKRCNN_*_API_URL in docker-compose.yml and the .dockerignore at the
+# repo root.
+#
+# Base image upgraded from ubuntu20.04 to ubuntu22.04 (April 2026): focal LTS
+# has standard support ending May 2025 and the focal deadsnakes PPA stopped
+# serving a usable Packages index for python3.11. Ubuntu 22.04 (jammy) ships
+# python3.10 natively — Django 5.2 officially supports 3.10–3.13 and all of
+# our heavy GIS + ML wheels (PyTorch 2.5.1+cu121, fiona 1.9, rasterio 1.3,
+# numpy 1.26, pandas 2.2) have cp310 wheels — so no PPA is required.
+FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
@@ -16,11 +30,13 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 RUN apt-get update && apt-get install -y software-properties-common
 RUN add-apt-repository ppa:ubuntugis/ppa
 
-# Install system dependencies
+# Install system dependencies. python3.10 ships natively with Ubuntu 22.04
+# and is supported by Django 5.2 LTS (>=3.10) plus the entire heavy GIS +
+# ML stack used here.
 RUN apt-get update && apt-get install -y \
-    python3.9 \
-    python3.9-dev \
-    python3.9-venv \
+    python3.10 \
+    python3.10-dev \
+    python3.10-venv \
     python3-pip \
     build-essential \
     libpq-dev \
@@ -59,7 +75,7 @@ RUN export GDAL_VERSION=$(gdal-config --version) && \
     echo "GDAL_LIBRARY_PATH=${GDAL_LIBRARY_PATH}" >> /etc/environment
 
 # Create virtual environment
-RUN python3.9 -m venv /opt/venv
+RUN python3.10 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Upgrade pip and install wheel
@@ -75,22 +91,27 @@ WORKDIR /app
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install PyTorch with CUDA support from PyTorch index, then the rest of requirements.
-# detectron2 was previously installed here as well, but no Python in this codebase
-# imports it (the Mask R-CNN rocks model runs as a remote service via
-# MASKRCNN_ROCKS_API_URL). Re-add only if a future analyzer needs in-process
-# detectron2 — note that it locks the numpy/torch ABI and has long build times.
-RUN pip install --no-cache-dir torch torchvision \
+# Install PyTorch with CUDA support from PyTorch index, then the rest of
+# requirements. Versions are pinned (2.5.1+cu121 / 0.20.1+cu121) to keep the
+# numpy/torch ABI stable across rebuilds — leaving them unpinned silently
+# shifts to whatever `latest` is on the cu121 index.  detectron2 was previously
+# installed here too, but nothing imports it (Mask R-CNN rocks runs remotely
+# via MASKRCNN_ROCKS_API_URL). Re-add only if a future analyzer needs
+# in-process detectron2 — note that it locks the numpy/torch ABI and has long
+# build times.
+#
+# YOLO (ultralytics) and SAM (segment-anything) are intentionally NOT installed
+# here — those models run as remote services on 192.168.0.232 (see SAM_API_URL,
+# the YOLOv8 dispatch path, and the per-family MASKRCNN_*_API_URL env vars in
+# docker-compose.yml). Keeping the model packages out of the image saves
+# ~1.5 GB of wheels and weight downloads on every build.
+RUN pip install --no-cache-dir \
+        torch==2.5.1+cu121 \
+        torchvision==0.20.1+cu121 \
         --index-url https://download.pytorch.org/whl/cu121 && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir fiona==$(pip show fiona | grep Version | cut -d' ' -f2) --no-binary fiona || \
     (echo "Failed to install requirements" && exit 1)
-
-# Create models directory for YOLO weights (auto-downloaded on first use)
-RUN mkdir -p /app/models
-
-# Verify YOLOv8 installation
-RUN python -c "from ultralytics import YOLO; print('✓ YOLOv8 installed successfully')"
 
 # Copy project
 COPY . .

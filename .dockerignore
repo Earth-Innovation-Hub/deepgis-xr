@@ -1,0 +1,141 @@
+# =============================================================================
+# .dockerignore for deepgis-xr web image
+# =============================================================================
+# Background: the previous build's `COPY . .` step took ~8 minutes and the
+# image-export step hung. The cause was a build context dominated by ~15 GB of
+# files that have no business inside the image:
+#
+#   sam_vit_*.pth (4 GB)   — SAM weights, served by services/sam-api on the
+#                            remote host (192.168.0.232).
+#   yolov8*.pt    (137 MB) — YOLO weights, served by the remote YOLO container.
+#   db.sqlite3    (1.8 GB) — local dev DB. Production uses Postgres (see the
+#                            DATABASE_URL env var); dev mounts ./db.sqlite3 via
+#                            the bind in docker-compose.yml.
+#   deepgis_results/ (6.4 GB) — generated SAM/YOLO artefacts, bind-mounted into
+#                            the container at runtime.
+#   cache/        (1.1 GB) — local model/inference cache, also bind-mounted.
+#
+# Note: staticfiles/ (1.9 GB, mostly 3D STL/glTF assets in staticfiles/models/)
+# is intentionally NOT excluded — collectstatic is disabled and Django serves
+# this directory directly via STATICFILES_DIRS (see settings.py). It is also
+# overlaid by the `.:/app` bind mount in docker-compose.yml during dev, but
+# the image-baked copy is required for deployments without that bind.
+#
+# Excluding the items below turns a 15+ GB context into roughly 2 GB and keeps
+# the image free of ML model weights, in line with the architecture where
+# YOLO/SAM/Mask-R-CNN inference all run as remote services on 192.168.0.232.
+# =============================================================================
+
+# --- AI/ML model weights (served remotely on 192.168.0.232) ------------------
+# SAM checkpoints (sam_vit_b/l/h)
+sam_vit_*.pth
+# Ultralytics YOLOv8 weights
+yolov8*.pt
+yolov11*.pt
+*.pt
+*.pth
+*.onnx
+*.engine
+# (the *.pt / *.pth wildcards are intentionally broad — we don't ship any
+# torch checkpoints in the image; if a future legitimate need arises, allow
+# specific files with `!path/to/file.pt` underneath.)
+
+# --- Local dev databases / data stores ---------------------------------------
+db.sqlite3
+db.sqlite3-journal
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+
+# --- Bind-mounted runtime directories ----------------------------------------
+# (NOT excluding staticfiles/ — it's the served source-of-truth for STATICFILES_DIRS;
+#  see the header comment.)
+deepgis_results/
+cache/
+media/
+mbtiles/
+logs/
+tmp_remote_inspect/
+tmp_*/
+
+# --- Stale STATIC_ROOT (collectstatic is intentionally disabled) -------------
+# settings.py sets STATIC_ROOT = BASE_DIR/static/ but the project deliberately
+# does NOT run collectstatic — Django serves STATICFILES_DIRS directly. Any
+# files under ./static/ are stale leftovers from a previous experiment and
+# should never be baked into the image (13 GB on the dev host).
+static/
+
+# --- Large data files served by sibling containers, not by web --------------
+# data/ holds the mbtile vector / raster sources served by the tileserver-gl
+# container (see docker-compose.yml `tileserver-gl` service which bind-mounts
+# ./data:/data:ro). The deepgis-xr web container never opens these files, so
+# they don't belong in the web image.
+data/
+*.mbtiles
+
+# GeoTIFF rasters that were dropped under deepgis_xr/static/tifs/ for ad-hoc
+# previewing (~11 GB on the dev host). Not referenced by Django code; if a
+# future feature needs them it should be served via tileserver-gl or a CDN.
+deepgis_xr/static/tifs/
+*.tif
+*.tiff
+
+# --- Python / virtualenv noise -----------------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+.eggs/
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+venv/
+.venv/
+env/
+.env
+.env.*
+!.env.example
+
+# --- Git & IDE metadata ------------------------------------------------------
+.git/
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# --- Node / frontend tooling (built assets are committed; src tooling isn't) -
+node_modules/
+npm-debug.log
+yarn-error.log
+.pnpm-debug.log
+
+# --- Archives & generated artefacts ------------------------------------------
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.dmg
+*.iso
+*.log
+
+# --- Docs / dev-only assets we don't need in the image -----------------------
+docs/_build/
+*.bak
+*.backup
+*.orig
+*.rej
+Dockerfile.cpu-backup
