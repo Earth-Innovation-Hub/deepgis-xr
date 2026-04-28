@@ -27,6 +27,13 @@ export const AppState = {
     productIndex: {},     // layer_id -> { site, dataset, timestep, product }
     orphanLayers: [],     // layer ids in availableLayers but not in catalog
     error: null,
+    // Per-dataset state for timeseries panels:
+    //   { [datasetSlug]: {
+    //       activeTimestepLabel: '2020-08',
+    //       enabledKinds: Set<'orthophoto'|'vector'|'mesh_3d'|...>,
+    //       opacityByKind: { [kind]: 0..1 },
+    //   }}
+    timeseriesState: {},
   },
   // UI mode for layer comparison: 'single' | 'swipe' | 'difference'
   comparisonMode: 'single',

@@ -104,24 +104,168 @@
   color: #d8e0e8;
 }
 
-/* ----- Timesteps (Phase 2 fallback rendering) ---------------------- */
-.tc-timeseries-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.tc-timestep {
+/* ----- Time scrubber (Phase 3) ------------------------------------- */
+.tc-scrubber {
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 3px;
-  padding: 0.35rem 0.5rem;
+  padding: 0.5rem 0.4rem;
+  margin-bottom: 0.5rem;
 }
 
-.tc-timestep-header {
+.tc-scrubber-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 0.25rem;
+}
+
+.tc-scrubber-prev,
+.tc-scrubber-next {
+  color: #b8c2cc;
+  width: 1.4em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.tc-scrubber-prev:hover,
+.tc-scrubber-next:hover {
+  color: #8b5cf6;
+}
+
+.tc-scrubber-track {
+  display: flex;
+  flex: 1 1 auto;
+  position: relative;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.tc-scrubber-track::before {
+  /* The horizontal rail behind the ticks. */
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0; right: 0;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.10);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.tc-tick {
+  position: relative;
+  flex: 1 1 0;
+  background: transparent;
+  border: none;
+  padding: 0.2rem 0.05rem 1rem;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #b8c2cc;
+  font-size: 0.72em;
+  text-align: center;
+}
+
+.tc-tick:hover .tc-tick-knob {
+  background: #8b5cf6;
+}
+
+.tc-tick.active {
+  color: #fff;
+  font-weight: 500;
+}
+
+.tc-tick.active .tc-tick-knob {
+  background: #8b5cf6;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.35);
+  width: 12px;
+  height: 12px;
+}
+
+.tc-tick-knob {
+  position: relative;
+  z-index: 2;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.4);
+  transition: all 120ms ease-in-out;
+}
+
+.tc-tick-rail { display: none; }
+
+.tc-tick-label {
+  margin-top: 0.25rem;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  max-width: 5em;
+}
+
+.tc-tick-dots {
+  position: absolute;
+  bottom: 0.05rem;
+  display: flex;
+  gap: 1px;
+  justify-content: center;
+}
+
+.tc-tick-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  display: inline-block;
+  opacity: 0.65;
+}
+
+.tc-scrubber-readout {
+  margin-top: 0.4rem;
+  font-size: 0.84em;
+  color: #d8e0e8;
+}
+
+/* ----- Kind rows (timeseries Tier-2) ------------------------------- */
+.tc-kind-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.tc-kind-row {
+  padding: 0.2rem 0.1rem;
+  border-radius: 2px;
+}
+
+.tc-kind-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tc-kind-row.tc-kind-unavailable {
+  opacity: 0.55;
+}
+
+.tc-variants-disclosure {
+  margin-top: 0.4rem;
+  padding-top: 0.3rem;
+  border-top: 1px dashed rgba(255, 255, 255, 0.10);
+}
+
+.tc-variants-disclosure summary {
   font-size: 0.82em;
-  margin-bottom: 0.25rem;
-  color: #d4d8de;
+  color: #b8c2cc;
+  cursor: pointer;
+}
+
+.tc-variants-list {
+  margin-top: 0.3rem;
+}
+
+.tc-variant-row {
+  margin-bottom: 0.1rem;
 }
 
 /* ----- Product rows (checkbox + opacity) --------------------------- */
