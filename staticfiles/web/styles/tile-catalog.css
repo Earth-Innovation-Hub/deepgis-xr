@@ -403,7 +403,26 @@
   margin-bottom: 0.1rem;
 }
 
-/* ----- Status / control bar --------------------------------------- */
+/* ----- Control bar (Phase 5) --------------------------------------- */
+.tc-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+.tc-viewport-filter-switch {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tc-viewport-filter-switch input.form-check-input {
+  margin-right: 0.3rem;
+}
+
 .tc-control-bar:empty {
   display: none;
 }

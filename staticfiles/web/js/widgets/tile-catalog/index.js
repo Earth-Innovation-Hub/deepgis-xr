@@ -24,6 +24,12 @@ import { renderSitePicker } from './site-picker.js';
 import { renderProductList } from './product-list.js';
 import { renderTimeseriesPanel } from './timeseries-panel.js';
 import { renderControlBar } from './control-bar.js';
+import {
+  enableMoveEndWatcher,
+  disableMoveEndWatcher,
+  getViewportBboxDeg,
+  visibleSiteSlugs,
+} from './viewport-filter.js';
 
 const ROOT_ID = 'tileCatalogPanel';
 
@@ -64,8 +70,23 @@ export function renderCatalogPanel(container) {
 
   renderControlBar(controlBar, { onChange: () => renderCatalogPanel(container) });
 
+  // Apply viewport filter (Phase 5). When enabled and a viewport is
+  // computable, hide sites whose bounds don't intersect.
+  let visibleSites = AppState.catalog.sites;
+  if (AppState.viewportFilterEnabled) {
+    const bbox = getViewportBboxDeg(AppState.viewer);
+    const visibleSet = visibleSiteSlugs(AppState.catalog.sites, bbox);
+    visibleSites = AppState.catalog.sites.filter(s => visibleSet.has(s.slug));
+    enableMoveEndWatcher(AppState.viewer, () => renderCatalogPanel(container));
+    if (visibleSites.length === 0) {
+      status.innerHTML = '<small class="text-muted">No sites in current viewport. Pan/zoom or untoggle the viewport filter.</small>';
+    }
+  } else {
+    disableMoveEndWatcher();
+  }
+
   renderSitePicker(sitesContainer, {
-    sites: AppState.catalog.sites,
+    sites: visibleSites,
     activeSiteSlug: AppState.catalog.activeSiteSlug,
     onSelect: (slug) => {
       AppState.catalog.activeSiteSlug = slug;
@@ -74,12 +95,12 @@ export function renderCatalogPanel(container) {
   });
 
   // Tier-2 mount points appear inside each site card as the user expands them.
-  // We render every visible site's body lazily based on activeSiteSlug.
-  const visibleSites = AppState.catalog.activeSiteSlug
-    ? AppState.catalog.sites.filter(s => s.slug === AppState.catalog.activeSiteSlug)
-    : AppState.catalog.sites;
+  // We render every (viewport-filtered) site's body lazily based on activeSiteSlug.
+  const expandedSites = AppState.catalog.activeSiteSlug
+    ? visibleSites.filter(s => s.slug === AppState.catalog.activeSiteSlug)
+    : visibleSites;
 
-  for (const site of visibleSites) {
+  for (const site of expandedSites) {
     const siteBody = sitesContainer.querySelector(`[data-site-body="${site.slug}"]`);
     if (!siteBody) continue;
     siteBody.innerHTML = '';
