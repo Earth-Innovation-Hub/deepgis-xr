@@ -115,17 +115,15 @@ services:
     # PID 1 over to gunicorn so signals (SIGTERM from `docker stop`) reach
     # the WSGI server cleanly. Worker/thread/timeout knobs read from env
     # vars defined above; defaults match Dockerfile CMD.
-    command: >
-      bash -c "
-        python manage.py migrate --noinput &&
-        exec gunicorn deepgis_xr.wsgi:application
-          --bind 0.0.0.0:8090
-          --workers ${GUNICORN_WORKERS:-2}
-          --threads ${GUNICORN_THREADS:-4}
-          --timeout ${GUNICORN_TIMEOUT:-600}
-          --access-logfile -
-          --error-logfile -
-      "
+    #
+    # IMPORTANT: this is intentionally written as a JSON sequence (not a
+    # YAML `>` folded scalar). The earlier folded form silently dropped the
+    # `--bind 0.0.0.0:8090` and other gunicorn flags onto separate bash
+    # statements, so gunicorn fell back to its default 127.0.0.1:8000 bind
+    # and the host port mapping (8060->8090) had nothing to connect to.
+    # Keep this on one line — line continuations inside a JSON-string YAML
+    # value re-introduce the same trap.
+    command: ["bash", "-c", "python manage.py migrate --noinput && exec gunicorn deepgis_xr.wsgi:application --bind 0.0.0.0:8090 --workers ${GUNICORN_WORKERS:-2} --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-600} --access-logfile - --error-logfile -"]
 
   # Celery broker / result backend. Tiny memory footprint; the only consumer
   # today is the admin-only model-training task in apps/api/v1/views/training.
@@ -185,13 +183,11 @@ services:
               capabilities: [gpu]
     # `--concurrency 1` because train_model_task takes the whole GPU.
     # `-l info` keeps logs readable; switch to `-l warning` to quiet down.
-    command: >
-      bash -c "
-        exec celery -A deepgis_xr worker
-          --concurrency=1
-          --loglevel=info
-          --hostname=worker@%h
-      "
+    # JSON-sequence form (not YAML `>` folded) for the same reason described
+    # in the web service `command:` above — folded scalars preserve newlines
+    # for more-indented lines, which bash treats as statement separators and
+    # silently drops the celery flags.
+    command: ["bash", "-c", "exec celery -A deepgis_xr worker --concurrency=1 --loglevel=info --hostname=worker@%h"]
 
   tileserver:
     image: maptiler/tileserver-gl
