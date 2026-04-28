@@ -203,6 +203,23 @@ services:
       - CORS_ENABLED=true
       - TILESERVER_GL_DATA_PATH=/data
     command: ["-p", "80", "--verbose"]
+    # The image's bundled healthcheck is hard-coded to probe :8080, but our
+    # `command:` overrides the listen port to 80, so the bundled check has
+    # been failing every 30s since this service first came up
+    # (FailingStreak in the thousands while the service itself was healthy
+    # the whole time). Override with a node one-liner that probes the port
+    # we actually bind. Keep `start_period` generous because tileserver-gl
+    # spends ~10s indexing a couple dozen MBTiles files at startup.
+    healthcheck:
+      test:
+        - "CMD"
+        - "node"
+        - "-e"
+        - "require('http').get('http://localhost:80/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # Optional Postgres backend. Not started by default — gated behind the
   # `postgres` profile so the existing SQLite-backed deployment keeps
