@@ -21,9 +21,22 @@ class ModelOptimizationMiddleware(MiddlewareMixin):
     """
     Middleware to optimize the delivery of 3D models
     """
-    
+
+    # Pure-sync request/response work (no awaits, no DB I/O). Declared
+    # explicitly so Django's BaseHandler sets up the right adapter; without
+    # this, Django >=4 raises AttributeError on `async_mode` because the
+    # MiddlewareMixin probe only initialises it inside its __init__ — which
+    # we override below.
+    sync_capable = True
+    async_capable = False
+
     def __init__(self, get_response):
-        self.get_response = get_response
+        # MiddlewareMixin.__init__ sets self.get_response, self.async_mode,
+        # and the iscoroutinefunction wrapping that BaseHandler expects. The
+        # pre-Django 4 version of this class skipped super() and Django was
+        # forgiving; Django 5.x is not. Always call super() first so any
+        # mixin-managed state is in place before we touch self.
+        super().__init__(get_response)
         # Regex patterns for model file URLs
         self.model_patterns = [
             r'.*\.(gltf|glb|obj|stl|fbx)$',  # 3D model files
