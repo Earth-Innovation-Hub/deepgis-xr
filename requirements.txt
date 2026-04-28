@@ -8,13 +8,25 @@
 # =============================================================================
 
 # --- Django core ---------------------------------------------------------------
-# Django 3.2 LTS — end-of-life April 2024. Upgrade to 4.2 LTS is tracked in the
-# roadmap (see Tier E of refactoring plan). Do NOT bump without testing.
-Django==3.2.24
-djangorestframework==3.12.4
-django-cors-headers==4.5.0
-asgiref==3.11.0
+# Django 5.2 LTS — supported through April 2028. Tier E of the refactor plan
+# (see TIER_E_MIGRATION_NOTES.md) walked the codebase clean of 4.x/5.x
+# deprecations (`url()`, `force_text`, `ugettext`, `JSONField` from postgres,
+# `default_app_config`, `USE_L10N`, `index_together`, `length_is`,
+# `NullBooleanField`, `make_random_password`) before this bump. Do NOT bump
+# minor versions without rebuilding the Docker image and running
+# `python manage.py check && pytest`.
+Django==5.2.13
+# DRF 3.16+ is the first line that officially supports Django 5.2. Earlier
+# 3.15.x works on 4.2/5.0/5.1 but emits deprecation warnings on 5.2.
+djangorestframework==3.16.1
+# 4.7+ adds Django 5.2 to the test matrix; 4.5 still works but is older.
+django-cors-headers==4.9.0
+# Django 5.2 requires asgiref>=3.8.1; we pin to a known-good newer build.
+asgiref==3.11.1
 sqlparse==0.5.5
+# pytz is no longer required by Django (4.0+ uses stdlib zoneinfo). Kept
+# because `pandas`, `osmnx`, and a couple of analyzers still import it
+# transitively; remove when those dependencies drop pytz.
 pytz==2025.2
 
 # --- Async / queue -------------------------------------------------------------
@@ -82,22 +94,23 @@ osmnx>=1.9,<2
 
 # --- Phone auth (Twilio) -------------------------------------------------------
 twilio==9.9.0
-django-phonenumber-field==8.0.0
+django-phonenumber-field==8.4.0
 phonenumbers==9.0.21
 # PyJWT removed: not imported anywhere (no DRF SimpleJWT, no custom JWT auth).
 
-# --- AI / ML — object detection & segmentation --------------------------------
-# Torch + torchvision are installed in the Dockerfile, NOT here:
-#   - torch==2.5.1+cu121 / torchvision==0.20.1+cu121 come from the PyTorch
-#     CUDA 12.1 index (see Dockerfile RUN pip install torch torchvision ...).
-# detectron2 was previously installed in the Dockerfile but is not imported
-# anywhere in this codebase; the Mask R-CNN rocks model runs as a remote
-# service (MASKRCNN_ROCKS_API_URL). Removed in the Tier E cleanup.
-ultralytics==8.3.241
-# Segment Anything Model — pinned by SHA via Docker install for reproducibility.
-# Adding here is a no-op inside Docker (already installed) but useful for non-Docker
-# dev installs.
-git+https://github.com/facebookresearch/segment-anything.git@dca509fe793f601edb92606367a655c15ac00fdf#egg=segment_anything
+# --- AI / ML — frameworks for the local Mask R-CNN training pathway ----------
+# Torch + torchvision are installed in the Dockerfile (CUDA 12.1 index), NOT
+# here. They are kept in the image only because the admin-only Mask R-CNN
+# training endpoint (deepgis_xr.apps.ml.services.trainer + the celery_worker
+# GPU job) still loads torch.models.detection locally. Inference for every
+# served Mask R-CNN family / YOLOv8 / SAM / Grounding-DINO runs as a remote
+# service on 192.168.0.232 (see MASKRCNN_*_API_URL, SAM_API_URL,
+# GROUNDING_DINO_API_URL, GROUNDED_SAM_API_URL in docker-compose.yml).
+#
+# Removed (model packages now live only in the remote services):
+#   - ultralytics              -> services/* (no maskrcnn-yolo container yet)
+#   - segment-anything @ git+  -> services/sam-api
+# detectron2 was removed in the Tier E cleanup (no Python imports it).
 
 # --- kernelcal integration -----------------------------------------------------
 # Kernel Dynamics under MaxCal library. Currently imported by examples/ only;
