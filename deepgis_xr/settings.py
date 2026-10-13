@@ -217,6 +217,14 @@ RASTER_TILES_URL = os.environ.get('RASTER_TILES_URL', 'https://raster_tiles:8081
 # Cesium Ion access token for 3D globe/terrain visualization
 CESIUM_ION_TOKEN = os.environ.get('CESIUM_ION_TOKEN', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI5MzIyMWMxOC03MTk5LTQyMmUtYTM5NC02NzVlYWU1NDg2NGYiLCJpZCI6MzA1OTgwLCJpYXQiOjE3NDgxMjcxNDZ9.AgxpEL6okIFIv0028AEmR2Mk9GeHCPLQyM3RjjBORNk')
 
+# AI pilot chat on /label/3d/search/ (views/pilot.py). The LLM runs on the
+# DREAMS Lab GPU box behind a read-only dreams_mcp (no vehicle commands); the
+# token lives only in .env. Signed-in users only, rate-limited per user.
+DEEPGIS_PILOT_MCP_URL = os.environ.get('DEEPGIS_PILOT_MCP_URL', 'http://10.99.0.2:8766/mcp')
+DEEPGIS_PILOT_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_MCP_TOKEN', '')
+DEEPGIS_PILOT_TIMEOUT_SEC = float(os.environ.get('DEEPGIS_PILOT_TIMEOUT_SEC', '90'))
+DEEPGIS_PILOT_RATE_PER_MIN = int(os.environ.get('DEEPGIS_PILOT_RATE_PER_MIN', '12'))
+
 # Custom user model
 AUTH_USER_MODEL = 'deepgis_auth.User'
 

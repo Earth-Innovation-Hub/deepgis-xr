@@ -105,6 +105,76 @@
             color: #34d399;
         }
         
+        .hud-btn.hud-pilot { border-color: rgba(245, 158, 11, 0.5); }
+        .hud-btn.hud-pilot:hover, .hud-btn.hud-pilot.active {
+            background: rgba(245, 158, 11, 0.25);
+            border-color: #f59e0b;
+            color: #fbbf24;
+        }
+        
+        /* AI pilot chat: stays open while the user moves the map */
+        .pilot-panel {
+            position: fixed;
+            bottom: 70px;
+            right: 120px;
+            width: 340px;
+            max-height: 55vh;
+            display: none;
+            flex-direction: column;
+            background: rgba(15, 23, 42, 0.92);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            border-radius: 12px;
+            padding: 12px;
+            z-index: 1998;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+        .pilot-panel.visible { display: flex; }
+        .pilot-log {
+            flex: 1;
+            overflow-y: auto;
+            min-height: 80px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 8px;
+            font-size: 0.8rem;
+        }
+        .pilot-msg {
+            padding: 6px 9px;
+            border-radius: 8px;
+            line-height: 1.35;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .pilot-msg.user { align-self: flex-end; background: rgba(59, 130, 246, 0.3); color: #e2e8f0; max-width: 85%; }
+        .pilot-msg.ai { align-self: flex-start; background: rgba(51, 65, 85, 0.7); color: #f1f5f9; max-width: 92%; }
+        .pilot-msg.step { align-self: flex-start; color: #94a3b8; font-size: 0.72rem; padding: 0 9px; }
+        .pilot-msg.error { align-self: flex-start; color: #fca5a5; font-size: 0.75rem; padding: 0 9px; }
+        .pilot-msg a { color: #fbbf24; }
+        .pilot-form { display: flex; gap: 6px; }
+        .pilot-form input {
+            flex: 1;
+            min-width: 0;
+            background: rgba(30, 41, 59, 0.9);
+            border: 1px solid rgba(100, 116, 139, 0.5);
+            border-radius: 6px;
+            color: #f1f5f9;
+            padding: 6px 8px;
+            font-size: 0.8rem;
+        }
+        .pilot-form input:focus { outline: none; border-color: #f59e0b; }
+        .pilot-form button {
+            background: rgba(245, 158, 11, 0.25);
+            border: 1px solid rgba(245, 158, 11, 0.5);
+            border-radius: 6px;
+            color: #fbbf24;
+            padding: 0 10px;
+            cursor: pointer;
+        }
+        .pilot-form button:disabled { opacity: 0.4; cursor: default; }
+        .pilot-form button.pilot-stop { background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.5); color: #fca5a5; }
+        
         .hud-btn.hud-vr { border-color: rgba(139, 92, 246, 0.5); }
         .hud-btn.hud-vr:hover, .hud-btn.hud-vr.active { 
             background: rgba(139, 92, 246, 0.3); 
@@ -1283,6 +1353,10 @@
             <i class="fas fa-brain"></i>
             <span>AI</span>
         </button>
+        <button class="hud-btn hud-pilot" id="hudPilotBtn" title="Fly the camera drone by chat">
+            <i class="fas fa-robot"></i>
+            <span>Pilot</span>
+        </button>
         <button class="hud-btn" id="hudToolsBtn" data-panel="toolsPanel">
             <i class="fas fa-tools"></i>
             <span>Tools</span>
@@ -1311,6 +1385,25 @@
             <i class="fas fa-gamepad"></i>
             <span>Joystick</span>
         </button>
+    </div>
+
+    <!-- AI Pilot chat (views/pilot.py); actions run on the drone widgets below -->
+    <div class="pilot-panel" id="pilotPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-robot" style="color: #f59e0b;"></i> AI Pilot</div>
+            <button class="hud-panel-close" id="pilotCloseBtn"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="pilot-log" id="pilotLog">
+            <div class="pilot-msg ai">Tell me where to fly, e.g. "orbit around Tempe Town Lake", "fly to Hayden Library at 200 m", "climb to 500 m and look at the horizon".</div>
+            {% if not user.is_authenticated %}
+            <div class="pilot-msg error">The AI pilot is for signed-in users. <a href="/label/admin/login/?next=/label/3d/search/">Sign in</a></div>
+            {% endif %}
+        </div>
+        <form class="pilot-form" id="pilotForm" autocomplete="off">
+            <input type="text" id="pilotInput" maxlength="600" placeholder="Orbit around Tempe Town Lake">
+            <button type="submit" id="pilotSendBtn" title="Send"><i class="fas fa-paper-plane"></i></button>
+            <button type="button" class="pilot-stop" id="pilotStopBtn" title="Stop all motion"><i class="fas fa-stop"></i></button>
+        </form>
     </div>
 
     <!-- ========== HUD FLOATING PANELS ========== -->
@@ -3557,13 +3650,22 @@
             let isClimbing = false;
             let isDescending = false;
             let animationId = null;
+            let targetHeight = null; // ellipsoid height to stop at (AI pilot); null = until stopped
+            
+            // Move along the local vertical; camera.moveUp follows the view's up
+            // vector, which is horizontal when the gimbal points straight down.
+            function moveVertical(camera, distance) {
+                const up = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(camera.position, new Cesium.Cartesian3());
+                camera.move(up, distance);
+            }
             
             // Takeoff function
-            function startTakeoff() {
+            function startTakeoff(target) {
                 if (isClimbing) {
                     stopVerticalMovement();
                     return;
                 }
+                targetHeight = typeof target === 'number' ? target : null;
                 
                 const viewer = window.AppState?.viewer || window.viewer;
                 if (!viewer || !viewer.camera) {
@@ -3589,6 +3691,10 @@
                     if (!isClimbing) return;
                     
                     const camera = viewer.camera;
+                    if (targetHeight !== null && camera.positionCartographic.height >= targetHeight) {
+                        stopVerticalMovement();
+                        return;
+                    }
                     const moveDistance = verticalSpeed * 0.016; // ~60fps
                     
                     // Get joystick state for yaw rate control
@@ -3617,7 +3723,7 @@
                         const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move up while maintaining orientation
-                    camera.moveUp(moveDistance);
+                    moveVertical(camera, moveDistance);
                         
                         // Apply gimbal orientation (heading + yaw offset, pitch from slider)
                         camera.setView({
@@ -3630,7 +3736,7 @@
                         });
                     } else {
                         // Fallback: just move up without gimbal control
-                        camera.moveUp(moveDistance);
+                        moveVertical(camera, moveDistance);
                     }
                     
                     animationId = requestAnimationFrame(climb);
@@ -3640,11 +3746,12 @@
             }
             
             // Land function
-            function startLanding() {
+            function startLanding(target) {
                 if (isDescending) {
                     stopVerticalMovement();
                     return;
                 }
+                targetHeight = typeof target === 'number' ? target : null;
                 
                 const viewer = window.AppState?.viewer || window.viewer;
                 if (!viewer || !viewer.camera) {
@@ -3670,6 +3777,10 @@
                     if (!isDescending) return;
                     
                     const camera = viewer.camera;
+                    if (targetHeight !== null && camera.positionCartographic.height <= targetHeight) {
+                        stopVerticalMovement();
+                        return;
+                    }
                     const moveDistance = verticalSpeed * 0.016; // ~60fps
                     
                     // Get joystick state for yaw rate control
@@ -3698,7 +3809,7 @@
                         const finalPitch = Cesium.Math.toRadians(pitchDegrees);
                         
                         // Move down while maintaining orientation
-                    camera.moveDown(moveDistance);
+                    moveVertical(camera, -moveDistance);
                         
                         // Apply gimbal orientation (heading + yaw offset, pitch from slider)
                         camera.setView({
@@ -3711,7 +3822,7 @@
                         });
                     } else {
                         // Fallback: just move down without gimbal control
-                        camera.moveDown(moveDistance);
+                        moveVertical(camera, -moveDistance);
                     }
                     
                     animationId = requestAnimationFrame(descend);
@@ -3729,6 +3840,7 @@
                 
                 isClimbing = false;
                 isDescending = false;
+                targetHeight = null;
                 
                 takeoffBtn.classList.remove('active');
                 takeoffBtn.innerHTML = '<i class="fas fa-arrow-up"></i> Takeoff';
@@ -3742,8 +3854,16 @@
             }
             
             // Event listeners
-            takeoffBtn.addEventListener('click', startTakeoff);
-            landBtn.addEventListener('click', startLanding);
+            takeoffBtn.addEventListener('click', () => startTakeoff());
+            landBtn.addEventListener('click', () => startLanding());
+            
+            // Programmatic control (AI pilot): climb/descend to an ellipsoid height
+            window.DeepGISDrone = Object.assign(window.DeepGISDrone || {}, {
+                climbTo(height) { stopVerticalMovement(); startTakeoff(height); },
+                descendTo(height) { stopVerticalMovement(); startLanding(height); },
+                stopVertical: stopVerticalMovement,
+                isVerticalActive: () => isClimbing || isDescending,
+            });
             
             // Stop on Escape key
             document.addEventListener('keydown', (e) => {
@@ -3873,6 +3993,7 @@
             let orbitPausedTime = 0; // Total time spent paused
             let orbitCenterPoint = null;
             let orbitInitialAngle = 0; // Starting angle in orbit (radians)
+            let orbitDirection = 1; // 1 = counter-clockwise seen from above, -1 = clockwise
             let orbitStartAltitude = 0; // Altitude when orbit started (maintains current altitude)
             let lastVerificationTime = 0; // For performance optimization
             let lastProgressUpdateTime = 0; // For UI updates
@@ -3889,6 +4010,8 @@
                     console.error('[Orbit] Viewer not available');
                     return;
                 }
+                
+                orbitDirection = 1;
                 
                 // QGC behavior: Use current camera position as orbit center
                 const camera = viewer.camera;
@@ -3951,7 +4074,9 @@
                 function calculateInitialAngle(position) {
                     // Calculate initial angle based on position relative to center
                     const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint);
-                    const deltaLon = position.longitude - centerCartographic.longitude;
+                    // Scale longitude to ground distance so the angle matches the east/north
+                    // offsets used by animateOrbit (otherwise the camera jumps at high latitude).
+                    const deltaLon = (position.longitude - centerCartographic.longitude) * Math.cos(centerCartographic.latitude);
                     const deltaLat = position.latitude - centerCartographic.latitude;
                     
                     // If camera is directly above center (or very close), start at angle 0 (north)
@@ -3990,8 +4115,10 @@
                     }
                     
                     const camera = viewer.camera;
-                    const pitchDegrees = parseFloat(orbitPitchInput.value) || -10;
-                    const yawOffsetDegrees = parseFloat(document.getElementById('droneOrbitYaw')?.value) || 50;
+                    const pitchRaw = parseFloat(orbitPitchInput.value);
+                    const pitchDegrees = Number.isFinite(pitchRaw) ? pitchRaw : -10;
+                    const yawRaw = parseFloat(document.getElementById('droneOrbitYaw')?.value);
+                    const yawOffsetDegrees = Number.isFinite(yawRaw) ? yawRaw : 50;
                     const radius = parseFloat(orbitRadiusInput.value) || 5000;
                     const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
                     const maxRevolutions = parseFloat(revolutionsInput?.value) || 10;
@@ -4014,7 +4141,7 @@
                     
                     // Calculate current angle from elapsed time
                     const currentRadiansFromStart = angularVelocity * elapsed;
-                    const orbitAngle = orbitInitialAngle + currentRadiansFromStart;
+                    const orbitAngle = orbitInitialAngle + orbitDirection * currentRadiansFromStart;
                     
                     // ========== REVOLUTION COUNTING & AUTO-STOP ==========
                     const totalRadians = maxRevolutions * 2 * Math.PI;
@@ -4170,6 +4297,7 @@
                 orbitPausedTime = 0;
                 orbitCenterPoint = null;
                 orbitInitialAngle = 0;
+                orbitDirection = 1;
                 orbitStartAltitude = 0;
                 lastVerificationTime = 0;
                 lastProgressUpdateTime = 0;
@@ -4195,17 +4323,381 @@
                 pauseOrbitBtn.addEventListener('click', togglePause);
             }
             
+            // Programmatic control (AI pilot): orbit a given ground point from the
+            // camera's current position, at the current height and widget settings
+            window.DeepGISDrone = Object.assign(window.DeepGISDrone || {}, {
+                orbitAround(center, { clockwise = false } = {}) {
+                    if (isOrbiting) stopOrbit();
+                    orbitCenterPoint = center;
+                    orbitDirection = clockwise ? -1 : 1;
+                    startOrbitWithCenter();
+                },
+                stopOrbit() { if (isOrbiting) stopOrbit(); },
+                isOrbiting: () => isOrbiting,
+            });
+            
             // Keyboard shortcuts
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape' && isOrbiting) {
                     stopOrbit();
-                } else if (e.key === ' ' && isOrbiting) {
+                } else if (e.key === ' ' && isOrbiting && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
                     e.preventDefault(); // Prevent page scroll
                     togglePause();
                 }
             });
             
             console.log('[Orbit] Enhanced orbit system initialized with all improvements');
+        })();
+        
+        // ========== AI PILOT CHAT ==========
+        // POST /label/api/pilot/ turns a request into actions (goto, orbit, takeoff,
+        // land, look, stop, wait); they run here, in order, on the drone widgets
+        // above. Place names are geocoded with Cesium Ion.
+        (function initAiPilot() {
+            const panel = document.getElementById('pilotPanel');
+            const toggleBtn = document.getElementById('hudPilotBtn');
+            const log = document.getElementById('pilotLog');
+            const form = document.getElementById('pilotForm');
+            const input = document.getElementById('pilotInput');
+            const sendBtn = document.getElementById('pilotSendBtn');
+            const stopBtn = document.getElementById('pilotStopBtn');
+            if (!panel || !toggleBtn || !form) return;
+            
+            const history = [];
+            const geocodeCache = new Map();
+            let runId = 0; // bumped to cancel the running plan
+            
+            class Cancelled extends Error {}
+            
+            const getViewer = () => window.AppState?.viewer || window.viewer;
+            const drone = () => window.DeepGISDrone || {};
+            const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+            const fmtM = (m) => m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+            
+            toggleBtn.addEventListener('click', () => {
+                const open = panel.classList.toggle('visible');
+                toggleBtn.classList.toggle('active', open);
+                if (open) input.focus();
+            });
+            document.getElementById('pilotCloseBtn').addEventListener('click', () => {
+                panel.classList.remove('visible');
+                toggleBtn.classList.remove('active');
+            });
+            
+            function addMsg(kind, text, linkHref) {
+                const div = document.createElement('div');
+                div.className = `pilot-msg ${kind}`;
+                div.textContent = text;
+                if (linkHref) {
+                    const a = document.createElement('a');
+                    a.href = linkHref;
+                    a.textContent = ' Sign in';
+                    div.appendChild(a);
+                }
+                log.appendChild(div);
+                log.scrollTop = log.scrollHeight;
+                return div;
+            }
+            
+            function csrfToken() {
+                const el = document.querySelector('input[name=csrfmiddlewaretoken]');
+                return el ? el.value : '';
+            }
+            
+            async function groundHeight(lon, lat) {
+                const viewer = getViewer();
+                const carto = Cesium.Cartographic.fromRadians(lon, lat);
+                try {
+                    const [s] = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, [carto]);
+                    if (Number.isFinite(s.height)) return s.height;
+                } catch (e) { /* ellipsoid or unavailable terrain */ }
+                return viewer.scene.globe.getHeight(carto) || 0;
+            }
+            
+            // Ground point at the centre of the screen (what the user is looking at)
+            function viewTarget() {
+                const viewer = getViewer();
+                const canvas = viewer.scene.canvas;
+                const centre = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+                const ray = viewer.camera.getPickRay(centre);
+                const hit = (ray && viewer.scene.globe.pick(ray, viewer.scene)) ||
+                    viewer.camera.pickEllipsoid(centre);
+                return hit ? Cesium.Cartographic.fromCartesian(hit) : null;
+            }
+            
+            async function currentView() {
+                const viewer = getViewer();
+                const cam = viewer.camera.positionCartographic;
+                const ground = await groundHeight(cam.longitude, cam.latitude);
+                const view = {
+                    lat: Cesium.Math.toDegrees(cam.latitude),
+                    lon: Cesium.Math.toDegrees(cam.longitude),
+                    height_agl: cam.height - ground,
+                    heading_deg: Cesium.Math.toDegrees(viewer.camera.heading),
+                };
+                const t = viewTarget();
+                if (t) view.target = { lat: Cesium.Math.toDegrees(t.latitude), lon: Cesium.Math.toDegrees(t.longitude) };
+                return view;
+            }
+            
+            // -> {lon, lat (radians), sizeM (place extent or null), label}
+            async function resolvePoint(a) {
+                if (Number.isFinite(a.lat) && Number.isFinite(a.lon)) {
+                    return { lon: Cesium.Math.toRadians(a.lon), lat: Cesium.Math.toRadians(a.lat), sizeM: null,
+                             label: `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` };
+                }
+                if (a.place) {
+                    let hit = geocodeCache.get(a.place);
+                    if (!hit) {
+                        const svc = new Cesium.IonGeocoderService({ scene: getViewer().scene });
+                        const results = await svc.geocode(a.place);
+                        if (!results || !results.length) throw new Error(`Could not find "${a.place}"`);
+                        const dest = results[0].destination;
+                        if (dest instanceof Cesium.Rectangle) {
+                            const c = Cesium.Rectangle.center(dest);
+                            const R = Cesium.Ellipsoid.WGS84.maximumRadius;
+                            const w = dest.width * R * Math.cos(c.latitude), h = dest.height * R;
+                            hit = { lon: c.longitude, lat: c.latitude, sizeM: Math.max(w, h) };
+                        } else {
+                            const c = Cesium.Cartographic.fromCartesian(dest);
+                            hit = { lon: c.longitude, lat: c.latitude, sizeM: null };
+                        }
+                        hit.label = results[0].displayName || a.place;
+                        geocodeCache.set(a.place, hit);
+                    }
+                    return hit;
+                }
+                const t = viewTarget() || getViewer().camera.positionCartographic;
+                return { lon: t.longitude, lat: t.latitude, sizeM: null, label: 'the point in view' };
+            }
+            
+            function check(id) { if (id !== runId) throw new Cancelled(); }
+            
+            function flight(opts, id) {
+                const viewer = getViewer();
+                return new Promise((resolve, reject) => {
+                    const done = { complete: resolve, cancel: () => reject(new Cancelled()) };
+                    if (opts.sphere) viewer.camera.flyToBoundingSphere(opts.sphere, { ...opts.options, ...done });
+                    else viewer.camera.flyTo({ ...opts, ...done });
+                }).then(() => check(id));
+            }
+            
+            async function until(cond, id) {
+                while (!cond()) {
+                    check(id);
+                    await new Promise(r => setTimeout(r, 200));
+                }
+                check(id);
+            }
+            
+            function setInput(elId, value) {
+                const el = document.getElementById(elId);
+                if (!el) return;
+                el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            
+            function stopAll() {
+                runId++;
+                const viewer = getViewer();
+                drone().stopOrbit?.();
+                drone().stopVertical?.();
+                viewer?.camera.cancelFlight();
+            }
+            
+            async function verticalTo(height, speed, id) {
+                const viewer = getViewer();
+                const dz = height - viewer.camera.positionCartographic.height;
+                if (Math.abs(dz) < 1) return;
+                setInput('droneVerticalSpeed', Math.round(speed || clamp(Math.abs(dz) / 15, 5, 50)));
+                if (dz > 0) drone().climbTo(height); else drone().descendTo(height);
+                await until(() => !drone().isVerticalActive(), id);
+            }
+            
+            const runners = {
+                async goto(a, id) {
+                    // No destination: change height where we are, then point the camera
+                    if (!a.place && !(Number.isFinite(a.lat) && Number.isFinite(a.lon))) {
+                        if (a.alt_m) await runners.takeoff(a, id);
+                        if (Number.isFinite(a.pitch_deg) || Number.isFinite(a.heading_deg)) await runners.look(a);
+                        return;
+                    }
+                    const p = await resolvePoint(a);
+                    check(id);
+                    const viewer = getViewer();
+                    const ground = await groundHeight(p.lon, p.lat);
+                    const pitchDeg = Number.isFinite(a.pitch_deg) ? a.pitch_deg : -45;
+                    // Frame from at least 20 deg down so the camera stays near the place;
+                    // a shallower requested tilt is applied after arriving.
+                    const framePitch = Cesium.Math.toRadians(Math.min(pitchDeg, -20));
+                    const heading = Number.isFinite(a.heading_deg) ? Cesium.Math.toRadians(a.heading_deg) : viewer.camera.heading;
+                    // alt_m is the camera height above ground
+                    const alt = a.alt_m || clamp((p.sizeM || 600) * 0.8, 100, 20000);
+                    const range = alt / Math.sin(-framePitch);
+                    addMsg('step', `Flying to ${p.label} (${fmtM(alt)} above ground)`);
+                    await flight({
+                        sphere: new Cesium.BoundingSphere(Cesium.Cartesian3.fromRadians(p.lon, p.lat, ground), 0),
+                        options: { offset: new Cesium.HeadingPitchRange(heading, framePitch, range) },
+                    }, id);
+                    if (pitchDeg > -20) await runners.look({ pitch_deg: pitchDeg });
+                },
+                
+                async orbit(a, id) {
+                    const p = await resolvePoint(a);
+                    check(id);
+                    const viewer = getViewer();
+                    const ground = await groundHeight(p.lon, p.lat);
+                    const radius = a.radius_m || clamp((p.sizeM || 1000) * 0.6, 100, 20000);
+                    const alt = a.alt_m || clamp(radius * 0.5, 80, 3000);
+                    const revs = a.revolutions || 1;
+                    const speed = a.speed_mps || clamp(2 * Math.PI * radius / 75, 5, 150);
+                    const pitchDeg = Number.isFinite(a.pitch_deg) ? a.pitch_deg
+                        : -Cesium.Math.toDegrees(Math.atan2(alt, radius));
+                    
+                    // Start on the circle at the bearing of the current camera (shortest hop)
+                    const R = Cesium.Ellipsoid.WGS84.maximumRadius;
+                    const cam = viewer.camera.positionCartographic;
+                    const east = (cam.longitude - p.lon) * Math.cos(p.lat), north = cam.latitude - p.lat;
+                    const theta = (Math.abs(east) + Math.abs(north) > 1e-9) ? Math.atan2(north, east) : -Math.PI / 2;
+                    const startLat = p.lat + radius * Math.sin(theta) / R;
+                    const startLon = p.lon + radius * Math.cos(theta) / (R * Math.cos(p.lat));
+                    const centre = Cesium.Cartesian3.fromRadians(p.lon, p.lat, 0);
+                    const toCentre = new Cesium.EllipsoidGeodesic(
+                        new Cesium.Cartographic(startLon, startLat), new Cesium.Cartographic(p.lon, p.lat)).startHeading;
+                    
+                    setInput('droneOrbitRadius', Math.round(radius));
+                    setInput('droneOrbitRevolutions', revs);
+                    setInput('droneHorizontalSpeed', Math.round(speed));
+                    drone().stopOrbit?.();
+                    setInput('droneOrbitPitch', Math.round(pitchDeg));
+                    setInput('droneOrbitYaw', 0);
+                    
+                    addMsg('step', `Orbiting ${p.label}: radius ${fmtM(radius)}, ${fmtM(alt)} above ground, ` +
+                        `${revs} lap${revs === 1 ? '' : 's'} ${a.clockwise ? 'clockwise' : 'counter-clockwise'} at ${Math.round(speed)} m/s`);
+                    await flight({
+                        destination: Cesium.Cartesian3.fromRadians(startLon, startLat, ground + alt),
+                        orientation: { heading: toCentre, pitch: Cesium.Math.toRadians(pitchDeg), roll: 0 },
+                    }, id);
+                    drone().orbitAround(centre, { clockwise: !!a.clockwise });
+                    await until(() => !drone().isOrbiting(), id);
+                },
+                
+                async takeoff(a, id) {
+                    const viewer = getViewer();
+                    const cam = viewer.camera.positionCartographic;
+                    const ground = await groundHeight(cam.longitude, cam.latitude);
+                    const agl = a.alt_m || (cam.height - ground + 100);
+                    addMsg('step', `${ground + agl >= cam.height ? 'Climbing' : 'Descending'} to ${fmtM(agl)} above ground`);
+                    await verticalTo(ground + agl, a.speed_mps, id);
+                },
+                
+                async land(a, id) {
+                    const viewer = getViewer();
+                    const cam = viewer.camera.positionCartographic;
+                    const ground = await groundHeight(cam.longitude, cam.latitude);
+                    addMsg('step', 'Descending to the ground');
+                    await verticalTo(ground + 2, a.speed_mps, id);
+                },
+                
+                async look(a) {
+                    const camera = getViewer().camera;
+                    if (Number.isFinite(a.pitch_deg)) setInput('droneOrbitPitch', Math.round(a.pitch_deg));
+                    camera.setView({
+                        destination: camera.position,
+                        orientation: {
+                            heading: Number.isFinite(a.heading_deg) ? Cesium.Math.toRadians(a.heading_deg) : camera.heading,
+                            pitch: Number.isFinite(a.pitch_deg) ? Cesium.Math.toRadians(a.pitch_deg) : camera.pitch,
+                            roll: 0,
+                        },
+                    });
+                    addMsg('step', 'Camera pointed');
+                },
+                
+                async stop() {
+                    stopAll();
+                    addMsg('step', 'Stopped');
+                },
+                
+                async wait(a, id) {
+                    const end = Date.now() + (a.seconds || 0) * 1000;
+                    addMsg('step', `Hovering ${Math.round(a.seconds || 0)} s`);
+                    await until(() => Date.now() >= end, id);
+                },
+            };
+            
+            // Heading and tilt only exist in 3D; the page opens in 2D
+            async function ensure3D(id) {
+                const scene = getViewer().scene;
+                if (scene.mode === Cesium.SceneMode.SCENE3D) return;
+                addMsg('step', 'Switching to 3D view');
+                const morphed = new Promise(r => {
+                    const off = scene.morphComplete.addEventListener(() => { off(); r(); });
+                    setTimeout(r, 4000);
+                });
+                const btn3D = document.getElementById('view3D');
+                if (btn3D) btn3D.click(); else scene.morphTo3D(1.0);
+                await morphed;
+                check(id);
+            }
+            
+            async function runPlan(actions) {
+                // A new plan replaces whatever is flying now
+                stopAll();
+                const id = runId;
+                try {
+                    if (actions.some(a => a.type !== 'stop')) await ensure3D(id);
+                    for (const a of actions) {
+                        check(id);
+                        await runners[a.type](a, id);
+                    }
+                    if (actions.some(a => a.type !== 'stop')) addMsg('step', 'Done');
+                } catch (e) {
+                    if (e instanceof Cancelled) return;
+                    addMsg('error', e.message || String(e));
+                }
+            }
+            
+            stopBtn.addEventListener('click', () => { stopAll(); addMsg('step', 'Stopped'); });
+            
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const message = input.value.trim();
+                if (!message || !getViewer()) return;
+                input.value = '';
+                addMsg('user', message);
+                const thinking = addMsg('step', 'Thinking...');
+                sendBtn.disabled = true;
+                try {
+                    const resp = await fetch('/label/api/pilot/', {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                        body: JSON.stringify({ message, history, view: await currentView() }),
+                    });
+                    const data = await resp.json().catch(() => ({}));
+                    thinking.remove();
+                    if (resp.status === 401) {
+                        addMsg('error', 'The AI pilot is for signed-in users.', data.login_url || '/label/admin/login/?next=/label/3d/search/');
+                        return;
+                    }
+                    if (!resp.ok) {
+                        addMsg('error', data.error || `Request failed (${resp.status})`);
+                        return;
+                    }
+                    addMsg('ai', data.reply || '(no reply)');
+                    history.push({ role: 'user', content: message },
+                                 { role: 'assistant', content: JSON.stringify({ reply: data.reply, actions: data.actions }) });
+                    history.splice(0, Math.max(0, history.length - 8));
+                    if (data.actions && data.actions.length) runPlan(data.actions);
+                } catch (err) {
+                    thinking.remove();
+                    addMsg('error', `Request failed: ${err.message || err}`);
+                } finally {
+                    sendBtn.disabled = false;
+                }
+            });
+            
+            console.log('[AI Pilot] Initialized');
         })();
         
         // ========== 3D MODEL LOADING ==========

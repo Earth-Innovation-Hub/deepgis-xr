@@ -59,6 +59,9 @@ urlpatterns = [
     path('api/training/datasets/<int:dataset_id>/', views.get_dataset_details, name='get_dataset_details'),
     path('api/training/datasets/add-label/', views.add_label_to_dataset, name='add_label_to_dataset'),
     
+    # AI pilot chat for the DeepGIS Search viewer (views/pilot.py)
+    path('label/api/pilot/', views.pilot_chat, name='pilot_chat'),
+
     # Mission planning API endpoints
     path('label/api/missions/', views.list_missions, name='list_missions'),
     path('label/api/missions/create/', views.create_mission, name='create_mission'),
