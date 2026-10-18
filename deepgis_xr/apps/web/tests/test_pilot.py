@@ -38,6 +38,13 @@ class CleanActionsTests(TestCase):
         out = pilot.clean_actions([{"type": "goto", "lat": 33.43, "lon": -111.94, "alt_m": 200}])
         self.assertEqual(out, [{"type": "goto", "lat": 33.43, "lon": -111.94, "alt_m": 200.0}])
 
+    def test_geology_actions(self):
+        out = pilot.clean_actions([{"type": "show_geology", "place": "Hayden Butte, Tempe, Arizona",
+                                    "radius_m": 5000, "features": ["Lake Tempe"]},
+                                   {"type": "hide_geology"}])
+        self.assertEqual(out, [{"type": "show_geology", "place": "Hayden Butte, Tempe, Arizona",
+                                "radius_m": 5000.0}, {"type": "hide_geology"}])
+
     def test_caps_action_count(self):
         self.assertEqual(len(pilot.clean_actions([{"type": "wait", "seconds": 1}] * 20)), pilot.MAX_ACTIONS)
 

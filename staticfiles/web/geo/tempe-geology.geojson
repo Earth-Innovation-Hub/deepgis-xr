@@ -1,0 +1,1350 @@
+{
+ "type": "FeatureCollection",
+ "name": "Tempe-area geology (sourced)",
+ "features": [
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Tempe Butte (Hayden Butte)",
+    "category": "volcanic butte",
+    "rock_units": "Andesite lava flows over the Tempe Beds (mudrock, sandstone) over rhyolitic ash",
+    "age": "Andesite ~17.6 +/- 0.4 Ma (Miocene)",
+    "description": "Miocene andesite flows cap sedimentary Tempe Beds that show soft-sediment deformation; the whole stack was later tilted to the south.",
+    "sources": [
+     {
+      "title": "Pewe, Wellendorf & Bales 1986, Geology of the Tempe Quadrangle (AZ Bureau of Geology GI-2-A)",
+      "url": "https://azgs.arizona.edu/"
+     },
+     {
+      "title": "Paradise Valley CC virtual field trip: Tempe Butte",
+      "url": "https://www2.paradisevalley.edu/~douglass/v_trips/t_butte/"
+     }
+    ],
+    "osm_id": "n359252381",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.93582,
+     33.42827
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Papago Buttes",
+    "category": "tilted sedimentary buttes",
+    "rock_units": "Camels Head Formation: sedimentary breccia, conglomerate, sandstone, siltstone",
+    "age": "Mid-Tertiary (Oligocene-Miocene)",
+    "description": "Red beds of the Camels Head Formation dip steeply south-west. They were deposited and tilted in half-grabens during the extension that formed the South Mountains core complex.",
+    "sources": [
+     {
+      "title": "AZGS Arizona Geology, Geology of the Papago Buttes (2013)",
+      "url": "http://azgeology.azgs.arizona.edu/azgs/image-of-the-day/images/geology-papago-buttes-phoenix-az"
+     },
+     {
+      "title": "AZGS GI-2-C, Tempe quadrangle cross sections",
+      "url": "https://data.azgs.arizona.edu/api/v1/collections/PEGC-1552427551346-578/tempegi-2-c.pdf"
+     }
+    ],
+    "osm_id": "n359249703",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.95153,
+     33.46418
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Barnes Butte",
+    "category": "tilted sedimentary butte",
+    "rock_units": "Camels Head Formation",
+    "age": "Mid-Tertiary",
+    "description": "At 1,746 ft, the highest point in the Tempe 7.5' quadrangle; part of the Papago Buttes.",
+    "sources": [
+     {
+      "title": "Pewe, Wellendorf & Bales 1986, Geology of the Tempe Quadrangle (AZ Bureau of Geology GI-2-A)",
+      "url": "https://azgs.arizona.edu/"
+     },
+     {
+      "title": "AZGS Arizona Geology, Geology of the Papago Buttes (2013)",
+      "url": "http://azgeology.azgs.arizona.edu/azgs/image-of-the-day/images/geology-papago-buttes-phoenix-az"
+     }
+    ],
+    "osm_id": "n359242348",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.95626,
+     33.46782
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Hole-in-the-Rock",
+    "category": "tafoni / weathering landform",
+    "rock_units": "Arkosic conglomeratic sandstone and breccia (Camels Head Formation) on Camelback Granite",
+    "age": "Rock mid-Tertiary; openings Quaternary weathering",
+    "description": "Openings are tafoni enlarged by chemical weathering beneath calcium and iron coatings, not wind or salt. Nearby, the red beds rest nonconformably on Proterozoic granite.",
+    "sources": [
+     {
+      "title": "AZGS Arizona Geology, Geology of the Papago Buttes (2013)",
+      "url": "http://azgeology.azgs.arizona.edu/azgs/image-of-the-day/images/geology-papago-buttes-phoenix-az"
+     },
+     {
+      "title": "Earth Surface Processes and Landforms 24(3):271 (1999), tafoni weathering",
+      "url": "https://doi.org/10.1002/(SICI)1096-9837(199903)24:3<271::AID-ESP969>3.0.CO;2-T"
+     },
+     {
+      "title": "Reynolds, Geology and subsurface of the Phoenix basin",
+      "url": "https://reynolds.asu.edu/"
+     }
+    ],
+    "osm_id": "w974216087",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.9454,
+     33.45646
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Camelback Mountain",
+    "category": "granite inselberg with sedimentary cap",
+    "rock_units": "Camelback Granite ('hump'); Camels Head Formation ('head')",
+    "age": "Granite ~1.4 Ga (Mesoproterozoic); cap ~25 Ma",
+    "description": "Coarse Proterozoic granite with K-feldspar phenocrysts forms the hump. The nonconformity at Echo Canyon spans roughly 1.4 billion years of missing time.",
+    "sources": [
+     {
+      "title": "USGS Geolex: Camelback Granite",
+      "url": "https://ngmdb.usgs.gov/Geolex/search"
+     },
+     {
+      "title": "Reynolds, Geology and subsurface of the Phoenix basin",
+      "url": "https://reynolds.asu.edu/"
+     }
+    ],
+    "osm_id": "n2334012138",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.9617,
+     33.51473
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "South Mountains (Dobbins Lookout)",
+    "category": "metamorphic core complex",
+    "rock_units": "West: Estrella Gneiss, Komatke Granite. East: South Mountains Granodiorite, Telegraph Pass Granite, Dobbins Alaskite (mylonitized)",
+    "age": "Proterozoic basement; mid-Tertiary plutons; mylonitization ~21.6-19.4 Ma",
+    "description": "A classic metamorphic core complex. Mid-Tertiary plutons were sheared beneath a low-angle detachment fault as the crust extended.",
+    "sources": [
+     {
+      "title": "Reynolds 1985, Geology of the South Mountains, central Arizona (AZGS Bulletin 195)",
+      "url": "https://azgs.arizona.edu/geologic-map-south-mountains-central-arizona"
+     }
+    ],
+    "osm_id": "n3710977209",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -112.05842,
+     33.34515
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Superstition Mountains",
+    "category": "eroded caldera (volcanic field)",
+    "rock_units": "Ash-flow tuffs and lavas of the Superstition volcanic field",
+    "age": "~20.5-17.9 Ma; Apache Leap Tuff 18.58 +/- 0.03 Ma",
+    "description": "Eroded remnants of the resurgent Superstition cauldron, one of several Miocene calderas in the Superstition-Superior volcanic field.",
+    "sources": [
+     {
+      "title": "AZGS OFR 98-27, Superstition volcanic field",
+      "url": "https://data.azgs.arizona.edu/api/v1/collections/AOFR-1552426752449-93/ofr_98-27_report_superstionvolcanicfield.pdf"
+     }
+    ],
+    "osm_id": "n359273668",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.41819,
+     33.42866
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Tempe Town Lake (Salt River)",
+    "category": "reservoir in channelized river",
+    "rock_units": "Quaternary Salt River channel alluvium (sand and gravel)",
+    "age": "Lake filled June-July 1999; opened 7 Nov 1999",
+    "description": "Built in the channelized bed of the Salt River, the lowest ground in the Tempe quadrangle (~1,100 ft). The original rubber dams were replaced with a steel-gate dam in 2016.",
+    "sources": [
+     {
+      "title": "City of Tempe, Tempe Town Lake history",
+      "url": "https://www.tempe.gov/"
+     },
+     {
+      "title": "Pewe, Wellendorf & Bales 1986, Geology of the Tempe Quadrangle (AZ Bureau of Geology GI-2-A)",
+      "url": "https://azgs.arizona.edu/"
+     }
+    ],
+    "osm_id": "w28751896",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Point",
+    "coordinates": [
+     -111.94048,
+     33.43344
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Tempe Town Lake outline",
+    "category": "area outline",
+    "osm_id": "w28751896",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -111.94951,
+       33.43255
+      ],
+      [
+       -111.94781,
+       33.43224
+      ],
+      [
+       -111.94688,
+       33.43235
+      ],
+      [
+       -111.9448,
+       33.43207
+      ],
+      [
+       -111.94424,
+       33.43207
+      ],
+      [
+       -111.94377,
+       33.43227
+      ],
+      [
+       -111.94321,
+       33.43203
+      ],
+      [
+       -111.93757,
+       33.43223
+      ],
+      [
+       -111.93573,
+       33.43213
+      ],
+      [
+       -111.9336,
+       33.43172
+      ],
+      [
+       -111.93082,
+       33.43079
+      ],
+      [
+       -111.92908,
+       33.43043
+      ],
+      [
+       -111.9253,
+       33.43016
+      ],
+      [
+       -111.9218,
+       33.43059
+      ],
+      [
+       -111.92017,
+       33.43101
+      ],
+      [
+       -111.91701,
+       33.4322
+      ],
+      [
+       -111.91367,
+       33.43296
+      ],
+      [
+       -111.91024,
+       33.43318
+      ],
+      [
+       -111.91051,
+       33.43574
+      ],
+      [
+       -111.91104,
+       33.43574
+      ],
+      [
+       -111.91119,
+       33.43556
+      ],
+      [
+       -111.9126,
+       33.43525
+      ],
+      [
+       -111.9149,
+       33.43523
+      ],
+      [
+       -111.91697,
+       33.43496
+      ],
+      [
+       -111.91731,
+       33.43528
+      ],
+      [
+       -111.91689,
+       33.43575
+      ],
+      [
+       -111.91833,
+       33.43671
+      ],
+      [
+       -111.9194,
+       33.4356
+      ],
+      [
+       -111.91972,
+       33.43503
+      ],
+      [
+       -111.92039,
+       33.43481
+      ],
+      [
+       -111.92161,
+       33.43387
+      ],
+      [
+       -111.92344,
+       33.43302
+      ],
+      [
+       -111.92491,
+       33.4327
+      ],
+      [
+       -111.9266,
+       33.4326
+      ],
+      [
+       -111.92913,
+       33.43282
+      ],
+      [
+       -111.93547,
+       33.43438
+      ],
+      [
+       -111.94136,
+       33.43457
+      ],
+      [
+       -111.94273,
+       33.43442
+      ],
+      [
+       -111.94466,
+       33.43446
+      ],
+      [
+       -111.9478,
+       33.43462
+      ],
+      [
+       -111.94821,
+       33.43486
+      ],
+      [
+       -111.94881,
+       33.43494
+      ],
+      [
+       -111.94907,
+       33.43493
+      ],
+      [
+       -111.94951,
+       33.43255
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "Papago Park boundary",
+    "category": "area outline",
+    "osm_id": "w102017885",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+     [
+      [
+       -111.96963,
+       33.45833
+      ],
+      [
+       -111.96543,
+       33.45832
+      ],
+      [
+       -111.96549,
+       33.451
+      ],
+      [
+       -111.95557,
+       33.45097
+      ],
+      [
+       -111.95272,
+       33.44965
+      ],
+      [
+       -111.95016,
+       33.44653
+      ],
+      [
+       -111.94879,
+       33.44673
+      ],
+      [
+       -111.94782,
+       33.44741
+      ],
+      [
+       -111.94331,
+       33.44746
+      ],
+      [
+       -111.94244,
+       33.44697
+      ],
+      [
+       -111.94123,
+       33.44749
+      ],
+      [
+       -111.93978,
+       33.45001
+      ],
+      [
+       -111.94057,
+       33.45145
+      ],
+      [
+       -111.94189,
+       33.45258
+      ],
+      [
+       -111.94306,
+       33.45496
+      ],
+      [
+       -111.94277,
+       33.45581
+      ],
+      [
+       -111.94183,
+       33.45665
+      ],
+      [
+       -111.9421,
+       33.45891
+      ],
+      [
+       -111.9416,
+       33.46168
+      ],
+      [
+       -111.93953,
+       33.46441
+      ],
+      [
+       -111.93922,
+       33.46543
+      ],
+      [
+       -111.94926,
+       33.46625
+      ],
+      [
+       -111.95743,
+       33.46529
+      ],
+      [
+       -111.95784,
+       33.46414
+      ],
+      [
+       -111.96016,
+       33.46269
+      ],
+      [
+       -111.96303,
+       33.46201
+      ],
+      [
+       -111.96318,
+       33.46133
+      ],
+      [
+       -111.96432,
+       33.46078
+      ],
+      [
+       -111.96552,
+       33.45898
+      ],
+      [
+       -111.96796,
+       33.45915
+      ],
+      [
+       -111.96796,
+       33.46017
+      ],
+      [
+       -111.96958,
+       33.46006
+      ],
+      [
+       -111.96963,
+       33.45833
+      ]
+     ]
+    ]
+   }
+  },
+  {
+   "type": "Feature",
+   "properties": {
+    "name": "South Mountain Park and Preserve boundary",
+    "category": "area outline",
+    "osm_id": "r9244885",
+    "coord_source": "OpenStreetMap Nominatim (data (c) OpenStreetMap contributors, ODbL)"
+   },
+   "geometry": {
+    "type": "MultiPolygon",
+    "coordinates": [
+     [
+      [
+       [
+        -112.16518,
+        33.32405
+       ],
+       [
+        -112.16049,
+        33.31937
+       ],
+       [
+        -112.15171,
+        33.3195
+       ],
+       [
+        -112.15173,
+        33.31053
+       ],
+       [
+        -112.14461,
+        33.30489
+       ],
+       [
+        -112.1172,
+        33.30499
+       ],
+       [
+        -112.1172,
+        33.29563
+       ],
+       [
+        -112.11576,
+        33.29571
+       ],
+       [
+        -112.10982,
+        33.29842
+       ],
+       [
+        -112.10412,
+        33.3027
+       ],
+       [
+        -112.10045,
+        33.30314
+       ],
+       [
+        -112.10045,
+        33.30506
+       ],
+       [
+        -112.08361,
+        33.30511
+       ],
+       [
+        -112.08362,
+        33.31971
+       ],
+       [
+        -112.06813,
+        33.31968
+       ],
+       [
+        -112.06734,
+        33.31678
+       ],
+       [
+        -112.06563,
+        33.31759
+       ],
+       [
+        -112.0669,
+        33.31967
+       ],
+       [
+        -112.03182,
+        33.31967
+       ],
+       [
+        -112.03181,
+        33.3233
+       ],
+       [
+        -112.01449,
+        33.32334
+       ],
+       [
+        -112.01449,
+        33.32848
+       ],
+       [
+        -112.01223,
+        33.32803
+       ],
+       [
+        -112.01209,
+        33.32882
+       ],
+       [
+        -112.01449,
+        33.32966
+       ],
+       [
+        -112.01444,
+        33.34057
+       ],
+       [
+        -112.01248,
+        33.34148
+       ],
+       [
+        -111.99718,
+        33.34149
+       ],
+       [
+        -111.99717,
+        33.35119
+       ],
+       [
+        -111.99397,
+        33.35293
+       ],
+       [
+        -111.99528,
+        33.35358
+       ],
+       [
+        -111.99524,
+        33.3551
+       ],
+       [
+        -111.99226,
+        33.35486
+       ],
+       [
+        -111.99127,
+        33.35615
+       ],
+       [
+        -111.9891,
+        33.35584
+       ],
+       [
+        -111.98585,
+        33.35896
+       ],
+       [
+        -111.98375,
+        33.35989
+       ],
+       [
+        -111.98345,
+        33.36173
+       ],
+       [
+        -111.98246,
+        33.36262
+       ],
+       [
+        -111.97988,
+        33.36283
+       ],
+       [
+        -111.97989,
+        33.36359
+       ],
+       [
+        -111.98068,
+        33.36369
+       ],
+       [
+        -111.97977,
+        33.36404
+       ],
+       [
+        -111.9762,
+        33.36403
+       ],
+       [
+        -111.97866,
+        33.36436
+       ],
+       [
+        -111.98261,
+        33.36367
+       ],
+       [
+        -111.9818,
+        33.36477
+       ],
+       [
+        -111.97963,
+        33.36548
+       ],
+       [
+        -111.9769,
+        33.36474
+       ],
+       [
+        -111.9768,
+        33.36887
+       ],
+       [
+        -111.97557,
+        33.37144
+       ],
+       [
+        -111.98032,
+        33.3709
+       ],
+       [
+        -111.98142,
+        33.37126
+       ],
+       [
+        -111.9813,
+        33.37205
+       ],
+       [
+        -111.98425,
+        33.37162
+       ],
+       [
+        -111.98394,
+        33.37278
+       ],
+       [
+        -111.98137,
+        33.37335
+       ],
+       [
+        -111.98088,
+        33.3744
+       ],
+       [
+        -111.98786,
+        33.37446
+       ],
+       [
+        -111.98749,
+        33.37625
+       ],
+       [
+        -111.98893,
+        33.37586
+       ],
+       [
+        -111.9888,
+        33.37464
+       ],
+       [
+        -111.99679,
+        33.3744
+       ],
+       [
+        -111.99691,
+        33.37328
+       ],
+       [
+        -111.99939,
+        33.37244
+       ],
+       [
+        -112.00129,
+        33.37244
+       ],
+       [
+        -112.00128,
+        33.37343
+       ],
+       [
+        -112.00387,
+        33.3731
+       ],
+       [
+        -112.00458,
+        33.37188
+       ],
+       [
+        -112.00589,
+        33.37207
+       ],
+       [
+        -112.00547,
+        33.37078
+       ],
+       [
+        -112.00729,
+        33.37131
+       ],
+       [
+        -112.0073,
+        33.37078
+       ],
+       [
+        -112.01441,
+        33.37076
+       ],
+       [
+        -112.01441,
+        33.36336
+       ],
+       [
+        -112.01452,
+        33.36771
+       ],
+       [
+        -112.02298,
+        33.36758
+       ],
+       [
+        -112.02277,
+        33.36638
+       ],
+       [
+        -112.02514,
+        33.36477
+       ],
+       [
+        -112.03164,
+        33.36661
+       ],
+       [
+        -112.03163,
+        33.365
+       ],
+       [
+        -112.0348,
+        33.365
+       ],
+       [
+        -112.03427,
+        33.36326
+       ],
+       [
+        -112.03527,
+        33.36326
+       ],
+       [
+        -112.03583,
+        33.36434
+       ],
+       [
+        -112.03583,
+        33.36326
+       ],
+       [
+        -112.0402,
+        33.36325
+       ],
+       [
+        -112.04026,
+        33.35603
+       ],
+       [
+        -112.04877,
+        33.35601
+       ],
+       [
+        -112.04878,
+        33.35992
+       ],
+       [
+        -112.04616,
+        33.35964
+       ],
+       [
+        -112.04616,
+        33.36129
+       ],
+       [
+        -112.04785,
+        33.36082
+       ],
+       [
+        -112.04985,
+        33.36144
+       ],
+       [
+        -112.04985,
+        33.35962
+       ],
+       [
+        -112.05299,
+        33.35964
+       ],
+       [
+        -112.05455,
+        33.3585
+       ],
+       [
+        -112.05507,
+        33.35924
+       ],
+       [
+        -112.05855,
+        33.35967
+       ],
+       [
+        -112.05881,
+        33.3578
+       ],
+       [
+        -112.05737,
+        33.35646
+       ],
+       [
+        -112.06092,
+        33.3571
+       ],
+       [
+        -112.06168,
+        33.35692
+       ],
+       [
+        -112.06167,
+        33.35607
+       ],
+       [
+        -112.06598,
+        33.35609
+       ],
+       [
+        -112.06599,
+        33.35481
+       ],
+       [
+        -112.06826,
+        33.35479
+       ],
+       [
+        -112.06893,
+        33.35606
+       ],
+       [
+        -112.07212,
+        33.35603
+       ],
+       [
+        -112.07302,
+        33.35783
+       ],
+       [
+        -112.07463,
+        33.35782
+       ],
+       [
+        -112.07581,
+        33.35598
+       ],
+       [
+        -112.0786,
+        33.35596
+       ],
+       [
+        -112.07893,
+        33.35777
+       ],
+       [
+        -112.08249,
+        33.35767
+       ],
+       [
+        -112.08248,
+        33.35592
+       ],
+       [
+        -112.08323,
+        33.35578
+       ],
+       [
+        -112.09198,
+        33.3559
+       ],
+       [
+        -112.09371,
+        33.35306
+       ],
+       [
+        -112.09202,
+        33.35195
+       ],
+       [
+        -112.09203,
+        33.35109
+       ],
+       [
+        -112.09463,
+        33.34954
+       ],
+       [
+        -112.09576,
+        33.35001
+       ],
+       [
+        -112.0959,
+        33.35121
+       ],
+       [
+        -112.09782,
+        33.35078
+       ],
+       [
+        -112.10039,
+        33.3518
+       ],
+       [
+        -112.1004,
+        33.34871
+       ],
+       [
+        -112.09775,
+        33.34872
+       ],
+       [
+        -112.09769,
+        33.34961
+       ],
+       [
+        -112.09758,
+        33.34863
+       ],
+       [
+        -112.10061,
+        33.34862
+       ],
+       [
+        -112.10061,
+        33.35134
+       ],
+       [
+        -112.10477,
+        33.35225
+       ],
+       [
+        -112.10477,
+        33.35043
+       ],
+       [
+        -112.10691,
+        33.35043
+       ],
+       [
+        -112.10691,
+        33.34954
+       ],
+       [
+        -112.109,
+        33.34935
+       ],
+       [
+        -112.10909,
+        33.34861
+       ],
+       [
+        -112.11178,
+        33.34764
+       ],
+       [
+        -112.11345,
+        33.34597
+       ],
+       [
+        -112.11346,
+        33.34498
+       ],
+       [
+        -112.11781,
+        33.34497
+       ],
+       [
+        -112.11783,
+        33.34181
+       ],
+       [
+        -112.11998,
+        33.34134
+       ],
+       [
+        -112.12066,
+        33.3391
+       ],
+       [
+        -112.12142,
+        33.34017
+       ],
+       [
+        -112.12106,
+        33.34132
+       ],
+       [
+        -112.12213,
+        33.34131
+       ],
+       [
+        -112.12211,
+        33.34347
+       ],
+       [
+        -112.12905,
+        33.34392
+       ],
+       [
+        -112.12912,
+        33.34217
+       ],
+       [
+        -112.12644,
+        33.34206
+       ],
+       [
+        -112.12956,
+        33.34202
+       ],
+       [
+        -112.12955,
+        33.34121
+       ],
+       [
+        -112.13495,
+        33.34113
+       ],
+       [
+        -112.13506,
+        33.33892
+       ],
+       [
+        -112.13733,
+        33.33858
+       ],
+       [
+        -112.1383,
+        33.33622
+       ],
+       [
+        -112.14046,
+        33.33402
+       ],
+       [
+        -112.14265,
+        33.33616
+       ],
+       [
+        -112.14582,
+        33.33401
+       ],
+       [
+        -112.14798,
+        33.33401
+       ],
+       [
+        -112.15494,
+        33.32764
+       ],
+       [
+        -112.15387,
+        33.32674
+       ],
+       [
+        -112.16267,
+        33.32732
+       ],
+       [
+        -112.16518,
+        33.32405
+       ]
+      ],
+      [
+       [
+        -112.01391,
+        33.34087
+       ],
+       [
+        -112.01443,
+        33.34148
+       ],
+       [
+        -112.01361,
+        33.34148
+       ],
+       [
+        -112.01391,
+        33.34087
+       ]
+      ]
+     ],
+     [
+      [
+       [
+        -112.03805,
+        33.36357
+       ],
+       [
+        -112.03591,
+        33.36335
+       ],
+       [
+        -112.03591,
+        33.36403
+       ],
+       [
+        -112.03684,
+        33.36415
+       ],
+       [
+        -112.03805,
+        33.36357
+       ]
+      ]
+     ],
+     [
+      [
+       [
+        -112.03271,
+        33.36514
+       ],
+       [
+        -112.03174,
+        33.36514
+       ],
+       [
+        -112.03175,
+        33.36663
+       ],
+       [
+        -112.0327,
+        33.36593
+       ],
+       [
+        -112.03271,
+        33.36514
+       ]
+      ]
+     ],
+     [
+      [
+       [
+        -112.02755,
+        33.36646
+       ],
+       [
+        -112.02712,
+        33.3657
+       ],
+       [
+        -112.02522,
+        33.36649
+       ],
+       [
+        -112.02561,
+        33.36752
+       ],
+       [
+        -112.02677,
+        33.3675
+       ],
+       [
+        -112.02755,
+        33.36646
+       ]
+      ]
+     ]
+    ]
+   }
+  }
+ ]
+}

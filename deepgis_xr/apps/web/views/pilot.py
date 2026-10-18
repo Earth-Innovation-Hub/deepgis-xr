@@ -20,7 +20,8 @@ from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 
-ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait")
+ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
+                "show_geology", "hide_geology")
 MAX_ACTIONS = 8
 MAX_HISTORY = 8
 MAX_MESSAGE_CHARS = 600
@@ -76,12 +77,16 @@ Actions (all heights are metres ABOVE GROUND):
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
 - stop: stop all motion immediately.
 - wait: hover for seconds.
+- show_geology: mark the mapped geologic features (sourced data for the Phoenix and Tempe area) within radius_m of a place and list them in the chat. Fields: place or lat+lon (omit both for the point in view); radius_m (default 5000).
+- hide_geology: remove the geology markers.
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
 - Only fill fields the user asked for or that clearly follow from the request; the viewer picks sensible defaults for the rest.
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
+- For geology, rocks or landforms around a place, put show_geology first, then any orbit of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
+- Never name, list or describe geologic features in reply; the viewer lists them from its sourced data.
 - If the request is a question or not a flight request, answer it in reply and return no actions.
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 

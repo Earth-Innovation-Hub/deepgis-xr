@@ -151,6 +151,7 @@
         .pilot-msg.ai { align-self: flex-start; background: rgba(51, 65, 85, 0.7); color: #f1f5f9; max-width: 92%; }
         .pilot-msg.step { align-self: flex-start; color: #94a3b8; font-size: 0.72rem; padding: 0 9px; }
         .pilot-msg.error { align-self: flex-start; color: #fca5a5; font-size: 0.75rem; padding: 0 9px; }
+        .pilot-msg.geo { align-self: flex-start; color: #fde68a; font-size: 0.74rem; padding: 0 9px; }
         .pilot-msg a { color: #fbbf24; }
         .pilot-form { display: flex; gap: 6px; }
         .pilot-form input {
@@ -4351,8 +4352,8 @@
         
         // ========== AI PILOT CHAT ==========
         // POST /label/api/pilot/ turns a request into actions (goto, orbit, takeoff,
-        // land, look, stop, wait); they run here, in order, on the drone widgets
-        // above. Place names are geocoded with Cesium Ion.
+        // land, look, stop, wait, show_geology, hide_geology); they run here, in
+        // order, on the drone widgets above. Place names are geocoded with Cesium Ion.
         (function initAiPilot() {
             const panel = document.getElementById('pilotPanel');
             const toggleBtn = document.getElementById('hudPilotBtn');
@@ -4447,7 +4448,7 @@
                              label: `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` };
                 }
                 if (a.place) {
-                    let hit = geocodeCache.get(a.place);
+                    let hit = geocodeCache.get(a.place) || await geologyPlace(a.place);
                     if (!hit) {
                         const svc = new Cesium.IonGeocoderService({ scene: getViewer().scene });
                         const results = await svc.geocode(a.place);
@@ -4473,6 +4474,94 @@
             
             function check(id) { if (id !== runId) throw new Cancelled(); }
             
+            // Geology layer. Features come from a sourced GeoJSON (descriptions from the
+            // Arizona Geological Survey and others, coordinates from OpenStreetMap); the
+            // model only chooses the place and radius, never the features listed.
+            const GEOLOGY_URL = "{% static 'web/geo/tempe-geology.geojson' %}";
+            const EARTH_R = 6371008.8;
+            let geologyData = null;
+            let geologyLayer = null;
+            let geologyArea = null; // {lon, lat (radians), radius (m)} while the layer is shown
+            
+            function distanceM(lon1, lat1, lon2, lat2) {
+                const s = Math.sin((lat2 - lat1) / 2) ** 2 +
+                    Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2;
+                return 2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(s)));
+            }
+            
+            function insideRing(ring, x, y) {
+                let inside = false;
+                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+                    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+                }
+                return inside;
+            }
+            
+            // Metres from (lon, lat) radians to a feature: 0 inside an outline, else the nearest vertex
+            function featureDistance(f, lon, lat) {
+                const g = f.geometry || {};
+                const x = Cesium.Math.toDegrees(lon), y = Cesium.Math.toDegrees(lat);
+                const polys = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+                if (polys.some(p => insideRing(p[0], x, y))) return 0;
+                let best = Infinity;
+                const walk = (c) => {
+                    if (typeof c[0] === 'number') {
+                        best = Math.min(best, distanceM(lon, lat, Cesium.Math.toRadians(c[0]), Cesium.Math.toRadians(c[1])));
+                    } else c.forEach(walk);
+                };
+                walk(g.coordinates || []);
+                return best;
+            }
+            
+            const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
+                c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+            
+            function geologyHtml(p, d) {
+                const rows = [['Type', p.category], ['Rock units', p.rock_units], ['Age', p.age], ['Distance', fmtM(d)]]
+                    .filter(r => r[1]).map(r => `<tr><th>${r[0]}</th><td>${esc(r[1])}</td></tr>`).join('');
+                const sources = (p.sources || []).filter(s => /^https?:\/\//.test(s.url || ''))
+                    .map(s => `<li><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></li>`).join('');
+                return (p.description ? `<p>${esc(p.description)}</p>` : '') +
+                    `<table class="cesium-infoBox-defaultTable"><tbody>${rows}</tbody></table>` +
+                    (sources ? `<p>Sources:</p><ul>${sources}</ul>` : '') +
+                    (p.coord_source ? `<p style="font-size:11px">Location: ${esc(p.coord_source)}</p>` : '');
+            }
+            
+            async function loadGeology() {
+                if (!geologyData) {
+                    const resp = await fetch(GEOLOGY_URL);
+                    if (!resp.ok) throw new Error('Could not load the geology layer');
+                    geologyData = await resp.json();
+                }
+                return geologyData;
+            }
+            
+            // Ion has no peaks or buttes ("Hayden Butte" comes back as Hayden Rd), so
+            // names of mapped geology sites resolve to their OpenStreetMap point first.
+            // "Tempe Butte (Hayden Butte)" answers to either name.
+            async function geologyPlace(place) {
+                const key = place.split(',')[0].trim().toLowerCase().replace(/^the /, '');
+                let data;
+                try { data = await loadGeology(); } catch (e) { return null; }
+                const f = data.features.find(f => f.geometry.type === 'Point' &&
+                    f.properties.name.toLowerCase().split(/\s*[()]\s*/).filter(Boolean).includes(key));
+                if (!f) return null;
+                const [lon, lat] = f.geometry.coordinates;
+                return { lon: Cesium.Math.toRadians(lon), lat: Cesium.Math.toRadians(lat), sizeM: null,
+                         label: f.properties.name };
+            }
+            
+            function circlePositions(lon, lat, radius) {
+                const pts = [];
+                for (let k = 0; k <= 128; k++) {
+                    const t = 2 * Math.PI * k / 128;
+                    const la = lat + radius * Math.sin(t) / EARTH_R;
+                    pts.push(Cesium.Cartesian3.fromRadians(lon + radius * Math.cos(t) / (EARTH_R * Math.cos(lat)), la));
+                }
+                return pts;
+            }
+            
             function flight(opts, id) {
                 const viewer = getViewer();
                 return new Promise((resolve, reject) => {
@@ -4497,12 +4586,16 @@
                 el.dispatchEvent(new Event('input', { bubbles: true }));
             }
             
-            function stopAll() {
-                runId++;
-                const viewer = getViewer();
+            function haltMotion() {
                 drone().stopOrbit?.();
                 drone().stopVertical?.();
-                viewer?.camera.cancelFlight();
+                getViewer()?.camera.cancelFlight();
+            }
+            
+            // Cancels the running plan as well as the motion
+            function stopAll() {
+                runId++;
+                haltMotion();
             }
             
             async function verticalTo(height, speed, id) {
@@ -4547,8 +4640,12 @@
                     check(id);
                     const viewer = getViewer();
                     const ground = await groundHeight(p.lon, p.lat);
-                    const radius = a.radius_m || clamp((p.sizeM || 1000) * 0.6, 100, 20000);
-                    const alt = a.alt_m || clamp(radius * 0.5, 80, 3000);
+                    // Orbiting the centre of the geology layer: size the circle to keep the area in view
+                    const geo = geologyArea && distanceM(p.lon, p.lat, geologyArea.lon, geologyArea.lat) < 1000
+                        ? geologyArea : null;
+                    const radius = a.radius_m || (geo ? clamp(geo.radius * 0.5, 100, 20000)
+                        : clamp((p.sizeM || 1000) * 0.6, 100, 20000));
+                    const alt = a.alt_m || (geo ? clamp(geo.radius * 0.35, 80, 7000) : clamp(radius * 0.5, 80, 3000));
                     const revs = a.revolutions || 1;
                     const speed = a.speed_mps || clamp(2 * Math.PI * radius / 75, 5, 150);
                     const pitchDeg = Number.isFinite(a.pitch_deg) ? a.pitch_deg
@@ -4614,7 +4711,7 @@
                 },
                 
                 async stop() {
-                    stopAll();
+                    haltMotion();
                     addMsg('step', 'Stopped');
                 },
                 
@@ -4622,6 +4719,84 @@
                     const end = Date.now() + (a.seconds || 0) * 1000;
                     addMsg('step', `Hovering ${Math.round(a.seconds || 0)} s`);
                     await until(() => Date.now() >= end, id);
+                },
+                
+                async show_geology(a, id) {
+                    const p = await resolvePoint(a);
+                    check(id);
+                    const viewer = getViewer();
+                    const radius = a.radius_m || 5000;
+                    const data = await loadGeology();
+                    check(id);
+                    const found = data.features
+                        .map(f => ({ f, d: featureDistance(f, p.lon, p.lat) }))
+                        .filter(x => x.d <= radius)
+                        .sort((x, y) => x.d - y.d);
+                    const byName = new Map(found.map(x => [x.f.properties.name, x]));
+                    
+                    const ds = await Cesium.GeoJsonDataSource.load(
+                        { type: 'FeatureCollection', features: found.map(x => x.f) }, {
+                            clampToGround: true,
+                            fill: Cesium.Color.ORANGE.withAlpha(0.15),
+                            markerColor: Cesium.Color.ORANGERED,
+                            markerSymbol: 'mountain',
+                        });
+                    check(id);
+                    ds.name = 'ai-pilot-geology';
+                    ds.entities.values.forEach(e => {
+                        const hit = byName.get(e.name);
+                        if (hit) e.description = geologyHtml(hit.f.properties, hit.d);
+                        if (!e.billboard) return;
+                        e.billboard.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                        e.billboard.disableDepthTestDistance = Number.POSITIVE_INFINITY;
+                        e.label = new Cesium.LabelGraphics({
+                            text: e.name, font: '13px sans-serif',
+                            fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+                            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                            pixelOffset: new Cesium.Cartesian2(0, -40),
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        });
+                    });
+                    ds.entities.add({
+                        name: `Search radius ${fmtM(radius)}`,
+                        polyline: {
+                            positions: circlePositions(p.lon, p.lat, radius), clampToGround: true,
+                            width: 2, material: Cesium.Color.YELLOW.withAlpha(0.8),
+                        },
+                    });
+                    runners.hide_geology({}, id, true);
+                    await viewer.dataSources.add(ds);
+                    geologyLayer = ds;
+                    geologyArea = { lon: p.lon, lat: p.lat, radius };
+                    
+                    const sites = found.filter(x => x.f.geometry.type === 'Point');
+                    if (!sites.length) {
+                        addMsg('step', `No mapped geologic features within ${fmtM(radius)} of ${p.label}; ` +
+                            'the layer covers the Phoenix and Tempe area');
+                    } else {
+                        addMsg('step', `Geologic features within ${fmtM(radius)} of ${p.label} ` +
+                            '(click a marker for rock units and sources):');
+                        sites.forEach(({ f, d }) => {
+                            const q = f.properties;
+                            addMsg('geo', `${q.name}, ${fmtM(d)}: ${q.category}; ${q.age}`);
+                        });
+                    }
+                    if (a.frame) {
+                        const ground = await groundHeight(p.lon, p.lat);
+                        await flight({
+                            sphere: new Cesium.BoundingSphere(Cesium.Cartesian3.fromRadians(p.lon, p.lat, ground), radius),
+                            options: { offset: new Cesium.HeadingPitchRange(viewer.camera.heading, Cesium.Math.toRadians(-50), radius * 2.6) },
+                        }, id);
+                    }
+                },
+                
+                async hide_geology(a, id, quiet) {
+                    const had = !!geologyLayer;
+                    if (had) getViewer().dataSources.remove(geologyLayer, true);
+                    geologyLayer = null;
+                    geologyArea = null;
+                    if (!quiet) addMsg('step', had ? 'Geology layer removed' : 'No geology layer is shown');
                 },
             };
             
@@ -4640,14 +4815,27 @@
                 check(id);
             }
             
+            const samePlace = (x, y) => (x.place && x.place === y.place) ||
+                (Number.isFinite(x.lat) && x.lat === y.lat && x.lon === y.lon);
+            
             async function runPlan(actions) {
+                // An orbit flies to its own start point; a goto to the same place first is a detour
+                actions = actions.filter((a, i) => {
+                    if (a.type !== 'goto') return true;
+                    const next = actions.slice(i + 1).find(b => b.type !== 'show_geology');
+                    return !(next && next.type === 'orbit' && samePlace(a, next));
+                });
                 // A new plan replaces whatever is flying now
                 stopAll();
                 const id = runId;
                 try {
                     if (actions.some(a => a.type !== 'stop')) await ensure3D(id);
-                    for (const a of actions) {
+                    for (const [i, a] of actions.entries()) {
                         check(id);
+                        // Frame the area unless a later step moves the camera anyway
+                        if (a.type === 'show_geology') {
+                            a.frame = !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit');
+                        }
                         await runners[a.type](a, id);
                     }
                     if (actions.some(a => a.type !== 'stop')) addMsg('step', 'Done');
