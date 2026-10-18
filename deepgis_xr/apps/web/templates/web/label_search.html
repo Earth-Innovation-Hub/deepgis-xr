@@ -4441,6 +4441,28 @@
                 return view;
             }
             
+            // OpenStreetMap knows parks, peaks and landmarks that Ion misses ("Griffith
+            // Park, Los Angeles" came back from Ion as Carlton Way Park). Public
+            // Nominatim allows ~1 request/s; lookups are cached per page.
+            async function nominatim(place) {
+                const url = 'https://nominatim.openstreetmap.org/search?' +
+                    new URLSearchParams({ q: place, format: 'jsonv2', limit: '1', 'accept-language': 'en' });
+                try {
+                    const resp = await fetch(url);
+                    if (!resp.ok) return null;
+                    const [h] = await resp.json();
+                    if (!h) return null;
+                    const [south, north, west, east] = h.boundingbox.map(Number);
+                    const lat = Cesium.Math.toRadians(Number(h.lat));
+                    const sizeM = Math.max(Cesium.Math.toRadians(east - west) * EARTH_R * Math.cos(lat),
+                                           Cesium.Math.toRadians(north - south) * EARTH_R);
+                    return { lon: Cesium.Math.toRadians(Number(h.lon)), lat, sizeM: sizeM > 50 ? sizeM : null,
+                             label: h.display_name.split(', ').slice(0, 3).join(', ') };
+                } catch (e) {
+                    return null;
+                }
+            }
+            
             // -> {lon, lat (radians), sizeM (place extent or null), label}
             async function resolvePoint(a) {
                 if (Number.isFinite(a.lat) && Number.isFinite(a.lon)) {
@@ -4449,6 +4471,7 @@
                 }
                 if (a.place) {
                     let hit = geocodeCache.get(a.place) || await geologyPlace(a.place);
+                    if (!hit && (hit = await nominatim(a.place))) geocodeCache.set(a.place, hit);
                     if (!hit) {
                         const svc = new Cesium.IonGeocoderService({ scene: getViewer().scene });
                         const results = await svc.geocode(a.place);
@@ -4550,6 +4573,68 @@
                 const [lon, lat] = f.geometry.coordinates;
                 return { lon: Cesium.Math.toRadians(lon), lat: Cesium.Math.toRadians(lat), sizeM: null,
                          label: f.properties.name };
+            }
+            
+            // Published geologic maps anywhere (most detailed in the US) via Macrostrat:
+            // sample the map at the centre and on two rings, keep the most detailed
+            // map at each point, merge repeats. Each unit carries its source map.
+            const MACROSTRAT_API = 'https://macrostrat.org/api/v2/geologic_units/map';
+            const MACROSTRAT_TILES = 'https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png';
+            const MAP_SCALES = ['large', 'medium', 'small', 'tiny'];
+            let geologyMap = null; // Macrostrat imagery layer while shown
+            
+            async function mapUnits(lon, lat, radius) {
+                const pts = [[lon, lat]];
+                for (const [frac, n] of [[0.5, 6], [1, 8]]) {
+                    for (let k = 0; k < n; k++) {
+                        const t = 2 * Math.PI * k / n;
+                        pts.push([lon + radius * frac * Math.cos(t) / (EARTH_R * Math.cos(lat)),
+                                  lat + radius * frac * Math.sin(t) / EARTH_R]);
+                    }
+                }
+                const hits = await Promise.all(pts.map(async ([x, y]) => {
+                    try {
+                        const resp = await fetch(`${MACROSTRAT_API}?` + new URLSearchParams({
+                            lat: Cesium.Math.toDegrees(y).toFixed(5), lng: Cesium.Math.toDegrees(x).toFixed(5) }));
+                        if (!resp.ok) return null;
+                        const res = (await resp.json()).success || {};
+                        const data = res.data || [];
+                        const u = MAP_SCALES.map(s => data.find(d => d.scale === s)).find(Boolean);
+                        return u ? { u, ref: (res.refs || {})[u.source_id], d: distanceM(lon, lat, x, y) } : null;
+                    } catch (e) {
+                        return null;
+                    }
+                }));
+                const units = new Map();
+                hits.filter(Boolean).forEach(h => {
+                    const key = `${h.u.source_id}|${h.u.name}`;
+                    const prev = units.get(key);
+                    if (prev) { prev.n++; prev.d = Math.min(prev.d, h.d); } else units.set(key, { ...h, n: 1 });
+                });
+                return { sampled: pts.length, units: [...units.values()].sort((x, y) => y.n - x.n || x.d - y.d) };
+            }
+            
+            function unitLine({ u, d }) {
+                const age = u.b_int_name === u.t_int_name ? u.b_int_name : `${u.b_int_name} to ${u.t_int_name}`;
+                const fmtMa = (v) => v >= 1 ? String(Math.round(v * 10) / 10) : String(+v.toPrecision(2));
+                const ma = Number.isFinite(u.b_int_age) && Number.isFinite(u.t_int_age)
+                    ? ` (${fmtMa(u.b_int_age)}-${fmtMa(u.t_int_age)} Ma)` : '';
+                let rock = (u.descrip || u.lith || '').replace(/\s+/g, ' ').trim();
+                if (rock.length > 110) rock = rock.slice(0, 107) + '...';
+                const where = d < 1 ? 'at the centre' : `nearest ${fmtM(d)}`;
+                return `${u.name}: ${age}${ma}${rock ? '; ' + rock : ''} [${where}]`;
+            }
+            
+            function showGeologyMap(lon, lat, radius) {
+                const viewer = getViewer();
+                const dLat = radius / EARTH_R, dLon = radius / (EARTH_R * Math.cos(lat));
+                geologyMap = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+                    url: MACROSTRAT_TILES,
+                    tileWidth: 512, tileHeight: 512, maximumLevel: 13,
+                    rectangle: new Cesium.Rectangle(lon - dLon, lat - dLat, lon + dLon, lat + dLat),
+                    credit: new Cesium.Credit('Geologic map: Macrostrat (CC BY 4.0)'),
+                }));
+                geologyMap.alpha = 0.55;
             }
             
             function circlePositions(lon, lat, radius) {
@@ -4726,6 +4811,7 @@
                     check(id);
                     const viewer = getViewer();
                     const radius = a.radius_m || 5000;
+                    const unitsPending = mapUnits(p.lon, p.lat, radius);
                     const data = await loadGeology();
                     check(id);
                     const found = data.features
@@ -4769,18 +4855,27 @@
                     await viewer.dataSources.add(ds);
                     geologyLayer = ds;
                     geologyArea = { lon: p.lon, lat: p.lat, radius };
+                    showGeologyMap(p.lon, p.lat, radius);
                     
                     const sites = found.filter(x => x.f.geometry.type === 'Point');
-                    if (!sites.length) {
-                        addMsg('step', `No mapped geologic features within ${fmtM(radius)} of ${p.label}; ` +
-                            'the layer covers the Phoenix and Tempe area');
-                    } else {
-                        addMsg('step', `Geologic features within ${fmtM(radius)} of ${p.label} ` +
+                    if (sites.length) {
+                        addMsg('step', `Geologic sites within ${fmtM(radius)} of ${p.label} ` +
                             '(click a marker for rock units and sources):');
                         sites.forEach(({ f, d }) => {
                             const q = f.properties;
                             addMsg('geo', `${q.name}, ${fmtM(d)}: ${q.category}; ${q.age}`);
                         });
+                    }
+                    const { sampled, units } = await unitsPending;
+                    check(id);
+                    if (units.length) {
+                        addMsg('step', `Geologic map units within ${fmtM(radius)} of ${p.label} ` +
+                            `(Macrostrat, ${sampled} sample points; map overlay shown):`);
+                        units.slice(0, 8).forEach(x => addMsg('geo', unitLine(x)));
+                        const refs = [...new Set(units.slice(0, 8).map(x => x.ref).filter(Boolean))];
+                        refs.forEach(r => addMsg('step', `Source: ${r.trim()}`));
+                    } else if (!sites.length) {
+                        addMsg('step', `No geologic data found within ${fmtM(radius)} of ${p.label}`);
                     }
                     if (a.frame) {
                         const ground = await groundHeight(p.lon, p.lat);
@@ -4794,7 +4889,9 @@
                 async hide_geology(a, id, quiet) {
                     const had = !!geologyLayer;
                     if (had) getViewer().dataSources.remove(geologyLayer, true);
+                    if (geologyMap) getViewer().imageryLayers.remove(geologyMap, true);
                     geologyLayer = null;
+                    geologyMap = null;
                     geologyArea = null;
                     if (!quiet) addMsg('step', had ? 'Geology layer removed' : 'No geology layer is shown');
                 },

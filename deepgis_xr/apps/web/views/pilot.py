@@ -77,7 +77,7 @@ Actions (all heights are metres ABOVE GROUND):
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
 - stop: stop all motion immediately.
 - wait: hover for seconds.
-- show_geology: mark the mapped geologic features (sourced data for the Phoenix and Tempe area) within radius_m of a place and list them in the chat. Fields: place or lat+lon (omit both for the point in view); radius_m (default 5000).
+- show_geology: overlay the published geologic map within radius_m of a place (anywhere; most detailed in the US) and list its rock units and any curated geology sites in the chat. Fields: place or lat+lon (omit both for the point in view); radius_m (default 5000).
 - hide_geology: remove the geology markers.
 
 Rules:
