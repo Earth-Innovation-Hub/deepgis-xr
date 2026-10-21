@@ -38,12 +38,41 @@ class CleanActionsTests(TestCase):
         out = pilot.clean_actions([{"type": "goto", "lat": 33.43, "lon": -111.94, "alt_m": 200}])
         self.assertEqual(out, [{"type": "goto", "lat": 33.43, "lon": -111.94, "alt_m": 200.0}])
 
-    def test_geology_actions(self):
-        out = pilot.clean_actions([{"type": "show_geology", "place": "Hayden Butte, Tempe, Arizona",
-                                    "radius_m": 5000, "features": ["Lake Tempe"]},
-                                   {"type": "hide_geology"}])
-        self.assertEqual(out, [{"type": "show_geology", "place": "Hayden Butte, Tempe, Arizona",
-                                "radius_m": 5000.0}, {"type": "hide_geology"}])
+    def test_layer_actions(self):
+        out = pilot.clean_actions([
+            {"type": "show_layer", "kind": "geology", "place": "Hayden Butte, Tempe, Arizona",
+             "radius_m": 5000, "features": ["Lake Tempe"]},
+            {"type": "show_layer", "kind": "volcanoes", "place": "Tempe, Arizona"},
+            {"type": "show_layer", "place": "Tempe, Arizona"},
+            {"type": "show_layer", "kind": "river", "place": "Salt River", "distance_km": 9000},
+            {"type": "hide_layer", "kind": "faults"},
+            {"type": "hide_layer", "kind": "bogus"},
+            {"type": "hide_layer"},
+        ])
+        self.assertEqual(out, [
+            {"type": "show_layer", "kind": "geology", "place": "Hayden Butte, Tempe, Arizona", "radius_m": 5000.0},
+            {"type": "show_layer", "kind": "river", "place": "Salt River", "distance_km": 500.0},
+            {"type": "hide_layer", "kind": "faults"},
+            {"type": "hide_layer"},
+        ])
+
+    def test_layers_go_before_an_orbit(self):
+        out = pilot.clean_actions([{"type": "goto", "place": "Tempe"},
+                                   {"type": "orbit", "place": "Hayden Butte"},
+                                   {"type": "show_layer", "kind": "geology", "place": "Hayden Butte"},
+                                   {"type": "wait", "seconds": 2},
+                                   {"type": "show_layer", "kind": "faults"}])
+        self.assertEqual([a["type"] for a in out], ["goto", "show_layer", "orbit", "wait", "show_layer"])
+
+    def test_kind_only_on_layer_actions(self):
+        self.assertEqual(pilot.clean_actions([{"type": "goto", "place": "Tempe", "kind": "faults", "distance_km": 5}]),
+                         [{"type": "goto", "place": "Tempe"}])
+
+    def test_distance_km_is_a_radius_except_for_river(self):
+        out = pilot.clean_actions([{"type": "show_layer", "kind": "faults", "place": "Bishop", "distance_km": 15},
+                                   {"type": "show_layer", "kind": "fires", "distance_km": 5, "radius_m": 900}])
+        self.assertEqual(out, [{"type": "show_layer", "kind": "faults", "place": "Bishop", "radius_m": 15000.0},
+                               {"type": "show_layer", "kind": "fires", "radius_m": 900.0}])
 
     def test_caps_action_count(self):
         self.assertEqual(len(pilot.clean_actions([{"type": "wait", "seconds": 1}] * 20)), pilot.MAX_ACTIONS)

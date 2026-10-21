@@ -34,25 +34,38 @@ A **Pilot** panel on the search page turns requests into camera-drone flights:
 - *"fly to Hayden Library at 200 m, orbit it twice clockwise, then land"*
 - *"climb to 1500 m and look at the horizon"*
 - *"orbit around Hayden Butte and show geologic features within 5 km"*
-- *"show geology around Griffith Park, Los Angeles while orbiting it"*
+- *"show active faults near Bishop"*
+- *"trace the Salt River downstream and show live flow"*
+- *"trails, springs and mines within 3 km"*
 
 A language model only chooses the actions and the numbers the user gave
-(`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_geology`,
-`hide_geology`). Django validates and clamps them, and the page runs them on
+(`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
+`hide_layer`). Django validates and clamps them, and the page runs them on
 the existing drone controls. It never touches a real vehicle. See
 [AI Pilot architecture](#-ai-pilot-architecture).
 
-### 🪨 Geology layer
-- **Published geologic maps anywhere** (most detailed in the US) via
-  [Macrostrat](https://macrostrat.org/): rock units sampled across a circle,
-  with age, lithology and the source map citation, plus the geologic map
-  draped over the terrain.
-- **Curated geology sites** around Phoenix and Tempe (Tempe/Hayden Butte,
-  Papago and Barnes Buttes, Hole-in-the-Rock, Camelback Mountain, South
-  Mountains, Superstition Mountains, Tempe Town Lake). Each has a description
-  sourced from Arizona Geological Survey publications and others, plus
-  OpenStreetMap coordinates, in
-  `staticfiles/web/geo/tempe-geology.geojson`.
+### 🗺️ Data layers
+`show_layer {kind, place, radius_m}` draws a layer around a place, lists what
+is there in the chat, and cites the source. Every kind runs through the same
+steps: fetch from a public source, list, draw, cite, and hide on request.
+
+| kind | Example request | Source | Coverage |
+|---|---|---|---|
+| `geology` | "geology around Griffith Park, Los Angeles" | [Macrostrat](https://macrostrat.org/) map units and tiles, plus curated Tempe-area sites | Worldwide, most detailed in the US |
+| `faults` | "show active faults near Bishop" | USGS Quaternary Fault and Fold Database | US |
+| `flood` | "flood risk around Tempe Town Lake" | FEMA National Flood Hazard Layer | US |
+| `fires` | "past fire perimeters within 20 km" | NIFC InterAgency Fire Perimeter History | US |
+| `river` | "trace the Salt River downstream and show live flow" | USGS NLDI (NHDPlus) and NWIS live discharge | US |
+| `landcover` | "land cover within 5 km" | NLCD 2021 (MRLC) | Contiguous US |
+| `soils` | "what soils are under this field?" | USDA NRCS SSURGO via Soil Data Access | US |
+| `wildlife` | "wildlife observations around Papago Park" | iNaturalist research-grade observations | Worldwide |
+| `trails`, `springs`, `mines` | "trails, springs and mines within 3 km" | OpenStreetMap via Overpass | Worldwide |
+
+The curated geology sites around Phoenix and Tempe (Tempe/Hayden Butte, Papago
+and Barnes Buttes, Hole-in-the-Rock, Camelback Mountain, South Mountains,
+Superstition Mountains, Tempe Town Lake) have descriptions sourced from
+Arizona Geological Survey publications and others, plus OpenStreetMap
+coordinates, in `staticfiles/web/geo/tempe-geology.geojson`.
 
 ### 🤖 AI Viewport Analysis
 Analyze what the camera sees, using remote GPU services:
@@ -145,7 +158,7 @@ python manage.py runserver
 Tests and lint:
 
 ```bash
-python manage.py test deepgis_xr.apps.web.tests.test_pilot   # AI pilot (13 tests)
+python manage.py test deepgis_xr.apps.web.tests.test_pilot   # AI pilot (16 tests)
 pytest
 ruff check .
 black --check .
@@ -338,7 +351,9 @@ Django: keep known action types and fields, clamp every number
   ▼
 Browser: run actions in order on the drone controls
      goto · orbit · takeoff · land · look · stop · wait
-     show_geology · hide_geology
+     show_layer {kind} · hide_layer {kind?}
+       └─ LAYERS[kind].load() fetches from the public source in the browser,
+          then the page draws, lists and cites the result
 ```
 
 Design rules:
@@ -350,20 +365,31 @@ Design rules:
 - **Place lookup order:** curated geology sites, then OpenStreetMap Nominatim
   (good for parks, peaks and landmarks), then Cesium Ion. Lookups are cached
   per page.
-- **Geology cannot be invented.** For `show_geology {place, radius_m}` the
-  model picks only the centre and radius (default 5 km). The page then:
-  - lists curated sites inside the circle, with distance, type and age;
-    clicking a marker shows rock units and source links;
-  - samples the Macrostrat geologic map at 15 points, keeps the most detailed
-    map at each point, and lists up to 8 units with age, lithology and the
-    source map citation;
-  - drapes the Macrostrat map tiles at 55% opacity over the area.
+- **Layer contents cannot be invented.** For `show_layer {kind, place,
+  radius_m}` the model picks only the kind, the centre and the radius; the
+  prompt tells it never to describe layer contents in its reply. Django
+  accepts only the known kinds. Each kind in `LAYERS` (in
+  `label_search.html`) has a default radius and a `load()` that returns
+  features to draw, an optional imagery overlay, the chat lines and the
+  source citations. One runner draws, lists, cites and frames them all, so
+  adding a kind adds no prompt rules or server checks beyond its name.
+  - `geology` lists curated sites in the circle, samples the Macrostrat map
+    at 15 points (the most detailed map at each), lists up to 8 units with
+    the source map citation, and drapes the map at 55% opacity.
+  - `river` uses `distance_km` (default 50) instead of a radius: it traces the
+    NHDPlus flowline downstream and shows gauges that reported discharge in
+    the last 12 hours.
+  - `landcover` and `soils` drape the NLCD and SSURGO maps; the others draw
+    features (fault lines, flood zones, fire perimeters, observations, OSM
+    trails, springs and mines) that open details and links when clicked.
 
-  An orbit of the same centre without a radius widens to keep the whole area
-  in view.
+  Layers of different kinds stack; `hide_layer` without a kind removes all.
+  An orbit of the same centre without a radius widens to keep the area in
+  view, and Django moves a `show_layer` ahead of an orbit so it is drawn
+  first. A source that fails reports its error and the plan continues.
 - **Plans are cancellable.** A new request or the Stop button interrupts the
   current plan. A `stop` action inside a plan halts motion and
-  lets the remaining steps (such as `hide_geology`) run.
+  lets the remaining steps (such as `hide_layer`) run.
 - **Read-only by construction.** Django holds only the read-only MCP token,
   and that server has commands disabled. Nothing in this path can command a
   vehicle.
@@ -432,7 +458,11 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
 1. Open DeepGIS Search (`/label/3d/search/`) and sign in (`/label/admin/login/`).
 2. Click **Pilot** in the HUD toolbar and type a request. The page switches
    to 3D, runs the plan and logs each step in the panel.
-3. Press **Stop** at any time.
+3. For a data layer, ask for the kind and place ("flood risk around Tempe
+   Town Lake") or say "here" for the point in view. Click a drawn feature for
+   details and source links. "Hide the faults" removes one layer; "clear all
+   layers" removes them all. OpenStreetMap layers can take up to a minute.
+4. Press **Stop** at any time.
 
 ### AI Viewport Analysis
 1. Open DeepGIS Search and the **AI** panel.
@@ -575,6 +605,12 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   no longer cancels the rest of the plan.
 - **Geology anywhere** (`5678038`): OpenStreetMap Nominatim geocoding first,
   Macrostrat geologic-map units with citations, and a draped map overlay.
+- **Data layers**: `show_geology` / `hide_geology` became one
+  `show_layer {kind, place, radius_m}` / `hide_layer {kind?}` pair with ten more
+  kinds: faults, flood, fires, river (with live USGS flow), landcover, soils,
+  wildlife, trails, springs and mines. The action schema now puts `kind`
+  before `place`. Under constrained decoding, the model had otherwise
+  skipped the place.
 
 ### April 2026: Django 5.2 LTS and a slimmer image
 - **Django 3.2 → 5.2.13 LTS**, DRF 3.12 → 3.16.1, Shapely 1.8 → 2.0,
@@ -617,7 +653,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] 3D Buildings layer (OpenStreetMap)
 - [x] Hierarchical tile catalog with time scrubber and comparison modes
 - [x] Django 5.2 LTS, Python 3.10, Ubuntu 22.04 image
-- [x] AI pilot (language-driven camera drone) with sourced geology layer
+- [x] AI pilot (language-driven camera drone) with sourced data layers
+      (geology, faults, flood zones, fires, rivers, land cover, soils,
+      wildlife, trails, springs, mines)
 
 ### 🔧 Next
 - [ ] AI pilot: a sign-in path for lab members, persistent rate limiting
@@ -666,8 +704,13 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 - **Meta AI**: Segment Anything (SAM, SAM 2)
 - **IDEA Research**: Grounding DINO
 - **Macrostrat**: geologic map API and tiles (CC BY 4.0)
-- **OpenStreetMap contributors**: Nominatim geocoding, buildings, coordinates (ODbL)
+- **OpenStreetMap contributors**: Nominatim geocoding, buildings, trails,
+  springs, mines and coordinates, via Overpass (ODbL)
 - **Arizona Geological Survey**: geology of the Tempe area
+- **USGS**: Quaternary Fault and Fold Database, NLDI/NHDPlus, NWIS water data
+- **FEMA**: National Flood Hazard Layer; **NIFC**: fire perimeter history
+- **MRLC**: National Land Cover Database; **USDA NRCS**: SSURGO soils
+- **iNaturalist** observers: wildlife observations (each under its own license)
 - **NASA/GSFC/ASU**: LROC QuickMap lunar imagery
 - **National Weather Service**: weather station data
 
@@ -682,7 +725,7 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 
 ## ⚠️ Disclaimer
 
-This software is provided "as is" without warranty. Use at your own risk. Intended for research and educational purposes. AI analysis results, and AI-pilot geology listings, should be validated independently for critical applications.
+This software is provided "as is" without warranty. Use at your own risk. Intended for research and educational purposes. AI analysis results and AI-pilot layer listings should be validated independently for critical applications; flood zones in particular are not an official FEMA determination.
 
 ---
 

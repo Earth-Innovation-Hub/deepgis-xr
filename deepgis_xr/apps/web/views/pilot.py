@@ -6,8 +6,9 @@ plus the current camera view; this view asks the DREAMS Lab robot LLM (one
 `ask_robot_llm` turn on the read-only dreams_mcp, constrained to PILOT_SCHEMA)
 for a short reply and a list of camera-drone actions. The actions are
 validated and clamped here and executed client-side by the page's existing
-takeoff / land / orbit controls; place names are geocoded in the browser with
-Cesium Ion. Nothing here touches a real vehicle.
+takeoff / land / orbit controls, or as data layers (show_layer) fetched from
+public sources in the browser; place names are geocoded in the browser.
+Nothing here touches a real vehicle.
 """
 
 import json
@@ -21,7 +22,10 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_POST
 
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
-                "show_geology", "hide_geology")
+                "show_layer", "hide_layer")
+# Data layers the page knows how to fetch, draw and cite (LAYERS in label_search.html)
+LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
+               "soils", "wildlife", "trails", "springs", "mines")
 MAX_ACTIONS = 8
 MAX_HISTORY = 8
 MAX_MESSAGE_CHARS = 600
@@ -35,6 +39,7 @@ LIMITS = {
     "pitch_deg": (-90.0, 0.0),
     "heading_deg": (-360.0, 360.0),
     "seconds": (0.0, 120.0),
+    "distance_km": (1.0, 500.0),
 }
 
 PILOT_SCHEMA = {
@@ -46,13 +51,17 @@ PILOT_SCHEMA = {
             "maxItems": MAX_ACTIONS,
             "items": {
                 "type": "object",
+                # Constrained decoding writes keys in this order; with kind before place
+                # the model reliably fills in the place for a layer
                 "properties": {
                     "type": {"enum": list(ACTION_TYPES)},
+                    "kind": {"enum": list(LAYER_KINDS)},
                     "place": {"type": "string"},
                     "lat": {"type": "number"},
                     "lon": {"type": "number"},
-                    "alt_m": {"type": "number"},
                     "radius_m": {"type": "number"},
+                    "distance_km": {"type": "number"},
+                    "alt_m": {"type": "number"},
                     "revolutions": {"type": "number"},
                     "speed_mps": {"type": "number"},
                     "clockwise": {"type": "boolean"},
@@ -77,17 +86,37 @@ Actions (all heights are metres ABOVE GROUND):
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
 - stop: stop all motion immediately.
 - wait: hover for seconds.
-- show_geology: overlay the published geologic map within radius_m of a place (anywhere; most detailed in the US) and list its rock units and any curated geology sites in the chat. Fields: place or lat+lon (omit both for the point in view); radius_m (default 5000).
-- hide_geology: remove the geology markers.
+- show_layer: draw a data layer around a place and list what it contains, with sources, in the chat. Fields: kind; place (always set it to the place the user names, e.g. "Bishop, California") or lat+lon; omit both only when the user means where they are looking ("here", "this field", "in view"); radius_m (omit for the kind's default). kind is one of:
+  - geology: geologic map units and rock types (default 5 km; worldwide, most detailed in the US)
+  - faults: active (Quaternary) faults and earthquake fault lines (15 km; US)
+  - flood: FEMA flood zones, flood risk, floodplains (3 km; US)
+  - fires: past wildfire perimeters and burn history (20 km; US)
+  - river: trace a river or stream downstream from the place and show live streamflow at USGS gauges; use distance_km (default 50) instead of radius_m (US)
+  - landcover: land cover / land use mix such as urban, forest, cropland, water (5 km; contiguous US)
+  - soils: soil types under a field or site (300 m; US). "This field" or "here" means the point in view: omit place and lat/lon.
+  - wildlife: animal and plant observations, species lists (2 km; worldwide, iNaturalist)
+  - trails: hiking and walking trails (3 km; worldwide, OpenStreetMap)
+  - springs: springs and hot springs (5 km; worldwide, OpenStreetMap)
+  - mines: mines, mine shafts, adits and quarries (5 km; worldwide, OpenStreetMap)
+- hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
 - Only fill fields the user asked for or that clearly follow from the request; the viewer picks sensible defaults for the rest.
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
-- For geology, rocks or landforms around a place, put show_geology first, then any orbit of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
-- Never name, list or describe geologic features in reply; the viewer lists them from its sourced data.
+- Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
+- Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
+- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils or trails); the viewer lists them from its sourced data.
 - If the request is a question or not a flight request, answer it in reply and return no actions.
+
+Examples (actions only):
+- "show active faults near Bishop" -> [{"type": "show_layer", "kind": "faults", "place": "Bishop, California"}]
+- "flood risk around Tempe Town Lake" -> [{"type": "show_layer", "kind": "flood", "place": "Tempe Town Lake, Tempe, Arizona"}]
+- "trace the Salt River downstream and show live flow" -> [{"type": "show_layer", "kind": "river", "place": "Salt River, Arizona"}]
+- "past fire perimeters within 20 km" -> [{"type": "show_layer", "kind": "fires", "radius_m": 20000}]
+- "what soils are under this field?" -> [{"type": "show_layer", "kind": "soils"}]
+- "orbit Hayden Butte and show geology within 5 km" -> [{"type": "show_layer", "kind": "geology", "place": "Hayden Butte, Tempe, Arizona", "radius_m": 5000}, {"type": "orbit", "place": "Hayden Butte, Tempe, Arizona"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 
@@ -119,7 +148,25 @@ def clean_actions(raw):
                 act[field] = v
         if isinstance(a.get("clockwise"), bool):
             act["clockwise"] = a["clockwise"]
-        out.append(act)
+        if act["type"] in ("show_layer", "hide_layer"):
+            kind = a.get("kind")
+            if kind in LAYER_KINDS:
+                act["kind"] = kind
+            elif kind is not None or act["type"] == "show_layer":
+                continue
+            if kind != "river" and "distance_km" in act:
+                km = act.pop("distance_km")
+                act.setdefault("radius_m", _num(km * 1000, "radius_m"))
+        else:
+            act.pop("distance_km", None)
+        if act["type"] == "show_layer":
+            # An orbit runs until its laps end; draw the layer before it, not after
+            i = len(out)
+            while i and out[i - 1]["type"] == "orbit":
+                i -= 1
+            out.insert(i, act)
+        else:
+            out.append(act)
         if len(out) == MAX_ACTIONS:
             break
     return out
@@ -179,6 +226,8 @@ def call_mcp_tool(name, arguments, timeout):
         timeout=timeout,
     )
     resp.raise_for_status()
+    # The event-stream reply has no charset, which requests would read as Latin-1
+    resp.encoding = "utf-8"
     body = resp.text
     if "text/event-stream" in resp.headers.get("Content-Type", ""):
         body = next((ln[6:] for ln in body.splitlines() if ln.startswith("data: ")), "")
