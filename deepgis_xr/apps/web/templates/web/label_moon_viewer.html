@@ -3313,10 +3313,280 @@
     
     <!-- World Sampler UI and Mission Planner (required for AI Viewport Analysis) -->
     {% load static %}
-    <script src="{% static 'web/js/world-sampler-ui.js' %}"></script>
+    <script src="{% static 'web/js/world-sampler-ui.js' %}?v=20261021"></script>
     <!-- Urban Spectral (OSM building graph + kernelcal diagnostics) -->
     <script src="{% static 'web/js/urban-spectral-ui.js' %}"></script>
     <script src="{% static 'web/js/mission-planner.js' %}"></script>
+    <!-- Camera drone: flight maths in planet-flight.js, Cesium glue here -->
+    <script src="{% static 'web/js/planet-flight.js' %}?v=20261021"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function initMoonDrone() {
+            const F = window.PlanetFlight;
+            const $ = (id) => document.getElementById(id);
+            const flyBtn = $('droneFlyBtn'), orbitBtn = $('droneOrbitBtn');
+            const stopBtn = $('stopOrbitBtn'), stopBox = $('stopOrbitContainer');
+            if (!F || !flyBtn || !orbitBtn) return;
+
+            const viewer = () => window.DeepGISMoon.viewer;
+            const ellipsoid = () => viewer().scene.globe.ellipsoid;
+            const radius = () => window.DeepGISMoon.MOON_RADIUS;
+            const num = (id, fallback) => {
+                const v = parseFloat($(id)?.value);
+                return Number.isFinite(v) ? v : fallback;
+            };
+            const fmtM = (m) => (m >= 1000 ? `${+(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`);
+            const toDeg = (c) => ({
+                lon: Cesium.Math.toDegrees(c.longitude),
+                lat: Cesium.Math.toDegrees(c.latitude),
+                height: c.height,
+            });
+
+            // One motion at a time: { kind, cancel, resolve }. Every motion
+            // resolves true when it completes and false when stopped.
+            let motion = null;
+            // Bumped by stop(), so a motion still sampling terrain when the
+            // user stops (or starts another) never starts.
+            let generation = 0, preparing = 0;
+
+            async function beforeMoving(promise) {
+                const g = ++generation;
+                preparing++;
+                try {
+                    const value = await promise;
+                    return g === generation ? { value } : null;
+                } finally {
+                    preparing--;
+                }
+            }
+
+            function setActive(kind) {
+                flyBtn.classList.toggle('active', kind === 'fly');
+                orbitBtn.classList.toggle('active', kind === 'orbit');
+                stopBox.style.display = kind ? 'block' : 'none';
+                if (kind !== 'orbit') updateLabels();
+            }
+
+            function settle(resolve, completed) {
+                if (!motion || motion.resolve !== resolve) return;
+                motion = null;
+                setActive(null);
+                resolve(completed);
+            }
+
+            function stop() {
+                generation++;
+                if (!motion) return;
+                const m = motion;
+                motion = null;
+                m.cancel();
+                setActive(null);
+                m.resolve(false);
+            }
+
+            function setPose(p) {
+                viewer().camera.setView({
+                    destination: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height, ellipsoid()),
+                    orientation: {
+                        heading: Cesium.Math.toRadians(p.heading),
+                        pitch: Cesium.Math.toRadians(p.pitch),
+                        roll: 0,
+                    },
+                });
+            }
+
+            // Drive `step(elapsedSeconds)` until it returns true. A tab that is
+            // hidden mid-flight stops animation frames, so each frame races a
+            // timer; poses come from elapsed time, so a slow tick only skips frames.
+            function run(kind, step) {
+                stop();
+                return new Promise((resolve) => {
+                    const t0 = performance.now();
+                    let raf = null, timeout = null;
+                    const cancel = () => {
+                        cancelAnimationFrame(raf);
+                        clearTimeout(timeout);
+                    };
+                    const schedule = () => {
+                        const fire = () => {
+                            cancel();
+                            tick();
+                        };
+                        raf = requestAnimationFrame(fire);
+                        timeout = setTimeout(fire, 100);
+                    };
+                    motion = { kind, resolve, cancel };
+                    setActive(kind);
+                    function tick() {
+                        if (motion?.resolve !== resolve) return;
+                        let done = true;
+                        try {
+                            done = step((performance.now() - t0) / 1000);
+                        } catch (err) {
+                            console.error('[MoonDrone]', err);
+                        }
+                        if (done) settle(resolve, true);
+                        else schedule();
+                    }
+                    schedule();
+                });
+            }
+
+            function flyToPose(p, durationS) {
+                stop();
+                return new Promise((resolve) => {
+                    const camera = viewer().camera;
+                    motion = { kind: 'goto', resolve, cancel: () => camera.cancelFlight() };
+                    setActive('goto');
+                    camera.flyTo({
+                        destination: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.height, ellipsoid()),
+                        orientation: {
+                            heading: Cesium.Math.toRadians(p.heading),
+                            pitch: Cesium.Math.toRadians(p.pitch),
+                            roll: 0,
+                        },
+                        duration: durationS,
+                        complete: () => settle(resolve, true),
+                        cancel: () => settle(resolve, false),
+                    });
+                });
+            }
+
+            async function groundHeight(lon, lat) {
+                const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+                const terrain = window.DeepGISMoon.moonTerrain;
+                if (terrain) {
+                    try {
+                        const [sampled] = await Promise.race([
+                            Cesium.sampleTerrainMostDetailed(terrain, [carto]),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error('terrain timeout')), 4000)),
+                        ]);
+                        if (Number.isFinite(sampled.height)) return sampled.height;
+                    } catch (err) {
+                        console.warn('[MoonDrone] terrain sample failed:', err.message);
+                    }
+                }
+                return viewer().scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat)) ?? 0;
+            }
+
+            /** Ground point at the centre of the view, else straight below the camera. */
+            function viewCenter() {
+                const v = viewer();
+                const canvas = v.scene.canvas;
+                const ray = v.camera.getPickRay(new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2));
+                const hit = ray && v.scene.globe.pick(ray, v.scene);
+                const c = hit ? Cesium.Cartographic.fromCartesian(hit, ellipsoid()) : v.camera.positionCartographic;
+                return toDeg(c);
+            }
+
+            /** Fly `distM` along the current (or given) heading, ending `aglM` above the ground. */
+            async function flyForward({ distM, speedMps, aglM = null, headingDeg = null }) {
+                const camera = viewer().camera;
+                const start = toDeg(camera.positionCartographic);
+                const heading = headingDeg ?? Cesium.Math.toDegrees(camera.heading);
+                const pitch = Cesium.Math.toDegrees(camera.pitch);
+                const end = F.destination(start, heading, distM, radius());
+                let endHeight = start.height;
+                if (aglM != null) {
+                    const ready = await beforeMoving(groundHeight(end.lon, end.lat));
+                    if (!ready) return false;
+                    endHeight = ready.value + aglM;
+                }
+                const plan = F.flyForwardPlan({
+                    start, startHeight: start.height, headingDeg: heading, distM, endHeight, speedMps, radius: radius(),
+                });
+                return run('fly', (s) => {
+                    const p = plan.sample(s);
+                    setPose({ ...p, pitch });
+                    return p.done;
+                });
+            }
+
+            /** Hover `aglM` above a point, looking down (or at `pitchDeg` from `headingDeg`). */
+            async function goTo({ lon, lat }, { aglM = 20000, pitchDeg = -90, headingDeg = 0, durationS = 3 } = {}) {
+                const ready = await beforeMoving(groundHeight(lon, lat));
+                if (!ready) return false;
+                return flyToPose({ lon, lat, height: ready.value + aglM, heading: headingDeg, pitch: pitchDeg }, durationS);
+            }
+
+            /**
+             * Circle `center` at `radiusM`, `aglM` above its ground, for
+             * `revolutions` (0 = until stopped). `pitchDeg` null keeps the
+             * centre in the middle of the view.
+             */
+            async function orbitAround(center, { radiusM, aglM, speedMps, revolutions = 1, pitchDeg = null, clockwise = false }) {
+                const R = radius();
+                const ready = await beforeMoving(groundHeight(center.lon, center.lat));
+                if (!ready) return false;
+                const centerHeight = ready.value;
+                const camera = toDeg(viewer().camera.positionCartographic);
+                const startAngleDeg = F.distance(center, camera, R) < 1 ? 0 : F.bearing(center, camera);
+                const pose = (angleDeg) =>
+                    F.orbitPose({ center, centerHeight, radiusM, aglM, angleDeg, pitchDeg, radius: R });
+                if (!(await flyToPose(pose(startAngleDeg), 2))) return false;
+                const lapS = F.orbitCircumference(radiusM, R) / speedMps;
+                const at = (s) => F.orbitAngleAt({ startAngleDeg, speedMps, radiusM, elapsedS: s, clockwise, radius: R });
+                let shown = -1;
+                return run('orbit', (s) => {
+                    const finished = revolutions > 0 && s >= revolutions * lapS;
+                    const { angleDeg, revolutions: done } = at(finished ? revolutions * lapS : s);
+                    setPose(pose(angleDeg));
+                    const tenth = Math.floor(done * 10);
+                    if (!finished && tenth !== shown) {
+                        shown = tenth;
+                        orbitBtn.innerHTML = `<i class="fas fa-stop"></i> Orbiting ${done.toFixed(1)}` +
+                            (revolutions > 0 ? ` / ${revolutions}` : '') + ' rev';
+                    }
+                    return finished;
+                });
+            }
+
+            function updateLabels() {
+                flyBtn.innerHTML = `<i class="fas fa-paper-plane"></i> Fly Forward ${fmtM(num('droneFlyDistance', 20000))}` +
+                    ` @ ${num('droneFlySpeed', 3000)} km/h`;
+                orbitBtn.innerHTML = `<i class="fas fa-circle-notch"></i> Orbit ${fmtM(num('droneOrbitRadius', 20000))}` +
+                    ` radius @ ${num('droneOrbitSpeed', 3000)} km/h`;
+                const pitchLabel = $('orbitPitchValue');
+                if (pitchLabel) pitchLabel.textContent = `${num('droneOrbitPitch', -35)}°`;
+            }
+
+            ['droneFlyDistance', 'droneFlySpeed', 'droneOrbitRadius', 'droneOrbitSpeed', 'droneOrbitPitch']
+                .forEach((id) => $(id)?.addEventListener('input', () => motion?.kind !== 'orbit' && updateLabels()));
+
+            flyBtn.addEventListener('click', () => {
+                if (!viewer()) return;
+                flyForward({
+                    distM: num('droneFlyDistance', 20000),
+                    speedMps: num('droneFlySpeed', 3000) / 3.6,
+                    aglM: num('droneFlyAltitude', 10000),
+                }).catch((err) => console.error('[MoonDrone] fly failed:', err));
+            });
+
+            orbitBtn.addEventListener('click', () => {
+                if (!viewer()) return;
+                if (motion?.kind === 'orbit') return stop();
+                orbitAround(viewCenter(), {
+                    radiusM: num('droneOrbitRadius', 20000),
+                    aglM: num('droneOrbitAltitude', 15000),
+                    speedMps: num('droneOrbitSpeed', 3000) / 3.6,
+                    revolutions: num('droneOrbitRevolutions', 1),
+                    pitchDeg: num('droneOrbitPitch', -35),
+                }).catch((err) => console.error('[MoonDrone] orbit failed:', err));
+            });
+
+            stopBtn?.addEventListener('click', stop);
+
+            window.DeepGISMoonDrone = {
+                flyForward,
+                goTo,
+                orbitAround,
+                stop,
+                isBusy: () => motion !== null || preparing > 0,
+                viewCenter,
+                groundHeight,
+            };
+            updateLabels();
+        });
+    </script>
     <script>
         // HUD Panel Management
         (function() {
@@ -4732,84 +5002,84 @@
     </div>
 
     <!-- Drone Fly Widget -->
-    <div class="drone-fly-widget" id="droneFlyWidget">
+    <div class="drone-fly-widget" id="droneFlyWidget" data-drone-controller="page">
         <div class="widget-title">
             <i class="fas fa-drone"></i>Drone Fly Mode
         </div>
         <div class="widget-item">
             <label>Fly Distance (meters):</label>
             <input type="number" id="droneFlyDistance" 
-                   value="100" min="10" max="1000" step="10">
+                   value="20000" min="100" max="500000" step="100">
         </div>
         <div class="widget-item">
             <label>Speed (km/h):</label>
             <input type="number" id="droneFlySpeed" 
-                   value="100" min="25" max="250" step="5">
-            <small>Range: 25-250 km/h</small>
+                   value="3000" min="50" max="6000" step="50">
+            <small>Range: 50-6,000 km/h (low lunar orbit is ~6,000)</small>
         </div>
         <div class="widget-item">
             <label>Altitude AGL (meters):</label>
             <input type="number" id="droneFlyAltitude" 
-                   value="2000" min="20" max="50000" step="10">
+                   value="10000" min="100" max="200000" step="100">
         </div>
         <div class="widget-item" style="margin-top: 8px;">
             <button class="btn btn-success" id="droneFlyBtn">
-                <i class="fas fa-paper-plane"></i> Fly Forward 100m @ 100 km/h
+                <i class="fas fa-paper-plane"></i> Fly Forward 20 km @ 3000 km/h
             </button>
         </div>
         <div class="widget-item" style="margin-top: 4px;">
             <small style="display: block; text-align: center;">
-                Flies along current heading, maintaining altitude & orientation
+                Flies along the current heading, ending at the set height above the ground
             </small>
         </div>
     </div>
 
     <!-- Drone Orbit Widget -->
-    <div class="drone-orbit-widget" id="droneOrbitWidget">
+    <div class="drone-orbit-widget" id="droneOrbitWidget" data-drone-controller="page">
         <div class="widget-title">
             <i class="fas fa-circle-notch"></i>Drone Orbit Mode
         </div>
         <div class="widget-item">
             <label>Orbit Radius (meters):</label>
             <input type="number" id="droneOrbitRadius" 
-                   value="1000" min="20" max="5000" step="10">
+                   value="20000" min="500" max="300000" step="500">
         </div>
         <div class="widget-item">
             <label>Altitude AGL (meters):</label>
             <input type="number" id="droneOrbitAltitude" 
-                   value="2000" min="20" max="50000" step="10">
+                   value="15000" min="100" max="200000" step="100">
         </div>
         <div class="widget-item">
             <label>Orbit Speed (km/h):</label>
             <input type="number" id="droneOrbitSpeed" 
-                   value="50" min="10" max="100" step="5">
-            <small>Range: 10-100 km/h</small>
+                   value="3000" min="50" max="6000" step="50">
+            <small>Range: 50-6,000 km/h</small>
         </div>
         <div class="widget-item">
             <label>Revolutions:</label>
             <input type="number" id="droneOrbitRevolutions" 
-                   value="10" min="0.25" max="20" step="0.25">
+                   value="1" min="0.25" max="20" step="0.25">
             <small>0.25 = 90°, 0.5 = 180°, 1 = 360°</small>
         </div>
         <div class="widget-item">
-            <label>Camera Pitch (degrees): <span id="orbitPitchValue">-65°</span></label>
+            <label>Camera Pitch (degrees): <span id="orbitPitchValue">-35°</span></label>
             <input type="range" id="droneOrbitPitch" 
-                   value="-65" min="-90" max="0" step="5">
+                   value="-35" min="-90" max="0" step="5">
             <small>-90° = straight down, -45° = 45° angle, 0° = horizon</small>
         </div>
         <div class="widget-item" style="margin-top: 8px;">
             <button class="btn btn-primary" id="droneOrbitBtn">
-                <i class="fas fa-circle-notch"></i> Orbit 1000m radius @ 50 km/h
+                <i class="fas fa-circle-notch"></i> Orbit 20 km radius @ 3000 km/h
             </button>
         </div>
         <div class="widget-item" style="margin-top: 4px; display: none;" id="stopOrbitContainer">
             <button class="btn btn-danger" id="stopOrbitBtn">
-                <i class="fas fa-stop"></i> Stop Orbit (ESC)
+                <i class="fas fa-stop"></i> Stop (ESC)
             </button>
         </div>
         <div class="widget-item" style="margin-top: 4px;">
             <small style="display: block; text-align: center;">
-                Orbits around center point, camera faces inward. Press ESC to cancel.
+                Orbits the point at the centre of the view, camera facing inward. Press ESC to stop.
             </small>
         </div>
     </div>
