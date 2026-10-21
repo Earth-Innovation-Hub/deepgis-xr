@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+{% load static %}<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -19,6 +19,20 @@
     <!-- Cesium Dependencies -->
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <script src="{% static 'web/js/planet-bodies.js' %}?v=20261021"></script>
+    <script>
+        // This template serves /label/3d/moon/ and /label/3d/planet/<body>/.
+        window.PLANET_BODY_ID = '{{ planet_body|default:"moon"|escapejs }}';
+        window.PLANET_BODY = PlanetBodies.get(window.PLANET_BODY_ID) || PlanetBodies.get('moon');
+        window.PLANET_ELLIPSOID = PlanetBodies.cesiumEllipsoid(window.PLANET_BODY, Cesium);
+        window.IS_MOON = window.PLANET_BODY.id === 'moon';
+        document.title = `DeepGIS ${window.PLANET_BODY.name} Viewer`;
+        document.documentElement.classList.toggle('not-moon', !window.IS_MOON);
+        document.addEventListener('DOMContentLoaded', () => {
+            document.querySelectorAll('[data-body-name]').forEach((el) => { el.textContent = window.PLANET_BODY.name; });
+        });
+    </script>
+    <style>.not-moon [data-moon-only] { display: none !important; }</style>
     
     <!-- Additional Dependencies -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" crossorigin="anonymous">
@@ -1898,8 +1912,8 @@
         <div id="sidebar-wrapper">
             <div class="sidebar-content">
                 <div class="sidebar-header">
-                    <h5><i class="fas fa-moon"></i> DeepGIS Moon Viewer</h5>
-                    <small>Lunar Surface Explorer</small>
+                    <h5><i class="fas fa-moon"></i> DeepGIS <span data-body-name>Moon</span> Viewer</h5>
+                    <small data-moon-only>Lunar Surface Explorer</small>
                 </div>
                 
                 <div class="layer-controls">
@@ -1911,22 +1925,22 @@
                         <div class="form-check mb-2">
                             <input class="form-check-input" type="checkbox" id="moonImageryToggle" checked>
                             <label class="form-check-label" for="moonImageryToggle">
-                                <i class="fas fa-image me-2"></i>Moon Imagery
+                                <i class="fas fa-image me-2"></i><span data-body-name>Moon</span> Imagery
                             </label>
                         </div>
                         <div class="form-check mb-2">
                             <input class="form-check-input" type="checkbox" id="moonTerrainToggle" checked>
                             <label class="form-check-label" for="moonTerrainToggle">
-                                <i class="fas fa-mountain me-2"></i>Moon Terrain
+                                <i class="fas fa-mountain me-2"></i><span data-body-name>Moon</span> Terrain
                             </label>
                         </div>
-                        <div class="form-check mb-2">
+                        <div class="form-check mb-2" data-moon-only>
                             <input class="form-check-input" type="checkbox" id="landingSitesToggle" checked>
                             <label class="form-check-label" for="landingSitesToggle">
                                 <i class="fas fa-flag me-2"></i>Landing Sites
                             </label>
                         </div>
-                        <div style="font-size: 0.75rem; color: var(--slate-400); margin-top: 8px; padding: 6px;">
+                        <div style="font-size: 0.75rem; color: var(--slate-400); margin-top: 8px; padding: 6px;" data-moon-only>
                             <i class="fas fa-info-circle"></i> NASA LRO LROC WAC<br>
                             Public Moon imagery & terrain
                         </div>
@@ -1952,7 +1966,7 @@
                     </div>
 
                     <!-- Apollo Landing Sites -->
-                    <div class="landing-sites-section">
+                    <div class="landing-sites-section" data-moon-only>
                         <div class="layer-group-title">
                             <i class="fas fa-rocket"></i> Apollo Landing Sites
                         </div>
@@ -2181,7 +2195,7 @@
         // Configuration object
         const CONFIG = {
             SIDEBAR_WIDTH: 320,
-            MOON_RADIUS: 1737400, // Moon radius in meters
+            MOON_RADIUS: PlanetBodies.meanRadius(PLANET_BODY), // the open body's mean radius (m); name kept for existing callers
             APOLLO_SITES: {
                 apollo11: { name: 'Apollo 11', lon: 23.47297, lat: 0.67408, description: 'First crewed Moon landing (July 20, 1969)' },
                 apollo12: { name: 'Apollo 12', lon: -23.42157, lat: -3.01239, description: 'Second crewed Moon landing (November 19, 1969)' },
@@ -2397,8 +2411,8 @@
                     // Globe.ellipsoid is read-only: the Moon ellipsoid has to be given at
                     // construction, and the map projection carries it to the camera's
                     // positionCartographic and to 2D mode
-                    globe: new Cesium.Globe(Cesium.Ellipsoid.MOON),
-                    mapProjection: new Cesium.GeographicProjection(Cesium.Ellipsoid.MOON),
+                    globe: new Cesium.Globe(PLANET_ELLIPSOID),
+                    mapProjection: new Cesium.GeographicProjection(PLANET_ELLIPSOID),
                     baseLayer: false,
                     skyAtmosphere: false
                 });
@@ -2474,17 +2488,11 @@
                     }
                 });
                 
-                Utils.updateLoadingStatus('Loading Moon imagery...', 60);
+                Utils.updateLoadingStatus(`Loading ${PLANET_BODY.name} imagery...`, 60);
                 
-                // Imagery: LROC QuickMap WAC + NAC mosaic, with NASA Moon Trek's WAC mosaic as
-                // a fallback. QuickMap's level 0 is one 512 px tile holding the whole Moon in
-                // its top half; from level 1 on, level z is a 2^z x 2^(z-1) grid of 180/2^(z-1)
-                // degree tiles, Y=0 at the north. That is Cesium's 2x1 geographic scheme one
-                // level down, hence {lrocZ} = level + 1. Real NAC detail ends at QuickMap
-                // level 16 (~0.5 m/px); Cesium upsamples beyond.
+                // Imagery: the body's sources from planet-bodies.js, first reachable one wins.
                 let imageryLoaded = false;
                 let imagerySource = 'Unknown';
-                const moonTiling = () => new Cesium.GeographicTilingScheme({ ellipsoid: Cesium.Ellipsoid.MOON });
                 const reachable = async (url) => {
                     try {
                         const resp = await fetch(url, { signal: AbortSignal.timeout(8000) });
@@ -2493,33 +2501,12 @@
                         return false;
                     }
                 };
-                const imagerySources = [
-                    {
-                        name: 'LROC QuickMap (WAC + NAC)', link: 'https://quickmap.lroc.asu.edu',
-                        probe: 'https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/1/0/0.jpg',
-                        provider: () => new Cesium.UrlTemplateImageryProvider({
-                            url: 'https://lroc-tiles.quickmap.io/tiles/wac_nac_nacroi/lunar-fulleqc/{lrocZ}/{x}/{y}.jpg',
-                            customTags: { lrocZ: (provider, x, y, level) => level + 1 },
-                            tilingScheme: moonTiling(), tileWidth: 512, tileHeight: 512, maximumLevel: 15,
-                            credit: new Cesium.Credit('NASA/GSFC/Arizona State University - LROC QuickMap', true),
-                        }),
-                    },
-                    {
-                        name: 'NASA Moon Trek (LRO WAC mosaic)', link: 'https://trek.nasa.gov/moon/',
-                        probe: 'https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/0/0/0.jpg',
-                        provider: () => new Cesium.UrlTemplateImageryProvider({
-                            url: 'https://trek.nasa.gov/tiles/Moon/EQ/LRO_WAC_Mosaic_Global_303ppd_v02/1.0.0/default/default028mm/{z}/{y}/{x}.jpg',
-                            tilingScheme: moonTiling(), tileWidth: 256, tileHeight: 256, maximumLevel: 8,
-                            credit: new Cesium.Credit('NASA/GSFC/Arizona State University - LRO WAC via NASA Moon Trek', true),
-                        }),
-                    },
-                ];
-                for (const src of imagerySources) {
-                    if (!(await reachable(src.probe))) {
+                for (const src of PLANET_BODY.imagery) {
+                    if (!(await reachable(PlanetBodies.probeUrl(src)))) {
                         console.warn(`✗ ${src.name} unreachable`);
                         continue;
                     }
-                    viewer.imageryLayers.addImageryProvider(src.provider());
+                    viewer.imageryLayers.addImageryProvider(PlanetBodies.imageryProvider(src, PLANET_ELLIPSOID, Cesium));
                     imageryLoaded = true;
                     imagerySource = src.name;
                     const imagerySourceEl = document.getElementById('imagerySource');
@@ -2527,11 +2514,11 @@
                         imagerySourceEl.innerHTML = `Imagery: <a href="${src.link}" target="_blank" style="color: #10b981;">${src.name}</a>`;
                         imagerySourceEl.style.color = '#10b981';
                     }
-                    console.log(`✓ Moon imagery: ${src.name}`);
+                    console.log(`✓ ${PLANET_BODY.name} imagery: ${src.name}`);
                     break;
                 }
                 if (!imageryLoaded) {
-                    Utils.showSnackBar('Moon imagery services are unreachable; showing a plain globe', 'warning');
+                    Utils.showSnackBar(`${PLANET_BODY.name} imagery services are unreachable; showing a plain globe`, 'warning');
                     imagerySource = 'Gray base color (fallback)';
                     const imagerySourceEl = document.getElementById('imagerySource');
                     if (imagerySourceEl) {
@@ -2542,32 +2529,34 @@
 
                 Utils.updateLoadingStatus('Loading Moon terrain...', 70);
                 
-                // Terrain: LOLA-based quantized mesh from QuickMap's DEM stack. Its layer.json
-                // sits above /mesh and declares scheme "slippyMap" (Y=0 north), levels 0-15 and
-                // vertex normals; without it Cesium guesses TMS rows and flips the terrain.
+                // Terrain: the body's quantized-mesh DEM if the registry has one.
                 let terrainLoaded = false;
+                const terrainSrc = PLANET_BODY.terrain;
                 try {
+                    if (!terrainSrc) throw new Error(`no global DEM tiles for ${PLANET_BODY.name} yet`);
                     const moonTerrain = await Cesium.CesiumTerrainProvider.fromUrl(
-                        'https://dem-tiles.b-cdn.net/lunar/qts_demstack/lunar-fulleqc',
-                        { ellipsoid: Cesium.Ellipsoid.MOON, requestVertexNormals: true }
+                        terrainSrc.url,
+                        { ellipsoid: PLANET_ELLIPSOID, requestVertexNormals: true }
                     );
                     viewer.terrainProvider = moonTerrain;
                     window.DeepGISMoon.moonTerrain = moonTerrain;
                     terrainLoaded = true;
-                    console.log('✓ Moon terrain: LOLA DEM (LROC QuickMap)');
+                    console.log(`✓ ${PLANET_BODY.name} terrain: ${terrainSrc.name}`);
                     const terrainSourceEl = document.getElementById('terrainSource');
                     if (terrainSourceEl) {
-                        terrainSourceEl.innerHTML = 'Terrain: <a href="https://quickmap.lroc.asu.edu" target="_blank" style="color: #10b981;">LOLA DEM (LROC QuickMap)</a>';
+                        terrainSourceEl.innerHTML = `Terrain: <a href="${terrainSrc.link}" target="_blank" style="color: #10b981;">${terrainSrc.name}</a>`;
                         terrainSourceEl.style.color = '#10b981';
                     }
                 } catch (error) {
-                    console.warn('✗ LROC QuickMap terrain unavailable:', error.message);
+                    console.warn('✗ Terrain unavailable:', error.message);
                     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
-                        ellipsoid: Cesium.Ellipsoid.MOON
+                        ellipsoid: PLANET_ELLIPSOID
                     });
                     const terrainSourceEl = document.getElementById('terrainSource');
                     if (terrainSourceEl) {
-                        terrainSourceEl.textContent = 'Terrain: Smooth ellipsoid (LOLA DEM unavailable)';
+                        terrainSourceEl.textContent = terrainSrc
+                            ? `Terrain: Smooth ellipsoid (${terrainSrc.name} unavailable)`
+                            : 'Terrain: Smooth ellipsoid (no DEM tiles for this body)';
                         terrainSourceEl.style.color = '#f59e0b';
                     }
                 }
@@ -2577,27 +2566,20 @@
                 viewer.scene.screenSpaceCameraController.minimumZoomDistance = 10.0; // 10 meters - allows close surface inspection
                 viewer.scene.screenSpaceCameraController.maximumZoomDistance = 30000000.0; // 30,000 km - better overview capability
                 
-                // Set initial view to Apollo 11 landing site with better positioning
-                const apollo11 = CONFIG.APOLLO_SITES.apollo11;
+                // Initial view: the whole disc around the body's home point (Apollo 11 on the Moon).
+                // From ~1.7 radii up the limb is ~38 deg below the horizontal; look straight down.
+                const home = PlanetBodies.homeView(PLANET_BODY);
+                const homeDestination = () =>
+                    Cesium.Cartesian3.fromDegrees(home.lon, home.lat, home.heightM, PLANET_ELLIPSOID);
                 viewer.camera.setView({
-                    destination: Cesium.Cartesian3.fromDegrees(
-                        apollo11.lon, 
-                        apollo11.lat, 
-                        3000000, // the whole near side
-                        Cesium.Ellipsoid.MOON
-                    ),
-                    orientation: {
-                        heading: 0,
-                        // From 3000 km the limb is ~38 deg below the horizontal; look straight down
-                        pitch: Cesium.Math.toRadians(-90),
-                        roll: 0.0
-                    }
+                    destination: homeDestination(),
+                    orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0.0 }
                 });
-                // Cesium's home view is a rectangle over North America; on the Moon go back to the near side
+                // Cesium's home view is a rectangle over North America; go back to the body's home instead
                 viewer.homeButton?.viewModel.command.beforeExecute.addEventListener((e) => {
                     e.cancel = true;
                     viewer.camera.flyTo({
-                        destination: Cesium.Cartesian3.fromDegrees(apollo11.lon, apollo11.lat, 3000000, Cesium.Ellipsoid.MOON),
+                        destination: homeDestination(),
                         orientation: { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 },
                     });
                 });
@@ -2610,8 +2592,10 @@
                 // Enable high dynamic range for better lighting
                 viewer.scene.highDynamicRange = true;
                 
-                Utils.updateLoadingStatus('Adding Apollo landing sites...', 75);
-                addLandingSites(viewer);
+                if (IS_MOON) {
+                    Utils.updateLoadingStatus('Adding Apollo landing sites...', 75);
+                    addLandingSites(viewer);
+                }
 
                 Utils.updateLoadingStatus('Setting up event handlers...', 85);
                 setupEventHandlers(viewer);
@@ -2626,10 +2610,10 @@
                     const statusMsg = [];
                     if (imageryLoaded) statusMsg.push('Imagery');
                     if (terrainLoaded) statusMsg.push('Terrain');
-                    statusMsg.push('Landing Sites');
+                    if (IS_MOON) statusMsg.push('Landing Sites');
                     
                     Utils.updateStatus(`Ready - ${statusMsg.join(' + ')} Loaded`);
-                    Utils.showSnackBar(`Moon viewer ready! ${statusMsg.join(', ')} loaded successfully.`, 'success');
+                    Utils.showSnackBar(`${PLANET_BODY.name} viewer ready! ${statusMsg.join(', ')} loaded successfully.`, 'success');
                 }, 500);
 
                 // Add error event listener to suppress tile loading errors in UI
@@ -2691,7 +2675,7 @@
                     id: id,
                     name: site.name,
                     description: site.description,
-                    position: Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 0, Cesium.Ellipsoid.MOON),
+                    position: Cesium.Cartesian3.fromDegrees(site.lon, site.lat, 0, PLANET_ELLIPSOID),
                     billboard: {
                         image: 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0MCIgaGVpZ2h0PSI0MCI+PGNpcmNsZSBjeD0iMjAiIGN5PSIyMCIgcj0iMTUiIGZpbGw9IiNmZmZmZmYiIHN0cm9rZT0iIzMzMzMzMyIgc3Ryb2tlLXdpZHRoPSIyIi8+PHRleHQgeD0iMjAiIHk9IjI1IiBmb250LWZhbWlseT0iQXJpYWwiIGZvbnQtc2l6ZT0iMTgiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiMzMzMzMzMiPvCflqA8L3RleHQ+PC9zdmc+',
                         width: 40,
@@ -2746,9 +2730,9 @@
                     viewer.scene.morphToColumbusView(1.0); // 1 second animation
                 },
                 'homeView': () => {
-                    const apollo11 = CONFIG.APOLLO_SITES.apollo11;
+                    const home = PlanetBodies.homeView(PLANET_BODY);
                     viewer.camera.flyTo({
-                        destination: Cesium.Cartesian3.fromDegrees(apollo11.lon, apollo11.lat, 5000, Cesium.Ellipsoid.MOON),
+                        destination: Cesium.Cartesian3.fromDegrees(home.lon, home.lat, 5000, PLANET_ELLIPSOID),
                         orientation: {
                             heading: 0,
                             pitch: Cesium.Math.toRadians(-45),
@@ -2773,7 +2757,7 @@
                             site.lon, 
                             site.lat, 
                             3000, // Good altitude for viewing landing site details
-                            Cesium.Ellipsoid.MOON
+                            PLANET_ELLIPSOID
                         ),
                         orientation: {
                             heading: 0,
@@ -2839,7 +2823,7 @@
                     }
                 } else {
                     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
-                        ellipsoid: Cesium.Ellipsoid.MOON
+                        ellipsoid: PLANET_ELLIPSOID
                     });
                     Utils.showSnackBar('Terrain disabled', 'info');
                     
@@ -2885,7 +2869,7 @@
                     // In 2D mode, terrain adds complexity without benefit
                     // Temporarily disable terrain for better performance
                     viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
-                        ellipsoid: Cesium.Ellipsoid.MOON
+                        ellipsoid: PLANET_ELLIPSOID
                     });
                     
                     // Ensure globe is properly configured for 2D
@@ -2920,7 +2904,7 @@
                     } else {
                         // Terrain toggle is off or no terrain available
                         viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider({
-                            ellipsoid: Cesium.Ellipsoid.MOON
+                            ellipsoid: PLANET_ELLIPSOID
                         });
                         
                         const terrainSourceEl = document.getElementById('terrainSource');
@@ -4069,7 +4053,7 @@
                                         Cesium.Math.toDegrees(position.longitude),
                                         Cesium.Math.toDegrees(position.latitude),
                                         currentHeight,
-                                        Cesium.Ellipsoid.MOON
+                                        PLANET_ELLIPSOID
                                     ),
                                     orientation: {
                                         heading: Cesium.Math.toRadians(0), // North
@@ -4094,7 +4078,7 @@
                                         Cesium.Math.toDegrees(position.longitude),
                                         Cesium.Math.toDegrees(position.latitude),
                                         currentHeight,
-                                        Cesium.Ellipsoid.MOON
+                                        PLANET_ELLIPSOID
                                     ),
                                     orientation: {
                                         heading: Cesium.Math.toRadians(180), // South
@@ -4119,7 +4103,7 @@
                                         Cesium.Math.toDegrees(position.longitude),
                                         Cesium.Math.toDegrees(position.latitude),
                                         currentHeight,
-                                        Cesium.Ellipsoid.MOON
+                                        PLANET_ELLIPSOID
                                     ),
                                     orientation: {
                                         heading: Cesium.Math.toRadians(90), // West
@@ -4144,7 +4128,7 @@
                                         Cesium.Math.toDegrees(position.longitude),
                                         Cesium.Math.toDegrees(position.latitude),
                                         currentHeight,
-                                        Cesium.Ellipsoid.MOON
+                                        PLANET_ELLIPSOID
                                     ),
                                     orientation: {
                                         heading: Cesium.Math.toRadians(270), // East
@@ -4357,7 +4341,7 @@
                                 }
                                 
                                 modelPosition = Cesium.Cartesian3.fromDegrees(
-                                    customLon, customLat, customAlt, Cesium.Ellipsoid.MOON
+                                    customLon, customLat, customAlt, PLANET_ELLIPSOID
                                 );
                                 shouldZoomToLocation = true;
                                 break;
@@ -4370,7 +4354,7 @@
                             case 'apollo17':
                                 const site = apolloSites[locationOption];
                                 modelPosition = Cesium.Cartesian3.fromDegrees(
-                                    site.lon, site.lat, 0, Cesium.Ellipsoid.MOON
+                                    site.lon, site.lat, 0, PLANET_ELLIPSOID
                                 );
                                 shouldZoomToLocation = true;
                                 break;
@@ -4382,7 +4366,7 @@
                                     cameraPosition.longitude,
                                     cameraPosition.latitude,
                                     0,
-                                    Cesium.Ellipsoid.MOON
+                                    PLANET_ELLIPSOID
                                 );
                                 break;
                         }
@@ -4468,7 +4452,7 @@
                             cameraPosition.longitude,
                             cameraPosition.latitude,
                             0,
-                            Cesium.Ellipsoid.MOON
+                            PLANET_ELLIPSOID
                         );
                         
                         // Check if it's an Ion Asset ID
@@ -4953,7 +4937,7 @@
     </div>
 
     <!-- Main Heading -->
-    <div class="main-heading">DeepGIS Moon Viewer</div>
+    <div class="main-heading">DeepGIS <span data-body-name>Moon</span> Viewer</div>
 
     <!-- Performance Indicator -->
     <div class="performance-indicator" id="performanceIndicator">

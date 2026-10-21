@@ -15,6 +15,7 @@ urlpatterns = [
     path('label/3d/topology/sigma/', views.label_topology_sigma, name='label_topology_sigma'),  # Explicit SIGMA URL
     path('label/3d/search/', views.label_search, name='label_search'),  # DeepGIS Search viewer
     path('label/3d/moon/', views.label_moon_viewer, name='label_moon_viewer'),  # Moon viewer
+    path('label/3d/planet/<slug:body>/', views.label_planet_viewer, name='label_planet_viewer'),  # same viewer, any body in planet-bodies.js
     path('stl-viewer/', views.stl_viewer, name='stl_viewer'),
     path('view-label/', views.view_label, name='view_label'),
     path('results/', views.results, name='results'),
