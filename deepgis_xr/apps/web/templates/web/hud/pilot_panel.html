@@ -1,17 +1,25 @@
+{% load static %}
     <!-- AI Pilot chat (views/pilot.py); actions run on the drone widgets below -->
-    <div class="pilot-panel" id="pilotPanel">
+    <div class="pilot-panel" id="pilotPanel" data-body="{{ hud_body }}"
+         {% if hud_body == "earth" %}data-geology-url="{% static 'web/geo/tempe-geology.geojson' %}"{% else %}{% with "web/geo/nomenclature/"|add:hud_body|add:".json" as gazetteer %}data-gazetteer-url="{% static gazetteer %}"{% endwith %}{% endif %}>
         <div class="hud-panel-header">
             <div class="hud-panel-title"><i class="fas fa-robot" style="color: #f59e0b;"></i> AI Pilot</div>
             <button class="hud-panel-close" id="pilotCloseBtn"><i class="fas fa-times"></i></button>
         </div>
         <div class="pilot-log" id="pilotLog">
+            {% if hud_body == "earth" %}
             <div class="pilot-msg ai">Tell me where to fly, e.g. "orbit around Tempe Town Lake", "fly to Hayden Library at 200 m", "climb to 500 m and look at the horizon".</div>
+            {% elif hud_body == "moon" %}
+            <div class="pilot-msg ai">Tell me where to fly, e.g. "orbit Tycho", "fly to the Apollo 15 landing site at 5 km", "climb to 50 km and look at the horizon".</div>
+            {% else %}
+            <div class="pilot-msg ai">Tell me where to fly on {{ hud_body|title }} by IAU feature name or coordinates, e.g. "fly to 10 N 45 E at 20 km", "orbit what I am looking at", "climb to 50 km".</div>
+            {% endif %}
             {% if not user.is_authenticated %}
-            <div class="pilot-msg error">The AI pilot is for signed-in users. <a href="/label/admin/login/?next=/label/3d/search/">Sign in</a></div>
+            <div class="pilot-msg error">The AI pilot is for signed-in users. <a href="/label/admin/login/?next={{ request.path|urlencode }}">Sign in</a></div>
             {% endif %}
         </div>
         <form class="pilot-form" id="pilotForm" autocomplete="off">
-            <input type="text" id="pilotInput" maxlength="600" placeholder="Orbit around Tempe Town Lake">
+            <input type="text" id="pilotInput" maxlength="600" placeholder="{% if hud_body == "earth" %}Orbit around Tempe Town Lake{% elif hud_body == "moon" %}Orbit Tycho{% else %}Fly to a named feature{% endif %}">
             <button type="submit" id="pilotSendBtn" title="Send"><i class="fas fa-paper-plane"></i></button>
             <button type="button" class="pilot-stop" id="pilotStopBtn" title="Stop all motion"><i class="fas fa-stop"></i></button>
         </form>

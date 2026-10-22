@@ -77,6 +77,12 @@ class CleanActionsTests(TestCase):
     def test_caps_action_count(self):
         self.assertEqual(len(pilot.clean_actions([{"type": "wait", "seconds": 1}] * 20)), pilot.MAX_ACTIONS)
 
+    def test_planet_scale_and_no_layers(self):
+        out = pilot.clean_actions([{"type": "orbit", "place": "Tycho", "radius_m": 60000, "alt_m": 1e9},
+                                   {"type": "show_layer", "kind": "geology", "place": "Tycho"},
+                                   {"type": "hide_layer"}], body="moon")
+        self.assertEqual(out, [{"type": "orbit", "place": "Tycho", "radius_m": 60000.0, "alt_m": 500000.0}])
+
 
 @override_settings(DEEPGIS_PILOT_MCP_TOKEN="test-token", DEEPGIS_PILOT_RATE_PER_MIN=3)
 class PilotChatTests(TestCase):
@@ -134,6 +140,23 @@ class PilotChatTests(TestCase):
         self.assertIn("lat 33.43000, lon -111.94000, 812 m above ground", args["prompt"])
         self.assertIn("looking at lat 33.43200", args["prompt"])
         self.assertTrue(args["prompt"].endswith("User: orbit around tempe town lake twice"))
+
+    def test_planet_request(self):
+        self.client.force_login(self.user)
+        plan = {"reply": "Orbiting Tycho.", "actions": [{"type": "orbit", "place": "Tycho"},
+                                                         {"type": "show_layer", "kind": "faults"}]}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(plan)) as post:
+            resp = self.post({"message": "orbit tycho", "body": "moon"})
+        self.assertEqual(resp.json()["actions"], [{"type": "orbit", "place": "Tycho"}])
+        args = post.call_args.kwargs["json"]["params"]["arguments"]
+        self.assertEqual(args["json_schema"], pilot.PLANET_SCHEMA)
+        self.assertIn("3D globe of the Moon", args["system_prompt"])
+        self.assertNotIn("show_layer", json.dumps(args["json_schema"]))
+
+    def test_rejects_unknown_body(self):
+        self.client.force_login(self.user)
+        for body in ("vulcan", ["moon"]):
+            self.assertEqual(self.post({"message": "hi", "body": body}).status_code, 400)
 
     def test_backend_error_is_502(self):
         self.client.force_login(self.user)

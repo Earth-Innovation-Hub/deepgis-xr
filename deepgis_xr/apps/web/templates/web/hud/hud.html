@@ -4,7 +4,7 @@ shared by every planetary viewer. hud_body is "earth" or a planet-bodies.js id;
 parts that need Earth data or Earth-only scripts are switched on it.
 {% endcomment %}
 {% include "web/hud/toolbar.html" %}
-{% if hud_body == "earth" %}{% include "web/hud/pilot_panel.html" %}{% endif %}
+{% include "web/hud/pilot_panel.html" %}
     <!-- ========== HUD FLOATING PANELS ========== -->
 {% if hud_body == "earth" %}{% include "web/hud/layers_panel.html" %}{% endif %}
 {% include "web/hud/view_panel.html" %}

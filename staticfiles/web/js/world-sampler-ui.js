@@ -965,58 +965,6 @@ class WorldSamplerUI {
             }
         });
         
-        // The drone flight maths below is Earth-only (WGS84). Pages with their
-        // own controller (the Moon viewer) mark the widgets
-        // data-drone-controller="page" and keep these buttons to themselves.
-        if (!document.querySelector('[data-drone-controller="page"]')) {
-            // Drone fly mode button
-            safeAddListener('droneFlyBtn', 'click', () => this.flyDroneMode());
-            
-            // Update drone fly button text when distance or speed changes
-            const updateDroneFlyButton = () => {
-                const distEl = document.getElementById('droneFlyDistance');
-                const speedEl = document.getElementById('droneFlySpeed');
-                const btnEl = document.getElementById('droneFlyBtn');
-                if (distEl && speedEl && btnEl) {
-                    const distance = distEl.value || 100;
-                    const speed = speedEl.value || 100;
-                    btnEl.innerHTML = `<i class="fas fa-paper-plane"></i> Fly Forward ${distance}m @ ${speed} km/h`;
-                }
-            };
-            
-            safeAddListener('droneFlyDistance', 'input', updateDroneFlyButton);
-            safeAddListener('droneFlySpeed', 'input', updateDroneFlyButton);
-            
-            // Drone orbit mode button
-            safeAddListener('droneOrbitBtn', 'click', () => this.orbitDroneMode());
-            
-            // Update drone orbit button text when radius or speed changes
-            const updateDroneOrbitButton = () => {
-                const radiusEl = document.getElementById('droneOrbitRadius');
-                const speedEl = document.getElementById('droneOrbitSpeed');
-                const btnEl = document.getElementById('droneOrbitBtn');
-                if (radiusEl && speedEl && btnEl) {
-                    const radius = radiusEl.value || 1000;
-                    const speed = speedEl.value || 50;
-                    btnEl.innerHTML = `<i class="fas fa-circle-notch"></i> Orbit ${radius}m radius @ ${speed} km/h`;
-                }
-            };
-            
-            safeAddListener('droneOrbitRadius', 'input', updateDroneOrbitButton);
-            safeAddListener('droneOrbitSpeed', 'input', updateDroneOrbitButton);
-            safeAddListener('droneOrbitAltitude', 'input', updateDroneOrbitButton);
-            safeAddListener('droneOrbitRevolutions', 'input', updateDroneOrbitButton);
-            
-            // Update orbit pitch display
-            safeAddListener('droneOrbitPitch', 'input', (e) => {
-                const pitchVal = document.getElementById('orbitPitchValue');
-                if (pitchVal) pitchVal.textContent = `${e.target.value}°`;
-            });
-            
-            // Stop orbit button
-            safeAddListener('stopOrbitBtn', 'click', () => this.stopOrbitMode());
-        }
-        
         // AI Viewport Analysis button (handled globally, see initialization at bottom of file)
         
         // Reward slider
