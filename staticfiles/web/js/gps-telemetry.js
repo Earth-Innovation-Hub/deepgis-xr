@@ -26,7 +26,9 @@ class GPSTelemetryLoader {
         
         // Fallback: Create standalone GPS Telemetry section if not in World Sampler
         // Find the sidebar or create a container
-        const sidebar = document.getElementById('sidebar-wrapper') || document.querySelector('.sidebar-content');
+        const sidebar = document.getElementById('hudSamplerContainer') ||
+                        document.getElementById('sidebar-wrapper') ||
+                        document.querySelector('.sidebar-content');
         if (!sidebar) {
             console.error('Could not find sidebar to add GPS telemetry controls');
             return;
