@@ -1,0 +1,20 @@
+    <!-- Main Heading -->
+    <div class="main-heading">{% if hud_body == "earth" %}DeepGIS Search{% else %}DeepGIS <span data-body-name>{{ hud_body|title }}</span> Viewer{% endif %}</div>
+
+    <!-- Status Indicators -->
+    <div class="status-indicator" id="statusIndicator">
+        Initializing Cesium...
+    </div>
+
+    <div class="performance-indicator" id="performanceIndicator">
+        FPS: --
+    </div>
+
+    {% if hud_body == "earth" %}
+    <!-- Aircraft Count Indicator (Main Viewport) -->
+    <div class="aircraft-count-indicator" id="aircraftCountIndicator">
+        <i class="fas fa-plane icon"></i>
+        <span class="count" id="aircraftCountMain">0</span>
+        <span class="label">Aircraft in View</span>
+    </div>
+    {% endif %}

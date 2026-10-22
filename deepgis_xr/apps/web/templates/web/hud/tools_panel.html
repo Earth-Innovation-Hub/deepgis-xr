@@ -1,0 +1,31 @@
+    <!-- Tools Panel -->
+    <div class="hud-panel" id="toolsPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-tools"></i> Measurement Tools</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('toolsPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="btn-group-vertical w-100 mb-3" role="group">
+            <button class="btn btn-warning btn-sm mb-1" id="measureDistance">
+                <i class="fas fa-ruler-horizontal me-2"></i>Measure Distance
+            </button>
+            <button class="btn btn-warning btn-sm mb-1" id="measureArea">
+                <i class="fas fa-draw-polygon me-2"></i>Measure Area
+            </button>
+            <button class="btn btn-warning btn-sm mb-1" id="measureHeight">
+                <i class="fas fa-ruler-vertical me-2"></i>Measure Height
+            </button>
+            <button class="btn btn-info btn-sm mb-1" id="searchLidar">
+                <i class="fas fa-cloud me-2"></i>Search LiDAR Data
+            </button>
+            <button class="btn btn-danger btn-sm" id="clearMeasurements">
+                <i class="fas fa-trash me-2"></i>Clear All
+            </button>
+        </div>
+        <div id="measurementsList" style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; min-height: 40px; font-size: 0.8rem; color: #94a3b8;">
+            No measurements yet
+        </div>
+        <div id="lidarSearchResults" style="display: none; margin-top: 12px; padding: 8px; background: rgba(59, 130, 246, 0.15); border-radius: 4px; font-size: 0.8rem;">
+            <div id="lidarSearchStatus" style="color: #94a3b8;">Click "Search LiDAR Data" to find available datasets</div>
+            <div id="lidarSearchContent" style="margin-top: 8px;"></div>
+        </div>
+    </div>

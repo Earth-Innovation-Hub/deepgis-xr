@@ -1,0 +1,18 @@
+    <!-- AI Pilot chat (views/pilot.py); actions run on the drone widgets below -->
+    <div class="pilot-panel" id="pilotPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-robot" style="color: #f59e0b;"></i> AI Pilot</div>
+            <button class="hud-panel-close" id="pilotCloseBtn"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="pilot-log" id="pilotLog">
+            <div class="pilot-msg ai">Tell me where to fly, e.g. "orbit around Tempe Town Lake", "fly to Hayden Library at 200 m", "climb to 500 m and look at the horizon".</div>
+            {% if not user.is_authenticated %}
+            <div class="pilot-msg error">The AI pilot is for signed-in users. <a href="/label/admin/login/?next=/label/3d/search/">Sign in</a></div>
+            {% endif %}
+        </div>
+        <form class="pilot-form" id="pilotForm" autocomplete="off">
+            <input type="text" id="pilotInput" maxlength="600" placeholder="Orbit around Tempe Town Lake">
+            <button type="submit" id="pilotSendBtn" title="Send"><i class="fas fa-paper-plane"></i></button>
+            <button type="button" class="pilot-stop" id="pilotStopBtn" title="Stop all motion"><i class="fas fa-stop"></i></button>
+        </form>
+    </div>

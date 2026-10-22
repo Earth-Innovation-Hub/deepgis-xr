@@ -1,0 +1,26 @@
+{% comment %}
+The DeepGIS HUD: the Earth search viewer's toolbar, panels and flight widgets,
+shared by every planetary viewer. hud_body is "earth" or a planet-bodies.js id;
+parts that need Earth data or Earth-only scripts are switched on it.
+{% endcomment %}
+{% include "web/hud/toolbar.html" %}
+{% if hud_body == "earth" %}{% include "web/hud/pilot_panel.html" %}{% endif %}
+    <!-- ========== HUD FLOATING PANELS ========== -->
+{% if hud_body == "earth" %}{% include "web/hud/layers_panel.html" %}{% endif %}
+{% include "web/hud/view_panel.html" %}
+{% include "web/hud/ai_panel.html" %}
+{% include "web/hud/tools_panel.html" %}
+{% include "web/hud/models_panel.html" %}
+{% include "web/hud/mission_panel.html" %}
+{% include "web/hud/sampler_panel.html" %}
+{% if hud_body == "earth" %}{% include "web/hud/weather_panel.html" %}{% endif %}
+{% include "web/hud/vr_panel.html" %}
+{% include "web/hud/quick_views.html" %}
+{% include "web/hud/indicators.html" %}
+{% include "web/hud/camera_info.html" %}
+{% include "web/hud/drone_widgets.html" %}
+{% include "web/hud/navigation.html" %}
+{% include "web/hud/perspective.html" %}
+{% if hud_body == "earth" %}{% include "web/hud/joysticks.html" %}{% endif %}
+{% include "web/hud/loading.html" %}
+{% include "web/hud/shortcuts.html" %}

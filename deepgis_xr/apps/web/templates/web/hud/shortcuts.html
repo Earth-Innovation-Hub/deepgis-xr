@@ -1,0 +1,88 @@
+    <!-- Keyboard Shortcuts Legend Panel -->
+    <div class="keyboard-shortcuts-legend" id="keyboardShortcutsLegend">
+        <div class="keyboard-shortcuts-legend-header">
+            <div class="keyboard-shortcuts-legend-title">
+                <i class="fas fa-keyboard"></i> Keyboard Shortcuts
+            </div>
+            <button class="keyboard-shortcuts-legend-close" id="closeShortcutsLegend">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="keyboard-shortcuts-list">
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle View Mode (2D/3D)</span>
+                <span class="keyboard-shortcut-key">V</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: North</span>
+                <span class="keyboard-shortcut-key arrow">↑</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: South</span>
+                <span class="keyboard-shortcut-key arrow">↓</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: West</span>
+                <span class="keyboard-shortcut-key arrow">←</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Perspective: East</span>
+                <span class="keyboard-shortcut-key arrow">→</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle Full Screen</span>
+                <span class="keyboard-shortcut-key">F</span>
+            </div>
+            {% if hud_body == "earth" %}
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle 3D Buildings</span>
+                <span class="keyboard-shortcut-key">B</span>
+            </div>
+            {% endif %}
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle Wireframe Mesh/Textured</span>
+                <span class="keyboard-shortcut-key">W</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Hide All Toolbars</span>
+                <span class="keyboard-shortcut-key">T</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Show Keyboard Shortcuts</span>
+                <span class="keyboard-shortcut-key">H</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Stop Orbit / Close Panel</span>
+                <span class="keyboard-shortcut-key">ESC</span>
+            </div>
+            <div class="keyboard-shortcut-item" style="grid-column: 1 / -1; margin-top: 4px; padding: 6px 10px; background: rgba(59, 130, 246, 0.1); border-top: 1px solid rgba(59, 130, 246, 0.2);">
+                <span class="keyboard-shortcut-label" style="font-weight: 600; color: #93c5fd; text-align: center; width: 100%;">🎮 Drone Controls</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Drone Fly Forward</span>
+                <span class="keyboard-shortcut-key">D</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Start Orbit</span>
+                <span class="keyboard-shortcut-key">O</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Pause/Stop Orbit</span>
+                <span class="keyboard-shortcut-key">P</span>
+            </div>
+            {% if hud_body == "earth" %}
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Toggle Virtual Joysticks</span>
+                <span class="keyboard-shortcut-key">J</span>
+            </div>
+            {% endif %}
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Takeoff (Climb)</span>
+                <span class="keyboard-shortcut-key">U</span>
+            </div>
+            <div class="keyboard-shortcut-item">
+                <span class="keyboard-shortcut-label">Land (Descend)</span>
+                <span class="keyboard-shortcut-key">L</span>
+            </div>
+        </div>
+    </div>

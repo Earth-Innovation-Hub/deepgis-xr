@@ -1,0 +1,55 @@
+    <!-- ========== HUD BOTTOM TOOLBAR ========== -->
+    <div class="hud-toolbar" id="hudToolbar">
+        {% if hud_body == "earth" %}
+        <button class="hud-btn" id="hudLayersBtn" data-panel="layersPanel" title="Site / Dataset / Time-step layer catalog">
+            <i class="fas fa-layer-group"></i>
+            <span>Layers</span>
+        </button>
+        {% endif %}
+        <button class="hud-btn" id="hudViewBtn" data-panel="viewPanel">
+            <i class="fas fa-eye"></i>
+            <span>View</span>
+        </button>
+        <button class="hud-btn hud-ai" id="hudAiBtn" data-panel="aiPanel">
+            <i class="fas fa-brain"></i>
+            <span>AI</span>
+        </button>
+        {% if hud_body == "earth" %}
+        <button class="hud-btn hud-pilot" id="hudPilotBtn" title="Fly the camera drone by chat">
+            <i class="fas fa-robot"></i>
+            <span>Pilot</span>
+        </button>
+        {% endif %}
+        <button class="hud-btn" id="hudToolsBtn" data-panel="toolsPanel">
+            <i class="fas fa-tools"></i>
+            <span>Tools</span>
+        </button>
+        <button class="hud-btn hud-mission" id="hudMissionBtn" data-panel="missionPanel">
+            <i class="fas fa-route"></i>
+            <span>Mission</span>
+        </button>
+        <button class="hud-btn hud-sampler" id="hudSamplerBtn" data-panel="samplerPanel">
+            <i class="fas fa-globe"></i>
+            <span>Sampler</span>
+        </button>
+        <button class="hud-btn" id="hudModelsBtn" data-panel="modelsPanel">
+            <i class="fas fa-cube"></i>
+            <span>Models</span>
+        </button>
+        {% if hud_body == "earth" %}
+        <button class="hud-btn hud-weather" id="hudWeatherBtn" data-panel="weatherPanel">
+            <i class="fas fa-cloud-sun"></i>
+            <span>Weather</span>
+        </button>
+        {% endif %}
+        <button class="hud-btn hud-vr" id="hudVrBtn" data-panel="vrPanel">
+            <i class="fas fa-vr-cardboard"></i>
+            <span>VR</span>
+        </button>
+        {% if hud_body == "earth" %}
+        <button class="hud-btn" id="hudJoystickBtn">
+            <i class="fas fa-gamepad"></i>
+            <span>Joystick</span>
+        </button>
+        {% endif %}
+    </div>

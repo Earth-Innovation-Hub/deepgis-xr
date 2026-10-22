@@ -1,0 +1,284 @@
+    <!-- AI Analysis Panel -->
+    <div class="hud-panel" id="aiPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-brain" style="color: #10b981;"></i> AI Viewport Analysis</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('aiPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Analysis Type:</label>
+            <select class="form-select form-select-sm" id="analysisTypeSelect">
+                <option value="sam"{% if hud_body != "earth" %} selected{% endif %}>SAM (Universal Segmentation)</option>
+                <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
+                <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
+                <option value="grounded_sam">Grounded-SAM-2 (Detection + Seg) 🎯🔍</option>
+                {% if hud_body == "earth" %}
+                <option value="maskrcnn_rocks" selected>MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
+                <option value="maskrcnn_house">MaskRCNN House (Tornado/Eureka) 🏠</option>
+                <option value="maskrcnn_hypolith">MaskRCNN Hypolith (Gobabeb/Namib) 🦠</option>
+                <option value="maskrcnn_litter">MaskRCNN Litter (DeepGIS dynamics) 🗑️</option>
+                <option value="maskrcnn_roadkill">MaskRCNN Roadkill (Sarah preview, e0004) 🦝</option>
+                <option value="maskrcnn_newlife">MaskRCNN NewLife (DeepGIS biology) 🌱</option>
+                {% endif %}
+                {% if hud_body == "earth" or hud_body == "moon" %}
+                <option value="maskrcnn_brent_moon_craters">MaskRCNN Moon Craters — Brent (LROC NAC) 🌑</option>
+                <option value="maskrcnn_harish_moon_craters">MaskRCNN Moon Craters — Harish (LROC NAC, e0099) 🌒</option>
+                {% endif %}
+                <option value="zero_shot">Zero-Shot (COCO)</option>
+                <option value="mask2former">Mask2Former (Accurate)</option>
+                {% if hud_body == "earth" %}
+                <option value="prithvi">Prithvi-EO (Earth Observation) 🌍</option>
+                {% endif %}
+            </select>
+        </div>
+        <!-- SAM Options -->
+        <div id="samOptions">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model:</label>
+                <select class="form-select form-select-sm" id="samModelType">
+                    <option value="vit_b" selected>Base (Fast)</option>
+                    <option value="vit_l">Large (Balanced)</option>
+                    <option value="vit_h">Huge (Best)</option>
+                </select>
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Min Area (px):</label>
+                <input type="number" class="form-control form-control-sm" id="samMinArea" value="100" min="10" max="10000" step="10">
+            </div>
+        </div>
+        <!-- YOLOv8 Options -->
+        <div id="yolov8Options" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model Size:</label>
+                <select class="form-select form-select-sm" id="yolov8ModelType">
+                    <option value="yolov8n" selected>Nano (Fastest)</option>
+                    <option value="yolov8s">Small</option>
+                    <option value="yolov8m">Medium</option>
+                    <option value="yolov8l">Large</option>
+                    <option value="yolov8x">XLarge (Best)</option>
+                </select>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="yolov8ConfidenceValue">25%</span></label>
+                <input type="range" class="form-range" id="yolov8Confidence" min="10" max="90" step="5" value="25">
+            </div>
+            <div class="form-group mb-3">
+                <input type="text" class="form-control form-control-sm" id="yolov8Classes" placeholder="Filter: person, car, truck...">
+            </div>
+        </div>
+        <!-- Grounding DINO Options -->
+        <div id="groundingDinoOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
+                <input type="text" class="form-control form-control-sm" id="groundingDinoPrompt" 
+                       value="{% if hud_body == "earth" %}building . roof . road . vehicle . parking lot . field . crop row . orchard . irrigation canal . tree . shrub . grass . wetland . water . bare soil . rock . boulder . outcrop . crater . debris . erosion channel{% else %}crater . small crater . boulder . rock . outcrop . ridge . rille . scarp . channel . dune . regolith . debris . shadow{% endif %}"
+                       placeholder="{% if hud_body == "earth" %}Describe objects: building . road . field . tree . rock . crater{% else %}Describe features: crater . boulder . ridge . rille{% endif %}"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    {% if hud_body == "earth" %}Shared DINO/SAM vocabulary: urban, agricultural, ecological, and geological classes.{% else %}Planetary/geologic vocabulary, separated with dots.{% endif %}
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Box Threshold: <span id="gdBoxThresholdValue">0.30</span></label>
+                <input type="range" class="form-range" id="gdBoxThreshold" min="10" max="90" step="5" value="30">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Threshold: <span id="gdTextThresholdValue">0.25</span></label>
+                <input type="range" class="form-range" id="gdTextThreshold" min="10" max="90" step="5" value="25">
+            </div>
+        </div>
+        <!-- Zero-Shot Options -->
+        <div id="zeroShotOptions" style="display: none;">
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="zeroShotConfidenceValue">0.50</span></label>
+                <input type="range" class="form-range" id="zeroShotConfidence" min="0" max="100" step="5" value="50">
+            </div>
+        </div>
+        <!-- Mask2Former Options -->
+        <div id="mask2formerOptions" style="display: none;">
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="mask2formerConfidenceValue">0.50</span></label>
+                <input type="range" class="form-range" id="mask2formerConfidence" min="0" max="100" step="5" value="50">
+            </div>
+        </div>
+        <!-- Grounded-SAM-2 Options -->
+        <div id="groundedSamOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
+                <input type="text" class="form-control form-control-sm" id="groundedSamPrompt" 
+                       value="{% if hud_body == "earth" %}building . roof . road . vehicle . parking lot . field . crop row . orchard . irrigation canal . tree . shrub . grass . wetland . water . bare soil . rock . boulder . outcrop . crater . debris . erosion channel{% else %}crater . small crater . boulder . rock . outcrop . ridge . rille . scarp . channel . dune . regolith . debris . shadow{% endif %}"
+                       placeholder="{% if hud_body == "earth" %}Detect and segment: building . road . field . tree . rock . crater{% else %}Detect and segment: crater . boulder . ridge . rille{% endif %}"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Uses the same vocabulary as Grounding DINO, with SAM-2 masks added.
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Box Threshold: <span id="gsBoxThresholdValue">0.35</span></label>
+                <input type="range" class="form-range" id="gsBoxThreshold" min="10" max="90" step="5" value="35">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Threshold: <span id="gsTextThresholdValue">0.25</span></label>
+                <input type="range" class="form-range" id="gsTextThreshold" min="10" max="90" step="5" value="25">
+            </div>
+        </div>
+        {% if hud_body == "earth" %}
+        <!-- MaskRCNN Rocks Options -->
+        <div id="maskrcnnRocksOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = server default):</label>
+                <input type="text" class="form-control form-control-sm" id="maskrcnnRocksModelId"
+                       value=""
+                       placeholder="e.g. bishop_hero_e0004"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Full registry: GET http://192.168.0.232:5002/api/models
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnRocksScoreValue">0.50</span></label>
+                <input type="range" class="form-range" id="maskrcnnRocksScore" min="10" max="95" step="5" value="50">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
+                <input type="number" class="form-control form-control-sm" id="maskrcnnRocksMaxDet" value="200" min="1" max="2000" step="10">
+            </div>
+        </div>
+        <!-- MaskRCNN House (Tornado/Eureka) Options -->
+        <div id="maskrcnnHouseOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = server default):</label>
+                <input type="text" class="form-control form-control-sm" id="maskrcnnHouseModelId"
+                       value=""
+                       placeholder="e.g. tornado_detector_eureka_aug_mult_e0039"
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Full registry: GET http://192.168.0.232:5003/api/models
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnHouseScoreValue">0.50</span></label>
+                <input type="range" class="form-range" id="maskrcnnHouseScore" min="10" max="95" step="5" value="50">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
+                <input type="number" class="form-control form-control-sm" id="maskrcnnHouseMaxDet" value="200" min="1" max="2000" step="10">
+            </div>
+        </div>
+        {% endif %}
+        <!--
+            Shared options panel for the six MaskRCNN sibling services
+            (hypolith / litter / roadkill / newlife / brent + harish moon
+            craters). All six branches accept the same triplet of inputs
+            (model_id, score_threshold, max_detections), so we keep one
+            panel and let the toggle code repoint the registry hint to
+            the right port (5004-5009). Placeholder model_id is updated
+            per-branch in the analysisTypeSelect change handler below.
+        -->
+        <div id="maskrcnnSiblingOptions" style="display: none;">
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = service default):</label>
+                <input type="text" class="form-control form-control-sm" id="maskrcnnSiblingModelId"
+                       value=""
+                       placeholder=""
+                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+                <small id="maskrcnnSiblingRegistryHint" style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
+                    Full registry: GET http://192.168.0.232:5004/api/models
+                </small>
+            </div>
+            <div class="form-group mb-2">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnSiblingScoreValue">0.50</span></label>
+                <input type="range" class="form-range" id="maskrcnnSiblingScore" min="10" max="95" step="5" value="50">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
+                <input type="number" class="form-control form-control-sm" id="maskrcnnSiblingMaxDet" value="200" min="1" max="2000" step="10">
+            </div>
+        </div>
+        <button class="btn btn-success w-100" id="analyzeViewportBtn">
+            <i class="fas fa-brain me-2"></i>Analyze Viewport
+        </button>
+        <div id="samAnalysisStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(16, 185, 129, 0.15); border-radius: 4px; font-size: 0.8rem;">
+            <span id="samStatusText">Processing...</span>
+        </div>
+        <small id="analysisDescription" style="display: block; margin-top: 6px; font-size: 0.75rem; color: #64748b;">
+            Segments all visible regions using Segment Anything Model
+        </small>
+
+        {% if hud_body == "earth" %}
+        <!-- Distinction-Game SceneGraph orchestrator (kernelcal §4 / §11.4):
+             one click calls every selected kernel on the captured viewport,
+             fuses all claims through PHX_URBAN_V0 + Q_s, and renders the
+             scene graph nodes on the globe coloured by argmax category. -->
+        <hr style="border-color: rgba(148, 163, 184, 0.25); margin: 12px 0 8px;">
+        <div style="font-size: 0.78rem; color: #cbd5e1; margin-bottom: 6px;">
+            <i class="fas fa-project-diagram me-1"></i>
+            <strong>Distinction-Game SceneGraph</strong>
+            <span style="color: #64748b;">— fuse multiple kernels into one labelled graph</span>
+        </div>
+        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">Kernels to query:</div>
+        <div class="d-flex flex-wrap gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelMrRocks" checked> MR-rocks 🪨</label>
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelMrHouse" checked> MR-house 🏠</label>
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelGroundingDino"> GD</label>
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelGroundedSam"> GS-2</label>
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelSam"> SAM</label>
+        </div>
+        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">Ground truth:</div>
+        <div class="d-flex flex-wrap gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgGtOsmBuildings" checked> OSM buildings</label>
+            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgGtOsmRoads"> OSM roads</label>
+        </div>
+        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 6px;">
+            Region backbone (Option&nbsp;A — urban-spectral merge):
+        </div>
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label class="form-check">
+                <input class="form-check-input me-1" type="checkbox" id="sgUseCityGraph">
+                Use OSM road-graph regions
+            </label>
+            <select id="sgGraphMode" class="form-select form-select-sm"
+                    style="display:inline-block; width:auto; font-size:0.72rem; padding:2px 4px;"
+                    title="knn = Euclidean centroid k-NN; road_knn = shortest path along OSM streets"
+                    disabled>
+                <option value="road_knn" selected>road_knn (street-aware)</option>
+                <option value="knn">knn (Euclidean)</option>
+            </select>
+        </div>
+        <button class="btn btn-info w-100" id="buildSceneGraphBtn" style="font-size: 0.85rem;">
+            <i class="fas fa-project-diagram me-2"></i>Build Scene Graph
+        </button>
+        <label class="form-check d-flex align-items-center mt-2 mb-0"
+               style="font-size: 0.75rem; color: #cbd5e1;">
+            <input class="form-check-input me-2" type="checkbox" id="sgShowFusedOnViewport">
+            Show latest fused SceneGraph (factor graph) on Cesium viewport
+        </label>
+        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 8px;">
+            Factor-graph fuse:
+        </div>
+        <div class="d-flex align-items-center gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label for="sgFuseLatestN" style="margin:0;">Latest rows</label>
+            <input type="number" class="form-control form-control-sm" id="sgFuseLatestN"
+                   value="1" min="1" max="5" step="1"
+                   style="width: 64px; background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
+            <button class="btn btn-secondary btn-sm" id="previewFusedSceneGraphBtn" type="button"
+                    style="font-size: 0.72rem;">Preview</button>
+            <button class="btn btn-primary btn-sm" id="buildFusedSceneGraphBtn" type="button"
+                    style="font-size: 0.72rem;">Fuse + Show</button>
+        </div>
+        <div id="fusedSceneGraphStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(37, 99, 235, 0.15); border-radius: 4px; font-size: 0.72rem; color: #cbd5e1;">
+            <span id="fusedSceneGraphStatusText">Ready.</span>
+        </div>
+        <div id="sceneGraphStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(59, 130, 246, 0.15); border-radius: 4px; font-size: 0.78rem; color: #cbd5e1;">
+            <span id="sceneGraphStatusText">Building...</span>
+        </div>
+        <small style="display: block; margin-top: 6px; font-size: 0.72rem; color: #64748b;">
+            Calls each selected kernel on the same captured frame, then runs
+            <code>kernelcal.distinction_game.build_scene_graph</code> to fuse
+            claims under PHX_URBAN_V0. Colour = argmax category, opacity = posterior score.
+            Ticking <em>Use OSM road-graph regions</em> additionally builds a
+            <code>kernelcal.urban.CityGraph</code> from OSM buildings + the
+            road network and splices its road-aware adjacency + Laplacian
+            spectrum into the SceneGraph.
+        </small>
+        {% endif %}
+    </div>

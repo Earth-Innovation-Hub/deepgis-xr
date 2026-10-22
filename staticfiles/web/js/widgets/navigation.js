@@ -88,12 +88,11 @@ function startNavigationUpdates(viewer) {
     const roll = Cesium.Math.toDegrees(camera.roll);
     
     // Calculate approximate zoom level based on altitude
-    // Formula: zoom ≈ log2(40075016.686 / (altitude * 0.0254 / 96 / 256))
-    // Simplified: zoom ≈ log2(40075016.686 / altitude) - log2(0.0254 / 96 / 256)
-    // Web Mercator zoom calculation
+    // Formula: zoom ≈ log2(circumference / (altitude * 0.0254 / 96 / 256))
+    // Web Mercator zoom calculation, on whichever body the globe is
     const metersPerPixel = altitude * 0.0254 / 96; // Assuming 96 DPI
-    const earthCircumference = 40075016.686; // meters
-    const zoom = Math.log2(earthCircumference / (metersPerPixel * 256));
+    const circumference = 2 * Math.PI * viewer.scene.globe.ellipsoid.maximumRadius; // 40075016.686 m on Earth
+    const zoom = Math.log2(circumference / (metersPerPixel * 256));
     const zoomLevel = Math.max(0, Math.min(24, zoom)); // Clamp between 0-24
     
     // Update camera info display

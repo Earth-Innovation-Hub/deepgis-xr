@@ -1,0 +1,29 @@
+    <!-- Quick View Buttons (Top Right) -->
+    <div class="hud-quick-views">
+        <button class="hud-quick-btn" id="quickView2D"><i class="fas fa-map"></i> 2D</button>
+        <button class="hud-quick-btn" id="quickView3D"><i class="fas fa-cube"></i> 3D</button>
+        <button class="hud-quick-btn" id="quickHome"><i class="fas fa-home"></i> Home</button>
+        {% if hud_body == "earth" %}
+        <button class="hud-quick-btn" id="quickShare" title="Share Current View"><i class="fas fa-share-alt"></i> Share</button>
+        <button class="hud-quick-btn" id="quickQR" title="Show QR Code"><i class="fas fa-qrcode"></i> QR</button>
+        <button class="hud-quick-btn" id="quickLabelRocks" title="Capture viewport &amp; open the rock label editor (Workflow B)" onclick="captureForRockLabel(); return false;">
+            <i class="fas fa-mountain"></i> Label Rocks
+        </button>
+        {% endif %}
+    </div>
+    
+    {% if hud_body == "earth" %}
+    <!-- QR Code Overlay -->
+    <div class="qr-code-overlay" id="qrCodeOverlay">
+        <div class="qr-code-label">Scan to Experience</div>
+        <div class="qr-code-container" id="qrCodeContainer"></div>
+        <div class="qr-code-controls">
+            <button class="qr-code-btn" id="qrRefreshBtn" title="Refresh QR Code">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+            <button class="qr-code-btn close" id="qrCloseBtn" title="Close">
+                <i class="fas fa-times"></i> Close
+            </button>
+        </div>
+    </div>
+    {% endif %}

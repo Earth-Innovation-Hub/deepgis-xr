@@ -1,0 +1,11 @@
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-content">
+            <i class="fas fa-globe fa-3x fa-spin" style="color: #3b82f6; margin-bottom: 20px;"></i>
+            <div>Initializing {% if hud_body == "earth" %}DeepGIS Search{% else %}DeepGIS {{ hud_body|title }} Viewer{% endif %}...</div>
+            <div class="loading-progress">
+                <div class="loading-bar" id="loadingBar"></div>
+            </div>
+            <div id="loadingStatus">Setting up 3D environment...</div>
+        </div>
+    </div>

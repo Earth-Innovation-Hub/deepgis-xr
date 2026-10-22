@@ -1,0 +1,111 @@
+    <!-- Drone Fly Widget -->
+    <div class="drone-fly-widget"{% if hud_body != "earth" %} data-drone-controller="page"{% endif %} id="droneFlyWidget">
+        <div class="widget-title">
+            <i class="fas fa-drone"></i>Drone Fly Mode
+        </div>
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>Distance (m):</label>
+            <input type="number" id="droneFlyDistance" 
+                   {% if hud_body == "earth" %}value="100" min="10" max="1000" step="10"{% else %}value="20000" min="100" max="500000" step="100"{% endif %}>
+        </div>
+            <div class="widget-field">
+            <label>Speed (km/h):</label>
+            <input type="number" id="droneFlySpeed" 
+                   {% if hud_body == "earth" %}value="100" min="25" max="250" step="5"{% else %}value="3000" min="50" max="6000" step="50"{% endif %}>
+        </div>
+        </div>
+        <div class="widget-item">
+            <button class="btn btn-success" id="droneFlyBtn">
+                <i class="fas fa-paper-plane"></i> Fly Forward
+            </button>
+        </div>
+        
+        <!-- Speed Controls -->
+        <div class="widget-item" style="padding-top: 2px;">
+            <small style="display: block; text-align: left; margin-bottom: 1px; color: #94a3b8; font-size: 7px; opacity: 0.7;">Speeds</small>
+        </div>
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>H (m/s):</label>
+                <input type="number" id="droneHorizontalSpeed" 
+                       {% if hud_body == "earth" %}value="50" min="5" max="100" step="5"{% else %}value="800" min="10" max="2000" step="10"{% endif %}>
+            </div>
+            <div class="widget-field">
+                <label>V (m/s):</label>
+                <input type="number" id="droneVerticalSpeed" 
+                       {% if hud_body == "earth" %}value="5" min="1" max="20" step="1"{% else %}value="100" min="1" max="1000" step="1"{% endif %}>
+            </div>
+        </div>
+        <div class="widget-fields-row">
+            <button class="btn btn-primary" id="droneTakeoffBtn">
+                <i class="fas fa-arrow-up"></i> Takeoff
+            </button>
+            <button class="btn btn-warning" id="droneLandBtn">
+                <i class="fas fa-arrow-down"></i> Land
+            </button>
+        </div>
+        
+        <div class="widget-item" style="display: none;" id="droneFlyHelp">
+            <small style="display: block; text-align: center; font-size: 7px;">
+                Flies along current heading, maintaining altitude & orientation
+            </small>
+        </div>
+    </div>
+
+    <!-- Drone Orbit Widget -->
+    <div class="drone-orbit-widget"{% if hud_body != "earth" %} data-drone-controller="page"{% endif %} id="droneOrbitWidget">
+        <div class="widget-title">
+            <i class="fas fa-circle-notch"></i>Drone Orbit Mode
+        </div>
+        <div class="widget-fields-row">
+            <div class="widget-field">
+                <label>Radius (m):</label>
+            <input type="number" id="droneOrbitRadius" 
+                   {% if hud_body == "earth" %}value="5000" min="20" max="10000" step="10"{% else %}value="20000" min="500" max="300000" step="500"{% endif %}>
+        </div>
+            <div class="widget-field">
+            <label>Revolutions:</label>
+            <input type="number" id="droneOrbitRevolutions" 
+                   {% if hud_body == "earth" %}value="10" min="0.25"{% else %}value="1" min="0.25"{% endif %} max="20" step="0.25">
+            </div>
+        </div>
+        <div class="widget-item">
+            <label style="opacity: 0.5; font-size: 8px;">Speed: Horizontal</label>
+        </div>
+        <div class="widget-item">
+            <label>Pitch: {% if hud_body == "earth" %}<span id="orbitPitchValue">-10°</span>{% else %}<span id="orbitPitchValue">-35°</span>{% endif %}</label>
+            <input type="range" id="droneOrbitPitch" 
+                   {% if hud_body == "earth" %}value="-10" min="-90"{% else %}value="-35" min="-90"{% endif %} max="0" step="5">
+        </div>
+        <div class="widget-item">
+            <label>Yaw: {% if hud_body == "earth" %}<span id="orbitYawValue">50°</span>{% else %}<span id="orbitYawValue">0°</span>{% endif %}</label>
+            <input type="range" id="droneOrbitYaw" 
+                   {% if hud_body == "earth" %}value="50" min="-180"{% else %}value="0" min="-180"{% endif %} max="180" step="5">
+        </div>
+        <div class="widget-item">
+            <button class="btn btn-primary" id="droneOrbitBtn">
+                <i class="fas fa-circle-notch"></i> Orbit
+            </button>
+        </div>
+        <div class="widget-item" style="display: none;" id="stopOrbitContainer">
+            <button class="btn btn-danger" id="stopOrbitBtn">
+                <i class="fas fa-stop"></i> Stop (ESC)
+            </button>
+        </div>
+        <div class="widget-item" style="display: none;" id="pauseOrbitContainer">
+            <button class="btn btn-warning" id="pauseOrbitBtn">
+                <i class="fas fa-pause"></i> Pause (Space)
+            </button>
+        </div>
+        <div class="widget-item" style="display: none;" id="orbitProgressContainer">
+            <small style="display: block; text-align: center; font-size: 9px;">
+                <span id="orbitProgressText">Revolution: 0.0 / 10.0</span>
+            </small>
+        </div>
+        <div class="widget-item" style="display: none;" id="droneOrbitHelp">
+            <small style="display: block; text-align: center; font-size: 7px;">
+                QGC-style: Orbits at current altitude. Gimbal points at center. Adjust pitch/yaw sliders. Press ESC to stop.
+            </small>
+        </div>
+    </div>

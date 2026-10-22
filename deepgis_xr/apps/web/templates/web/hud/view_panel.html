@@ -1,0 +1,58 @@
+    <!-- View Panel -->
+    <div class="hud-panel" id="viewPanel">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-eye"></i> View & Display</div>
+            <button class="hud-panel-close" onclick="closeHudPanel('viewPanel')"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="form-group mb-3">
+            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Base Map:</label>
+            <select class="form-select form-select-sm" id="baseMapSelect">
+                {% if hud_body == "earth" %}
+                <option value="ion_satellite">Ion Satellite</option>
+                <option value="ion_streets">Ion Streets</option>
+                <option value="satellite">Bing Satellite</option>
+                <option value="bing">Bing Streets</option>
+                <option value="mapbox">Mapbox Streets</option>
+                <option value="none">None</option>
+                {% else %}
+                <option value="none">None</option>
+                {% endif %}
+            </select>
+        </div>
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="terrainToggle"{% if hud_body != "earth" %} checked{% endif %}>
+            <label class="form-check-label" for="terrainToggle" style="color: #cbd5e1; font-size: 0.85rem;">
+                <i class="fas fa-mountain me-2"></i>3D Terrain
+            </label>
+        </div>
+        {% if hud_body == "earth" %}
+        <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" id="buildingsToggle">
+            <label class="form-check-label" for="buildingsToggle" style="color: #cbd5e1; font-size: 0.85rem;">
+                <i class="fas fa-building me-2"></i>3D Buildings (OSM)
+            </label>
+        </div>
+        {% endif %}
+        <div class="btn-group w-100 mb-2" role="group">
+            <button class="btn btn-outline-primary btn-sm" id="view2D"><i class="fas fa-map"></i> 2D</button>
+            <button class="btn btn-outline-primary btn-sm" id="view3D"><i class="fas fa-cube"></i> 3D</button>
+            <button class="btn btn-outline-primary btn-sm" id="viewColumbus"><i class="fas fa-compass"></i> Columbus</button>
+        </div>
+        <button class="btn btn-success btn-sm w-100" id="homeView"><i class="fas fa-home me-2"></i>Home View</button>
+        {% if hud_body == "moon" %}
+        <div class="form-check mt-3 mb-2">
+            <input class="form-check-input" type="checkbox" id="landingSitesToggle" checked>
+            <label class="form-check-label" for="landingSitesToggle" style="color: #cbd5e1; font-size: 0.85rem;">
+                <i class="fas fa-rocket me-2"></i>Apollo Landing Sites
+            </label>
+        </div>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px;">
+            <button class="btn btn-outline-secondary btn-sm" id="apollo11"><i class="fas fa-flag me-1"></i>Apollo 11</button>
+            <button class="btn btn-outline-secondary btn-sm" id="apollo12"><i class="fas fa-flag me-1"></i>Apollo 12</button>
+            <button class="btn btn-outline-secondary btn-sm" id="apollo14"><i class="fas fa-flag me-1"></i>Apollo 14</button>
+            <button class="btn btn-outline-secondary btn-sm" id="apollo15"><i class="fas fa-flag me-1"></i>Apollo 15</button>
+            <button class="btn btn-outline-secondary btn-sm" id="apollo16"><i class="fas fa-flag me-1"></i>Apollo 16</button>
+            <button class="btn btn-outline-secondary btn-sm" id="apollo17"><i class="fas fa-flag me-1"></i>Apollo 17</button>
+        </div>
+        {% endif %}
+    </div>

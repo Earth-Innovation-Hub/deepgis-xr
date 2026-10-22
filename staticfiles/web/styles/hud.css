@@ -1,0 +1,1258 @@
+/* DeepGIS HUD: toolbar, panels, indicators and flight widgets (templates/web/hud/). */
+/* ========== HUD BOTTOM TOOLBAR ========== */
+.hud-toolbar {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 4px;
+    padding: 8px 16px;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+    z-index: 2000;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.hud-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 14px;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    color: #94a3b8;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 60px;
+}
+
+.hud-btn:hover {
+    background: rgba(59, 130, 246, 0.25);
+    color: #60a5fa;
+    border-color: #3b82f6;
+    transform: translateY(-2px);
+}
+
+.hud-btn.active {
+    background: rgba(59, 130, 246, 0.4);
+    color: #93c5fd;
+    border-color: #3b82f6;
+    box-shadow: 0 0 12px rgba(59, 130, 246, 0.4);
+}
+
+.hud-btn i {
+    font-size: 1.1rem;
+    margin-bottom: 2px;
+}
+
+.hud-btn span {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Special colored buttons */
+.hud-btn.hud-ai { border-color: rgba(16, 185, 129, 0.5); }
+.hud-btn.hud-ai:hover, .hud-btn.hud-ai.active { 
+    background: rgba(16, 185, 129, 0.3); 
+    border-color: #10b981;
+    color: #34d399;
+}
+
+.hud-btn.hud-pilot { border-color: rgba(245, 158, 11, 0.5); }
+.hud-btn.hud-pilot:hover, .hud-btn.hud-pilot.active {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: #f59e0b;
+    color: #fbbf24;
+}
+
+/* AI pilot chat: stays open while the user moves the map */
+.pilot-panel {
+    position: fixed;
+    bottom: 70px;
+    right: 120px;
+    width: 340px;
+    max-height: 55vh;
+    display: none;
+    flex-direction: column;
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    border-radius: 12px;
+    padding: 12px;
+    z-index: 1998;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+.pilot-panel.visible { display: flex; }
+.pilot-log {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+    font-size: 0.8rem;
+}
+.pilot-msg {
+    padding: 6px 9px;
+    border-radius: 8px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.pilot-msg.user { align-self: flex-end; background: rgba(59, 130, 246, 0.3); color: #e2e8f0; max-width: 85%; }
+.pilot-msg.ai { align-self: flex-start; background: rgba(51, 65, 85, 0.7); color: #f1f5f9; max-width: 92%; }
+.pilot-msg.step { align-self: flex-start; color: #94a3b8; font-size: 0.72rem; padding: 0 9px; }
+.pilot-msg.error { align-self: flex-start; color: #fca5a5; font-size: 0.75rem; padding: 0 9px; }
+.pilot-msg.geo { align-self: flex-start; color: #fde68a; font-size: 0.74rem; padding: 0 9px; }
+.pilot-msg a { color: #fbbf24; }
+.pilot-form { display: flex; gap: 6px; }
+.pilot-form input {
+    flex: 1;
+    min-width: 0;
+    background: rgba(30, 41, 59, 0.9);
+    border: 1px solid rgba(100, 116, 139, 0.5);
+    border-radius: 6px;
+    color: #f1f5f9;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+}
+.pilot-form input:focus { outline: none; border-color: #f59e0b; }
+.pilot-form button {
+    background: rgba(245, 158, 11, 0.25);
+    border: 1px solid rgba(245, 158, 11, 0.5);
+    border-radius: 6px;
+    color: #fbbf24;
+    padding: 0 10px;
+    cursor: pointer;
+}
+.pilot-form button:disabled { opacity: 0.4; cursor: default; }
+.pilot-form button.pilot-stop { background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.5); color: #fca5a5; }
+
+.hud-btn.hud-vr { border-color: rgba(139, 92, 246, 0.5); }
+.hud-btn.hud-vr:hover, .hud-btn.hud-vr.active { 
+    background: rgba(139, 92, 246, 0.3); 
+    border-color: #8b5cf6;
+    color: #a78bfa;
+}
+
+.hud-btn.hud-mission { border-color: rgba(59, 130, 246, 0.5); }
+.hud-btn.hud-mission:hover, .hud-btn.hud-mission.active { 
+    background: rgba(59, 130, 246, 0.3); 
+    border-color: #3b82f6;
+    color: #60a5fa;
+}
+
+.hud-btn.hud-sampler { border-color: rgba(245, 158, 11, 0.5); }
+.hud-btn.hud-sampler:hover, .hud-btn.hud-sampler.active { 
+    background: rgba(245, 158, 11, 0.3); 
+    border-color: #f59e0b;
+    color: #fbbf24;
+}
+
+.hud-btn.hud-weather { border-color: rgba(16, 185, 129, 0.5); }
+.hud-btn.hud-weather:hover, .hud-btn.hud-weather.active { 
+    background: rgba(16, 185, 129, 0.3); 
+    border-color: #10b981;
+    color: #34d399;
+}
+
+/* ========== HUD FLOATING PANELS ========== */
+.hud-panel {
+    position: fixed;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    width: 380px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 12px;
+    padding: 16px;
+    z-index: 1999;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.25s ease;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.hud-panel.visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+}
+
+.hud-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.hud-panel-title {
+    color: #f1f5f9;
+    font-size: 0.9rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.hud-panel-close {
+    background: none;
+    border: none;
+    color: #64748b;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.hud-panel-close:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+}
+
+/* Custom scrollbar for panels */
+.hud-panel::-webkit-scrollbar {
+    width: 6px;
+}
+.hud-panel::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+.hud-panel::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.4);
+    border-radius: 3px;
+}
+
+/* ========== HIDE OLD SIDEBAR & FULL-WIDTH MAP ========== */
+#sidebar-wrapper {
+    display: none !important;
+    width: 0 !important;
+}
+
+#wrapper {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+.mobile-toggle {
+    display: none !important;
+}
+
+/* Make cesium container full width */
+#cesiumContainer {
+    right: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+}
+
+/* Hide the old status indicator (sidebar mode messages) */
+.status-indicator {
+    display: none !important;
+}
+
+/* ========== PERFORMANCE & AIRCRAFT COUNT INDICATORS ========== */
+.performance-indicator {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    background: rgba(139, 92, 246, 0.85);
+    backdrop-filter: blur(8px);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    z-index: 1500;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.aircraft-count-indicator {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(245, 158, 11, 0.90);
+    backdrop-filter: blur(10px);
+    color: white;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    z-index: 1500;
+    border: 2px solid rgba(245, 158, 11, 0.5);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 20px rgba(245, 158, 11, 0.3);
+    display: none;
+    transition: all 0.3s ease;
+    min-width: 180px;
+    text-align: center;
+}
+
+.aircraft-count-indicator.visible {
+    display: block;
+    animation: pulseGlow 2s ease-in-out infinite;
+}
+
+.aircraft-count-indicator .icon {
+    font-size: 1.3rem;
+    margin-right: 8px;
+    vertical-align: middle;
+}
+
+.aircraft-count-indicator .count {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+}
+
+.aircraft-count-indicator .label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    opacity: 0.9;
+    display: block;
+    margin-top: 2px;
+}
+
+@keyframes pulseGlow {
+    0%, 100% {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 20px rgba(245, 158, 11, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 30px rgba(245, 158, 11, 0.5);
+    }
+}
+
+/* ========== CONSISTENT LEFT WIDGET WIDTHS ========== */
+.camera-info {
+    width: 150px !important;
+    min-width: 150px !important;
+    max-width: 150px !important;
+    left: 10px !important;
+    position: fixed !important;
+    top: 80px !important;
+    padding: 4px 6px !important;
+    font-size: 9px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.camera-info-title {
+    margin-bottom: 2px !important;
+    font-size: 9px !important;
+    padding-bottom: 1px !important;
+    font-weight: 600 !important;
+}
+
+.camera-info-item {
+    margin-bottom: 1px !important;
+    font-size: 9px !important;
+    line-height: 1.1 !important;
+    display: flex !important;
+    justify-content: space-between !important;
+}
+
+.camera-info-label, .camera-info-value {
+    font-size: 9px !important;
+}
+
+.weather-stations-widget {
+    width: 200px !important;
+}
+
+.drone-fly-widget {
+    width: 150px !important;
+}
+
+.drone-orbit-widget {
+    width: 150px !important;
+}
+
+/* ========== ADJUST EXISTING HUD ELEMENTS ========== */
+.perspective-views-widget {
+    position: fixed !important;
+    bottom: 20px !important;  /* Moved to bottom-left corner */
+    left: 10px !important;  /* Left side instead of right */
+    width: 100px;  /* Reduced from 120px */
+    z-index: 1300;  /* Below navigation widget */
+    background: transparent;
+    border-radius: 0;
+    padding: 4px;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+    display: none !important;  /* Hidden from viewport */
+}
+
+.perspective-views-widget .widget-title {
+    color: #f1f5f9;
+    font-size: 8px;
+    font-weight: 600;
+    text-align: left;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+}
+
+.perspective-compass-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 3px;
+    width: 100%;
+    aspect-ratio: 1;
+}
+
+.perspective-btn-hud {
+    aspect-ratio: 1;
+    padding: 4px 2px;
+    font-size: 0.65rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-radius: 4px;
+    color: #60a5fa;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.perspective-btn-hud:hover {
+    background-color: rgba(59, 130, 246, 0.25);
+    border-color: #3b82f6;
+    color: #93c5fd;
+    transform: scale(1.05);
+}
+
+.perspective-btn-hud i { font-size: 0.9rem; margin-bottom: 2px; }
+.perspective-btn-hud small { font-size: 0.65rem; font-weight: 600; }
+
+.perspective-compass-grid #viewNorth { grid-column: 2; grid-row: 1; }
+.perspective-compass-grid #viewEast { grid-column: 3; grid-row: 2; }
+.perspective-compass-grid #viewSouth { grid-column: 2; grid-row: 3; }
+.perspective-compass-grid #viewWest { grid-column: 1; grid-row: 2; }
+
+/* ========== QUICK VIEW BUTTONS (Top Right) ========== */
+.hud-quick-views {
+    position: fixed;
+    top: 70px;
+    right: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    z-index: 1500;
+}
+
+/* Navigation widget adjustment - positioned below quick view buttons */
+.navigation-widget-group {
+    position: fixed !important;
+    top: 200px !important;  /* Moved up for compactness */
+    right: 10px !important;  /* Moved left slightly */
+    width: 100px;  /* Reduced from 120px */
+    max-height: 200px;  /* Reduced height */
+    z-index: 1400;  /* Below quick view buttons but above other elements */
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+.navigation-widget-group .widget-title {
+    font-size: 8px !important;
+    font-weight: 600 !important;
+    color: #f1f5f9 !important;
+    margin-bottom: 2px !important;
+    text-align: left !important;
+}
+
+/* ========== ALTITUDE METER ========== */
+.altitude-meter {
+    width: 100px;
+    height: 120px;
+    margin-top: 8px;
+    background: rgba(15, 23, 42, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
+}
+
+.altitude-meter-container {
+    position: relative;
+    width: 100%;
+    height: 80px;
+    overflow: hidden;
+}
+
+.altitude-tape {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    transition: transform 0.3s ease-out;
+}
+
+.altitude-tape-value {
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #f1f5f9;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.altitude-tape-value.major {
+    font-size: 13px;
+    color: #60a5fa;
+    border-bottom: 2px solid rgba(96, 165, 250, 0.3);
+}
+
+.altitude-pointer {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #ef4444;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 10;
+}
+
+.altitude-pointer::before {
+    content: '';
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 6px solid #ef4444;
+    border-top: 4px solid transparent;
+    border-bottom: 4px solid transparent;
+}
+
+.altitude-readout {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 35px;
+    background: rgba(0, 0, 0, 0.6);
+    border-top: 1px solid rgba(255, 255, 255, 0.2);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+}
+
+.altitude-value {
+    font-size: 16px;
+    font-weight: 700;
+    color: #10b981;
+    font-family: 'Courier New', monospace;
+    letter-spacing: 1px;
+}
+
+.altitude-unit {
+    font-size: 8px;
+    font-weight: 600;
+    color: #94a3b8;
+    letter-spacing: 0.5px;
+}
+
+/* ========== DRONE FLY WIDGET ========== */
+.drone-fly-widget {
+    position: fixed;
+    top: 240px;
+    left: 10px;
+    width: 150px;
+    z-index: 1400;
+    background: transparent;
+    border-radius: 0;
+    padding: 4px;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+
+.drone-fly-widget .widget-title {
+    color: #10b981;
+    font-size: 8px;
+    font-weight: 600;
+    text-align: left;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.drone-fly-widget .widget-item {
+    margin-bottom: 3px;
+}
+
+.drone-fly-widget .widget-fields-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 3px;
+}
+
+.drone-fly-widget .widget-field {
+    display: flex;
+    flex-direction: column;
+}
+
+.drone-fly-widget label {
+    font-size: 9px;
+    color: #cbd5e1;
+    margin-bottom: 1px;
+    display: block;
+    line-height: 1.1;
+}
+
+.drone-fly-widget input[type="number"] {
+    width: 100%;
+    padding: 2px 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    color: #f1f5f9;
+    font-size: 10px;
+    height: 20px;
+}
+
+.drone-fly-widget input[type="number"]:focus {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(16, 185, 129, 0.5);
+    outline: none;
+}
+
+.drone-fly-widget small {
+    font-size: 7px;
+    color: #94a3b8;
+    display: block;
+    margin-top: 0px;
+    line-height: 1.1;
+}
+
+.drone-fly-widget button {
+    width: 100%;
+    padding: 3px 4px;
+    font-size: 9px;
+    background: rgba(16, 185, 129, 0.2);
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    border-radius: 2px;
+    color: #10b981;
+    cursor: pointer;
+    transition: all 0.2s;
+    line-height: 1.2;
+}
+
+.drone-fly-widget button:hover {
+    background: rgba(16, 185, 129, 0.3);
+    border-color: #10b981;
+}
+
+.drone-fly-widget button.btn-primary {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.4);
+    color: #60a5fa;
+}
+
+.drone-fly-widget button.btn-primary:hover {
+    background: rgba(59, 130, 246, 0.3);
+    border-color: #3b82f6;
+}
+
+.drone-fly-widget button.btn-warning {
+    background: rgba(245, 158, 11, 0.2);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #fbbf24;
+}
+
+.drone-fly-widget button.btn-warning:hover {
+    background: rgba(245, 158, 11, 0.3);
+    border-color: #f59e0b;
+}
+
+.drone-fly-widget button.active {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: #ef4444;
+    color: #f87171;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.drone-fly-widget button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+@keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
+    50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
+}
+
+/* ========== DRONE ORBIT WIDGET ========== */
+.drone-orbit-widget {
+    position: fixed;
+    top: 420px;
+    left: 10px;
+    width: 150px;
+    max-height: 45vh;
+    overflow-y: auto;
+    z-index: 1400;
+    background: transparent;
+    border-radius: 0;
+    padding: 4px;
+    border: none;
+    box-shadow: none;
+    backdrop-filter: none;
+}
+
+.drone-orbit-widget .widget-title {
+    color: #3b82f6;
+    font-size: 8px;
+    font-weight: 600;
+    text-align: left;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.2px;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.drone-orbit-widget .widget-item {
+    margin-bottom: 3px;
+}
+
+.drone-orbit-widget .widget-fields-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 3px;
+}
+
+.drone-orbit-widget .widget-field {
+    display: flex;
+    flex-direction: column;
+}
+
+.drone-orbit-widget label {
+    font-size: 9px;
+    color: #cbd5e1;
+    margin-bottom: 1px;
+    display: block;
+    line-height: 1.1;
+}
+
+.drone-orbit-widget input[type="number"],
+.drone-orbit-widget input[type="range"] {
+    width: 100%;
+    padding: 2px 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+    color: #f1f5f9;
+    font-size: 10px;
+    height: 20px;
+}
+
+.drone-orbit-widget input[type="number"]:focus {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(59, 130, 246, 0.5);
+    outline: none;
+}
+
+.drone-orbit-widget input[type="range"] {
+    padding: 0;
+    height: 16px;
+    background: transparent;
+    border: none;
+}
+
+.drone-orbit-widget small {
+    font-size: 7px;
+    color: #94a3b8;
+    display: block;
+    margin-top: 0px;
+    line-height: 1.1;
+}
+
+.drone-orbit-widget button {
+    width: 100%;
+    padding: 3px 4px;
+    font-size: 9px;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-radius: 2px;
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    cursor: pointer;
+    transition: all 0.2s;
+    line-height: 1.2;
+}
+
+.drone-orbit-widget button.btn-primary {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.4);
+    color: #60a5fa;
+}
+
+.drone-orbit-widget button.btn-primary:hover {
+    background: rgba(59, 130, 246, 0.3);
+    border-color: #3b82f6;
+}
+
+.drone-orbit-widget button.btn-danger {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+
+.drone-orbit-widget button.btn-danger:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: #ef4444;
+}
+
+/* Custom scrollbar for orbit widget */
+.drone-orbit-widget::-webkit-scrollbar {
+    width: 6px;
+}
+.drone-orbit-widget::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+.drone-orbit-widget::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.4);
+    border-radius: 3px;
+}
+
+/* Train button special styling */
+.hud-quick-btn#quickTrain {
+    border-color: rgba(16, 185, 129, 0.4);
+}
+
+.hud-quick-btn#quickTrain:hover {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border-color: #10b981;
+}
+
+.hud-quick-btn#quickTrain i {
+    color: #10b981;
+}
+
+.hud-quick-btn {
+    padding: 4px 6px;
+    background: transparent;
+    backdrop-filter: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    color: #94a3b8;
+    cursor: pointer;
+    font-size: 0.7rem;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.hud-quick-btn:hover {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border-color: rgba(59, 130, 246, 0.3);
+    text-decoration: none;
+}
+
+.hud-quick-btn.active {
+    background: rgba(59, 130, 246, 0.2);
+    color: #93c5fd;
+    border-color: rgba(59, 130, 246, 0.4);
+}
+
+/* ========== QR CODE OVERLAY ========== */
+.qr-code-overlay {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 2000;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 8px;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+
+.qr-code-overlay.visible {
+    display: flex;
+}
+
+.qr-code-container {
+    width: 128px;
+    height: 128px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.qr-code-container canvas,
+.qr-code-container img {
+    max-width: 100%;
+    max-height: 100%;
+}
+
+.qr-code-label {
+    font-size: 9px;
+    color: #1e293b;
+    text-align: center;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.qr-code-controls {
+    display: flex;
+    gap: 4px;
+}
+
+.qr-code-btn {
+    padding: 3px 6px;
+    font-size: 8px;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.qr-code-btn:hover {
+    background: #2563eb;
+}
+
+.qr-code-btn.close {
+    background: #ef4444;
+}
+
+.qr-code-btn.close:hover {
+    background: #dc2626;
+}
+
+/* Hide keyboard shortcut hint */
+.hud-toolbar::after {
+    content: 'Press H to toggle HUD';
+    position: absolute;
+    top: -24px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    color: #475569;
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.hud-toolbar:hover::after {
+    opacity: 1;
+}
+
+/* ========== MAIN HEADING CENTERING ========== */
+.main-heading {
+    transition: all 0.3s ease;
+}
+
+/* ========== VIRTUAL JOYSTICKS ========== */
+.joystick-container {
+    position: fixed;
+    bottom: 100px;
+    z-index: 1800;
+    display: none; /* Hidden by default, toggled by button */
+}
+
+.joystick-container.active {
+    display: block;
+}
+
+#leftJoystick {
+    right: 40px;
+}
+
+#rightJoystick {
+    left: 40px;
+}
+
+.joystick-base {
+    width: 140px;
+    height: 140px;
+    border-radius: 50%;
+    background: radial-gradient(circle at center, rgba(15, 23, 42, 0.95) 0%, rgba(15, 23, 42, 0.85) 100%);
+    border: 2px solid rgba(59, 130, 246, 0.4);
+    position: relative;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 2px 10px rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(10px);
+    cursor: pointer;
+    user-select: none;
+}
+
+.joystick-base::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    border: 1px dashed rgba(59, 130, 246, 0.3);
+}
+
+.joystick-base::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: 1px dashed rgba(59, 130, 246, 0.2);
+}
+
+.joystick-stick {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #60a5fa, #3b82f6);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    cursor: move;
+    touch-action: none;
+    box-shadow: 0 2px 10px rgba(59, 130, 246, 0.5), 0 0 20px rgba(59, 130, 246, 0.3);
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    transition: box-shadow 0.1s ease;
+}
+
+.joystick-stick:active {
+    box-shadow: 0 2px 15px rgba(59, 130, 246, 0.7), 0 0 30px rgba(59, 130, 246, 0.5);
+}
+
+.joystick-label {
+    position: absolute;
+    bottom: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #94a3b8;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.joystick-value {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 9px;
+    font-weight: 600;
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* Joystick cardinal direction markers */
+.joystick-markers {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+.joystick-marker {
+    position: absolute;
+    color: rgba(148, 163, 184, 0.4);
+    font-size: 10px;
+    font-weight: bold;
+}
+
+.joystick-marker.north { top: 5px; left: 50%; transform: translateX(-50%); }
+.joystick-marker.south { bottom: 5px; left: 50%; transform: translateX(-50%); }
+.joystick-marker.east { right: 5px; top: 50%; transform: translateY(-50%); }
+.joystick-marker.west { left: 5px; top: 50%; transform: translateY(-50%); }
+
+/* ========== KEYBOARD SHORTCUTS LEGEND PANEL (HUD Style) ========== */
+.keyboard-shortcuts-legend {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 480px;
+    max-width: 90vw;
+    max-height: 85vh;
+    overflow-y: auto;
+    background: rgba(15, 23, 42, 0.75);
+    backdrop-filter: blur(16px);
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    border-radius: 12px;
+    padding: 20px;
+    z-index: 10000;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.25s ease;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.keyboard-shortcuts-legend.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+.keyboard-shortcuts-legend-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.2);
+}
+
+.keyboard-shortcuts-legend-title {
+    color: #e2e8f0;
+    font-size: 1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    letter-spacing: 0.5px;
+}
+
+.keyboard-shortcuts-legend-title i {
+    color: #60a5fa;
+    font-size: 1.1rem;
+}
+
+.keyboard-shortcuts-legend-close {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 1rem;
+    transition: all 0.2s;
+}
+
+.keyboard-shortcuts-legend-close:hover {
+    background: rgba(239, 68, 68, 0.2);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #f87171;
+}
+
+.keyboard-shortcuts-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+@media (max-width: 768px) {
+    .keyboard-shortcuts-list {
+        grid-template-columns: 1fr;
+    }
+}
+
+.keyboard-shortcut-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: rgba(59, 130, 246, 0.05);
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.keyboard-shortcut-item:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.3);
+    transform: translateY(-1px);
+}
+
+.keyboard-shortcut-label {
+    color: #cbd5e1;
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    margin-right: 8px;
+}
+
+.keyboard-shortcut-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 24px;
+    padding: 0 6px;
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 4px;
+    color: #93c5fd;
+    font-size: 0.7rem;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    flex-shrink: 0;
+}
+
+.keyboard-shortcut-key.arrow {
+    font-size: 0.85rem;
+}
+
+/* Custom scrollbar for legend */
+.keyboard-shortcuts-legend::-webkit-scrollbar {
+    width: 6px;
+}
+.keyboard-shortcuts-legend::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 3px;
+}
+.keyboard-shortcuts-legend::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.3);
+    border-radius: 3px;
+}
+.keyboard-shortcuts-legend::-webkit-scrollbar-thumb:hover {
+    background: rgba(59, 130, 246, 0.5);
+}
