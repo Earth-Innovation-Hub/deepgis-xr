@@ -6,6 +6,16 @@ from django.views.static import serve
 from django.views.generic import RedirectView
 from deepgis_xr.apps.web import views as web_views
 
+
+def serve_static_revalidate(request, path, document_root=None):
+    # Unversioned ES modules import each other by bare path, so a heuristically
+    # cached file can mix with fresh ones and break the import graph. no-cache
+    # forces revalidation; serve() answers If-Modified-Since with a 304.
+    response = serve(request, path, document_root=document_root)
+    response['Cache-Control'] = 'no-cache'
+    return response
+
+
 urlpatterns = [
     # Public-facing admin route. The deepgis.org nginx in front of this
     # container only proxies /label/, /webclient/, and /map-label/ to
@@ -32,6 +42,6 @@ urlpatterns = [
     # nginx proxies /label/ straight to gunicorn, with no file server in between.
     re_path(r'^%s(?P<path>.*)$' % settings.MEDIA_URL.lstrip('/'), serve,
             {'document_root': settings.MEDIA_ROOT}),
-    re_path(r'^%s(?P<path>.*)$' % settings.STATIC_URL.lstrip('/'), serve,
+    re_path(r'^%s(?P<path>.*)$' % settings.STATIC_URL.lstrip('/'), serve_static_revalidate,
             {'document_root': settings.STATIC_ROOT}),
 ]
