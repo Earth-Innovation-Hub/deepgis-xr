@@ -36,14 +36,14 @@
             <select class="form-select form-select-sm" id="modelLocation">
                 <option value="current_view" selected>Current View Location</option>
                 {% if hud_body == "earth" %}
-                <option value="mount_everest">Mount Everest, Nepal/Tibet</option>
+                <option value="mount_everest" data-lon="86.9250" data-lat="27.9881" data-alt="8848">Mount Everest, Nepal/Tibet</option>
                 {% elif hud_body == "moon" %}
-                <option value="apollo11">Apollo 11 Landing Site</option>
-                <option value="apollo12">Apollo 12 Landing Site</option>
-                <option value="apollo14">Apollo 14 Landing Site</option>
-                <option value="apollo15">Apollo 15 Landing Site</option>
-                <option value="apollo16">Apollo 16 Landing Site</option>
-                <option value="apollo17">Apollo 17 Landing Site</option>
+                <option value="apollo11" data-lon="23.47297" data-lat="0.67408">Apollo 11 Landing Site</option>
+                <option value="apollo12" data-lon="-23.42157" data-lat="-3.01239">Apollo 12 Landing Site</option>
+                <option value="apollo14" data-lon="-17.47139" data-lat="-3.64544">Apollo 14 Landing Site</option>
+                <option value="apollo15" data-lon="3.62981" data-lat="26.13224">Apollo 15 Landing Site</option>
+                <option value="apollo16" data-lon="15.50019" data-lat="-8.97301">Apollo 16 Landing Site</option>
+                <option value="apollo17" data-lon="30.77168" data-lat="20.19080">Apollo 17 Landing Site</option>
                 {% endif %}
                 <option value="custom">Custom Coordinates</option>
             </select>
