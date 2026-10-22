@@ -62,6 +62,8 @@ urlpatterns = [
     
     # AI pilot chat for the DeepGIS Search viewer (views/pilot.py)
     path('label/api/pilot/', views.pilot_chat, name='pilot_chat'),
+    # nginx auth_request target for the OpenUAV twin panel (views/twin_access.py)
+    path('label/api/twin-access/', views.twin_access, name='twin_access'),
 
     # Mission planning API endpoints
     path('label/api/missions/', views.list_missions, name='list_missions'),
