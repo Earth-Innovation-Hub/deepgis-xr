@@ -3,6 +3,7 @@
  * Handles Cesium viewer setup and configuration
  */
 import { CONFIG } from '../config.js';
+import { screenSpaceErrorForMode } from '../utils/screen-space-error.js';
 import { AppState } from '../state.js';
 import { CoordinateUtils } from '../utils/coordinates.js';
 import { ErrorHandler } from '../utils/errors.js';
@@ -107,14 +108,9 @@ export async function initializeCesium(updateLoadingStatus) {
           failIfMajorPerformanceCaveat: false
         }
       },
-      // Render scale: cap at 1.5 even on DPR=2 displays. Without a cap, a 4K
-      // Retina monitor renders at 8K-equivalent resolution (4x pixel work), which
-      // by itself can drop FPS from 60 to single digits on iGPUs. 1.5 is a good
-      // compromise: noticeably crisper than CSS pixels, ~56% of the GPU cost of
-      // full DPR=2. Override with ?hidpi=1 to force native-pixel rendering.
-      resolutionScale: (new URLSearchParams(window.location.search).get("hidpi") === "1")
-        ? (window.devicePixelRatio || 1.0)
-        : Math.min(window.devicePixelRatio || 1.0, 1.5),
+      // Render at native device pixels. Viewer (1.111) ignores a resolutionScale
+      // constructor option, and viewer.resolutionScale multiplies DPR rather than
+      // replacing it, so set it after construction if a cap is ever needed.
       useBrowserRecommendedResolution: false
     });
     
@@ -312,9 +308,7 @@ export async function initializeCesium(updateLoadingStatus) {
         // Disable terrain depth testing (not needed in flat 2D view)
         viewer.scene.globe.depthTestAgainstTerrain = false;
         
-        // Optimize screen space error for better quality in 2D
-        // Lower value = higher quality (sharper tiles)
-        viewer.scene.globe.maximumScreenSpaceError = 2; // Reduced from 4 for sharper rendering
+        viewer.scene.globe.maximumScreenSpaceError = screenSpaceErrorForMode(Cesium.SceneMode.SCENE2D);
         
         // Disable preload siblings (2D panning is predictable, no need to preload)
         viewer.scene.globe.preloadSiblings = false;
@@ -322,14 +316,13 @@ export async function initializeCesium(updateLoadingStatus) {
         // Disable preload ancestors (not needed in flat view)
         viewer.scene.globe.preloadAncestors = false;
         
-        // Resolution scale is set once at viewer creation (capped at 1.5 unless
-        // ?hidpi=1). Do NOT re-bump it here; that previously double-applied DPR
-        // and was a major FPS regression on Retina/4K displays.
+        // Do NOT bump resolutionScale here; it multiplies DPR and previously
+        // was a major FPS regression on Retina/4K displays.
         
         console.log('Applied 2D mode optimizations:', {
           tileCacheSize: 150,
           depthTestAgainstTerrain: false,
-          maximumScreenSpaceError: 2,
+          maximumScreenSpaceError: viewer.scene.globe.maximumScreenSpaceError,
           preloadSiblings: false,
           preloadAncestors: false,
           resolutionScale: viewer.resolutionScale

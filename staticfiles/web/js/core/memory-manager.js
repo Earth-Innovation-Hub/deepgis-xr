@@ -3,6 +3,7 @@
  * Handles memory optimization and out-of-memory error recovery
  */
 import { CONFIG } from '../config.js';
+import { screenSpaceErrorForMode } from '../utils/screen-space-error.js';
 import { AppState } from '../state.js';
 import { LayerUtils } from '../utils/layers.js';
 
@@ -148,11 +149,15 @@ export function optimizeMemorySettings(viewer) {
   const cameraHeight = viewer.camera.positionCartographic.height;
   const isHighAltitude = cameraHeight > CONFIG.MAX_2D_VIEW_HEIGHT;
   
+  const is2D = viewer.scene.mode === Cesium.SceneMode.SCENE2D;
+  const modeScreenSpaceError = screenSpaceErrorForMode(viewer.scene.mode);
+
   // Adjust settings based on current load
   if (hasHighZoomLayer || overlayCount > 1 || isHighAltitude) {
     // More conservative settings when high-zoom layers are active or camera is too high
     const cacheSize = Math.min(CONFIG.MEMORY.TILE_CACHE_SIZE, 200);
-    const screenSpaceError = Math.max(CONFIG.MEMORY.MAX_SCREEN_SPACE_ERROR, 8); // Increased to 8 for high altitude
+    // 2D: one imagery level coarser than normal; 8 there would blur orthomosaics badly.
+    const screenSpaceError = is2D ? modeScreenSpaceError * 2 : Math.max(modeScreenSpaceError, 8);
     
     viewer.scene.globe.tileCacheSize = cacheSize;
     viewer.scene.globe.maximumScreenSpaceError = screenSpaceError;
@@ -172,8 +177,10 @@ export function optimizeMemorySettings(viewer) {
     }
   } else {
     // Normal settings
-    viewer.scene.globe.tileCacheSize = CONFIG.MEMORY.TILE_CACHE_SIZE;
-    viewer.scene.globe.maximumScreenSpaceError = CONFIG.MEMORY.MAX_SCREEN_SPACE_ERROR;
+    viewer.scene.globe.tileCacheSize = is2D
+      ? CONFIG.MEMORY.MODE_SPECIFIC.SCENE2D.TILE_CACHE_SIZE
+      : CONFIG.MEMORY.TILE_CACHE_SIZE;
+    viewer.scene.globe.maximumScreenSpaceError = modeScreenSpaceError;
   }
 }
 

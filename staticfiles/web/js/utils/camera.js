@@ -2,6 +2,7 @@
  * Camera and View Utilities
  */
 import { CONFIG } from '../config.js';
+import { screenSpaceErrorForMode } from './screen-space-error.js';
 import { CoordinateUtils } from './coordinates.js';
 import { AppState } from '../state.js';
 
@@ -183,14 +184,14 @@ export const CameraUtils = {
       if (modeSettings && viewer.scene.globe) {
         // Apply all mode-specific settings
         viewer.scene.globe.tileCacheSize = modeSettings.TILE_CACHE_SIZE;
-        viewer.scene.globe.maximumScreenSpaceError = modeSettings.MAX_SCREEN_SPACE_ERROR;
+        viewer.scene.globe.maximumScreenSpaceError = screenSpaceErrorForMode(modeConfig.cesiumMode);
         viewer.scene.globe.depthTestAgainstTerrain = modeSettings.DEPTH_TEST_TERRAIN;
         viewer.scene.globe.preloadSiblings = modeSettings.PRELOAD_SIBLINGS;
         viewer.scene.globe.preloadAncestors = modeSettings.PRELOAD_ANCESTORS;
         
         console.log(`Applied ${configKey} optimizations:`, {
           tileCacheSize: modeSettings.TILE_CACHE_SIZE,
-          screenSpaceError: modeSettings.MAX_SCREEN_SPACE_ERROR,
+          screenSpaceError: viewer.scene.globe.maximumScreenSpaceError,
           depthTest: modeSettings.DEPTH_TEST_TERRAIN,
           preloadSiblings: modeSettings.PRELOAD_SIBLINGS,
           preloadAncestors: modeSettings.PRELOAD_ANCESTORS

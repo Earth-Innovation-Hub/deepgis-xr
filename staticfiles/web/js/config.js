@@ -30,7 +30,7 @@ export const CONFIG = {
     MODE_SPECIFIC: {
       SCENE2D: {
         TILE_CACHE_SIZE: 150,          // Half of 3D cache (2D needs fewer tiles)
-        MAX_SCREEN_SPACE_ERROR: 4,     // Lower = better quality (sharper tiles in 2D)
+        MAX_SCREEN_SPACE_ERROR: 2,     // In CSS px; divided by DPR (max 1.5) in utils/screen-space-error.js
         PRELOAD_SIBLINGS: false,        // Disable (2D panning is predictable)
         PRELOAD_ANCESTORS: false,       // Disable (not needed in flat view)
         DEPTH_TEST_TERRAIN: false,      // Disable (no depth in 2D)
