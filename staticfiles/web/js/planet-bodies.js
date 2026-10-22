@@ -18,6 +18,9 @@
  *
  * Radii are IAU (Mars: IAU 2000 biaxial; the rest spheres, as the USGS
  * simple-cylindrical products treat them).
+ *
+ * `elevationImagery` lists the ids of colour-coded elevation maps among the
+ * imagery, for the AI pilot's elevation layer on bodies without terrain.
  */
 (function (root, factory) {
     if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -83,6 +86,7 @@
                 usgs('usgs-mola-color', 'MOLA colour elevation', '/maps/mars/mars_simp_cyl.map', 'MOLA_color', 'NASA/GSFC'),
                 usgs('usgs-themis', 'THEMIS day IR', '/maps/mars/mars_simp_cyl.map', 'THEMIS', 'NASA/JPL/ASU'),
             ],
+            elevationImagery: ['trek-mola-color-shade', 'usgs-mola-color'],
         },
         {
             id: 'mercury', name: 'Mercury', radiiM: [2439400, 2439400, 2439400],
@@ -141,6 +145,7 @@
                 usgs('usgs-nh-mosaic', 'New Horizons mosaic', '/maps/pluto/pluto_simp_cyl.map', 'NEWHORIZONS_PLUTO_MOSAIC', 'NASA/JHU APL/SwRI'),
                 usgs('usgs-nh-color', 'New Horizons colour shaded relief', '/maps/pluto/pluto_simp_cyl.map', 'NEWHORIZONS_PLUTO_ClrSHADE', 'NASA/JHU APL/SwRI'),
             ],
+            elevationImagery: ['usgs-nh-color'],
         },
         {
             id: 'charon', name: 'Charon', radiiM: [606000, 606000, 606000],

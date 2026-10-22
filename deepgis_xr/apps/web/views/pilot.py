@@ -8,8 +8,9 @@ plus the body and the current camera view; this view asks the DREAMS Lab robot L
 for a short reply and a list of camera-drone actions. The actions are
 validated and clamped here and executed client-side by the page's existing
 takeoff / land / orbit controls, or as data layers (show_layer) fetched from
-public sources in the browser (Earth only); place names are geocoded in the
-browser, off Earth from the IAU planetary gazetteer.
+public sources in the browser (off Earth: drawn from the body's terrain or
+elevation map); place names are geocoded in the browser, off Earth from the
+IAU planetary gazetteer.
 Nothing here touches a real vehicle.
 """
 
@@ -25,7 +26,7 @@ from django.views.decorators.http import require_POST
 
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
                 "show_layer", "hide_layer")
-# Data layers the page knows how to fetch, draw and cite (LAYERS in label_search.html)
+# Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines")
 MAX_ACTIONS = 8
@@ -88,13 +89,37 @@ PILOT_SCHEMA = {
     "required": ["reply", "actions"],
 }
 PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("show_layer", "hide_layer"))
-_planet_item = dict(PILOT_SCHEMA["properties"]["actions"]["items"])
-_planet_item["properties"] = {k: v for k, v in _planet_item["properties"].items() if k not in ("kind", "distance_km")}
-_planet_item["properties"]["type"] = {"enum": list(PLANET_ACTION_TYPES)}
-PLANET_SCHEMA = {**PILOT_SCHEMA, "properties": {
-    "reply": {"type": "string"},
-    "actions": {**PILOT_SCHEMA["properties"]["actions"], "items": _planet_item},
-}}
+# Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/pilot.js)
+PLANET_LAYER_KINDS = {
+    "moon": ("elevation", "slope", "contours"),
+    "mars": ("elevation",),
+    "pluto": ("elevation",),
+}
+PLANET_LAYER_DOCS = {
+    "elevation": "elevation (topography, height) as a colour heat map stretched over the area, with the measured height range",
+    "slope": "terrain slope (steepness) as a colour map",
+    "contours": "elevation contour lines",
+}
+
+
+def _planet_schema(kinds):
+    item = dict(PILOT_SCHEMA["properties"]["actions"]["items"])
+    props = {k: v for k, v in item["properties"].items() if k != "distance_km"}
+    if kinds:
+        props["type"] = {"enum": list(ACTION_TYPES)}
+        props["kind"] = {"enum": list(kinds)}
+    else:
+        props.pop("kind")
+        props["type"] = {"enum": list(PLANET_ACTION_TYPES)}
+    item["properties"] = props
+    return {**PILOT_SCHEMA, "properties": {
+        "reply": {"type": "string"},
+        "actions": {**PILOT_SCHEMA["properties"]["actions"], "items": item},
+    }}
+
+
+PLANET_SCHEMA = _planet_schema(())
+PLANET_LAYER_SCHEMAS = {body: _planet_schema(kinds) for body, kinds in PLANET_LAYER_KINDS.items()}
 
 SYSTEM_PROMPT = """You are the AI pilot of a virtual camera drone flying over a 3D globe (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
 
@@ -149,14 +174,14 @@ Actions (all heights are metres ABOVE GROUND):
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
 - stop: stop all motion immediately.
 - wait: hover for seconds.
-
+{layer_actions}
 Rules:
 - place is the feature's official IAU name as in the Gazetteer of Planetary Nomenclature, without the body or feature type unless it is part of the name: "Tycho", "Mare Imbrium", "Olympus Mons", "Valles Marineris". On the Moon the Apollo landing sites are "Apollo 11" to "Apollo 17". Use lat/lon (planetocentric, east-positive degrees) only when the user gives coordinates.
 - This is orbital scale: features are kilometres to hundreds of kilometres across, so think in km (alt_m 50000 is 50 km). Omit alt_m and radius_m unless the user gives them; the viewer sizes them to the feature.
 - Only fill fields the user asked for or that clearly follow from the request; the viewer picks sensible defaults for the rest.
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the camera is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
-- There are no data layers here; if asked for one, say so in reply.
+{layer_rules}
 - If the request is a question or not a flight request, answer it briefly in reply and return no actions; never invent feature facts you are unsure of.
 
 Examples (actions only):
@@ -164,6 +189,25 @@ Examples (actions only):
 - "fly to the Apollo 15 site at 5 km" -> [{{"type": "goto", "place": "Apollo 15", "alt_m": 5000}}]
 - "go to 18.4 N 77.7 E and look at the horizon" -> [{{"type": "goto", "lat": 18.4, "lon": 77.7, "pitch_deg": 0}}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real spacecraft."""
+
+PLANET_LAYER_RULES = """- Use show_layer for any request to show, colour or map elevation, height, topography{slope_words}; "heat map" or "colormap" means elevation unless another kind is named. Set place as for goto, or omit place and lat/lon for "here" or "in view"; set radius_m only when the user gives a distance.
+- Put show_layer before an orbit or goto of the same place.
+- Never state heights, ranges or slopes in reply; the viewer measures them and lists them with their source.
+- Example: "orbit Tycho and show elevation as a colormap" -> [{{"type": "show_layer", "kind": "elevation", "place": "Tycho"}}, {{"type": "orbit", "place": "Tycho"}}]"""
+
+
+def planet_prompt(body):
+    kinds = PLANET_LAYER_KINDS.get(body, ())
+    if kinds:
+        docs = "\n".join(f"  - {k}: {PLANET_LAYER_DOCS[k]}" for k in kinds)
+        actions = ("- show_layer: draw a data layer. Fields: kind; place or lat+lon (omit both for the area in view); "
+                   "radius_m (omit to fit the feature). kind is one of:\n" + docs +
+                   "\n- hide_layer: remove a layer. Fields: kind (omit to remove every layer).\n")
+        slope_words = ", slope or contours" if "slope" in kinds else ""
+        rules = PLANET_LAYER_RULES.format(slope_words=slope_words)
+    else:
+        actions, rules = "", "- There are no data layers here; if asked for one, say so in reply."
+    return PLANET_PROMPT.format(body=BODIES[body], layer_actions=actions, layer_rules=rules)
 
 
 def _num(v, field, limits=LIMITS):
@@ -175,7 +219,11 @@ def _num(v, field, limits=LIMITS):
 
 def clean_actions(raw, body="earth"):
     """Keep known action types and fields, clamp numbers, drop bad coordinates."""
-    types, limits = (ACTION_TYPES, LIMITS) if body == "earth" else (PLANET_ACTION_TYPES, PLANET_LIMITS)
+    if body == "earth":
+        types, limits, kinds = ACTION_TYPES, LIMITS, LAYER_KINDS
+    else:
+        kinds = PLANET_LAYER_KINDS.get(body, ())
+        types, limits = (ACTION_TYPES if kinds else PLANET_ACTION_TYPES), PLANET_LIMITS
     out = []
     for a in raw if isinstance(raw, list) else []:
         if not isinstance(a, dict) or a.get("type") not in types:
@@ -197,13 +245,13 @@ def clean_actions(raw, body="earth"):
             act["clockwise"] = a["clockwise"]
         if act["type"] in ("show_layer", "hide_layer"):
             kind = a.get("kind")
-            if kind in LAYER_KINDS:
+            if kind in kinds:
                 act["kind"] = kind
             elif kind is not None or act["type"] == "show_layer":
                 continue
             if kind != "river" and "distance_km" in act:
                 km = act.pop("distance_km")
-                act.setdefault("radius_m", _num(km * 1000, "radius_m"))
+                act.setdefault("radius_m", _num(km * 1000, "radius_m", limits))
         else:
             act.pop("distance_km", None)
         if act["type"] == "show_layer":
@@ -315,8 +363,8 @@ def pilot_chat(request):
     try:
         out = call_mcp_tool("ask_robot_llm", {
             "prompt": prompt,
-            "system_prompt": SYSTEM_PROMPT if body == "earth" else PLANET_PROMPT.format(body=BODIES[body]),
-            "json_schema": PILOT_SCHEMA if body == "earth" else PLANET_SCHEMA,
+            "system_prompt": SYSTEM_PROMPT if body == "earth" else planet_prompt(body),
+            "json_schema": PILOT_SCHEMA if body == "earth" else PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA),
             "history": _clean_history(data.get("history")),
             "temperature": 0.2,
             "max_tokens": 800,

@@ -19,7 +19,7 @@
     <!-- Cesium Dependencies -->
     <script src="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Cesium.js"></script>
     <link href="https://cesium.com/downloads/cesiumjs/releases/1.111/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
-    <script src="{% static 'web/js/planet-bodies.js' %}?v=20261021"></script>
+    <script src="{% static 'web/js/planet-bodies.js' %}?v=20261024"></script>
     <script>
         // This template serves /label/3d/moon/ and /label/3d/planet/<body>/.
         window.PLANET_BODY_ID = '{{ planet_body|default:"moon"|escapejs }}';
@@ -860,7 +860,7 @@
     <script src="{% static 'web/js/hud/joysticks.js' %}?v=20261022"></script>
     <script src="{% static 'web/js/hud/models.js' %}?v=20261022"></script>
     <script src="{% static 'web/js/hud/drone.js' %}?v=20261023"></script>
-    <script src="{% static 'web/js/hud/pilot.js' %}?v=20261023"></script>
+    <script src="{% static 'web/js/hud/pilot.js' %}?v=20261026"></script>
     <script src="{% static 'web/js/widgets/altimeter.js' %}?v=20261021"></script>
     <script type="module">
         import { initializeNavigation } from "{% static 'web/js/widgets/navigation.js' %}?v=20261021";

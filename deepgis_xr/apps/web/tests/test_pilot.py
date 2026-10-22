@@ -77,11 +77,22 @@ class CleanActionsTests(TestCase):
     def test_caps_action_count(self):
         self.assertEqual(len(pilot.clean_actions([{"type": "wait", "seconds": 1}] * 20)), pilot.MAX_ACTIONS)
 
-    def test_planet_scale_and_no_layers(self):
+    def test_planet_scale_and_layers(self):
         out = pilot.clean_actions([{"type": "orbit", "place": "Tycho", "radius_m": 60000, "alt_m": 1e9},
                                    {"type": "show_layer", "kind": "geology", "place": "Tycho"},
+                                   {"type": "show_layer", "kind": "elevation", "place": "Tycho", "distance_km": 200},
                                    {"type": "hide_layer"}], body="moon")
-        self.assertEqual(out, [{"type": "orbit", "place": "Tycho", "radius_m": 60000.0, "alt_m": 500000.0}])
+        self.assertEqual(out, [{"type": "show_layer", "kind": "elevation", "place": "Tycho", "radius_m": 200000.0},
+                               {"type": "orbit", "place": "Tycho", "radius_m": 60000.0, "alt_m": 500000.0},
+                               {"type": "hide_layer"}])
+
+    def test_layers_per_body(self):
+        plan = [{"type": "show_layer", "kind": "slope"}, {"type": "show_layer", "kind": "elevation"}]
+        self.assertEqual(pilot.clean_actions(plan, body="mars"), [{"type": "show_layer", "kind": "elevation"}])
+        self.assertEqual(pilot.clean_actions(plan + [{"type": "hide_layer"}], body="europa"), [])
+        self.assertIn("no data layers", pilot.planet_prompt("europa"))
+        self.assertIn("- slope:", pilot.planet_prompt("moon"))
+        self.assertNotIn("- slope:", pilot.planet_prompt("mars"))
 
 
 @override_settings(DEEPGIS_PILOT_MCP_TOKEN="test-token", DEEPGIS_PILOT_RATE_PER_MIN=3)
@@ -144,13 +155,25 @@ class PilotChatTests(TestCase):
     def test_planet_request(self):
         self.client.force_login(self.user)
         plan = {"reply": "Orbiting Tycho.", "actions": [{"type": "orbit", "place": "Tycho"},
-                                                         {"type": "show_layer", "kind": "faults"}]}
+                                                         {"type": "show_layer", "kind": "faults"},
+                                                         {"type": "show_layer", "kind": "elevation"}]}
         with mock.patch.object(pilot.requests, "post", return_value=mcp_response(plan)) as post:
-            resp = self.post({"message": "orbit tycho", "body": "moon"})
-        self.assertEqual(resp.json()["actions"], [{"type": "orbit", "place": "Tycho"}])
+            resp = self.post({"message": "orbit tycho with an elevation heat map", "body": "moon"})
+        self.assertEqual(resp.json()["actions"], [{"type": "show_layer", "kind": "elevation"},
+                                                  {"type": "orbit", "place": "Tycho"}])
+        args = post.call_args.kwargs["json"]["params"]["arguments"]
+        self.assertEqual(args["json_schema"], pilot.PLANET_LAYER_SCHEMAS["moon"])
+        self.assertIn("3D globe of the Moon", args["system_prompt"])
+        kinds = args["json_schema"]["properties"]["actions"]["items"]["properties"]["kind"]["enum"]
+        self.assertEqual(kinds, ["elevation", "slope", "contours"])
+
+    def test_body_without_layers_gets_no_layer_schema(self):
+        self.client.force_login(self.user)
+        plan = {"reply": "ok", "actions": []}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(plan)) as post:
+            self.post({"message": "show elevation", "body": "europa"})
         args = post.call_args.kwargs["json"]["params"]["arguments"]
         self.assertEqual(args["json_schema"], pilot.PLANET_SCHEMA)
-        self.assertIn("3D globe of the Moon", args["system_prompt"])
         self.assertNotIn("show_layer", json.dumps(args["json_schema"]))
 
     def test_rejects_unknown_body(self):

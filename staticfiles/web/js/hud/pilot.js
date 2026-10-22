@@ -2,8 +2,9 @@
 // POST /label/api/pilot/ turns a request into actions (goto, orbit, takeoff,
 // land, look, stop, wait, show_layer, hide_layer); they run here, in order,
 // on the drone (hud/drone.js). On Earth place names go to OpenStreetMap, then
-// Cesium Ion, and data layers are available; elsewhere names come from the IAU
-// gazetteer (scripts/build_planet_nomenclature.py) and the page's preset sites.
+// Cesium Ion; elsewhere names come from the IAU gazetteer
+// (scripts/build_planet_nomenclature.py) and the page's preset sites, and the
+// data layers (PLANET_LAYERS) are drawn from the body's terrain or elevation maps.
 (function initAiPilot() {
     const panel = document.getElementById('pilotPanel');
     const toggleBtn = document.getElementById('hudPilotBtn');
@@ -201,6 +202,7 @@
     // and radius; each kind in LAYERS fetches from a public, citable source, then
     // the runner draws, lists and cites what came back, so nothing is invented.
     const EARTH_R = 6371008.8;
+    const bodyR = () => isEarth ? EARTH_R : ellipsoid().maximumRadius;
     const deg = (r) => Cesium.Math.toDegrees(r);
     const rad = (d) => Cesium.Math.toRadians(d);
     const shownLayers = new Map(); // kind -> {ds, imagery}
@@ -214,7 +216,7 @@
     function distanceM(lon1, lat1, lon2, lat2) {
         const s = Math.sin((lat2 - lat1) / 2) ** 2 +
             Math.cos(lat1) * Math.cos(lat2) * Math.sin((lon2 - lon1) / 2) ** 2;
-        return 2 * EARTH_R * Math.asin(Math.min(1, Math.sqrt(s)));
+        return 2 * bodyR() * Math.asin(Math.min(1, Math.sqrt(s)));
     }
 
     function insideRing(ring, x, y) {
@@ -545,13 +547,181 @@
     }
 
     function circlePositions(lon, lat, radius) {
+        const R = bodyR();
         const pts = [];
         for (let k = 0; k <= 128; k++) {
             const t = 2 * Math.PI * k / 128;
-            const la = lat + radius * Math.sin(t) / EARTH_R;
-            pts.push(Cesium.Cartesian3.fromRadians(lon + radius * Math.cos(t) / (EARTH_R * Math.cos(lat)), la));
+            const la = lat + radius * Math.sin(t) / R;
+            pts.push(Cesium.Cartesian3.fromRadians(lon + radius * Math.cos(t) / (R * Math.cos(lat)), la, 0, ellipsoid()));
         }
         return pts;
+    }
+
+    // Off-Earth layers colour the globe from the terrain heights (a globe material),
+    // or switch on a colour elevation map from planet-bodies.js on bodies without
+    // terrain. Same contract as LAYERS, plus globe: {ramp?: {type, min, max},
+    // contour?: {spacing}} and legend: {title, colors, lo, hi}.
+    const HEAT = ['#30123b', '#4662d7', '#36aaf9', '#1ae4b6', '#72fe5e', '#c8ef34',
+                  '#faba39', '#f66b19', '#ca2a04', '#7a0403']; // turbo
+    const globeLayers = new Map(); // kind -> globe spec
+    const bodyInfo = () => window.PlanetBodies?.get(body) || {};
+    const hasTerrain = () => !(getViewer().terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
+    const fmtH = (m) => Math.abs(m) >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
+    const terrainSource = () => {
+        const t = bodyInfo().terrain || {};
+        return `${t.name || 'Terrain model'}${t.link ? ` (${t.link})` : ''}`;
+    };
+    // A named feature with a size: 1.5 diameters; otherwise about the area in view
+    const planetRadius = (p) => clamp(p.sizeM ? p.sizeM * 1.5
+        : getViewer().camera.positionCartographic.height * 1.2, 5000, 1500000);
+
+    // `fill` < 1 puts the whole ramp in the first part and holds the last colour
+    function rampCanvas(colors, fill = 1) {
+        const c = document.createElement('canvas');
+        c.width = 256;
+        c.height = 1;
+        const g = c.getContext('2d');
+        const grad = g.createLinearGradient(0, 0, 256 * fill, 0);
+        colors.forEach((col, i) => grad.addColorStop(i / (colors.length - 1), col));
+        g.fillStyle = grad;
+        g.fillRect(0, 0, 256, 1);
+        return c;
+    }
+
+    function applyGlobeMaterial() {
+        const globe = getViewer().scene.globe;
+        let ramp = null, contour = null;
+        globeLayers.forEach(g => { ramp = g.ramp || ramp; contour = g.contour || contour; });
+        // SlopeRamp maps 0-90 degrees across the image; the colours span 0-45
+        const rampFabric = ramp && (ramp.type === 'slope'
+            ? { type: 'SlopeRamp', uniforms: { image: rampCanvas(HEAT, 0.5) } }
+            : { type: 'ElevationRamp',
+                uniforms: { image: rampCanvas(HEAT), minimumHeight: ramp.min, maximumHeight: ramp.max } });
+        const contourFabric = contour && { type: 'ElevationContour',
+            uniforms: { width: 2, spacing: contour.spacing, color: Cesium.Color.WHITE.withAlpha(0.9) } };
+        if (rampFabric && contourFabric) {
+            globe.material = new Cesium.Material({ translucent: false, fabric: {
+                type: 'DeepGISRampContour',
+                materials: { rampMaterial: rampFabric, contourMaterial: contourFabric },
+                components: {
+                    diffuse: 'contourMaterial.alpha == 0.0 ? rampMaterial.diffuse : contourMaterial.diffuse',
+                    alpha: 'max(contourMaterial.alpha, rampMaterial.alpha)',
+                },
+            } });
+        } else if (rampFabric || contourFabric) {
+            globe.material = new Cesium.Material({ translucent: false, fabric: rampFabric || contourFabric });
+        } else {
+            globe.material = undefined;
+        }
+    }
+
+    // Sorted terrain heights on a grid over the area, read at a level whose tiles are
+    // about a quarter of the radius across: a handful of tiles, not hundreds
+    async function areaHeights(p, radius) {
+        const tp = getViewer().terrainProvider;
+        const R = bodyR();
+        const radiusDeg = Cesium.Math.toDegrees(radius / R);
+        const level = clamp(Math.round(Math.log2(180 / Math.max(radiusDeg / 2, 1e-6))), 0, 15);
+        const pts = [];
+        const n = 24;
+        for (let i = 0; i <= n; i++) {
+            for (let j = 0; j <= n; j++) {
+                const e = (2 * i / n - 1) * radius, no = (2 * j / n - 1) * radius;
+                if (e * e + no * no <= radius * radius) {
+                    pts.push(new Cesium.Cartographic(p.lon + e / (R * Math.cos(p.lat)), p.lat + no / R));
+                }
+            }
+        }
+        let samples;
+        try {
+            samples = await Cesium.sampleTerrain(tp, level, pts);
+        } catch (e) {
+            samples = await Cesium.sampleTerrainMostDetailed(tp, pts);
+        }
+        const h = samples.map(s => s.height).filter(Number.isFinite).sort((a, b) => a - b);
+        if (h.length < 3) throw new Error('No terrain heights here yet; try again once the surface has loaded');
+        return h;
+    }
+
+    function niceStep(x) {
+        const p = 10 ** Math.floor(Math.log10(x));
+        return [1, 2, 5, 10].map(m => m * p).find(s => s >= x);
+    }
+
+    function elevationImagery(p, radius) {
+        const info = bodyInfo();
+        const src = (info.elevationImagery || []).map(id => (info.imagery || []).find(s => s.id === id)).find(Boolean);
+        if (!src) throw new Error(`No elevation data for ${info.name || body}`);
+        return {
+            imagery: window.PlanetBodies.imageryProvider(src, ellipsoid(), Cesium),
+            imageryAlpha: 1,
+            area: { lon: p.lon, lat: p.lat, radius },
+            lines: [['step', `Showing ${src.name}: elevation as colour (an image map; there is no height model here to measure)`]],
+            sources: [`${src.credit}${src.link ? ` (${src.link})` : ''}`],
+        };
+    }
+
+    const needTerrain = (title) => {
+        if (!hasTerrain()) throw new Error(`${title} needs a terrain model, and ${bodyInfo().name || body} has none here`);
+    };
+
+    const PLANET_LAYERS = {
+        elevation: {
+            title: 'Elevation', radius: planetRadius,
+            async load(p, radius) {
+                if (!hasTerrain()) return elevationImagery(p, radius);
+                const h = await areaHeights(p, radius);
+                const lo = h[0], hi = h[h.length - 1];
+                return {
+                    globe: { ramp: { type: 'elevation', min: lo, max: Math.max(hi, lo + 1) } },
+                    legend: { title: 'Elevation', colors: HEAT, lo: fmtH(lo), hi: fmtH(hi) },
+                    lines: [['step', `Elevation within ${fmtM(radius)} of ${p.label}: ${fmtH(lo)} to ${fmtH(hi)}, ` +
+                        `median ${fmtH(h[Math.floor(h.length / 2)])}, relative to the ${fmtM(bodyR())} reference sphere. ` +
+                        'Colours stretch over this range.']],
+                    sources: [terrainSource()],
+                };
+            },
+        },
+        slope: {
+            title: 'Slope', radius: planetRadius,
+            async load(p, radius) {
+                needTerrain('Slope');
+                return {
+                    globe: { ramp: { type: 'slope' } },
+                    legend: { title: 'Slope', colors: HEAT, lo: '0°', hi: '45°+' },
+                    lines: [['step', 'Slope of the terrain surface, from flat (dark blue) to 45° or steeper (dark red).']],
+                    sources: [terrainSource()],
+                };
+            },
+        },
+        contours: {
+            title: 'Contours', radius: planetRadius,
+            async load(p, radius) {
+                needTerrain('Contours');
+                const h = await areaHeights(p, radius);
+                const spacing = niceStep(Math.max(h[h.length - 1] - h[0], 10) / 12);
+                return {
+                    globe: { contour: { spacing } },
+                    lines: [['step', `Contour lines every ${fmtH(spacing)} (${fmtH(h[0])} to ${fmtH(h[h.length - 1])} within ${fmtM(radius)} of ${p.label}).`]],
+                    sources: [terrainSource()],
+                };
+            },
+        },
+    };
+    const layerSpecs = () => isEarth ? LAYERS : PLANET_LAYERS;
+
+    function addLegend({ title, colors, lo, hi }) {
+        const div = addMsg('step', title);
+        const bar = document.createElement('div');
+        bar.style.cssText = `min-width:220px;height:10px;border-radius:3px;margin:4px 0 2px;background:linear-gradient(to right, ${colors.join(', ')})`;
+        const ends = document.createElement('div');
+        ends.style.cssText = 'min-width:220px;display:flex;justify-content:space-between;gap:12px;font-size:11px';
+        [lo, hi].forEach(v => {
+            const s = document.createElement('span');
+            s.textContent = v;
+            ends.appendChild(s);
+        });
+        div.append(bar, ends);
     }
 
     // Each kind: load(p, radius, action) -> {fc?, style?, decorate?(entity, props),
@@ -1111,7 +1281,7 @@
                 ? layerArea : null;
             const radius = a.radius_m || (geo ? clamp(geo.radius * 0.5, 100, SCALE.radius)
                 : clamp((p.sizeM || 1000) * 0.6, 100, SCALE.radius));
-            const alt = a.alt_m || (geo ? clamp(geo.radius * 0.35, 80, 7000) : clamp(radius * 0.5, 80, SCALE.orbitAlt));
+            const alt = a.alt_m || (geo ? clamp(geo.radius * 0.35, 80, isEarth ? 7000 : SCALE.orbitAlt) : clamp(radius * 0.5, 80, SCALE.orbitAlt));
             const revs = a.revolutions || 1;
             const speed = a.speed_mps || clamp(2 * Math.PI * radius / 75, 5, SCALE.speed);
             const pitchDeg = Number.isFinite(a.pitch_deg) ? a.pitch_deg
@@ -1188,12 +1358,12 @@
         },
 
         async show_layer(a, id) {
-            const spec = isEarth && LAYERS[a.kind];
+            const spec = layerSpecs()[a.kind];
             if (!spec) throw new Error(`No "${a.kind}" layer on ${body}`);
             const p = await resolvePoint(a);
             check(id);
             const viewer = getViewer();
-            const radius = a.radius_m || spec.radius;
+            const radius = a.radius_m || (typeof spec.radius === 'function' ? spec.radius(p) : spec.radius);
             const loading = addMsg('step', `Loading ${spec.title.toLowerCase()} for ${p.label}...` +
                 (spec.slow ? ' (OpenStreetMap can take up to a minute)' : ''));
             let res;
@@ -1238,18 +1408,28 @@
                 imagery = viewer.imageryLayers.addImageryProvider(res.imagery);
                 imagery.alpha = res.imageryAlpha ?? 0.6;
             }
+            if (res.globe) {
+                // Elevation and slope both colour the whole surface; the newer one wins
+                if (res.globe.ramp) {
+                    [...globeLayers].filter(([k, g]) => g.ramp && k !== a.kind)
+                        .forEach(([k]) => runners.hide_layer({ kind: k }, id, true));
+                }
+                globeLayers.set(a.kind, res.globe);
+                applyGlobeMaterial();
+            }
             shownLayers.set(a.kind, { ds, imagery });
             layerArea = res.area || { lon: p.lon, lat: p.lat, radius: radius || 5000 };
 
             if (res.lines.length) {
                 res.lines.forEach(([kind, text]) => addMsg(kind, text));
+                if (res.legend) addLegend(res.legend);
                 (res.sources || []).forEach(s => addMsg('step', `Source: ${String(s).trim()}`));
             } else if (res.empty) addMsg('step', res.empty);
             if (a.frame) {
                 const r = layerArea.radius;
                 const ground = await groundHeight(layerArea.lon, layerArea.lat);
                 await flight({
-                    sphere: new Cesium.BoundingSphere(Cesium.Cartesian3.fromRadians(layerArea.lon, layerArea.lat, ground), r),
+                    sphere: new Cesium.BoundingSphere(Cesium.Cartesian3.fromRadians(layerArea.lon, layerArea.lat, ground, ellipsoid()), r),
                     options: { offset: new Cesium.HeadingPitchRange(viewer.camera.heading, Cesium.Math.toRadians(-50), r * 2.6) },
                 }, id);
             }
@@ -1260,16 +1440,20 @@
             const viewer = getViewer();
             const kinds = a.kind ? [a.kind] : [...shownLayers.keys()];
             const removed = kinds.filter(k => shownLayers.has(k));
+            const recolour = removed.some(k => globeLayers.has(k));
             removed.forEach(k => {
                 const { ds, imagery } = shownLayers.get(k);
                 viewer.dataSources.remove(ds, true);
                 if (imagery) viewer.imageryLayers.remove(imagery, true);
                 shownLayers.delete(k);
+                globeLayers.delete(k);
             });
+            if (recolour) applyGlobeMaterial();
             if (!shownLayers.size) layerArea = null;
             if (quiet) return;
-            if (removed.length) addMsg('step', `Removed: ${removed.map(k => LAYERS[k].title.toLowerCase()).join(', ')}`);
-            else addMsg('step', a.kind ? `No ${LAYERS[a.kind]?.title.toLowerCase() || a.kind} layer is shown` : 'No layers are shown');
+            const specs = layerSpecs();
+            if (removed.length) addMsg('step', `Removed: ${removed.map(k => specs[k].title.toLowerCase()).join(', ')}`);
+            else addMsg('step', a.kind ? `No ${specs[a.kind]?.title.toLowerCase() || a.kind} layer is shown` : 'No layers are shown');
         },
     };
 
@@ -1305,9 +1489,11 @@
             if (actions.some(a => a.type !== 'stop')) await ensure3D(id);
             for (const [i, a] of actions.entries()) {
                 check(id);
-                // Frame the area unless a later step moves the camera anyway
+                // Frame the area unless a later step moves the camera anyway; off Earth
+                // a layer for the area in view (sized from the camera) stays put
                 if (a.type === 'show_layer') {
-                    a.frame = !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit');
+                    a.frame = !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit') &&
+                        (isEarth || !!a.place || Number.isFinite(a.lat));
                 }
                 await runners[a.type](a, id);
             }
