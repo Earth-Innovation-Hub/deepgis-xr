@@ -1,7 +1,8 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
-from django.conf.urls.static import static
+from django.urls import re_path
+from django.views.static import serve
 from django.views.generic import RedirectView
 from deepgis_xr.apps.web import views as web_views
 
@@ -26,7 +27,11 @@ urlpatterns = [
 
     # API endpoints
     path('api/v1/', include('deepgis_xr.apps.api.v1.urls')),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
-if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    # Static and media files are served by Django in production too: the hub's
+    # nginx proxies /label/ straight to gunicorn, with no file server in between.
+    re_path(r'^%s(?P<path>.*)$' % settings.MEDIA_URL.lstrip('/'), serve,
+            {'document_root': settings.MEDIA_ROOT}),
+    re_path(r'^%s(?P<path>.*)$' % settings.STATIC_URL.lstrip('/'), serve,
+            {'document_root': settings.STATIC_ROOT}),
+]

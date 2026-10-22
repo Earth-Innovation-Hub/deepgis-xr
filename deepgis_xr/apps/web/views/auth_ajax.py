@@ -50,6 +50,11 @@ def ajax_phone_login(request):
         if not re.match(r'^\+?[1-9]\d{6,14}$', phone_number.replace(' ', '').replace('-', '')):
             return JsonResponse({'error': 'Invalid phone number format. Use international format (e.g., +1234567890)'}, status=400)
         
+        # SMS verification is not implemented here, so outside development
+        # there is no way to verify the number and no account is created
+        if not settings.DEBUG:
+            return JsonResponse({'error': 'Phone sign-in is not available on this server.'}, status=503)
+
         # Import User model from auth app
         from deepgis_xr.apps.auth.models import User
         from django.contrib.auth import login

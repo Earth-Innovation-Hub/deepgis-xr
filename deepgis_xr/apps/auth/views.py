@@ -35,15 +35,20 @@ class PhoneLoginView(View):
         form = PhoneLoginForm(request.POST)
         if form.is_valid():
             phone_number = form.cleaned_data['phone_number']
-            
+
+            # Without SMS there is no way to verify the number, so no account either
+            if not twilio_client and not settings.DEBUG:
+                form.add_error(None, 'Phone sign-in is not available on this server.')
+                return render(request, self.template_name, {'form': form})
+
             # Get or create user
             user, created = User.objects.get_or_create(
                 phone_number=phone_number,
                 defaults={'username': str(phone_number)}
             )
             
-            # In development or if Twilio is not configured, auto-verify all numbers
-            if not twilio_client or settings.DEBUG:
+            # Development only: auto-verify all numbers
+            if settings.DEBUG:
                 user.is_phone_verified = True
                 user.save()
                 login(request, user)
