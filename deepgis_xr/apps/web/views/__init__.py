@@ -67,7 +67,7 @@ from .rock_label import (
     rock_dataset_list, rock_category_list,
 )
 from .models_3d import get_3d_model, list_stl_models
-from .pilot import pilot_chat
+from .pilot import pilot_chat, pilot_ocean
 from .twin_access import twin_access
 from .planet import label_planet_viewer
 from .pages import (
@@ -105,6 +105,7 @@ __all__ = [
     "delete_mission", "add_waypoint", "remove_waypoint",
     "check_auth_status", "ajax_phone_login", "ajax_logout",
     "pilot_chat",
+    "pilot_ocean",
     "twin_access",
     "label_planet_viewer",
 ]

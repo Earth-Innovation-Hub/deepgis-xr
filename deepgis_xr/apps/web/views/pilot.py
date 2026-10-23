@@ -9,31 +9,39 @@ for a short reply and a list of camera-drone actions. The actions are
 validated and clamped here and executed client-side by the page's existing
 takeoff / land / orbit controls, or as data layers (show_layer) fetched from
 public sources in the browser (off Earth: drawn from the body's terrain or
-elevation map); place names are geocoded in the browser, off Earth from the
+elevation map; the sea layers come through pilot_ocean below); place names are geocoded in the browser, off Earth from the
 IAU planetary gazetteer.
 Nothing here touches a real vehicle.
 """
 
 import json
 import math
+import re
 import time
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_GET, require_POST
 
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
                 "show_layer", "hide_layer")
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
-               "soils", "wildlife", "trails", "springs", "mines", "surface_temp")
+               "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
+               "humidity", "air_temp", "sea_temp", "chlorophyll")
 # Colour maps a raster layer can be drawn in (COLORMAPS in hud/pilot.js)
-COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm")
+COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm", "rdylgn")
 MAX_ACTIONS = 8
 MAX_HISTORY = 8
 MAX_MESSAGE_CHARS = 600
+# Now and then the model describes a flight or layer in reply but returns no actions;
+# such a reply gets one more try
+PROMISE_RE = re.compile(r"\b(show|showing|fly|flying|orbit|orbiting|pull|pulling|bring|bringing|head|heading|"
+                        r"zoom|zooming|display|displaying|draw|drawing|load|loading|switch|switching|climb|climbing|"
+                        r"land|landing|descend|descending|take off|taking off)\b", re.IGNORECASE)
 
 # Display names; keys match planet-bodies.js and web/geo/nomenclature/<body>.json
 BODIES = {
@@ -53,6 +61,8 @@ LIMITS = {
     "seconds": (0.0, 120.0),
     "distance_km": (1.0, 500.0),
 }
+# Weather and sea layers cover bays and regions, wider than any orbit
+LAYER_LIMITS = {**LIMITS, "radius_m": (20.0, 200000.0)}
 # Off Earth the camera flies at orbiter scale
 PLANET_LIMITS = {**LIMITS, "alt_m": (5.0, 500000.0), "radius_m": (20.0, 500000.0),
                  "speed_mps": (1.0, 6000.0)}
@@ -91,6 +101,13 @@ PILOT_SCHEMA = {
     },
     "required": ["reply", "actions"],
 }
+# Actions go back to the model as history, so they keep the schema's key order: an
+# example with place before kind leads the model to skip kind, which drops the layer
+FIELD_ORDER = tuple(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
+LAYER_FIELDS = ("type", "kind", "place", "colormap", "lat", "lon", "radius_m", "distance_km")
+# Layers drawn as colour maps; a colour map named in the message applies to them
+RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll")
+COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
 PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("show_layer", "hide_layer"))
 # Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/pilot.js)
 PLANET_LAYER_KINDS = {
@@ -147,7 +164,12 @@ Actions (all heights are metres ABOVE GROUND):
   - springs: springs and hot springs (5 km; worldwide, OpenStreetMap)
   - mines: mines, mine shafts, adits and quarries (5 km; worldwide, OpenStreetMap)
   - surface_temp: land surface temperature (how hot the ground is, not the air) as a colour map with the measured range, from the latest clear Landsat thermal image (default: the whole place; worldwide over land, a new image about every 8 days, taken mid-morning). Also for "heat map", "hot spots", "urban heat island" or "thermal" requests.
-  For surface_temp, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma or coolwarm ("rainbow" means jet).
+  - ndvi: vegetation greenness (NDVI) as a colour map, with the share of green vegetation and of bare or built ground, from the latest clear Sentinel-2 image (10 m; worldwide over land, a new image every few days). Also for "vegetation", "greenness", "plant health", "how green" or "tree cover" requests.
+  - humidity: current relative humidity of the air as a colour map, with dew point, air temperature and wind at the centre (default: the whole place; worldwide, from weather models).
+  - air_temp: current air temperature as a colour map, with humidity and wind at the centre (worldwide, from weather models). Use it for "air temperature", "how hot is it", "weather" or "temperature right now"; use surface_temp for the ground, roofs or pavement.
+  - sea_temp: sea surface temperature (water temperature of the ocean, a bay, sea or large lake) as a colour map with the measured range, from the latest daily satellite analysis (1 km; worldwide over water). Any temperature request for a body of water is sea_temp.
+  - chlorophyll: chlorophyll-a in the surface water (phytoplankton, algae, ocean colour, productivity) as a colour map, from satellites (2 km; worldwide over water, about two weeks behind).
+  For surface_temp, ndvi, humidity, air_temp, sea_temp and chlorophyll, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 
 Rules:
@@ -157,8 +179,9 @@ Rules:
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
-- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails or temperatures); the viewer lists them from its sourced data.
+- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation or chlorophyll values); the viewer lists them from its sourced data.
 - If the request is a question or not a flight request, answer it in reply and return no actions.
+- Never say in reply that you will show, fly, orbit or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
 
 Examples (actions only):
 - "show active faults near Bishop" -> [{"type": "show_layer", "kind": "faults", "place": "Bishop, California"}]
@@ -168,6 +191,10 @@ Examples (actions only):
 - "what soils are under this field?" -> [{"type": "show_layer", "kind": "soils"}]
 - "orbit Hayden Butte and show geology within 5 km" -> [{"type": "show_layer", "kind": "geology", "place": "Hayden Butte, Tempe, Arizona", "radius_m": 5000}, {"type": "orbit", "place": "Hayden Butte, Tempe, Arizona"}]
 - "orbit all of Tempe and show surface temperature as a jet colormap" -> [{"type": "show_layer", "kind": "surface_temp", "place": "Tempe, Arizona", "colormap": "jet"}, {"type": "orbit", "place": "Tempe, Arizona"}]
+- "how green is Phoenix?" -> [{"type": "show_layer", "kind": "ndvi", "place": "Phoenix, Arizona"}]
+- "what's the humidity around Tucson" -> [{"type": "show_layer", "kind": "humidity", "place": "Tucson, Arizona"}]
+- "sea surface temperature of Monterey Bay in jet" -> [{"type": "show_layer", "kind": "sea_temp", "place": "Monterey Bay, California", "colormap": "jet"}]
+- "show chlorophyll and water temperature off Santa Cruz" -> [{"type": "show_layer", "kind": "chlorophyll", "place": "Santa Cruz, California"}, {"type": "show_layer", "kind": "sea_temp", "place": "Santa Cruz, California"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -235,6 +262,7 @@ def clean_actions(raw, body="earth"):
         if not isinstance(a, dict) or a.get("type") not in types:
             continue
         act = {"type": a["type"]}
+        lim = LAYER_LIMITS if body == "earth" and act["type"] == "show_layer" else limits
         place = a.get("place")
         if isinstance(place, str) and place.strip():
             act["place"] = place.strip()[:120]
@@ -243,8 +271,8 @@ def clean_actions(raw, body="earth"):
                 and not isinstance(lat, bool) and not isinstance(lon, bool)
                 and -90 <= lat <= 90 and -180 <= lon <= 180):
             act["lat"], act["lon"] = float(lat), float(lon)
-        for field in limits:
-            v = _num(a.get(field), field, limits)
+        for field in lim:
+            v = _num(a.get(field), field, lim)
             if v is not None:
                 act[field] = v
         if isinstance(a.get("clockwise"), bool):
@@ -259,9 +287,12 @@ def clean_actions(raw, body="earth"):
                 act["colormap"] = a["colormap"]
             if kind != "river" and "distance_km" in act:
                 km = act.pop("distance_km")
-                act.setdefault("radius_m", _num(km * 1000, "radius_m", limits))
+                act.setdefault("radius_m", _num(km * 1000, "radius_m", lim))
         else:
             act.pop("distance_km", None)
+        fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
+                  else FIELD_ORDER)
+        act = {k: act[k] for k in FIELD_ORDER if k in act and k in fields}
         if act["type"] == "show_layer":
             # An orbit runs until its laps end; draw the layer before it, not after
             i = len(out)
@@ -275,13 +306,30 @@ def clean_actions(raw, body="earth"):
     return out
 
 
-def _clean_history(raw):
+def _clean_history(raw, body="earth"):
     hist = []
     for h in raw if isinstance(raw, list) else []:
         if (isinstance(h, dict) and h.get("role") in ("user", "assistant")
                 and isinstance(h.get("content"), str)):
-            hist.append({"role": h["role"], "content": h["content"][:2000]})
+            content = h["content"]
+            if h["role"] == "assistant":
+                # Earlier plans as this server would send them, in schema key order
+                try:
+                    plan = json.loads(content)
+                except ValueError:
+                    plan = None
+                if isinstance(plan, dict) and "actions" in plan:
+                    content = json.dumps({"reply": str(plan.get("reply", "")),
+                                          "actions": clean_actions(plan["actions"], body)})
+            hist.append({"role": h["role"], "content": content[:2000]})
     return hist[-MAX_HISTORY:]
+
+
+def named_colormap(message):
+    """The one colour map the message names, if exactly one."""
+    found = {cm for word, cm in COLORMAP_WORDS.items()
+             if re.search(rf"\b{re.escape(word)}\b", message, re.IGNORECASE)}
+    return found.pop() if len(found) == 1 else None
 
 
 def _describe_view(view):
@@ -308,12 +356,12 @@ def _describe_view(view):
     return line + "."
 
 
-def _rate_limited(user_id):
-    key = f"pilot-rate:{user_id}:{int(time.time() // 60)}"
+def _rate_limited(user_id, scope="pilot", per_min=None):
+    key = f"{scope}-rate:{user_id}:{int(time.time() // 60)}"
     if cache.add(key, 1, timeout=90):
         return False
     try:
-        return cache.incr(key) > settings.DEEPGIS_PILOT_RATE_PER_MIN
+        return cache.incr(key) > (per_min or settings.DEEPGIS_PILOT_RATE_PER_MIN)
     except ValueError:
         return False
 
@@ -368,26 +416,118 @@ def pilot_chat(request):
     view_line = _describe_view(data.get("view"))
     prompt = (view_line + "\n" if view_line else "") + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
-    try:
-        out = call_mcp_tool("ask_robot_llm", {
-            "prompt": prompt,
-            "system_prompt": SYSTEM_PROMPT if body == "earth" else planet_prompt(body),
-            "json_schema": PILOT_SCHEMA if body == "earth" else PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA),
-            "history": _clean_history(data.get("history")),
-            "temperature": 0.2,
-            "max_tokens": 800,
-            "timeout_sec": timeout,
-        }, timeout + 10)
-    except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
-        return JsonResponse({"error": f"AI pilot unavailable: {type(e).__name__}"}, status=502)
-
-    plan = out.get("json") if isinstance(out, dict) else None
-    if not isinstance(plan, dict):
-        return JsonResponse({"error": "The AI pilot returned no plan; try rephrasing."}, status=502)
-    reply = plan.get("reply") if isinstance(plan.get("reply"), str) else ""
+    args = {
+        "prompt": prompt,
+        "system_prompt": SYSTEM_PROMPT if body == "earth" else planet_prompt(body),
+        "json_schema": PILOT_SCHEMA if body == "earth" else PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA),
+        "history": _clean_history(data.get("history"), body),
+        "temperature": 0.2,
+        "max_tokens": 800,
+        "timeout_sec": timeout,
+    }
+    for attempt in range(2):
+        try:
+            out = call_mcp_tool("ask_robot_llm", args, timeout + 10)
+        except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
+            return JsonResponse({"error": f"AI pilot unavailable: {type(e).__name__}"}, status=502)
+        plan = out.get("json") if isinstance(out, dict) else None
+        if not isinstance(plan, dict):
+            return JsonResponse({"error": "The AI pilot returned no plan; try rephrasing."}, status=502)
+        reply = plan.get("reply") if isinstance(plan.get("reply"), str) else ""
+        actions = clean_actions(plan.get("actions"), body)
+        if actions or not PROMISE_RE.search(reply):
+            break
+    cmap = named_colormap(message) if body == "earth" else None
+    for a in actions:
+        if cmap and a["type"] == "show_layer" and a.get("kind") in RASTER_KINDS:
+            a["colormap"] = cmap
+    actions = [{k: a[k] for k in FIELD_ORDER if k in a} for a in actions]
     return JsonResponse({
         "reply": reply.strip()[:1000],
-        "actions": clean_actions(plan.get("actions"), body),
+        "actions": actions,
         "model": out.get("model", ""),
         "duration_sec": out.get("duration_sec"),
     })
+
+
+# Gridded sea data for the sea_temp and chlorophyll layers, from NOAA ERDDAP servers,
+# which send no CORS headers, so the page cannot read them itself.
+# res is the grid spacing in degrees; lat_desc grids store latitude north to south.
+OCEAN_DATASETS = {
+    "sea_temp": {"url": "https://coastwatch.pfeg.noaa.gov/erddap/griddap/jplMURSST41",
+                 "var": "analysed_sst", "res": 0.01, "altitude": False, "lat_desc": False},
+    "chlorophyll": {"url": "https://coastwatch.noaa.gov/erddap/griddap/noaacwNPPN20S3ASCIDINEOF2kmDaily",
+                    "var": "chlor_a", "res": 0.02, "altitude": True, "lat_desc": True},
+}
+OCEAN_MAX_SPAN_DEG = 10.0
+OCEAN_MAX_CELLS = 160  # per side; coarser areas are subsampled
+OCEAN_RATE_PER_MIN = 20
+OCEAN_CACHE_SEC = 3 * 3600
+
+
+def ocean_query(ds, south, north, west, east):
+    """ERDDAP griddap query for the latest day over the box, subsampled to OCEAN_MAX_CELLS."""
+    stride = max(1, math.ceil(max(north - south, east - west) / ds["res"] / OCEAN_MAX_CELLS))
+    lat = f"({north}):{stride}:({south})" if ds["lat_desc"] else f"({south}):{stride}:({north})"
+    q = f"{ds['var']}[(last)]" + ("[(0.0)]" if ds["altitude"] else "") + f"[{lat}][({west}):{stride}:({east})]"
+    return f"{ds['url']}.json?{quote(q, safe='():')}", stride
+
+
+def ocean_grid(rows):
+    """ERDDAP JSON rows (time, [altitude], lat, lon, value) as a grid with rows south to north."""
+    lats = sorted({r[-3] for r in rows})
+    lons = sorted({r[-2] for r in rows})
+    li, lj = {v: i for i, v in enumerate(lats)}, {v: j for j, v in enumerate(lons)}
+    values = [[None] * len(lons) for _ in lats]
+    for r in rows:
+        v = r[-1]
+        if isinstance(v, (int, float)) and math.isfinite(v):
+            values[li[r[-3]]][lj[r[-2]]] = round(v, 3)
+    return lats, lons, values
+
+
+@require_GET
+def pilot_ocean(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "login_required", "login_url": "/label/admin/login/"}, status=401)
+    kind = request.GET.get("kind")
+    ds = OCEAN_DATASETS.get(kind)
+    if not ds:
+        return JsonResponse({"error": "Unknown sea layer"}, status=400)
+    try:
+        south, north, west, east = (round(float(request.GET[k]), 2) for k in ("south", "north", "west", "east"))
+    except (KeyError, ValueError):
+        return JsonResponse({"error": "south, north, west and east are required"}, status=400)
+    if not (-90 <= south < north <= 90 and -180 <= west < east <= 180
+            and north - south <= OCEAN_MAX_SPAN_DEG and east - west <= OCEAN_MAX_SPAN_DEG):
+        return JsonResponse({"error": f"The area must be within {OCEAN_MAX_SPAN_DEG:g} degrees on each side"}, status=400)
+
+    key = f"pilot-ocean:{kind}:{south}:{north}:{west}:{east}"
+    cached = cache.get(key)
+    if cached:
+        return JsonResponse(cached)
+    if _rate_limited(request.user.pk, "pilot-ocean", OCEAN_RATE_PER_MIN):
+        return JsonResponse({"error": "Too many requests; wait a minute."}, status=429)
+    url, stride = ocean_query(ds, south, north, west, east)
+    try:
+        for attempt in range(2):
+            # ERDDAP servers are busy now and then; a server error or timeout gets one retry
+            try:
+                resp = requests.get(url, timeout=30)
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt:
+                    raise
+                continue
+            if resp.status_code < 500 or attempt:
+                break
+        if resp.status_code >= 400:
+            return JsonResponse({"error": f"NOAA ERDDAP returned HTTP {resp.status_code}"}, status=502)
+        rows = resp.json()["table"]["rows"]
+        lats, lons, values = ocean_grid(rows)
+        when = rows[0][0]
+    except (requests.RequestException, ValueError, KeyError, IndexError, TypeError) as e:
+        return JsonResponse({"error": f"NOAA ERDDAP is unavailable right now ({type(e).__name__})"}, status=502)
+    out = {"time": when, "lat": lats, "lon": lons, "values": values,
+           "res": ds["res"] * stride, "dataset": ds["url"].rsplit("/", 1)[1]}
+    cache.set(key, out, OCEAN_CACHE_SEC)
+    return JsonResponse(out)

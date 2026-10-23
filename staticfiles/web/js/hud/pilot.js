@@ -462,7 +462,12 @@
         inferno: ['#000004', '#1b0c41', '#4a0c6b', '#781c6d', '#a52c60', '#cf4446', '#ed6925', '#fb9b06', '#f7d13d', '#fcffa4'],
         plasma: ['#0d0887', '#46039f', '#7201a8', '#9c179e', '#bd3786', '#d8576b', '#ed7953', '#fb9f3a', '#fdca26', '#f0f921'],
         coolwarm: ['#3b4cc0', '#6788ee', '#9abbff', '#c9d7f0', '#edd1c2', '#f7a889', '#e26952', '#b40426'],
+        rdylgn: ['#a50026', '#d73027', '#f46d43', '#fdae61', '#fee08b', '#ffffbf', '#d9ef8b', '#a6d96a', '#66bd63', '#1a9850', '#006837'],
     };
+    const cmapOf = (a, fallback) => COLORMAPS[a.colormap] ? a.colormap : fallback;
+    // NOAA ERDDAP grids, relayed by views/pilot.py (pilot_ocean)
+    const PILOT_OCEAN_URL = '/label/api/pilot/ocean/';
+    const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
     // Newest Landsat 8/9 scene over the area; a nearly clear one wins over a newer cloudier one
     async function landsatScene(bbox) {
@@ -476,6 +481,175 @@
         });
         const items = (j.features || []).filter(f => f.assets?.lwir11);
         return items.find(f => f.properties['eo:cloud_cover'] <= 5) || items[0] || null;
+    }
+
+    // Newest nearly clear Sentinel-2 scene over the point (scenes are 110 km tiles)
+    async function sentinelScene(p) {
+        const j = await fetchJson(PC_STAC_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                collections: ['sentinel-2-l2a'], limit: 10,
+                intersects: { type: 'Point', coordinates: [deg(p.lon), deg(p.lat)] },
+                query: { 'eo:cloud_cover': { lt: 10 } },
+                sortby: [{ field: 'datetime', direction: 'desc' }],
+            }),
+        });
+        const items = (j.features || []).filter(f => f.assets?.B04 && f.assets?.B08);
+        return items.find(f => f.properties['eo:cloud_cover'] <= 2) || items[0] || null;
+    }
+
+    // Every scene of the same satellite pass over the box: an area can span several tiles
+    async function passScenes(scene, bbox) {
+        const day = scene.properties.datetime.slice(0, 10);
+        const j = await fetchJson(PC_STAC_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collections: ['sentinel-2-l2a'], bbox, limit: 20,
+                                   datetime: `${day}T00:00:00Z/${day}T23:59:59Z` }),
+        });
+        const same = (j.features || []).filter(f => f.properties.datetime === scene.properties.datetime &&
+            f.properties.platform === scene.properties.platform && f.assets?.B04 && f.assets?.B08);
+        return same.some(f => f.id === scene.id) ? same : [scene, ...same];
+    }
+
+    // Mosaic of the given items, for tiles across scene edges
+    async function pcMosaic(ids) {
+        const j = await fetchJson(`${PC_DATA_URL}/mosaic/register`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ collections: ['sentinel-2-l2a'], 'filter-lang': 'cql2-json',
+                                   filter: { op: 'in', args: [{ property: 'id' }, ids] } }),
+        });
+        const id = j.searchid || j.id;
+        if (!id) throw new Error('planetarycomputer.microsoft.com did not register the image mosaic');
+        return id;
+    }
+
+    const ageText = (when) => {
+        const days = Math.round((Date.now() - when) / 86400000);
+        return days < 1 ? 'today' : `${days} day${days === 1 ? '' : 's'} ago`;
+    };
+
+    function hexRgb(h) {
+        const n = parseInt(h.slice(1), 16);
+        return [n >> 16, (n >> 8) & 255, n & 255];
+    }
+
+    // Colour of t in [0, 1] along a COLORMAPS ramp
+    function rampColor(stops, t) {
+        const x = clamp(t, 0, 1) * (stops.length - 1);
+        const i = Math.min(Math.floor(x), stops.length - 2), f = x - i;
+        const a = hexRgb(stops[i]), b = hexRgb(stops[i + 1]);
+        return a.map((v, k) => Math.round(v + (b[k] - v) * f));
+    }
+
+    // {lat, lon, values} grid (cell centres, rows south to north, null = no data) as one
+    // image over the cells; `scale` maps a value before colouring (e.g. Math.log10)
+    function gridImagery(grid, res, cmap, lo, hi, credit, scale = (v) => v) {
+        const rows = grid.lat.length, cols = grid.lon.length;
+        const c = document.createElement('canvas');
+        c.width = cols;
+        c.height = rows;
+        const g = c.getContext('2d');
+        const img = g.createImageData(cols, rows);
+        for (let r = 0; r < rows; r++) {
+            for (let k = 0; k < cols; k++) {
+                const v = grid.values[rows - 1 - r][k]; // canvas row 0 is the north edge
+                if (v === null || !Number.isFinite(v)) continue;
+                img.data.set([...rampColor(COLORMAPS[cmap], (scale(v) - lo) / (hi - lo)), 255], (r * cols + k) * 4);
+            }
+        }
+        g.putImageData(img, 0, 0);
+        return new Cesium.SingleTileImageryProvider({
+            url: c.toDataURL(), tileWidth: cols, tileHeight: rows,
+            rectangle: Cesium.Rectangle.fromDegrees(grid.lon[0] - res / 2, grid.lat[0] - res / 2,
+                grid.lon[cols - 1] + res / 2, grid.lat[rows - 1] + res / 2),
+            credit: new Cesium.Credit(credit),
+        });
+    }
+
+    // Sorted values of the grid cells within radius of p, and the cell nearest p
+    function gridStats(grid, p, radius) {
+        const vals = [];
+        let centre = null, best = Infinity;
+        grid.lat.forEach((la, i) => grid.lon.forEach((lo, j) => {
+            const v = grid.values[i][j];
+            if (v === null || !Number.isFinite(v)) return;
+            const d = distanceM(p.lon, p.lat, rad(lo), rad(la));
+            if (d <= radius) vals.push(v);
+            if (d < best) { best = d; centre = { v, d }; }
+        }));
+        if (!vals.length) return null;
+        vals.sort((x, y) => x - y);
+        const q = (f) => vals[Math.min(vals.length - 1, Math.floor(f * vals.length))];
+        return { vals, centre, min: vals[0], max: vals[vals.length - 1], p2: q(0.02), p98: q(0.98),
+                 median: q(0.5), mean: vals.reduce((s, v) => s + v, 0) / vals.length };
+    }
+
+    async function oceanGrid(kind, rect) {
+        const q = new URLSearchParams({ kind, south: deg(rect.south).toFixed(2), north: deg(rect.north).toFixed(2),
+                                        west: deg(rect.west).toFixed(2), east: deg(rect.east).toFixed(2) });
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 60000);
+        try {
+            const resp = await fetch(`${PILOT_OCEAN_URL}?${q}`, { credentials: 'same-origin', signal: ctl.signal });
+            const j = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(j.error || `the NOAA data relay returned HTTP ${resp.status}`);
+            return j;
+        } catch (e) {
+            if (e.name === 'AbortError') throw new Error('NOAA ERDDAP did not respond');
+            throw e;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+
+    const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    const compass = (d) => COMPASS[Math.round(((d % 360) + 360) % 360 / 45) % 8];
+
+    // Current conditions on an n x n grid over the area plus the centre (last), from Open-Meteo
+    async function weatherGrid(p, radius, n = 7) {
+        const rect = areaRect(p.lon, p.lat, radius);
+        const dLat = (rect.north - rect.south) / n, dLon = (rect.east - rect.west) / n;
+        const lat = [], lon = [];
+        for (let i = 0; i < n; i++) lat.push(deg(rect.south + (i + 0.5) * dLat));
+        for (let j = 0; j < n; j++) lon.push(deg(rect.west + (j + 0.5) * dLon));
+        const pts = lat.flatMap(la => lon.map(lo => [la, lo])).concat([[deg(p.lat), deg(p.lon)]]);
+        const j = await fetchJson(`${OPEN_METEO_URL}?` + new URLSearchParams({
+            latitude: pts.map(x => x[0].toFixed(4)).join(','),
+            longitude: pts.map(x => x[1].toFixed(4)).join(','),
+            current: 'temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,wind_direction_10m,precipitation',
+            timezone: 'auto',
+        }));
+        const list = Array.isArray(j) ? j : [j];
+        if (list.length !== pts.length || !list.every(x => x.current)) throw new Error('api.open-meteo.com returned no current conditions');
+        const field = (key) => lat.map((_, i) => lon.map((_, k) => list[i * n + k].current[key] ?? null));
+        return { lat, lon, res: Math.min(deg(dLat), deg(dLon)), field, centre: list[list.length - 1] };
+    }
+
+    // Shared loader for the humidity and air temperature layers
+    async function weatherLayer(p, radius, a, key, title, fmt, minSpan) {
+        const cmap = cmapOf(a, 'turbo');
+        const w = await weatherGrid(p, radius);
+        const grid = { lat: w.lat, lon: w.lon, values: w.field(key) };
+        const st = gridStats(grid, p, Infinity);
+        if (!st) return { lines: [], empty: `No current ${title.toLowerCase()} for ${p.label}` };
+        const lo = st.min, hi = Math.max(st.max, lo + minSpan);
+        const c = w.centre.current;
+        const local = String(c.time || '').replace('T', ' ');
+        const lines = [['step', `${title} around ${p.label} (${fmtM(radius)} radius), current conditions at ${local} local time:`],
+            ['geo', `At the centre: air ${fmtC(c.temperature_2m)}, humidity ${Math.round(c.relative_humidity_2m)}%, ` +
+                `dew point ${fmtC(c.dew_point_2m)}`],
+            ['geo', `Across the area: ${fmt(st.min)} to ${fmt(st.max)}`],
+            ['geo', `Wind ${Math.round(c.wind_speed_10m)} km/h from the ${compass(c.wind_direction_10m)}` +
+                (c.precipitation > 0 ? `; ${c.precipitation} mm of rain in the last 15 minutes` : '; no rain right now')],
+            ['step', 'These are weather-model values on a grid of a few kilometres, blended between points, not station readings.']];
+        return {
+            imagery: gridImagery(grid, w.res, cmap, lo, hi, 'Weather: Open-Meteo.com'),
+            imageryAlpha: 0.6, lines,
+            legend: { title: `${title} (${cmap})`, colors: COLORMAPS[cmap], lo: fmt(lo), hi: fmt(hi) },
+            sources: ['Open-Meteo forecast API (open-meteo.com, CC BY 4.0), current conditions from national weather ' +
+                      'models such as NOAA HRRR and GFS'],
+            empty: '',
+        };
     }
 
     function faultColor(age = '') {
@@ -1286,6 +1460,150 @@
                               lo: `${dnToC(lo).toFixed(1)} °C`, hi: `${dnToC(hi).toFixed(1)} °C` },
                     sources: ['U.S. Geological Survey, Landsat 8-9 Collection 2 Level-2 Surface Temperature (band ST_B10, 30 m), ' +
                               'via Microsoft Planetary Computer', `Scene ${scene.id}`],
+                    empty: '',
+                };
+            },
+        },
+
+        ndvi: {
+            title: 'Vegetation (NDVI)',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 500, 20000) : 3000,
+            async load(p, radius, a) {
+                const cmap = cmapOf(a, 'rdylgn');
+                const scene = await sentinelScene(p);
+                if (!scene) return { lines: [], empty: `No Sentinel-2 image with under 10% cloud covers ${p.label}` };
+                // From processing baseline 04.00 (2022) each band's numbers carry a +1000 offset,
+                // which cancels in the difference but not in the sum
+                const sum = parseFloat(scene.properties['s2:processing_baseline']) >= 4 ? 'B08_b1+B04_b1-2000' : 'B08_b1+B04_b1';
+                const q = new URLSearchParams({ collection: 'sentinel-2-l2a', nodata: '0',
+                                                expression: `(B08_b1-B04_b1)/(${sum})`, asset_as_band: 'false' });
+                const rect = areaRect(p.lon, p.lat, radius);
+                const scenes = await passScenes(scene, [deg(rect.west), deg(rect.south), deg(rect.east), deg(rect.north)]);
+                const ring = circlePositions(p.lon, p.lat, radius).map(c => {
+                    const g = Cesium.Cartographic.fromCartesian(c);
+                    return [deg(g.longitude), deg(g.latitude)];
+                });
+                const feature = JSON.stringify({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } });
+                // NDVI histogram in 0.01 bins from -1 to 1 per scene; pixels outside a scene are nodata
+                const [mosaic, centre, ...perScene] = await Promise.all([
+                    pcMosaic(scenes.map(f => f.id)),
+                    fetchJson(`${PC_DATA_URL}/item/point/${deg(p.lon).toFixed(5)},${deg(p.lat).toFixed(5)}?${q}&item=${scene.id}`).catch(() => null),
+                    ...scenes.map(f => fetchJson(`${PC_DATA_URL}/item/statistics?${q}&item=${f.id}&max_size=1024&histogram_bins=200&histogram_range=-1,1`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: feature,
+                    }, 40000).then(st => Object.values(st?.properties?.statistics || {})[0]).catch(() => null)),
+                ]);
+                const counts = new Array(200).fill(0);
+                perScene.forEach(s => (s?.histogram?.[0] || []).forEach((n, i) => { counts[i] += n; }));
+                const total = counts.reduce((t, n) => t + n, 0);
+                if (!total) return { lines: [], empty: `The latest clear Sentinel-2 image (${scene.id}) has no data over ${p.label}` };
+                // Bin i covers -1 + i/100 to -1 + (i+1)/100; near-black pixels (deep water, shadow)
+                // divide by almost zero and fall outside -1 to 1, so they are left out
+                const share = (from, to) => Math.round(100 * counts.slice(from, to).reduce((t, n) => t + n, 0) / total);
+                const pct = (f) => {
+                    let acc = 0;
+                    const i = counts.findIndex(n => (acc += n) >= f * total);
+                    return -1 + (i + 0.5) / 100;
+                };
+                const when = new Date(scene.properties.datetime);
+                const sat = scene.properties.platform || 'Sentinel-2';
+                const cloud = Math.max(...scenes.map(f => f.properties['eo:cloud_cover'] || 0));
+                const lines = [['step', `Vegetation greenness (NDVI) within ${fmtM(radius)} of ${p.label}, from the ${sat} pass of ` +
+                    `${when.toISOString().slice(0, 10)} (${ageText(when)}; ${plural(scenes.length, 'image tile')}, ` +
+                    `up to ${Math.round(cloud)}% cloud each):`]];
+                const c0 = centre?.values?.[0];
+                if (Number.isFinite(c0) && Math.abs(c0) <= 1) lines.push(['geo', `At the centre: NDVI ${c0.toFixed(2)}`]);
+                lines.push(['geo', `Median NDVI ${pct(0.5).toFixed(2)}; most of the area (2nd to 98th percentile) ` +
+                    `${pct(0.02).toFixed(2)} to ${pct(0.98).toFixed(2)}`]);
+                lines.push(['geo', `Green vegetation (NDVI 0.4 or more): about ${share(140, 200)}% of the area`]);
+                lines.push(['geo', `Bare ground, buildings, roads or water (below 0.1): about ${share(0, 110)}%`]);
+                lines.push(['step', 'NDVI runs from -1 to 1: water is below 0, bare soil and pavement near 0.1, ' +
+                    'sparse plants 0.2-0.4 and dense healthy vegetation above 0.6. Clouds in the image read as low values.']);
+                const tiles = new URLSearchParams(q);
+                tiles.set('rescale', '-0.1,0.8');
+                tiles.set('colormap_name', cmap);
+                tiles.set('format', 'png');
+                return {
+                    imagery: new Cesium.UrlTemplateImageryProvider({
+                        url: `${PC_DATA_URL}/mosaic/${mosaic}/tiles/WebMercatorQuad/{z}/{x}/{y}@1x?${tiles}`,
+                        rectangle: rect, maximumLevel: 15,
+                        credit: new Cesium.Credit('NDVI: ESA Copernicus Sentinel-2 via Microsoft Planetary Computer'),
+                    }),
+                    imageryAlpha: 0.75,
+                    lines,
+                    legend: { title: `NDVI (${cmap})`, colors: COLORMAPS[cmap], lo: '-0.1 bare or water', hi: '0.8 dense green' },
+                    sources: ['ESA Copernicus Sentinel-2 Level-2A surface reflectance (red band B04 and near-infrared band B08, 10 m), ' +
+                              'via Microsoft Planetary Computer', `${scenes.length === 1 ? 'Scene' : 'Scenes'} ${scenes.map(f => f.id).join(', ')}`],
+                    empty: '',
+                };
+            },
+        },
+
+        humidity: {
+            title: 'Humidity',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 5000, 100000) : 20000,
+            load: (p, radius, a) => weatherLayer(p, radius, a, 'relative_humidity_2m', 'Relative humidity',
+                (v) => `${Math.round(v)}%`, 5),
+        },
+
+        air_temp: {
+            title: 'Air temperature',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 5000, 100000) : 20000,
+            load: (p, radius, a) => weatherLayer(p, radius, a, 'temperature_2m', 'Air temperature (2 m above ground)',
+                (v) => `${v.toFixed(1)} °C`, 1),
+        },
+
+        sea_temp: {
+            title: 'Sea surface temperature',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 5000, 150000) : 30000,
+            async load(p, radius, a) {
+                const cmap = cmapOf(a, 'turbo');
+                const g = await oceanGrid('sea_temp', areaRect(p.lon, p.lat, radius));
+                const st = gridStats(g, p, radius);
+                if (!st) return { lines: [], empty: `No sea surface temperature within ${fmtM(radius)} of ${p.label} (no open water there)` };
+                const lo = st.p2, hi = Math.max(st.p98, lo + 0.5);
+                const lines = [['step', `Sea surface temperature within ${fmtM(radius)} of ${p.label}, from the daily MUR analysis for ` +
+                    `${String(g.time).slice(0, 10)} (a 1 km blend of several satellites and buoys):`]];
+                if (st.centre.d < 2000) lines.push(['geo', `At the centre: ${fmtC(st.centre.v)}`]);
+                else lines.push(['geo', `Nearest water to the centre (${fmtM(st.centre.d)} away): ${fmtC(st.centre.v)}`]);
+                lines.push(['geo', `Average: ${fmtC(st.mean)}`]);
+                lines.push(['geo', `Coolest ${fmtC(st.min)}, warmest ${fmtC(st.max)}`]);
+                return {
+                    imagery: gridImagery(g, g.res, cmap, lo, hi, 'Sea surface temperature: NASA JPL MUR via NOAA CoastWatch'),
+                    imageryAlpha: 0.8, lines,
+                    legend: { title: `Sea surface temperature (${cmap}), middle 96% of the area`, colors: COLORMAPS[cmap],
+                              lo: `${lo.toFixed(1)} °C`, hi: `${hi.toFixed(1)} °C` },
+                    sources: ['NASA JPL Multi-scale Ultra-high Resolution (MUR) SST analysis v4.1, GHRSST Level 4 (0.01°), ' +
+                              `via NOAA CoastWatch ERDDAP, dataset ${g.dataset}`],
+                    empty: '',
+                };
+            },
+        },
+
+        chlorophyll: {
+            title: 'Chlorophyll',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 5000, 150000) : 30000,
+            async load(p, radius, a) {
+                const cmap = cmapOf(a, 'viridis');
+                const g = await oceanGrid('chlorophyll', areaRect(p.lon, p.lat, radius));
+                const st = gridStats(g, p, radius);
+                if (!st) return { lines: [], empty: `No chlorophyll data within ${fmtM(radius)} of ${p.label} (no open water there)` };
+                // Chlorophyll spans orders of magnitude; colour it on a log scale
+                const lo = Math.log10(Math.max(st.p2, 0.01)), hi = Math.max(Math.log10(Math.max(st.p98, 0.01)), lo + 0.3);
+                const mg = (v) => `${v < 1 ? v.toFixed(2) : v.toFixed(1)} mg/m³`;
+                const lines = [['step', `Chlorophyll-a in the surface water within ${fmtM(radius)} of ${p.label}, for ` +
+                    `${String(g.time).slice(0, 10)} (daily satellite ocean colour, cloud gaps filled statistically):`]];
+                if (st.centre.d < 3000) lines.push(['geo', `At the centre: ${mg(st.centre.v)}`]);
+                else lines.push(['geo', `Nearest water to the centre (${fmtM(st.centre.d)} away): ${mg(st.centre.v)}`]);
+                lines.push(['geo', `Median ${mg(st.median)}; lowest ${mg(st.min)}, highest ${mg(st.max)}`]);
+                lines.push(['step', 'Higher chlorophyll means more phytoplankton. Open ocean is usually below 0.3 mg/m³; ' +
+                    'productive coastal upwelling water often reaches 1-10 mg/m³ and blooms more.']);
+                return {
+                    imagery: gridImagery(g, g.res, cmap, lo, hi, 'Chlorophyll: NOAA CoastWatch', (v) => Math.log10(Math.max(v, 0.01))),
+                    imageryAlpha: 0.8, lines,
+                    legend: { title: `Chlorophyll-a (${cmap}, log scale), middle 96% of the area`, colors: COLORMAPS[cmap],
+                              lo: mg(10 ** lo), hi: mg(10 ** hi) },
+                    sources: ['NOAA CoastWatch gap-filled (DINEOF) chlorophyll-a from NOAA S-NPP and NOAA-20 VIIRS and ' +
+                              `Copernicus Sentinel-3A OLCI, science quality, 2 km, via NOAA CoastWatch ERDDAP, dataset ${g.dataset}`],
                     empty: '',
                 };
             },
