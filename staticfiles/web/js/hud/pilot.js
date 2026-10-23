@@ -445,6 +445,38 @@
     // The public Overpass instance is often at capacity; try mirrors in turn
     const OVERPASS_URLS = ['https://overpass-api.de/api/interpreter',
         'https://maps.mail.ru/osm/tools/overpass/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
+    // USGS Landsat Collection 2 Level-2 from Microsoft Planetary Computer: STAC search,
+    // then its tiler colours, stretches and samples the surface temperature band
+    const PC_STAC_URL = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
+    const PC_DATA_URL = 'https://planetarycomputer.microsoft.com/api/data/v1';
+    // lwir11 (ST_B10) digital numbers: kelvin = DN * scale + offset
+    const LST_SCALE = 0.00341802, LST_OFFSET = 149.0;
+    const dnToC = (dn) => dn * LST_SCALE + LST_OFFSET - 273.15;
+    const fmtC = (c) => `${c.toFixed(1)} °C (${(c * 9 / 5 + 32).toFixed(0)} °F)`;
+    // Names as the tiler knows them (matplotlib); stops only draw the chat legend.
+    // Keep the names in step with COLORMAPS in views/pilot.py.
+    const COLORMAPS = {
+        jet: ['#00007f', '#0000ff', '#007fff', '#00ffff', '#7fff7f', '#ffff00', '#ff7f00', '#ff0000', '#7f0000'],
+        turbo: ['#30123b', '#4662d7', '#36aaf9', '#1ae4b6', '#72fe5e', '#c8ef34', '#faba39', '#f66b19', '#ca2a04', '#7a0403'],
+        viridis: ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'],
+        inferno: ['#000004', '#1b0c41', '#4a0c6b', '#781c6d', '#a52c60', '#cf4446', '#ed6925', '#fb9b06', '#f7d13d', '#fcffa4'],
+        plasma: ['#0d0887', '#46039f', '#7201a8', '#9c179e', '#bd3786', '#d8576b', '#ed7953', '#fb9f3a', '#fdca26', '#f0f921'],
+        coolwarm: ['#3b4cc0', '#6788ee', '#9abbff', '#c9d7f0', '#edd1c2', '#f7a889', '#e26952', '#b40426'],
+    };
+
+    // Newest Landsat 8/9 scene over the area; a nearly clear one wins over a newer cloudier one
+    async function landsatScene(bbox) {
+        const j = await fetchJson(PC_STAC_URL, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                collections: ['landsat-c2-l2'], bbox, limit: 10,
+                query: { 'eo:cloud_cover': { lt: 20 }, platform: { in: ['landsat-8', 'landsat-9'] } },
+                sortby: [{ field: 'datetime', direction: 'desc' }],
+            }),
+        });
+        const items = (j.features || []).filter(f => f.assets?.lwir11);
+        return items.find(f => f.properties['eo:cloud_cover'] <= 5) || items[0] || null;
+    }
 
     function faultColor(age = '') {
         const a = String(age).toLowerCase();
@@ -1193,6 +1225,68 @@
                     },
                     lines, sources: [OSM_SOURCE],
                     empty: `No mines or quarries mapped in OpenStreetMap within ${fmtM(radius)} of ${p.label}`,
+                };
+            },
+        },
+
+        surface_temp: {
+            title: 'Surface temperature',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 1000, 20000) : 5000,
+            async load(p, radius, a) {
+                const cmap = COLORMAPS[a.colormap] ? a.colormap : 'turbo';
+                const rect = areaRect(p.lon, p.lat, radius);
+                const scene = await landsatScene([deg(rect.west), deg(rect.south), deg(rect.east), deg(rect.north)]);
+                if (!scene) return { lines: [], empty: `No Landsat thermal image with under 20% cloud covers ${p.label}` };
+                const q = new URLSearchParams({ collection: 'landsat-c2-l2', item: scene.id, assets: 'lwir11' });
+                const ring = circlePositions(p.lon, p.lat, radius).map(c => {
+                    const g = Cesium.Cartographic.fromCartesian(c);
+                    return [deg(g.longitude), deg(g.latitude)];
+                });
+                const [stats, centre] = await Promise.all([
+                    fetchJson(`${PC_DATA_URL}/item/statistics?${q}&nodata=0&max_size=1024`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [ring] } }),
+                    }, 40000),
+                    fetchJson(`${PC_DATA_URL}/item/point/${deg(p.lon).toFixed(5)},${deg(p.lat).toFixed(5)}?${q}`).catch(() => null),
+                ]);
+                const s = Object.values(stats?.properties?.statistics || {})[0];
+                if (!s || !(s.valid_percent > 0) || !Number.isFinite(s.percentile_2)) {
+                    return { lines: [], empty: `The latest clear Landsat image (${scene.id}) has no thermal data over ${p.label}` };
+                }
+                // A uniform area still gets at least a 1 °C spread
+                const lo = s.percentile_2, hi = Math.max(s.percentile_98, lo + 1 / LST_SCALE);
+                const when = new Date(scene.properties.datetime);
+                const days = Math.round((Date.now() - when) / 86400000);
+                const platform = String(scene.properties.platform || 'landsat').replace('landsat-', 'Landsat ');
+                const lines = [['step', `Surface temperature within ${fmtM(radius)} of ${p.label}, from the ${platform} image of ` +
+                    `${when.toISOString().slice(0, 16).replace('T', ' ')} UTC (${days} day${days === 1 ? '' : 's'} ago, ` +
+                    `${Math.round(scene.properties['eo:cloud_cover'])}% cloud over the whole scene):`]];
+                const c0 = centre?.values?.[0];
+                if (Number.isFinite(c0) && c0 > 0) lines.push(['geo', `At the centre: ${fmtC(dnToC(c0))}`]);
+                lines.push(['geo', `Average: ${fmtC(dnToC(s.mean))}`]);
+                lines.push(['geo', `Coolest ${fmtC(dnToC(s.min))}, hottest ${fmtC(dnToC(s.max))}`]);
+                // valid_percent counts the circle's bounding square, which the circle fills π/4 of
+                const covered = Math.min(100, s.valid_percent / (Math.PI / 4));
+                if (covered < 95) lines.push(['geo', `The image covers about ${Math.round(covered)}% of the area`]);
+                lines.push(['step', 'This is the temperature of the ground and roofs at the time of the image, not the air temperature.']);
+                const tiles = new URLSearchParams(q);
+                tiles.set('nodata', '0');
+                tiles.set('rescale', `${Math.round(lo)},${Math.round(hi)}`);
+                tiles.set('colormap_name', cmap);
+                tiles.set('format', 'png');
+                return {
+                    imagery: new Cesium.UrlTemplateImageryProvider({
+                        url: `${PC_DATA_URL}/item/tiles/WebMercatorQuad/{z}/{x}/{y}@1x?${tiles}`,
+                        rectangle: rect, maximumLevel: 14,
+                        credit: new Cesium.Credit('Surface temperature: USGS Landsat Collection 2 via Microsoft Planetary Computer'),
+                    }),
+                    imageryAlpha: 0.75,
+                    lines,
+                    legend: { title: `Surface temperature (${cmap}), middle 96% of the area`, colors: COLORMAPS[cmap],
+                              lo: `${dnToC(lo).toFixed(1)} °C`, hi: `${dnToC(hi).toFixed(1)} °C` },
+                    sources: ['U.S. Geological Survey, Landsat 8-9 Collection 2 Level-2 Surface Temperature (band ST_B10, 30 m), ' +
+                              'via Microsoft Planetary Computer', `Scene ${scene.id}`],
+                    empty: '',
                 };
             },
         },

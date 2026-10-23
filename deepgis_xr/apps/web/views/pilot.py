@@ -28,7 +28,9 @@ ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
                 "show_layer", "hide_layer")
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
-               "soils", "wildlife", "trails", "springs", "mines")
+               "soils", "wildlife", "trails", "springs", "mines", "surface_temp")
+# Colour maps a raster layer can be drawn in (COLORMAPS in hud/pilot.js)
+COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm")
 MAX_ACTIONS = 8
 MAX_HISTORY = 8
 MAX_MESSAGE_CHARS = 600
@@ -70,6 +72,7 @@ PILOT_SCHEMA = {
                     "type": {"enum": list(ACTION_TYPES)},
                     "kind": {"enum": list(LAYER_KINDS)},
                     "place": {"type": "string"},
+                    "colormap": {"enum": list(COLORMAPS)},
                     "lat": {"type": "number"},
                     "lon": {"type": "number"},
                     "radius_m": {"type": "number"},
@@ -104,7 +107,7 @@ PLANET_LAYER_DOCS = {
 
 def _planet_schema(kinds):
     item = dict(PILOT_SCHEMA["properties"]["actions"]["items"])
-    props = {k: v for k, v in item["properties"].items() if k != "distance_km"}
+    props = {k: v for k, v in item["properties"].items() if k not in ("distance_km", "colormap")}
     if kinds:
         props["type"] = {"enum": list(ACTION_TYPES)}
         props["kind"] = {"enum": list(kinds)}
@@ -143,6 +146,8 @@ Actions (all heights are metres ABOVE GROUND):
   - trails: hiking and walking trails (3 km; worldwide, OpenStreetMap)
   - springs: springs and hot springs (5 km; worldwide, OpenStreetMap)
   - mines: mines, mine shafts, adits and quarries (5 km; worldwide, OpenStreetMap)
+  - surface_temp: land surface temperature (how hot the ground is, not the air) as a colour map with the measured range, from the latest clear Landsat thermal image (default: the whole place; worldwide over land, a new image about every 8 days, taken mid-morning). Also for "heat map", "hot spots", "urban heat island" or "thermal" requests.
+  For surface_temp, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma or coolwarm ("rainbow" means jet).
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 
 Rules:
@@ -152,7 +157,7 @@ Rules:
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
-- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils or trails); the viewer lists them from its sourced data.
+- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails or temperatures); the viewer lists them from its sourced data.
 - If the request is a question or not a flight request, answer it in reply and return no actions.
 
 Examples (actions only):
@@ -162,6 +167,7 @@ Examples (actions only):
 - "past fire perimeters within 20 km" -> [{"type": "show_layer", "kind": "fires", "radius_m": 20000}]
 - "what soils are under this field?" -> [{"type": "show_layer", "kind": "soils"}]
 - "orbit Hayden Butte and show geology within 5 km" -> [{"type": "show_layer", "kind": "geology", "place": "Hayden Butte, Tempe, Arizona", "radius_m": 5000}, {"type": "orbit", "place": "Hayden Butte, Tempe, Arizona"}]
+- "orbit all of Tempe and show surface temperature as a jet colormap" -> [{"type": "show_layer", "kind": "surface_temp", "place": "Tempe, Arizona", "colormap": "jet"}, {"type": "orbit", "place": "Tempe, Arizona"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -249,6 +255,8 @@ def clean_actions(raw, body="earth"):
                 act["kind"] = kind
             elif kind is not None or act["type"] == "show_layer":
                 continue
+            if act["type"] == "show_layer" and body == "earth" and a.get("colormap") in COLORMAPS:
+                act["colormap"] = a["colormap"]
             if kind != "river" and "distance_km" in act:
                 km = act.pop("distance_km")
                 act.setdefault("radius_m", _num(km * 1000, "radius_m", limits))

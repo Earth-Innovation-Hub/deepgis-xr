@@ -74,6 +74,25 @@ class CleanActionsTests(TestCase):
         self.assertEqual(out, [{"type": "show_layer", "kind": "faults", "place": "Bishop", "radius_m": 15000.0},
                                {"type": "show_layer", "kind": "fires", "radius_m": 900.0}])
 
+    def test_surface_temp_and_colormap(self):
+        out = pilot.clean_actions([
+            {"type": "orbit", "place": "Tempe, Arizona"},
+            {"type": "show_layer", "kind": "surface_temp", "place": "Tempe, Arizona", "colormap": "jet"},
+            {"type": "show_layer", "kind": "surface_temp", "colormap": "hotpink"},
+            {"type": "goto", "place": "Tempe", "colormap": "jet"},
+        ])
+        self.assertEqual(out, [
+            {"type": "show_layer", "kind": "surface_temp", "place": "Tempe, Arizona", "colormap": "jet"},
+            {"type": "show_layer", "kind": "surface_temp"},
+            {"type": "orbit", "place": "Tempe, Arizona"},
+            {"type": "goto", "place": "Tempe"},
+        ])
+        items = pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"]
+        self.assertEqual(list(items)[:4], ["type", "kind", "place", "colormap"])
+        self.assertNotIn("colormap", json.dumps(pilot.PLANET_LAYER_SCHEMAS["moon"]))
+        self.assertEqual(pilot.clean_actions([{"type": "show_layer", "kind": "elevation", "colormap": "jet"}],
+                                             body="moon"), [{"type": "show_layer", "kind": "elevation"}])
+
     def test_caps_action_count(self):
         self.assertEqual(len(pilot.clean_actions([{"type": "wait", "seconds": 1}] * 20)), pilot.MAX_ACTIONS)
 
