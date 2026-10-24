@@ -9,18 +9,24 @@ for a short reply and a list of camera-drone actions. The actions are
 validated and clamped here and executed client-side by the page's existing
 takeoff / land / orbit controls, or as data layers (show_layer) fetched from
 public sources in the browser (off Earth: drawn from the body's terrain or
-elevation map; the sea layers come through pilot_ocean below); place names are geocoded in the browser, off Earth from the
+elevation map; the sea layers come through pilot_ocean below, the lidar
+terrain through pilot_topo); place names are geocoded in the browser, off Earth from the
 IAU planetary gazetteer.
 Nothing here touches a real vehicle.
 """
 
+import base64
 import json
 import math
+import os
 import re
 import time
+import uuid
 from urllib.parse import quote
 
+import numpy as np
 import requests
+from osgeo import gdal, osr
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
@@ -31,7 +37,8 @@ ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
-               "humidity", "air_temp", "sea_temp", "chlorophyll")
+               "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "slope", "contours",
+               "lidar_dem", "topo_datasets")
 # Colour maps a raster layer can be drawn in (COLORMAPS in hud/pilot.js)
 COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm", "rdylgn")
 MAX_ACTIONS = 8
@@ -106,7 +113,7 @@ PILOT_SCHEMA = {
 FIELD_ORDER = tuple(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
 LAYER_FIELDS = ("type", "kind", "place", "colormap", "lat", "lon", "radius_m", "distance_km")
 # Layers drawn as colour maps; a colour map named in the message applies to them
-RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll")
+RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "lidar_dem")
 COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
 PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("show_layer", "hide_layer"))
 # Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/pilot.js)
@@ -169,7 +176,12 @@ Actions (all heights are metres ABOVE GROUND):
   - air_temp: current air temperature as a colour map, with humidity and wind at the centre (worldwide, from weather models). Use it for "air temperature", "how hot is it", "weather" or "temperature right now"; use surface_temp for the ground, roofs or pavement.
   - sea_temp: sea surface temperature (water temperature of the ocean, a bay, sea or large lake) as a colour map with the measured range, from the latest daily satellite analysis (1 km; worldwide over water). Any temperature request for a body of water is sea_temp.
   - chlorophyll: chlorophyll-a in the surface water (phytoplankton, algae, ocean colour, productivity) as a colour map, from satellites (2 km; worldwide over water, about two weeks behind).
-  For surface_temp, ndvi, humidity, air_temp, sea_temp and chlorophyll, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
+  - elevation: terrain height (topography, relief) as a colour map over the ground with the measured height range, from Cesium World Terrain (default: the whole place; worldwide, about 30 m detail, finer in places). Also for "how high" or "height map" requests.
+  - slope: terrain steepness as a colour map, from Cesium World Terrain (worldwide).
+  - contours: elevation contour lines, from Cesium World Terrain (worldwide).
+  - lidar_dem: high-resolution lidar or drone terrain (down to 0.5 m) as shaded relief coloured by height, with height and slope figures, from OpenTopography surveys stored on DeepGIS (default 2 km; so far only around Bishop, California: the Volcanic Tablelands fault scarps, the White Mountains fault zone and the Bishop Tuff). Use it for "lidar", "high resolution terrain", "hillshade", "shaded relief", "bare earth", "DEM" or "fault scarp" requests; use elevation for terrain anywhere else.
+  - topo_datasets: which lidar, drone and elevation datasets OpenTopography has around a place, with their footprints, dates and links (default 15 km; mostly the US). Also for "what lidar is there" or "OpenTopography data" requests.
+  For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 
 Rules:
@@ -179,7 +191,7 @@ Rules:
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
-- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation or chlorophyll values); the viewer lists them from its sourced data.
+- Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - If the request is a question or not a flight request, answer it in reply and return no actions.
 - Never say in reply that you will show, fly, orbit or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
 
@@ -195,6 +207,9 @@ Examples (actions only):
 - "what's the humidity around Tucson" -> [{"type": "show_layer", "kind": "humidity", "place": "Tucson, Arizona"}]
 - "sea surface temperature of Monterey Bay in jet" -> [{"type": "show_layer", "kind": "sea_temp", "place": "Monterey Bay, California", "colormap": "jet"}]
 - "show chlorophyll and water temperature off Santa Cruz" -> [{"type": "show_layer", "kind": "chlorophyll", "place": "Santa Cruz, California"}, {"type": "show_layer", "kind": "sea_temp", "place": "Santa Cruz, California"}]
+- "elevation map of Mount Whitney" -> [{"type": "show_layer", "kind": "elevation", "place": "Mount Whitney, California"}]
+- "show the lidar hillshade of the fault scarps in the Volcanic Tablelands" -> [{"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California"}]
+- "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -530,4 +545,261 @@ def pilot_ocean(request):
     out = {"time": when, "lat": lats, "lon": lons, "values": values,
            "res": ds["res"] * stride, "dataset": ds["url"].rsplit("/", 1)[1]}
     cache.set(key, out, OCEAN_CACHE_SEC)
+    return JsonResponse(out)
+
+
+# Lidar and drone terrain models from OpenTopography for the lidar_dem layer, pulled to
+# this server once as cloud-optimised GeoTIFFs (scripts/topo_pull.py, files in data/topo/,
+# not in git). Keys are the file stems; when surveys tie on coverage the finer, newer wins.
+TOPO_DIR = os.path.join(settings.BASE_DIR, "data", "topo")
+TOPO_DATASETS = {
+    "CA19_Scott_hh": {"name": "Topography of Normal Faults in the Volcanic Tablelands, CA 2019", "year": 2019,
+                      "product": "drone surface model (includes shrubs and boulders)", "collected": "April 2019",
+                      "source_res": "4.6 cm, stored at 0.5 m", "doi": "10.5069/G97S7KXT"},
+    "CA18_Scott_hh": {"name": "Topography of Normal Faults in the Volcanic Tablelands, CA 2018", "year": 2018,
+                      "product": "drone surface model (includes shrubs and boulders)", "collected": "March 2018",
+                      "source_res": "10 cm, stored at 0.5 m", "doi": "10.5069/G9SF2TC5"},
+    "CA14_Delano_be": {"name": "Volcanic Tablelands in Bishop, California", "year": 2014,
+                       "product": "airborne lidar bare-earth model", "collected": "October 2014",
+                       "source_res": "0.5 m", "doi": "10.5069/G9RJ4GCH"},
+    "CA12_Lifton_be": {"name": "White Mountain Fault Zone, Owens Valley, CA", "year": 2012,
+                       "product": "airborne lidar bare-earth model", "collected": "July 2012",
+                       "source_res": "1 m", "doi": "10.5069/G9FF3Q99"},
+    "CA09_Whelley_be": {"name": "Bishop, CA: Morphological characteristics of the Bishop Tuff", "year": 2010,
+                        "product": "airborne lidar bare-earth model", "collected": "September 2010",
+                        "source_res": "1 m", "doi": "10.5069/G9J1012J"},
+}
+TOPO_RADIUS_M = (50.0, 10000.0)
+TOPO_MAX_PX = 768  # per side of the returned image
+TOPO_NEAR_M = 30000.0  # a request this close to a survey moves onto it
+TOPO_RATE_PER_MIN = 20
+TOPO_CACHE_SEC = 24 * 3600
+TOPO_NODATA = -9999.0
+TOPO_SLOPE_MAX = 60.0  # degrees at blue 255
+_topo_index = {}
+
+
+# This GDAL build has no numpy bridge (ReadAsArray), so bands go through raw buffers
+def _band(ds, k=1):
+    raw = ds.GetRasterBand(k).ReadRaster(buf_type=gdal.GDT_Float32)
+    return np.frombuffer(raw, np.float32).reshape(ds.RasterYSize, ds.RasterXSize)
+
+
+def _wgs84():
+    srs = osr.SpatialReference()
+    srs.ImportFromEPSG(4326)
+    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    return srs
+
+
+def topo_index():
+    """{stem: dataset} for the pulled files, with native resolution, projected box and lon/lat bounds."""
+    out = {}
+    for stem, meta in TOPO_DATASETS.items():
+        path = os.path.join(TOPO_DIR, stem + ".tif")
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        hit = _topo_index.get(stem)
+        if not hit or hit["mtime"] != mtime or hit["path"] != path:
+            src = gdal.Open(path)
+            gt, w, h = src.GetGeoTransform(), src.RasterXSize, src.RasterYSize
+            srs = src.GetSpatialRef()
+            box = (gt[0], gt[3] + gt[5] * h, gt[0] + gt[1] * w, gt[3])
+            to_ll = osr.CoordinateTransformation(srs, _wgs84())
+            corners = [to_ll.TransformPoint(x, y)[:2] for x in box[0::2] for y in box[1::2]]
+            hit = _topo_index[stem] = {
+                **meta, "id": stem, "path": path, "mtime": mtime, "res": gt[1], "wkt": srs.ExportToWkt(), "box": box,
+                "bounds": [round(f(c[k] for c in corners), 5) for f, k in ((min, 0), (min, 1), (max, 0), (max, 1))]}
+        out[stem] = hit
+    return out
+
+
+def _transform(info, to_projected):
+    srs = osr.SpatialReference(wkt=info["wkt"])
+    srs.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+    return osr.CoordinateTransformation(*((_wgs84(), srs) if to_projected else (srs, _wgs84())))
+
+
+def _topo_warp(info, x, y, r, res=None, size=None):
+    """The square of half-width r around projected (x, y), read from the file's overviews as needed."""
+    opts = {"xRes": res, "yRes": res} if res else {"width": size, "height": size}
+    coarser = (res or 2 * r / size) > info["res"] * 1.01
+    return gdal.Warp("", info["path"], format="MEM", outputBounds=(x - r, y - r, x + r, y + r),
+                     dstNodata=TOPO_NODATA, outputType=gdal.GDT_Float32,
+                     resampleAlg="average" if coarser else "bilinear", **opts)
+
+
+def pick_topo(index, lon, lat, r):
+    """(dataset, x, y, coverage, other names) for the survey covering most of the circle's square, or None."""
+    found = []
+    for info in index.values():
+        x, y = _transform(info, True).TransformPoint(lon, lat)[:2]
+        bx = info["box"]
+        if x + r < bx[0] or x - r > bx[2] or y + r < bx[1] or y - r > bx[3]:
+            continue
+        cover = float((_band(_topo_warp(info, x, y, r, size=48)) != TOPO_NODATA).mean())
+        if cover >= 0.02:
+            found.append(((round(cover, 1), -info["res"], info["year"]), info, x, y, cover))
+    if not found:
+        return None
+    found.sort(key=lambda f: f[0], reverse=True)
+    _, info, x, y, cover = found[0]
+    return info, x, y, cover, [f[1]["name"] for f in found[1:]]
+
+
+def nearest_topo(index, lon, lat, r):
+    """(distance_m, lon, lat) of the nearest centre whose circle is mostly surveyed ground, or None."""
+    best = None
+    for info in index.values():
+        x, y = _transform(info, True).TransformPoint(lon, lat)[:2]
+        bx = info["box"]
+        cell = max(bx[2] - bx[0], bx[3] - bx[1]) / 128
+        src = gdal.Warp("", info["path"], format="MEM", outputBounds=bx, xRes=cell, yRes=cell,
+                        dstNodata=TOPO_NODATA, resampleAlg="average")
+        gt = src.GetGeoTransform()
+        valid = (_band(src) != TOPO_NODATA).astype(np.float64)
+        if not valid.any():
+            continue
+        # Share of surveyed cells in the (2k+1)-cell square around each cell, by summed-area table
+        k = int(round(r / cell))
+        n = 2 * k + 1
+        c = np.pad(np.pad(valid, k).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+        share = (c[n:, n:] - c[:-n, n:] - c[n:, :-n] + c[:-n, :-n]) / (n * n)
+        rows, cols = np.nonzero((valid > 0) & (share >= min(0.6, share.max() * 0.9)))
+        cx, cy = gt[0] + (cols + 0.5) * gt[1], gt[3] + (rows + 0.5) * gt[5]
+        d2 = (cx - x) ** 2 + (cy - y) ** 2
+        i = int(d2.argmin())
+        if best is None or d2[i] < best[0]:
+            best = (float(d2[i]), info, float(cx[i]), float(cy[i]))
+    if best is None:
+        return None
+    lon2, lat2 = _transform(best[1], False).TransformPoint(best[2], best[3])[:2]
+    return math.sqrt(best[0]), lon2, lat2
+
+
+def _png_data_url(ds):
+    path = f"/vsimem/pilot-topo-{uuid.uuid4().hex}.png"
+    gdal.Translate(path, ds, format="PNG")
+    try:
+        f = gdal.VSIFOpenL(path, "rb")
+        gdal.VSIFSeekL(f, 0, 2)
+        size = gdal.VSIFTellL(f)
+        gdal.VSIFSeekL(f, 0, 0)
+        data = gdal.VSIFReadL(1, size, f)
+        gdal.VSIFCloseL(f)
+    finally:
+        gdal.Unlink(path)
+    return "data:image/png;base64," + base64.b64encode(data).decode()
+
+
+def topo_render(info, x, y, r):
+    """Shaded-relief image and figures for the circle of radius r around projected (x, y).
+
+    The PNG packs, per pixel, height (red, over the elev range), multidirectional
+    hillshade (green), slope (blue, 0 to TOPO_SLOPE_MAX degrees) and coverage (alpha),
+    so the page can colour it with any colour map.
+    """
+    res = max(info["res"], 2 * r / TOPO_MAX_PX)
+    src = _topo_warp(info, x, y, r, res=res)
+    elev = _band(src)
+    valid = elev != TOPO_NODATA
+    shade = _band(gdal.DEMProcessing("", src, "hillshade", format="MEM", multiDirectional=True, computeEdges=True))
+    slope = _band(gdal.DEMProcessing("", src, "slope", format="MEM", computeEdges=True))
+
+    gt = src.GetGeoTransform()
+    rows, cols = np.indices(elev.shape)
+    dx, dy = gt[0] + (cols + 0.5) * gt[1] - x, gt[3] + (rows + 0.5) * gt[5] - y
+    circle = dx ** 2 + dy ** 2 <= r * r
+    inside = valid & circle
+    if inside.sum() < 10:
+        return None
+    e = elev[inside]
+    s = slope[inside & (slope >= 0)]
+    p1, p2, p50, p98, p99 = (float(v) for v in np.percentile(e, [1, 2, 50, 98, 99]))
+    ci, cj = int(np.abs(dy[:, 0]).argmin()), int(np.abs(dx[0]).argmin())
+    stats = {
+        "min": float(e.min()), "max": float(e.max()), "p2": p2, "p98": p98, "median": p50,
+        "centre": float(elev[ci, cj]) if valid[ci, cj] else None,
+        "centre_slope": float(slope[ci, cj]) if valid[ci, cj] and slope[ci, cj] >= 0 else None,
+        "slope_median": float(np.median(s)) if s.size else None,
+        "steep_share": float((s > 30).mean()) if s.size else None,
+        "coverage": float(inside.sum() / circle.sum()),
+    }
+    stats = {k: (round(v, 3) if isinstance(v, float) else v) for k, v in stats.items()}
+
+    lo, hi = p1, max(p99, p1 + 1.0)
+    bands = [np.clip((elev - lo) / (hi - lo) * 255, 0, 255), shade,
+             np.clip(slope / TOPO_SLOPE_MAX * 255, 0, 255), valid * 255.0]
+    rgba = gdal.GetDriverByName("MEM").Create("", elev.shape[1], elev.shape[0], 4, gdal.GDT_Byte)
+    rgba.SetGeoTransform(gt)
+    rgba.SetProjection(src.GetProjection())
+    for k, band in enumerate(bands):
+        rgba.GetRasterBand(k + 1).WriteRaster(0, 0, elev.shape[1], elev.shape[0],
+                                              np.where(valid, band, 0).round().astype(np.uint8).tobytes())
+    rgba.GetRasterBand(4).SetColorInterpretation(gdal.GCI_AlphaBand)
+    # Square pixels in lon/lat so the page can drape the image on a rectangle
+    ll = gdal.Warp("", rgba, format="MEM", dstSRS="EPSG:4326", width=elev.shape[1], height=elev.shape[0],
+                   resampleAlg="near", srcAlpha=True, dstAlpha=True)
+    lgt = ll.GetGeoTransform()
+    bounds = [lgt[0], lgt[3] + lgt[5] * ll.RasterYSize, lgt[0] + lgt[1] * ll.RasterXSize, lgt[3]]
+    return {"png": _png_data_url(ll), "bounds": [round(v, 7) for v in bounds], "res_m": round(res, 2),
+            "elev": [round(lo, 2), round(hi, 2)], "slope_max": TOPO_SLOPE_MAX, "stats": stats}
+
+
+def _topo_public(info):
+    return {k: info[k] for k in ("id", "name", "product", "collected", "source_res", "doi", "bounds")}
+
+
+@require_GET
+def pilot_topo(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "login_required", "login_url": "/label/admin/login/"}, status=401)
+    with gdal.ExceptionMgr(useExceptions=True):
+        try:
+            index = topo_index()
+        except RuntimeError as e:
+            return JsonResponse({"error": f"The stored terrain models cannot be read ({e})"}, status=500)
+        if request.GET.get("list"):
+            return JsonResponse({"datasets": [_topo_public(i) for i in index.values()]})
+        try:
+            lat, lon = float(request.GET["lat"]), float(request.GET["lon"])
+            r = float(request.GET.get("radius_m", 2000))
+        except (KeyError, ValueError):
+            return JsonResponse({"error": "lat and lon are required"}, status=400)
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180 and math.isfinite(r)):
+            return JsonResponse({"error": "lat, lon or radius_m is out of range"}, status=400)
+        lat, lon, r = round(lat, 5), round(lon, 5), round(max(TOPO_RADIUS_M[0], min(TOPO_RADIUS_M[1], r)))
+
+        files = ":".join(f"{k}{int(i['mtime'])}" for k, i in index.items())
+        key = f"pilot-topo:{lat}:{lon}:{r}:{files}"
+        cached = cache.get(key)
+        if cached:
+            return JsonResponse(cached)
+        if _rate_limited(request.user.pk, "pilot-topo", TOPO_RATE_PER_MIN):
+            return JsonResponse({"error": "Too many requests; wait a minute."}, status=429)
+        try:
+            moved = None
+            hit = pick_topo(index, lon, lat, r)
+            if not hit or hit[3] < 0.1:
+                # Off or at the edge of the surveys: move onto the nearest well-covered ground
+                near = nearest_topo(index, lon, lat, r)
+                there = near and near[0] <= TOPO_NEAR_M and pick_topo(index, near[1], near[2], r)
+                if there:
+                    hit, moved, lon, lat = there, round(near[0]), round(near[1], 5), round(near[2], 5)
+            if not hit:
+                names = "; ".join(i["name"] for i in index.values()) or "none yet"
+                return JsonResponse({"error": "No OpenTopography lidar is stored on DeepGIS near here. "
+                                              f"Stored surveys: {names}.",
+                                     "datasets": [_topo_public(i) for i in index.values()]}, status=404)
+            info, x, y, _, others = hit
+            out = topo_render(info, x, y, r)
+        except RuntimeError as e:
+            return JsonResponse({"error": f"The terrain model could not be read ({e})"}, status=500)
+    if not out:
+        return JsonResponse({"error": "No lidar ground inside this circle"}, status=404)
+    out.update({"dataset": _topo_public(info), "lat": lat, "lon": lon, "radius_m": r,
+                "moved_m": moved, "others": others})
+    cache.set(key, out, TOPO_CACHE_SEC)
     return JsonResponse(out)

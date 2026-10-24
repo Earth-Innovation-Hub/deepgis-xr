@@ -63,6 +63,7 @@ urlpatterns = [
     # AI pilot chat for the DeepGIS Search viewer (views/pilot.py)
     path('label/api/pilot/', views.pilot_chat, name='pilot_chat'),
     path('label/api/pilot/ocean/', views.pilot_ocean, name='pilot_ocean'),  # NOAA ERDDAP relay for the sea layers
+    path('label/api/pilot/topo/', views.pilot_topo, name='pilot_topo'),  # OpenTopography lidar stored in data/topo
     # nginx auth_request target for the OpenUAV twin panel (views/twin_access.py)
     path('label/api/twin-access/', views.twin_access, name='twin_access'),
 

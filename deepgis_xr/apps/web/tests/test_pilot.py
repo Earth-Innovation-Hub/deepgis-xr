@@ -1,9 +1,14 @@
 import json
+import os
+import shutil
+import tempfile
 from unittest import mock
 
+import numpy as np
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
+from osgeo import gdal, osr
 
 from deepgis_xr.apps.web.views import pilot
 
@@ -55,6 +60,21 @@ class CleanActionsTests(TestCase):
             {"type": "hide_layer", "kind": "faults"},
             {"type": "hide_layer"},
         ])
+
+    def test_terrain_layers(self):
+        out = pilot.clean_actions([
+            {"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California", "colormap": "viridis"},
+            {"type": "show_layer", "kind": "elevation", "place": "Mount Whitney, California", "alt_m": 300},
+            {"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California", "distance_km": 20},
+            {"type": "hide_layer", "kind": "contours"},
+        ])
+        self.assertEqual(out, [
+            {"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California", "colormap": "viridis"},
+            {"type": "show_layer", "kind": "elevation", "place": "Mount Whitney, California"},
+            {"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California", "radius_m": 20000.0},
+            {"type": "hide_layer", "kind": "contours"},
+        ])
+        self.assertIn("lidar_dem", pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"]["kind"]["enum"])
 
     def test_layers_go_before_an_orbit(self):
         out = pilot.clean_actions([{"type": "goto", "place": "Tempe"},
@@ -364,3 +384,104 @@ class PilotOceanTests(TestCase):
             resp = self.client.get(OCEAN_URL, {"kind": "chlorophyll", **BOX})
         self.assertEqual((get.call_count, resp.status_code), (1, 502))
         self.assertIn("HTTP 404", resp.json()["error"])
+
+
+TOPO_URL = "/label/api/pilot/topo/"
+
+
+class PilotTopoTests(TestCase):
+    """Against a 1 m synthetic terrain model with a 20 m fault scarp, in the Volcanic Tablelands."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.tmp = tempfile.mkdtemp()
+        drv = gdal.GetDriverByName("GTiff")
+        ds = drv.Create(os.path.join(cls.tmp, "TEST_be.tif"), 400, 400, 1, gdal.GDT_Float32)
+        ds.SetGeoTransform((370000, 1, 0, 4144400, 0, -1))
+        srs = osr.SpatialReference()
+        srs.ImportFromEPSG(26911)
+        ds.SetProjection(srs.ExportToWkt())
+        cols = np.arange(400)
+        elev = 1300 + np.where(cols < 200, 0.0, 20.0) + 0.01 * cols
+        grid = np.tile(elev, (400, 1)).astype(np.float32)
+        grid[:, 380:] = -9999
+        band = ds.GetRasterBand(1)
+        band.SetNoDataValue(-9999)
+        band.WriteRaster(0, 0, 400, 400, grid.tobytes())
+        ds = None
+        cls.datasets = {"TEST_be": {"name": "Test scarp", "year": 2020, "product": "bare earth",
+                                    "collected": "2020", "source_res": "1 m", "doi": "10.0/test"}}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        cache.clear()
+        pilot._topo_index.clear()
+        self.user = get_user_model().objects.create_user(username="pilot", password="pw")
+        self.client.force_login(self.user)
+        for name, value in (("TOPO_DIR", self.tmp), ("TOPO_DATASETS", self.datasets)):
+            patcher = mock.patch.object(pilot, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        x, y = 370200, 4144200
+        with gdal.ExceptionMgr(useExceptions=True):
+            to_ll = osr.CoordinateTransformation(*self._srs())
+            self.lon, self.lat = to_ll.TransformPoint(x, y)[:2]
+
+    @staticmethod
+    def _srs():
+        utm, ll = osr.SpatialReference(), osr.SpatialReference()
+        utm.ImportFromEPSG(26911)
+        ll.ImportFromEPSG(4326)
+        ll.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
+        return utm, ll
+
+    def test_requires_login(self):
+        self.client.logout()
+        self.assertEqual(self.client.get(TOPO_URL, {"list": 1}).status_code, 401)
+
+    def test_lists_stored_surveys(self):
+        out = self.client.get(TOPO_URL, {"list": 1}).json()["datasets"]
+        self.assertEqual([d["id"] for d in out], ["TEST_be"])
+        w, s, e, n = out[0]["bounds"]
+        self.assertTrue(w < self.lon < e and s < self.lat < n)
+
+    def test_rejects_bad_requests(self):
+        self.assertEqual(self.client.get(TOPO_URL, {"lat": "37.4"}).status_code, 400)
+        self.assertEqual(self.client.get(TOPO_URL, {"lat": "97", "lon": "-118"}).status_code, 400)
+        self.assertEqual(self.client.get(TOPO_URL, {"lat": "37", "lon": "-118", "radius_m": "nan"}).status_code, 400)
+
+    def test_relief_image_and_figures(self):
+        resp = self.client.get(TOPO_URL, {"lat": self.lat, "lon": self.lon, "radius_m": 150})
+        self.assertEqual(resp.status_code, 200)
+        out = resp.json()
+        self.assertTrue(out["png"].startswith("data:image/png;base64,"))
+        self.assertEqual(out["dataset"]["id"], "TEST_be")
+        self.assertIsNone(out["moved_m"])
+        self.assertEqual(out["res_m"], 1.0)
+        w, s, e, n = out["bounds"]
+        self.assertTrue(w < self.lon < e and s < self.lat < n)
+        st = out["stats"]
+        self.assertAlmostEqual(st["min"], 1300.5, delta=0.6)
+        self.assertAlmostEqual(st["max"], 1323.5, delta=0.6)
+        # Only the scarp is steep
+        self.assertGreater(st["steep_share"], 0)
+        self.assertLess(st["steep_share"], 0.05)
+        self.assertLess(st["slope_median"], 2)
+        self.assertEqual(self.client.get(TOPO_URL, {"lat": self.lat, "lon": self.lon, "radius_m": 150}).json(), out)
+
+    def test_nearby_request_moves_onto_the_survey_and_far_one_is_404(self):
+        out = self.client.get(TOPO_URL, {"lat": self.lat + 0.03, "lon": self.lon, "radius_m": 100}).json()
+        self.assertGreater(out["moved_m"], 2500)
+        self.assertLess(out["moved_m"], 3500)
+        far = self.client.get(TOPO_URL, {"lat": 33.42, "lon": -111.93})
+        self.assertEqual(far.status_code, 404)
+        self.assertIn("Test scarp", far.json()["error"])
+
+    def test_missing_files_are_not_listed(self):
+        with mock.patch.object(pilot, "TOPO_DIR", os.path.join(self.tmp, "absent")):
+            self.assertEqual(self.client.get(TOPO_URL, {"list": 1}).json()["datasets"], [])

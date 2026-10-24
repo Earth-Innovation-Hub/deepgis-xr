@@ -467,6 +467,9 @@
     const cmapOf = (a, fallback) => COLORMAPS[a.colormap] ? a.colormap : fallback;
     // NOAA ERDDAP grids, relayed by views/pilot.py (pilot_ocean)
     const PILOT_OCEAN_URL = '/label/api/pilot/ocean/';
+    // OpenTopography lidar stored on this server (pilot_topo), and OpenTopography's catalog
+    const PILOT_TOPO_URL = '/label/api/pilot/topo/';
+    const OT_CATALOG_URL = 'https://portal.opentopography.org/API/otCatalog';
     const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
     // Newest Landsat 8/9 scene over the area; a nearly clear one wins over a newer cloudier one
@@ -584,22 +587,69 @@
                  median: q(0.5), mean: vals.reduce((s, v) => s + v, 0) / vals.length };
     }
 
-    async function oceanGrid(kind, rect) {
-        const q = new URLSearchParams({ kind, south: deg(rect.south).toFixed(2), north: deg(rect.north).toFixed(2),
-                                        west: deg(rect.west).toFixed(2), east: deg(rect.east).toFixed(2) });
+    // GET from one of this server's data endpoints, which answer errors as {error}
+    async function serverJson(url, params, relay, upstream) {
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), 60000);
         try {
-            const resp = await fetch(`${PILOT_OCEAN_URL}?${q}`, { credentials: 'same-origin', signal: ctl.signal });
+            const resp = await fetch(`${url}?${new URLSearchParams(params)}`, { credentials: 'same-origin', signal: ctl.signal });
             const j = await resp.json().catch(() => ({}));
-            if (!resp.ok) throw new Error(j.error || `the NOAA data relay returned HTTP ${resp.status}`);
+            if (!resp.ok) throw new Error(j.error || `the ${relay} relay returned HTTP ${resp.status}`);
             return j;
         } catch (e) {
-            if (e.name === 'AbortError') throw new Error('NOAA ERDDAP did not respond');
+            if (e.name === 'AbortError') throw new Error(`${upstream} did not respond`);
             throw e;
         } finally {
             clearTimeout(timer);
         }
+    }
+
+    const oceanGrid = (kind, rect) => serverJson(PILOT_OCEAN_URL, {
+        kind, south: deg(rect.south).toFixed(2), north: deg(rect.north).toFixed(2),
+        west: deg(rect.west).toFixed(2), east: deg(rect.east).toFixed(2),
+    }, 'NOAA data', 'NOAA ERDDAP');
+
+    // The pilot_topo PNG packs height (red), hillshade (green), slope (blue) and coverage
+    // (alpha); colour the height with the colour map and darken it by the hillshade
+    async function reliefImagery(t, cmap) {
+        const img = new Image();
+        img.src = t.png;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const g = c.getContext('2d', { willReadFrequently: true });
+        g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height);
+        const px = d.data;
+        const lut = Array.from({ length: 256 }, (_, i) => rampColor(COLORMAPS[cmap], i / 255));
+        for (let i = 0; i < px.length; i += 4) {
+            if (!px[i + 3]) continue;
+            const col = lut[px[i]], s = 0.2 + 0.8 * px[i + 1] / 255;
+            px[i] = col[0] * s;
+            px[i + 1] = col[1] * s;
+            px[i + 2] = col[2] * s;
+            px[i + 3] = 255;
+        }
+        g.putImageData(d, 0, 0);
+        return new Cesium.SingleTileImageryProvider({
+            url: c.toDataURL(), tileWidth: c.width, tileHeight: c.height,
+            rectangle: Cesium.Rectangle.fromDegrees(...t.bounds),
+            credit: new Cesium.Credit('Lidar terrain: OpenTopography'),
+        });
+    }
+
+    // [west, south, east, north] of any GeoJSON object's coordinates
+    function geoBox(geo) {
+        const box = [Infinity, Infinity, -Infinity, -Infinity];
+        const walk = (c) => {
+            if (typeof c[0] === 'number') {
+                box[0] = Math.min(box[0], c[0]); box[1] = Math.min(box[1], c[1]);
+                box[2] = Math.max(box[2], c[0]); box[3] = Math.max(box[3], c[1]);
+            } else c.forEach(walk);
+        };
+        (geo?.features || [geo]).forEach(f => f?.geometry?.coordinates && walk(f.geometry.coordinates));
+        return Number.isFinite(box[0]) ? box : null;
     }
 
     const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -774,9 +824,13 @@
     const hasTerrain = () => !(getViewer().terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
     const fmtH = (m) => Math.abs(m) >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`;
     const terrainSource = () => {
+        if (isEarth) return 'Cesium World Terrain (Cesium ion), built from SRTM, USGS 3DEP and other national elevation models';
         const t = bodyInfo().terrain || {};
         return `${t.name || 'Terrain model'}${t.link ? ` (${t.link})` : ''}`;
     };
+    const heightDatum = () => isEarth
+        ? 'above the WGS84 ellipsoid, which can sit tens of metres off sea level'
+        : `relative to the ${fmtM(bodyR())} reference sphere`;
     // A named feature with a size: 1.5 diameters; otherwise about the area in view
     const planetRadius = (p) => clamp(p.sizeM ? p.sizeM * 1.5
         : getViewer().camera.positionCartographic.height * 1.2, 5000, 1500000);
@@ -800,9 +854,9 @@
         globeLayers.forEach(g => { ramp = g.ramp || ramp; contour = g.contour || contour; });
         // SlopeRamp maps 0-90 degrees across the image; the colours span 0-45
         const rampFabric = ramp && (ramp.type === 'slope'
-            ? { type: 'SlopeRamp', uniforms: { image: rampCanvas(HEAT, 0.5) } }
+            ? { type: 'SlopeRamp', uniforms: { image: rampCanvas(ramp.colors || HEAT, 0.5) } }
             : { type: 'ElevationRamp',
-                uniforms: { image: rampCanvas(HEAT), minimumHeight: ramp.min, maximumHeight: ramp.max } });
+                uniforms: { image: rampCanvas(ramp.colors || HEAT), minimumHeight: ramp.min, maximumHeight: ramp.max } });
         const contourFabric = contour && { type: 'ElevationContour',
             uniforms: { width: 2, spacing: contour.spacing, color: Cesium.Color.WHITE.withAlpha(0.9) } };
         if (rampFabric && contourFabric) {
@@ -874,16 +928,18 @@
     const PLANET_LAYERS = {
         elevation: {
             title: 'Elevation', radius: planetRadius,
-            async load(p, radius) {
+            async load(p, radius, a = {}) {
                 if (!hasTerrain()) return elevationImagery(p, radius);
                 const h = await areaHeights(p, radius);
                 const lo = h[0], hi = h[h.length - 1];
+                const cmap = cmapOf(a, null);
+                const colors = cmap ? COLORMAPS[cmap] : HEAT;
                 return {
-                    globe: { ramp: { type: 'elevation', min: lo, max: Math.max(hi, lo + 1) } },
-                    legend: { title: 'Elevation', colors: HEAT, lo: fmtH(lo), hi: fmtH(hi) },
+                    globe: { ramp: { type: 'elevation', min: lo, max: Math.max(hi, lo + 1), colors } },
+                    legend: { title: cmap ? `Elevation (${cmap})` : 'Elevation', colors, lo: fmtH(lo), hi: fmtH(hi) },
                     lines: [['step', `Elevation within ${fmtM(radius)} of ${p.label}: ${fmtH(lo)} to ${fmtH(hi)}, ` +
-                        `median ${fmtH(h[Math.floor(h.length / 2)])}, relative to the ${fmtM(bodyR())} reference sphere. ` +
-                        'Colours stretch over this range.']],
+                        `median ${fmtH(h[Math.floor(h.length / 2)])}, ${heightDatum()}. Colours stretch over this range` +
+                        (isEarth ? ' and replace the satellite imagery while the layer is shown.' : '.')]],
                     sources: [terrainSource()],
                 };
             },
@@ -915,6 +971,7 @@
         },
     };
     const layerSpecs = () => isEarth ? LAYERS : PLANET_LAYERS;
+    const terrainRadius = (p) => p.sizeM ? clamp(p.sizeM / 2, 500, 50000) : 5000;
 
     function addLegend({ title, colors, lo, hi }) {
         const div = addMsg('step', title);
@@ -931,7 +988,8 @@
     }
 
     // Each kind: load(p, radius, action) -> {fc?, style?, decorate?(entity, props),
-    // imagery?, imageryAlpha?, area?, lines: [[msgKind, text]], sources: [text], empty}
+    // imagery?, imageryAlpha?, area?, ring?, lines: [[msgKind, text]], sources: [text], empty}
+    // (ring: where to draw the radius circle when it is not around the asked-for point)
     const LAYERS = {
         geology: {
             title: 'Geology', radius: 5000,
@@ -1608,6 +1666,109 @@
                 };
             },
         },
+
+        // Cesium World Terrain, coloured on the globe as off Earth
+        elevation: { ...PLANET_LAYERS.elevation, radius: terrainRadius },
+        slope: { ...PLANET_LAYERS.slope, radius: terrainRadius },
+        contours: { ...PLANET_LAYERS.contours, radius: terrainRadius },
+
+        lidar_dem: {
+            title: 'Lidar terrain',
+            radius: (p) => p.sizeM ? clamp(p.sizeM / 2, 300, 10000) : 2000,
+            async load(p, radius, a) {
+                const cmap = cmapOf(a, 'turbo');
+                const t = await serverJson(PILOT_TOPO_URL, { lat: deg(p.lat).toFixed(5), lon: deg(p.lon).toFixed(5),
+                                                             radius_m: String(Math.round(radius)) }, 'lidar', 'The lidar server');
+                const d = t.dataset, st = t.stats;
+                const fmtZ = (m) => `${Math.round(m).toLocaleString('en-US')} m`;
+                const share = (f) => `${Math.round(f * 100)}%`;
+                const where = t.moved_m ? `the nearest stored survey ground, ${fmtM(t.moved_m)} from ${p.label}` : p.label;
+                const lines = [['step', `${d.name}: ${d.product}, collected ${d.collected} (${d.source_res}), ` +
+                    `shown at ${t.res_m} m per pixel within ${fmtM(t.radius_m)} of ${where}:`]];
+                if (st.centre !== null) {
+                    lines.push(['geo', `At the centre: ${fmtZ(st.centre)}` +
+                        (st.centre_slope !== null ? `, slope ${Math.round(st.centre_slope)}°` : '')]);
+                }
+                lines.push(['geo', `Heights ${fmtZ(st.min)} to ${fmtZ(st.max)}, median ${fmtZ(st.median)}; ` +
+                    `local relief ${fmtZ(st.p98 - st.p2)} (2nd to 98th percentile)`]);
+                if (st.slope_median !== null) {
+                    lines.push(['geo', `Slope: median ${st.slope_median.toFixed(1)}°; ${share(st.steep_share)} of the ground ` +
+                        'is steeper than 30° (scarps, cliffs, channel walls)']);
+                }
+                if (st.coverage < 0.95) lines.push(['step', `The survey covers ${share(st.coverage)} of this circle; the rest shows the base map.`]);
+                if (t.others.length) lines.push(['step', `Also stored for this area: ${t.others.join('; ')}`]);
+                lines.push(['step', 'Shaded relief lit from several directions and coloured by height, in metres in the survey\'s vertical datum.']);
+                const area = { lon: rad(t.lon), lat: rad(t.lat), radius: t.radius_m };
+                return {
+                    imagery: await reliefImagery(t, cmap), imageryAlpha: 1,
+                    area, ring: area, lines,
+                    legend: { title: `Lidar height (${cmap}), middle 98% of the area`, colors: COLORMAPS[cmap],
+                              lo: fmtZ(t.elev[0]), hi: fmtZ(t.elev[1]) },
+                    sources: [`${d.name}. Distributed by OpenTopography, https://doi.org/${d.doi}`],
+                    empty: '',
+                };
+            },
+        },
+
+        topo_datasets: {
+            title: 'OpenTopography datasets',
+            // Surveys cover sites, not towns: look well beyond a small place's extent
+            radius: (p) => clamp((p.sizeM || 0) / 2, 15000, 50000),
+            async load(p, radius) {
+                const r = areaRect(p.lon, p.lat, radius);
+                const query = (productFormat) => `${OT_CATALOG_URL}?` + new URLSearchParams({
+                    productFormat, minx: deg(r.west).toFixed(4), miny: deg(r.south).toFixed(4),
+                    maxx: deg(r.east).toFixed(4), maxy: deg(r.north).toFixed(4),
+                    detail: 'true', outputFormat: 'json', include_federated: 'true',
+                });
+                const [pc, rs, stored] = await Promise.all([
+                    fetchJson(query('PointCloud'), {}, 45000), fetchJson(query('Raster'), {}, 45000),
+                    serverJson(PILOT_TOPO_URL, { list: 1 }, 'lidar', 'The lidar server').then(j => j.datasets, () => []),
+                ]);
+                const found = new Map();
+                for (const e of [...(pc.Datasets || []), ...(rs.Datasets || [])].map(x => x.Dataset).filter(Boolean)) {
+                    const geo = e.spatialCoverage?.geo?.geojson;
+                    const box = geoBox(geo);
+                    // The global elevation models (SRTM, Copernicus and the like) cover everywhere
+                    if (!box || box[2] - box[0] > 20) continue;
+                    const id = e.alternateName || e.identifier?.value || e.name;
+                    if (!found.has(id)) found.set(id, { e, id, geo, formats: new Set() });
+                    found.get(id).formats.add(/point/i.test(e.fileFormat || '') ? 'point cloud' : 'raster');
+                }
+                const list = [...found.values()].map(x => {
+                    const e = x.e;
+                    const dates = String(e.temporalCoverage || '').replace(' / ', ' to ');
+                    const here = stored.find(s => s.id.startsWith(`${x.id}_`));
+                    const link = e.url || (e.alternateName ? 'https://portal.opentopography.org/datasets'
+                        : `https://portal.opentopography.org/usgsDataset?dsid=${encodeURIComponent(x.id)}`);
+                    return { ...x, dates, here, link, start: dates.slice(0, 10),
+                             host: e.alternateName ? 'OpenTopography' : 'USGS 3DEP (indexed by OpenTopography)' };
+                }).sort((a, b) => b.start.localeCompare(a.start));
+                const props = new Map(list.map(x => [x.id, x]));
+                const features = list.flatMap(x => (x.geo.features || [x.geo]).filter(f => f?.geometry)
+                    .map(f => ({ type: 'Feature', geometry: f.geometry, properties: { dsid: x.id } })));
+                const lines = list.length ? [['step', `OpenTopography datasets within ${fmtM(radius)} of ${p.label}, newest first ` +
+                    '(footprints outlined; click one for its citation link):']] : [];
+                list.slice(0, 15).forEach(x => lines.push(['geo', `${x.e.name} (${x.dates || 'date unknown'}; ${[...x.formats].join(' and ')}; ` +
+                    `${x.host})` + (x.here ? '. Stored on DeepGIS: ask for lidar terrain here.' : '')]));
+                if (list.length > 15) lines.push(['step', `...and ${list.length - 15} more`]);
+                return {
+                    fc: { type: 'FeatureCollection', features },
+                    style: { fill: Cesium.Color.CYAN.withAlpha(0.12), stroke: Cesium.Color.CYAN },
+                    decorate(ent, q) {
+                        const x = props.get(q.dsid);
+                        if (!x) return;
+                        ent.name = x.e.name;
+                        ent.description = tableHtml([['Dataset', x.e.name], ['Collected', x.dates], ['Products', [...x.formats].join(', ')],
+                            ['Host', x.host], ['On DeepGIS', x.here ? `yes, ${x.here.product}` : ''], ['Citation', x.e.citation]],
+                            [['Dataset page', x.link]]);
+                    },
+                    lines,
+                    sources: ['OpenTopography catalog API (portal.opentopography.org), including the USGS 3DEP lidar it indexes'],
+                    empty: `No OpenTopography lidar or local elevation datasets within ${fmtM(radius)} of ${p.label}`,
+                };
+            },
+        },
     };
 
     function flight(opts, id) {
@@ -1804,11 +1965,12 @@
                 }
                 if (res.decorate) res.decorate(e, e.properties ? e.properties.getValue(now) : {});
             });
-            if (!res.area && radius) {
+            const ring = res.ring || (!res.area && radius ? { lon: p.lon, lat: p.lat, radius } : null);
+            if (ring) {
                 ds.entities.add({
-                    name: `${spec.title}: search radius ${fmtM(radius)}`,
+                    name: `${spec.title}: search radius ${fmtM(ring.radius)}`,
                     polyline: {
-                        positions: circlePositions(p.lon, p.lat, radius), clampToGround: true,
+                        positions: circlePositions(ring.lon, ring.lat, ring.radius), clampToGround: true,
                         width: 2, material: Cesium.Color.YELLOW.withAlpha(0.8),
                     },
                 });
