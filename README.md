@@ -17,18 +17,25 @@
 [![Django](https://img.shields.io/badge/django-5.2_LTS-green.svg)](https://www.djangoproject.com/)
 [![Cesium](https://img.shields.io/badge/cesium-1.111-orange.svg)](https://cesium.com/)
 
-DeepGIS-XR is a geospatial visualization and analysis platform for Earth and
-lunar exploration. It combines a CesiumJS 3D globe, open-vocabulary AI
-detection and segmentation of the current view, adaptive spatial sampling, a
-curated tile catalog, and an AI pilot that flies the camera from plain-language
-requests. The live site is [deepgis.org/label/3d/search/](https://deepgis.org/label/3d/search/).
+DeepGIS-XR is a geospatial visualization and analysis platform for Earth, the
+Moon and ten other planetary bodies. It combines a CesiumJS 3D globe,
+open-vocabulary AI detection and segmentation of the current view, adaptive
+spatial sampling, a curated tile catalog, and an AI pilot that flies the camera
+and draws sourced data layers from plain-language requests. Every globe shares
+the same HUD, camera drone and pilot.
+
+Live viewers: [Earth](https://deepgis.org/label/3d/search/) ·
+[Moon](https://deepgis.org/label/3d/moon/) ·
+[Mars](https://deepgis.org/label/3d/planet/mars/) and the other bodies at
+`/label/3d/planet/<body>/`.
 
 ---
 
 ## 🌟 Key Features
 
 ### 🧑‍✈️ AI Pilot (new, October 2026)
-A **Pilot** panel on the search page turns requests into camera-drone flights:
+A **Pilot** panel on every globe turns requests into camera-drone flights and
+data layers:
 
 - *"orbit around Tempe Town Lake"*
 - *"fly to Hayden Library at 200 m, orbit it twice clockwise, then land"*
@@ -36,18 +43,26 @@ A **Pilot** panel on the search page turns requests into camera-drone flights:
 - *"orbit around Hayden Butte and show geologic features within 5 km"*
 - *"show active faults near Bishop"*
 - *"trace the Salt River downstream and show live flow"*
-- *"trails, springs and mines within 3 km"*
+- *"orbit all of Tempe and show surface temperature as a jet colormap"*
+- *"sea surface temperature of Monterey Bay"*
+- *"show the lidar of the Volcanic Tablelands fault scarps"*
+- on the Moon: *"orbit Tycho and show elevation as a colormap"*
 
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
 `hide_layer`). Django validates and clamps them, and the page runs them on
-the existing drone controls. It never touches a real vehicle. See
+the existing drone controls. It never touches a real vehicle. Off Earth the
+pilot resolves IAU feature names from the USGS Gazetteer of Planetary
+Nomenclature and flies at orbiter scale. See
 [AI Pilot architecture](#-ai-pilot-architecture).
 
 ### 🗺️ Data layers
-`show_layer {kind, place, radius_m}` draws a layer around a place, lists what
-is there in the chat, and cites the source. Every kind runs through the same
-steps: fetch from a public source, list, draw, cite, and hide on request.
+`show_layer {kind, place, radius_m, colormap}` draws a layer around a place,
+lists or summarises what is there in the chat, and cites the source. Every
+kind runs through the same steps: fetch from a public source, list, draw,
+cite, and hide on request. Layers of different kinds stack.
+
+**Features** (Earth):
 
 | kind | Example request | Source | Coverage |
 |---|---|---|---|
@@ -60,6 +75,36 @@ steps: fetch from a public source, list, draw, cite, and hide on request.
 | `soils` | "what soils are under this field?" | USDA NRCS SSURGO via Soil Data Access | US |
 | `wildlife` | "wildlife observations around Papago Park" | iNaturalist research-grade observations | Worldwide |
 | `trails`, `springs`, `mines` | "trails, springs and mines within 3 km" | OpenStreetMap via Overpass | Worldwide |
+
+**Colour maps** (Earth). Drawn with a legend and readouts in the chat
+(centre value, typical range, extremes). Name a colour map to change it:
+`jet`, `turbo`, `viridis`, `inferno`, `plasma`, `coolwarm` or `rdylgn`
+("rainbow" means jet). By default these cover the whole place; layer radii
+may reach 200 km.
+
+| kind | Example request | Source | Coverage |
+|---|---|---|---|
+| `surface_temp` | "surface temperature over Tempe in jet" | USGS Landsat 8/9 Collection 2 Level-2 surface temperature (30 m), newest clear scene, via Microsoft Planetary Computer | Worldwide land |
+| `ndvi` | "how green is Phoenix?" | Copernicus Sentinel-2 L2A NDVI (10 m), every tile of the newest clear pass, via Microsoft Planetary Computer | Worldwide land |
+| `humidity`, `air_temp` | "what's the humidity around Tucson" | Open-Meteo current conditions on a 7 × 7 grid | Worldwide |
+| `sea_temp` | "sea surface temperature of Monterey Bay" | NASA JPL MUR SST v4.1 (1 km, daily) from NOAA CoastWatch ERDDAP | Global ocean |
+| `chlorophyll` | "chlorophyll off Santa Cruz" | NOAA gap-filled VIIRS + OLCI chlorophyll-a (2 km) from NOAA CoastWatch ERDDAP | Global ocean |
+
+**Terrain** (Earth):
+
+| kind | Example request | Source | Coverage |
+|---|---|---|---|
+| `elevation`, `slope`, `contours` | "Mount Whitney elevation in viridis, then slope and contours" | Cesium World Terrain, coloured on the globe (heights above the WGS84 ellipsoid) | Worldwide |
+| `topo_datasets` | "what OpenTopography data is near Bishop?" | OpenTopography catalog: survey footprints and links, with surveys stored on DeepGIS marked | Worldwide |
+| `lidar_dem` | "show the lidar of the Volcanic Tablelands" | OpenTopography surveys stored on the server (0.5–1 m): shaded relief coloured by height, with relief and slope figures | Bishop, California area (five surveys) |
+
+**Other bodies.** On the Moon, `elevation`, `slope` and `contours` colour the
+globe from the LOLA terrain. Mars and Pluto offer `elevation` from their
+colour elevation maps. The remaining bodies have no layers yet.
+
+The two ocean layers and `lidar_dem` are fetched through Django
+(see [API endpoints](#-api-endpoints)); every other layer is fetched by the
+browser from the public source, with no API keys.
 
 The curated geology sites around Phoenix and Tempe (Tempe/Hayden Butte, Papago
 and Barnes Buttes, Hole-in-the-Rock, Camelback Mountain, South Mountains,
@@ -90,9 +135,15 @@ Results come back as GeoJSON, drawn on the globe with labels and confidences.
 - Time scrubber, swipe and overlay comparison, and a filter to the current viewport
 - Edited in the Django admin; drift against tileserver-gl checked by a management command
 
-### 🌙 Moon Viewer
-- Lunar globe with LROC QuickMap imagery and LOLA terrain
-- Apollo landing sites and aviation-style navigation widgets
+### 🌙 Moon and planet viewers
+- **Moon** (`/label/3d/moon/`): a true Moon-sized globe with LROC QuickMap
+  WAC + NAC imagery, LOLA terrain, a NASA Moon Trek mosaic as fallback, and
+  the Apollo landing sites
+- **Planets and moons** (`/label/3d/planet/<body>/`): Mars, Mercury, Venus,
+  Io, Europa, Ganymede, Callisto, Titan, Pluto and Charon, each on its IAU
+  ellipsoid with USGS Astrogeology and NASA Trek imagery
+  (`staticfiles/web/js/planet-bodies.js`)
+- The same HUD, toolbar, instruments, camera drone and AI pilot as Earth
 
 ### 🌤️ Weather Stations
 - National Weather Service stations (21 defaults across CA, AZ, CO, NV)
@@ -158,15 +209,18 @@ python manage.py runserver
 Tests and lint:
 
 ```bash
-python manage.py test deepgis_xr.apps.web.tests.test_pilot   # AI pilot (16 tests)
+python manage.py test deepgis_xr.apps.web.tests   # 48 tests: AI pilot, planet viewer, twin access
+docker run --rm -v "$PWD":/w -w /w node:22-alpine node --test 'tests/js/*.test.js'   # planet registry
 pytest
 ruff check .
 black --check .
 ```
 
-In the container, gunicorn runs without `--reload`. After changing Python code
-or templates, run `docker restart deepgis-xr-web-1`. After changing `.env`, run
-`docker compose up -d --no-deps web` so the new environment is loaded.
+In the container, gunicorn runs without `--reload`, and templates are cached
+while `DEBUG=False`. After changing Python code or templates, run
+`docker restart deepgis-xr-web-1`. After changing `.env`, run
+`docker compose up -d --no-deps web` so the new environment is loaded. See
+[Static files](#static-files) after changing anything under `staticfiles/`.
 
 ---
 
@@ -184,12 +238,16 @@ or templates, run `docker restart deepgis-xr-web-1`. After changing `.env`, run
 - Celery 5.6 + Redis 7 for the admin-only model-training queue (not used for
   per-viewport requests)
 - Shapely 2.0, GDAL/rasterio/fiona for GIS processing
-- Twilio + `django-phonenumber-field` (phone-number authentication)
+- Twilio + `django-phonenumber-field` (phone-number authentication; without
+  a Twilio client, phone sign-in is refused unless `DEBUG=True`)
+- GDAL (in the image) for the stored lidar endpoint: hillshade and slope
 - Flask 3.x topology-tile server in `services/topology/`
 
 **Frontend**
 - CesiumJS 1.111, hand-written ES modules in `staticfiles/web/js/` (no build step)
-- Bootstrap UI, HUD toolbar with floating panels
+- Bootstrap UI, HUD toolbar with floating panels, shared by every globe:
+  template partials in `templates/web/hud/` and scripts in
+  `staticfiles/web/js/hud/` (panels, shortcuts, drone, pilot, models, share)
 - Geocoding: OpenStreetMap Nominatim, falling back to Cesium Ion
 
 **AI / ML** (inference runs as remote services; the web image ships no model weights)
@@ -222,24 +280,33 @@ deepgis-xr/
 │   │   └── web/                      # main web app
 │   │       ├── views/                # pages, missions, auth_ajax, ai_reports,
 │   │       │                         # training_datasets, semi_supervised,
-│   │       │                         # models_3d, pilot (AI pilot), legacy
+│   │       │                         # models_3d, pilot (AI pilot + relays),
+│   │       │                         # twin_access, legacy
 │   │       ├── world_sampler.py      # adaptive spatial sampler
 │   │       ├── world_sampler_api/    # sampling + AI viewport API
 │   │       │   ├── core.py, http.py  # helpers + HTTP endpoints
 │   │       │   └── analyzers/        # ANALYZER_REGISTRY (grounding_dino,
 │   │       │                         # grounded_sam, sam, ...)
-│   │       ├── tests/test_pilot.py   # AI pilot tests
-│   │       ├── templates/web/label_search.html   # search viewer + pilot panel
+│   │       ├── tests/                # test_pilot, test_planet, test_twin_access
+│   │       ├── templates/web/
+│   │       │   ├── label_search.html         # Earth viewer
+│   │       │   ├── label_moon_viewer.html    # Moon and planet viewer
+│   │       │   └── hud/                      # shared HUD partials
 │   │       ├── urls.py, admin.py, models.py, middleware/
 │   │       └── management/commands/
 │   └── settings.py
 ├── services/topology/                # standalone Flask tile/3D-tiles server
 ├── staticfiles/web/                  # tracked JS, CSS, vendor libs
-│   └── geo/tempe-geology.geojson     # curated, sourced geology sites
-├── scripts/                          # sync_assets.sh, GLB optimizer, API clients
+│   ├── js/hud/                       # shared HUD, drone and AI pilot (pilot.js: LAYERS)
+│   ├── js/planet-bodies.js           # body registry: radii, imagery, terrain
+│   └── geo/                          # tempe-geology.geojson, nomenclature/<body>.json
+├── scripts/                          # sync_assets.sh, GLB optimizer, API clients,
+│                                     # build_planet_nomenclature.py, topo_pull.py
+├── tests/js/                         # node:test cases for the planet registry
 ├── examples/                         # kernelcal demos
 ├── GroundingDINO/                    # vendored upstream repo
-├── static/, media/, data/, deepgis_results/   # runtime assets (gitignored)
+├── static/, media/, data/, deepgis_results/   # runtime assets (gitignored;
+│                                     # stored lidar COGs live in data/topo/)
 ├── Dockerfile                        # web image (Ubuntu 22.04, CUDA 12.1, Python 3.10)
 ├── docker-compose.yml                # web, redis, celery_worker, tileserver (+ db profile)
 ├── requirements.txt                  # pinned runtime deps
@@ -255,15 +322,42 @@ deepgis-xr/
 - `POST /label/api/pilot/`: one chat turn. Requires a signed-in session and
   the CSRF token. Rate-limited per user (`DEEPGIS_PILOT_RATE_PER_MIN`,
   default 12).
-  - **Body:** `{"message": "...", "view": {lat, lon, height_agl, heading_deg,
-    target: {lat, lon}}, "history": [{role, content}, ...]}`
+  - **Body:** `{"message": "...", "body": "earth", "view": {lat, lon,
+    height_agl, heading_deg, target: {lat, lon}}, "history": [{role, content}, ...]}`.
+    `body` is `earth` (default), `moon`, or any id in `planet-bodies.js`;
+    it selects the prompt, the layer kinds offered and the limits.
   - **Returns:** `{"reply": "...", "actions": [...], "model": "...",
-    "duration_sec": ...}`. Unknown action types and fields are dropped,
-    numbers are clamped (heights 5 m to 20 km, radius 20 m to 20 km, speed
-    1 to 300 m/s, and so on), and at most 8 actions are returned.
+    "duration_sec": ...}`. Unknown action types, kinds and fields are
+    dropped, numbers are clamped (on Earth: heights 5 m to 20 km, orbit
+    radius 20 m to 20 km, layer radius up to 200 km, speed 1 to 300 m/s; off
+    Earth: heights up to 500 km, speed up to 6 km/s), and at most 8 actions
+    are returned. Actions come back in schema key order, and assistant turns
+    in `history` are re-cleaned on the server.
   - **Errors:** 401 `login_required` (with `login_url`), 400 for an empty or
     invalid message, 429 when rate-limited, 503 if the pilot is not
     configured, and 502 if the model is unavailable.
+- `GET /label/api/pilot/ocean/?kind=&south=&north=&west=&east=`: relay for
+  the `sea_temp` and `chlorophyll` layers, because NOAA ERDDAP sends no CORS
+  headers. Signed-in users only; two allow-listed datasets, so it is not an
+  open proxy. Boxes are limited to 10° a side and grids to 160 cells a side;
+  results are cached for 3 hours, 20 requests/min per user. Returns
+  `{time, lat, lon, values, res, dataset}`.
+- `GET /label/api/pilot/topo/?lat=&lon=&radius_m=`: the `lidar_dem` layer
+  from the OpenTopography surveys stored in `data/topo/`. Signed-in users
+  only. Picks the survey that best covers the circle (moving a request just
+  off a survey onto its nearest well-covered ground, up to 30 km), and
+  returns one PNG packing height, hillshade, slope and coverage, plus relief
+  and slope figures. `?list=1` lists the stored surveys and their bounds.
+  20 requests/min per user, cached for 24 hours.
+
+### Viewers and access
+
+- `GET /label/3d/search/`: Earth viewer. `GET /label/3d/moon/`: Moon viewer.
+  `GET /label/3d/planet/<body>/`: any body in `planet-bodies.js`.
+- `GET /label/api/twin-access/`: 204 for a signed-in member of the
+  `twin-pilots` group, 401 when signed out, 403 otherwise. Meant for a
+  reverse proxy's `auth_request`, so an external digital-twin panel can
+  reuse the DeepGIS sign-in.
 
 ### AI Analysis API
 
@@ -336,8 +430,8 @@ deepgis-xr/
 ## 🧑‍✈️ AI Pilot Architecture
 
 ```
-Browser: /label/3d/search/  ── Pilot panel
-  │  POST /label/api/pilot/  {message, current view, recent history}
+Browser: any viewer (Earth, Moon, planets)  ── Pilot panel
+  │  POST /label/api/pilot/  {message, body, current view, recent history}
   ▼
 Django: views/pilot.py
   │  signed-in user · CSRF · per-user rate limit
@@ -352,8 +446,9 @@ Django: keep known action types and fields, clamp every number
 Browser: run actions in order on the drone controls
      goto · orbit · takeoff · land · look · stop · wait
      show_layer {kind} · hide_layer {kind?}
-       └─ LAYERS[kind].load() fetches from the public source in the browser,
-          then the page draws, lists and cites the result
+       └─ LAYERS[kind].load() fetches from the public source in the browser
+          (or through /label/api/pilot/ocean/ and /topo/), then the page
+          draws, lists and cites the result
 ```
 
 Design rules:
@@ -363,13 +458,16 @@ Design rules:
   place's size, height of about half the radius, about 75 s per lap, and the
   camera aimed at the centre.
 - **Place lookup order:** curated geology sites, then OpenStreetMap Nominatim
-  (good for parks, peaks and landmarks), then Cesium Ion. Lookups are cached
-  per page.
+  (good for parks, peaks and landmarks), then Cesium Ion. Off Earth: the
+  page's preset sites, then the IAU gazetteer for that body
+  (`staticfiles/web/geo/nomenclature/<body>.json`, built by
+  `scripts/build_planet_nomenclature.py`). Lookups are cached per page.
 - **Layer contents cannot be invented.** For `show_layer {kind, place,
   radius_m}` the model picks only the kind, the centre and the radius; the
   prompt tells it never to describe layer contents in its reply. Django
-  accepts only the known kinds. Each kind in `LAYERS` (in
-  `label_search.html`) has a default radius and a `load()` that returns
+  accepts only the known kinds (`LAYER_KINDS` on Earth, `PLANET_LAYER_KINDS`
+  per body). Each kind in `LAYERS` (in `staticfiles/web/js/hud/pilot.js`)
+  has a default radius and a `load()` that returns
   features to draw, an optional imagery overlay, the chat lines and the
   source citations. One runner draws, lists, cites and frames them all, so
   adding a kind adds no prompt rules or server checks beyond its name.
@@ -379,9 +477,17 @@ Design rules:
   - `river` uses `distance_km` (default 50) instead of a radius: it traces the
     NHDPlus flowline downstream and shows gauges that reported discharge in
     the last 12 hours.
-  - `landcover` and `soils` drape the NLCD and SSURGO maps; the others draw
-    features (fault lines, flood zones, fire perimeters, observations, OSM
-    trails, springs and mines) that open details and links when clicked.
+  - `landcover` and `soils` drape the NLCD and SSURGO maps; the feature
+    layers draw fault lines, flood zones, fire perimeters, observations, OSM
+    trails, springs and mines that open details and links when clicked.
+  - The colour-map kinds report statistics, not lists: Planetary Computer
+    renders the Landsat and Sentinel-2 tiles, and the gridded kinds
+    (humidity, air and sea temperature, chlorophyll) are coloured in the
+    browser. A colour map named in the message applies even if the model
+    leaves it out.
+  - `elevation`, `slope` and `contours` colour the globe's own terrain
+    (Cesium World Terrain on Earth, LOLA on the Moon); `lidar_dem` colours the
+    server's relief image by height and darkens it by hillshade.
 
   Layers of different kinds stack; `hide_layer` without a kind removes all.
   An orbit of the same centre without a radius widens to keep the area in
@@ -455,13 +561,15 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
 ## 🎯 Usage
 
 ### AI Pilot
-1. Open DeepGIS Search (`/label/3d/search/`) and sign in (`/label/admin/login/`).
+1. Open any viewer (Earth `/label/3d/search/`, Moon `/label/3d/moon/`, or
+   `/label/3d/planet/<body>/`) and sign in (`/label/admin/login/`).
 2. Click **Pilot** in the HUD toolbar and type a request. The page switches
    to 3D, runs the plan and logs each step in the panel.
 3. For a data layer, ask for the kind and place ("flood risk around Tempe
-   Town Lake") or say "here" for the point in view. Click a drawn feature for
-   details and source links. "Hide the faults" removes one layer; "clear all
-   layers" removes them all. OpenStreetMap layers can take up to a minute.
+   Town Lake") or say "here" for the point in view. Add a colour map by name
+   for colour layers ("in viridis"). Click a drawn feature for details and
+   source links. "Hide the faults" removes one layer; "clear all layers"
+   removes them all. OpenStreetMap layers can take up to a minute.
 4. Press **Stop** at any time.
 
 ### AI Viewport Analysis
@@ -475,8 +583,12 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
 Initialize a sampler, draw samples, step through them in survey mode, update
 the distribution from feedback, and query regions.
 
-### Moon Viewer
-Open `/label/3d/moon/` for LROC imagery, Apollo sites and aviation-style navigation.
+### Moon and Planet Viewers
+Open `/label/3d/moon/` for LROC imagery, LOLA terrain and the Apollo sites, or
+`/label/3d/planet/<body>/` (`mars`, `mercury`, `venus`, `io`, `europa`,
+`ganymede`, `callisto`, `titan`, `pluto`, `charon`). The HUD, drone widgets,
+keyboard shortcuts and AI pilot work as on Earth; ask the pilot to fly to an
+IAU-named feature ("fly to Olympus Mons").
 
 ### 3D Buildings
 In DeepGIS Search, check **3D Buildings (OSM)** in the **View** panel or press
@@ -559,12 +671,18 @@ DEEPGIS_PILOT_MCP_TOKEN=         # the READ-ONLY server's token, never a command
 
 ### Static Files
 
-- Django serves `/label/static/deepgis/` from `STATIC_ROOT` (`./static/`,
-  gitignored) only when `DEBUG=True`. With `DEBUG=False`, put Nginx (or
-  similar) in front of that path.
+- Django serves `/label/static/deepgis/` (and `MEDIA_URL`) from `STATIC_ROOT`
+  (`./static/`, gitignored) through `django.views.static.serve`, whatever
+  `DEBUG` is, so the app runs with `DEBUG=False` without a separate file
+  server. Responses carry `Cache-Control: no-cache`, so browsers revalidate
+  and unchanged files come back as 304; this keeps stale and fresh ES modules
+  from mixing. An Nginx alias or whitenoise in front would be faster.
 - The tracked source is `staticfiles/`. After adding or changing a file
   there, copy it into `STATIC_ROOT` with `python manage.py collectstatic`, or
   copy the single file.
+- The viewers load `hud/pilot.js?v=…` with a version tag hard-coded in
+  `label_search.html` and `label_moon_viewer.html`. Bump it with every
+  `pilot.js` change.
 - Avoid directories named `data/` for tracked assets, because `.gitignore`
   excludes them. That is why the geology file lives in `staticfiles/web/geo/`.
 
@@ -589,7 +707,34 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 
 ## 📊 Recent Updates
 
-### October 2026: AI pilot and geology
+### October 2026: planets, colour maps and terrain
+- **Moon viewer rebuilt** (`c99e2c2`, `66d1fab`): a real Moon-sized globe
+  (the old one was Earth-sized with the camera inside it), correctly tiled
+  LROC QuickMap imagery, LOLA terrain, and a working fly/orbit drone.
+- **Planet viewer** (`6964045`): `/label/3d/planet/<body>/` for ten more
+  bodies from one registry (`planet-bodies.js`) with IAU radii, USGS
+  Astrogeology and NASA Trek imagery.
+- **One HUD everywhere** (`8937bf4`, `a8924e0`, `bcd9962`): Earth's toolbar,
+  panels, instruments, shortcuts, camera drone and AI pilot became shared
+  partials and modules, so every globe has the same UI. Off Earth the pilot
+  uses the IAU gazetteer and orbiter-scale limits.
+- **Terrain layers on the Moon, Mars and Pluto** (`6c6b669`).
+- **Running with `DEBUG=False`** (`91b40b5`, `6f47702`): static files served
+  explicitly with `no-cache`; phone sign-in no longer creates and signs in
+  an account for any number when Twilio is not configured.
+- **Twin access check** (`1e2f2a5`): `/label/api/twin-access/` for a reverse
+  proxy's `auth_request`.
+- **Sharper 2D view on HiDPI displays** (`127cd29`) and the Search viewer's
+  vestigial sidebar removed (`9024b17`).
+- **Colour-map layers** (`6da7dcb`, `63c8820`): Landsat surface temperature,
+  Sentinel-2 NDVI, humidity, air temperature, sea surface temperature and
+  chlorophyll, with selectable colour maps and the ERDDAP relay. Fixed plans
+  coming back empty for follow-up layer requests (key order in history).
+- **Terrain and lidar** (`bedde97`): Earth elevation, slope and contours, the
+  OpenTopography catalog, and five Bishop-area OpenTopography surveys stored
+  on the server (`scripts/topo_pull.py`) behind `/label/api/pilot/topo/`.
+
+### Mid-October 2026: AI pilot and geology
 - **AI pilot chat** on the search page (`e93397e`): `POST /label/api/pilot/`,
   a read-only MCP model backend, and validated, clamped actions run in the
   browser. The drone controls were fixed along the way:
@@ -656,6 +801,11 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] AI pilot (language-driven camera drone) with sourced data layers
       (geology, faults, flood zones, fires, rivers, land cover, soils,
       wildlife, trails, springs, mines)
+- [x] AI pilot colour-map layers (surface temperature, NDVI, humidity, air
+      and sea temperature, chlorophyll) and terrain (elevation, slope,
+      contours, OpenTopography catalog, stored lidar)
+- [x] Moon and planet viewers (ten more bodies) sharing Earth's HUD, drone
+      and AI pilot
 
 ### 🔧 Next
 - [ ] AI pilot: a sign-in path for lab members, persistent rate limiting
@@ -667,13 +817,15 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [ ] Mission export to MAVLink waypoints
 - [ ] Real-time telemetry (MAVLink/ROS) on the globe
 - [ ] WebXR/VR globe exploration
-- [ ] Mars terrain viewer (HiRISE/CTX)
+- [ ] Mars high-resolution imagery and terrain (HiRISE/CTX) in the planet viewer
+- [ ] Data layers for the remaining bodies
 
 ### 🔮 Longer term
 - [ ] CLIP/VLM semantic search over imagery
 - [ ] Autonomous survey planning
 - [ ] Digital-twin integration and 3D reconstruction
-- [ ] OpenTopography point clouds (LAS/LAZ); Google Earth Engine
+- [ ] OpenTopography point clouds (LAS/LAZ) and on-demand DEM pulls beyond
+      the stored surveys; Google Earth Engine
 - [ ] Automated change detection between time periods
 
 ---
@@ -711,7 +863,18 @@ DeepGIS‑XR builds on concepts and systems originally developed for the [Oceano
 - **FEMA**: National Flood Hazard Layer; **NIFC**: fire perimeter history
 - **MRLC**: National Land Cover Database; **USDA NRCS**: SSURGO soils
 - **iNaturalist** observers: wildlife observations (each under its own license)
-- **NASA/GSFC/ASU**: LROC QuickMap lunar imagery
+- **NASA/GSFC/ASU**: LROC QuickMap lunar imagery and LOLA terrain;
+  **NASA Trek**: Moon and planetary mosaics
+- **USGS Astrogeology**: planetary basemaps and the Gazetteer of Planetary
+  Nomenclature (IAU)
+- **USGS / NASA**: Landsat 8/9 Collection 2 surface temperature;
+  **ESA Copernicus**: Sentinel-2; both via **Microsoft Planetary Computer**
+- **Open-Meteo**: current weather conditions (CC BY 4.0)
+- **NASA JPL** MUR sea surface temperature and **NOAA** chlorophyll-a, via
+  **NOAA CoastWatch** ERDDAP
+- **OpenTopography**: dataset catalog and lidar/SfM surveys (each cited by
+  its DOI in the chat)
+- **Cesium**: Cesium World Terrain
 - **National Weather Service**: weather station data
 
 ---
