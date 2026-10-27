@@ -113,17 +113,23 @@ Arizona Geological Survey publications and others, plus OpenStreetMap
 coordinates, in `staticfiles/web/geo/tempe-geology.geojson`.
 
 ### 🤖 AI Viewport Analysis
-Analyze what the camera sees, using remote GPU services:
+Analyze what the camera sees with one of four models:
 
+- **Segment Anything (SAM)**: prompt-free segmentation of every region in the
+  view, with GeoJSON export and polygon simplification. Remote service, with
+  a local fallback in the web container when the service is unreachable.
+- **YOLOv8**: fast detection of the 80 COCO classes, with an optional class
+  filter. Runs in the web container (ultralytics).
 - **Grounding DINO**: open-vocabulary detection from a text prompt, e.g.
   `"rock . boulder . crater . debris"`. Suited to domain-specific targets
-  (geology, archaeology, agriculture).
-- **Grounded-SAM-2**: Grounding DINO boxes refined into SAM 2 masks for
-  high-quality segmentation of the named objects.
-- **Segment Anything (SAM)**: prompt-free segmentation of every region in the
-  view, with GeoJSON export and polygon simplification.
+  (geology, archaeology, agriculture). Remote service.
+- **Mask R-CNN rocks** (Earth only): rock instance segmentation from the
+  Bishop/Jezero checkpoints. Remote service.
 
 Results come back as GeoJSON, drawn on the globe with labels and confidences.
+On Earth, the **SceneGraph** button runs several of these (Mask R-CNN rocks,
+Grounding DINO, SAM) on the same frame and fuses them with OSM buildings and
+roads into one labelled graph.
 
 ### 🌍 World Sampler: adaptive geospatial sampling
 - Probabilistic location sampling that updates from feedback and rewards
@@ -163,9 +169,10 @@ Results come back as GeoJSON, drawn on the globe with labels and confidences.
 
 ### Prerequisites
 - Docker and Docker Compose
-- NVIDIA GPU + NVIDIA Container Toolkit (only for the admin model-training worker)
+- NVIDIA GPU + NVIDIA Container Toolkit (for YOLOv8, SAM's local fallback
+  and the admin model-training worker)
 - Python 3.10 for local development (matches the Docker image)
-- Reachable Grounding DINO / Grounded-SAM-2 / SAM services for AI analysis
+- Reachable SAM / Grounding DINO / Mask R-CNN rocks services for AI analysis
   (optional; the page works without them)
 
 ### Installation
@@ -250,10 +257,12 @@ while `DEBUG=False`. After changing Python code or templates, run
   `staticfiles/web/js/hud/` (panels, shortcuts, drone, pilot, models, share)
 - Geocoding: OpenStreetMap Nominatim, falling back to Cesium Ion
 
-**AI / ML** (inference runs as remote services; the web image ships no model weights)
+**AI / ML** (the web image ships no model weights; they are fetched on first use)
+- Segment Anything (Meta AI), remote API, `SAM_API_URL`; falls back to
+  `segment_anything` in the web process, on its GPU, when the API is unreachable
+- YOLOv8 (Ultralytics), in the web process
 - Grounding DINO (IDEA Research), remote API, `GROUNDING_DINO_API_URL`
-- Grounded-SAM-2, remote API, `GROUNDED_SAM_API_URL`
-- Segment Anything (Meta AI), remote API, `SAM_API_URL`
+- Mask R-CNN rocks, remote API, `MASKRCNN_ROCKS_API_URL`
 - AI pilot: a language model reached through a read-only MCP server
   (`dreams_mcp_ro` from the DREAMS Lab `dreams_llm_ros2` stack),
   `DEEPGIS_PILOT_MCP_URL`
@@ -285,8 +294,8 @@ deepgis-xr/
 │   │       ├── world_sampler.py      # adaptive spatial sampler
 │   │       ├── world_sampler_api/    # sampling + AI viewport API
 │   │       │   ├── core.py, http.py  # helpers + HTTP endpoints
-│   │       │   └── analyzers/        # ANALYZER_REGISTRY (grounding_dino,
-│   │       │                         # grounded_sam, sam, ...)
+│   │       │   └── analyzers/        # per-model analyzers (sam, yolov8,
+│   │       │                         # grounding_dino, maskrcnn_rocks, ...)
 │   │       ├── tests/                # test_pilot, test_planet, test_twin_access
 │   │       ├── templates/web/
 │   │       │   ├── label_search.html         # Earth viewer
@@ -362,12 +371,17 @@ deepgis-xr/
 ### AI Analysis API
 
 - `POST /webclient/sampler/analyze-viewport`: analyze the current viewport
-  - `model_type`: `'grounding_dino'`, `'grounded_sam'` or `'sam'`
+  - `model_type`: `'sam'` (default), `'yolov8'`, `'grounding_dino'` or
+    `'maskrcnn_rocks'`; anything else returns 400
   - `image`: Base64-encoded viewport image; `location`: camera metadata
-  - **Grounding DINO / Grounded-SAM-2:** `text_prompt` (dot-separated, e.g.
+  - **SAM:** `sam_model` (`'vit_b'`, `'vit_l'`, `'vit_h'`), `min_area` (pixels)
+  - **YOLOv8:** `yolo_model` (`'yolov8n'` to `'yolov8x'`),
+    `confidence_threshold`, `class_filter` (comma-separated COCO names)
+  - **Grounding DINO:** `text_prompt` (dot-separated, e.g.
     `"rock . boulder . crater"`), `box_threshold` (default 0.3),
     `text_threshold` (default 0.25)
-  - **SAM:** `sam_model` (`'vit_b'`, `'vit_l'`, `'vit_h'`), `min_area` (pixels)
+  - **Mask R-CNN rocks:** `model_id` (blank for the service default),
+    `score_threshold` (default 0.5), `max_detections` (default 200)
   - **Returns:** a GeoJSON FeatureCollection with detections and metadata
   - **Graceful degradation.** If a remote service is unconfigured,
     unreachable or times out, the endpoint returns **HTTP 200** with an empty
@@ -518,8 +532,9 @@ request after the model has been idle.
 ┌──────────────────────────────────────────────────────────────────────┐
 │               DeepGIS-XR Django Backend (gunicorn)                   │
 │  apps/web/world_sampler_api/http.py::analyze_viewport()              │
-│   └─ analyzers/ANALYZER_REGISTRY[model_type]                         │
-│        grounding_dino · grounded_sam · sam   → remote services       │
+│   └─ analyzers/  (model_type not in VIEWPORT_MODEL_TYPES → 400)      │
+│        sam · grounding_dino · maskrcnn_rocks → remote services       │
+│        yolov8 (and SAM's fallback)           → web container GPU     │
 │                                                                      │
 │   On AI-down (not_configured · connection_error · timeout):          │
 │      → HTTP 200 + {status:"success", degraded:true, detections:[]}   │
@@ -529,7 +544,7 @@ request after the model has been idle.
 ┌──────────────────────────────────────────────────────────────────────┐
 │     Remote AI host (Flask + CUDA)                                    │
 │       :5000  Grounding DINO      (GROUNDING_DINO_API_URL)            │
-│       :5001  Grounded-SAM-2      (GROUNDED_SAM_API_URL)              │
+│       :5002  Mask R-CNN rocks    (MASKRCNN_ROCKS_API_URL)            │
 │       :5010  SAM                 (SAM_API_URL)                       │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -537,17 +552,13 @@ request after the model has been idle.
 **Grounding DINO** (port 5000): text-based detection  
 ![detection_visualization](https://github.com/user-attachments/assets/533490e9-bafd-40a4-bf2f-0204186387b3)
 
-**Grounded-SAM-2** (port 5001): detection + high-quality segmentation
-![segmentation_visualization](https://github.com/user-attachments/assets/161de955-7e61-4827-9ee5-1d36ffc7ca9e)
-
 ```bash
 # Grounding DINO: detection only
 curl -X POST http://<ai-host>:5000/api/predict \
     -F "file=@image.jpg" -F "text_prompt=rock . boulder . crater"
 
-# Grounded-SAM-2: detection + segmentation
-curl -X POST http://<ai-host>:5001/detect \
-    -F "image=@image.jpg" -F "text_prompt=rock . boulder . crater"
+# Mask R-CNN rocks: list the available checkpoints
+curl http://<ai-host>:5002/api/models
 
 # Python client
 python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock . boulder"
@@ -574,9 +585,11 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
 
 ### AI Viewport Analysis
 1. Open DeepGIS Search and the **AI** panel.
-2. Choose **Grounding DINO**, **Grounded-SAM-2** or **SAM**.
-3. Set the text prompt and thresholds (Grounding DINO / Grounded-SAM-2), or
-   the model size and minimum area (SAM).
+2. Choose **SAM**, **YOLOv8**, **Grounding DINO** or (on Earth)
+   **MaskRCNN Rocks**.
+3. Set the model size and minimum area (SAM), the model size, confidence and
+   class filter (YOLOv8), the text prompt and thresholds (Grounding DINO), or
+   the checkpoint, score threshold and detection limit (Mask R-CNN rocks).
 4. Click **Analyze Viewport**. Results are drawn as labelled polygons.
 
 ### World Sampler
@@ -658,9 +671,13 @@ GUNICORN_TIMEOUT=600
 REDIS_URL=redis://redis:6379/0
 
 # Remote AI services
-GROUNDING_DINO_API_URL=http://<ai-host>:5000
-GROUNDED_SAM_API_URL=http://<ai-host>:5001
 SAM_API_URL=http://<ai-host>:5010
+GROUNDING_DINO_API_URL=http://<ai-host>:5000
+MASKRCNN_ROCKS_API_URL=http://<ai-host>:5002
+
+# Host GPU index for the web container (YOLOv8 and SAM's local fallback).
+# Use a GPU that is not driving a display or simulator.
+DEEPGIS_WEB_GPU=0
 
 # AI pilot (optional; the panel shows "not configured" without a token)
 DEEPGIS_PILOT_MCP_URL=http://<mcp-host>:8766/mcp
@@ -692,7 +709,7 @@ DEEPGIS_PILOT_MCP_TOKEN=         # the READ-ONLY server's token, never a command
 
 | Service          | Image                       | Role |
 |------------------|-----------------------------|------|
-| `web`            | built locally (`Dockerfile`)| Django + DRF behind gunicorn; runs `migrate --noinput` on boot; host port 8060 |
+| `web`            | built locally (`Dockerfile`)| Django + DRF behind gunicorn; runs `migrate --noinput` on boot; host port 8060; GPU `DEEPGIS_WEB_GPU` |
 | `redis`          | `redis:7-alpine`            | Celery broker + result backend (healthchecked) |
 | `celery_worker`  | reuses the `web` image      | Single replica for the admin training task (GPU) |
 | `tileserver`     | `maptiler/tileserver-gl`    | Serves MBTiles raster + vector tiles; host port 8091 |
@@ -708,6 +725,11 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ## 📊 Recent Updates
 
 ### October 2026: planets, colour maps and terrain
+- **AI panel trimmed** (`4253571`): the AI Viewport Analysis panel offers
+  SAM, YOLOv8, Grounding DINO and Mask R-CNN rocks only, and
+  `analyze-viewport` rejects other model types. The web container's GPU is
+  now set by `DEEPGIS_WEB_GPU`, so SAM's resident fallback model can sit on
+  a GPU that isn't rendering.
 - **Moon viewer rebuilt** (`c99e2c2`, `66d1fab`): a real Moon-sized globe
   (the old one was Earth-sized with the camera inside it), correctly tiled
   LROC QuickMap imagery, LOLA terrain, and a working fly/orbit drone.
@@ -789,7 +811,7 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ## 🗺️ Roadmap
 
 ### ✅ Completed
-- [x] SAM viewport analysis; Grounding DINO open-vocabulary detection; Grounded-SAM-2
+- [x] Viewport analysis: SAM, YOLOv8, Grounding DINO, Mask R-CNN rocks
 - [x] Remote AI API architecture with graceful degradation
 - [x] World Sampler adaptive sampling
 - [x] Moon viewer with navigation widgets
