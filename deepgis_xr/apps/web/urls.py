@@ -68,6 +68,8 @@ urlpatterns = [
     # Live vehicle poses for follow_vehicle (views/vehicles.py): token-only ingest, signed-in reads
     path('label/api/vehicles/pose/', views.vehicle_pose, name='vehicle_pose'),
     path('label/api/vehicles/live/', views.vehicles_live, name='vehicles_live'),
+    path('label/api/vehicles/frame/', views.vehicle_frame, name='vehicle_frame'),
+    path('label/api/vehicles/<str:vid>/frame.jpg', views.vehicle_frame_image, name='vehicle_frame_image'),
     # nginx auth_request target for the OpenUAV twin panel (views/twin_access.py)
     path('label/api/twin-access/', views.twin_access, name='twin_access'),
 

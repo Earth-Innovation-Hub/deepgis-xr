@@ -1,21 +1,33 @@
 import hashlib
 import json
+from io import BytesIO
 from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.cache import caches
 from django.test import Client, TestCase, override_settings
+from PIL import Image
 
 from deepgis_xr.apps.web.views import vehicles
 
 POSE_URL = "/label/api/vehicles/pose/"
 LIVE_URL = "/label/api/vehicles/live/"
+FRAME_URL = "/label/api/vehicles/frame/"
 TOKEN = "twin-secret-token"
 OTHER = "boat-secret-token"
 
 
 def digest(token):
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def make_jpeg(color=(200, 120, 40)):
+    buf = BytesIO()
+    Image.new("RGB", (64, 36), color).save(buf, "JPEG")
+    return buf.getvalue()
+
+
+JPEG = make_jpeg()
 
 
 TWIN_POSE = {
@@ -105,3 +117,55 @@ class VehiclePoseTests(TestCase):
         self.client.force_login(self.user)
         [pose] = self.client.get(LIVE_URL).json()["vehicles"]
         self.assertEqual((pose["id"], pose["up_m"]), ("openuav-alice", 12.0))
+
+    def post_frame(self, jpeg, meta=None, token=TOKEN):
+        headers = {"HTTP_AUTHORIZATION": f"Bearer {token}"} if token else {}
+        if meta is not None:
+            headers["HTTP_X_FRAME_META"] = meta if isinstance(meta, str) else json.dumps(meta)
+        return self.client.post(FRAME_URL, jpeg, content_type="image/jpeg", **headers)
+
+    def test_frames_need_the_vehicles_token_and_a_jpeg(self):
+        meta = {"vehicle": "locutus"}
+        self.assertEqual(self.post_frame(JPEG, meta, token=None).status_code, 401)
+        self.assertEqual(self.post_frame(JPEG, meta, token="wrong").status_code, 401)
+        self.assertEqual(self.post_frame(JPEG, meta, token=OTHER).status_code, 403)
+        self.assertEqual(self.post_frame(JPEG, "[1]").status_code, 400)
+        self.assertEqual(self.post_frame(JPEG, "{bad").status_code, 400)
+        self.assertEqual(self.post_frame(JPEG, None, token=OTHER).status_code, 200)  # metadata is optional
+        self.assertEqual(self.post_frame(b"\x89PNG\r\n\x1a\n" + JPEG, meta).status_code, 400)
+        self.assertEqual(self.post_frame(b"\xff\xd8\xff" + b"0" * 100, meta).status_code, 400)
+        self.assertEqual(self.post_frame(JPEG + b"0" * vehicles.FRAME_MAX_BYTES, meta).status_code, 413)
+        with override_settings(VEHICLE_POSE_TOKENS=""):
+            self.assertEqual(self.post_frame(JPEG, meta).status_code, 503)
+        self.assertEqual(self.client.get(FRAME_URL).status_code, 405)
+
+    def test_signed_in_viewers_get_the_latest_frame(self):
+        self.assertEqual(self.post(TWIN_POSE).status_code, 200)
+        image_url = "/label/api/vehicles/locutus/frame.jpg"
+        self.assertEqual(self.client.get(image_url).status_code, 401)
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get(image_url).status_code, 404)
+        self.assertNotIn("frame", self.client.get(LIVE_URL).json()["vehicles"][0])
+        meta = {"vehicle": "locutus", "captured": 1e9, "lat": 37.4593, "lon": -118.4445, "hfov_deg": 114.6}
+        self.assertEqual(self.post_frame(JPEG, meta).json(), {"ok": True, "seq": 1})
+        newer = make_jpeg(color=(0, 90, 200))
+        self.assertEqual(self.post_frame(newer, {}).json(), {"ok": True, "seq": 2})
+        [pose] = self.client.get(LIVE_URL).json()["vehicles"]
+        self.assertEqual({k: pose["frame"][k] for k in ("seq", "w", "h")}, {"seq": 2, "w": 64, "h": 36})
+        resp = self.client.get(image_url)
+        self.assertEqual((resp.status_code, resp["Content-Type"], resp.content), (200, "image/jpeg", newer))
+        self.assertIn("no-store", resp["Cache-Control"])
+        self.assertEqual(self.client.get("/label/api/vehicles/BAD!/frame.jpg").status_code, 404)
+
+    def test_frame_keeps_the_pose_at_capture(self):
+        with mock.patch.object(vehicles, "now", return_value=2000.0):
+            self.post_frame(JPEG, {"vehicle": "locutus", "captured": 1999.5, "lat": 37.4593,
+                                   "lon": -118.4445, "up_m": 20.0, "heading_deg": 90})
+        info = caches["live"].get("frame_info:locutus")
+        self.assertEqual(info["captured"], 1999.5)
+        self.assertEqual(info["pose"], {"lat": 37.4593, "lon": -118.4445, "up_m": 20.0, "heading_deg": 90.0})
+        with mock.patch.object(vehicles, "now", return_value=2000.0):
+            self.post_frame(JPEG, {"captured": 1.0, "lat": 999, "lon": 0})
+        info = caches["live"].get("frame_info:locutus")
+        self.assertNotIn("captured", info)
+        self.assertNotIn("pose", info)

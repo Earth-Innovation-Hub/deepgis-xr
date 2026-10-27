@@ -12,6 +12,11 @@ keeps only the hash, and a token may only post for its own vehicle id. Sims star
 the OpenUAV launcher instead hold HMAC-SHA256(VEHICLE_FLEET_SECRET, vehicle id) for an id
 starting with VEHICLE_FLEET_PREFIX, so each sim can post only as itself and none needs
 configuring here.
+
+Camera frames work the same way: the vehicle POSTs a JPEG to vehicle_frame with the same
+token (metadata, including the pose at capture, in the X-Frame-Meta header), only the
+latest is kept, vehicles_live says which vehicles have one, and signed-in viewers fetch
+it from vehicle_frame_image.
 """
 
 import hashlib
@@ -19,16 +24,22 @@ import hmac
 import json
 import math
 import re
+from io import BytesIO
 from time import time as now
 
 from django.conf import settings
 from django.core.cache import caches
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
+from PIL import Image
 
 MAX_BODY_BYTES = 4096
 POSE_TTL_SEC = 60  # a vehicle silent this long drops off the list
+FRAME_TTL_SEC = 60
+FRAME_MAX_BYTES = 600 * 1024
+FRAME_MAX_SIDE = 4096
+CAPTURE_SKEW_SEC = 600  # a capture time further than this from the server's clock is dropped
 IDS_KEY = "vehicles:ids"
 VEHICLE_ID = re.compile(r"[a-z0-9_-]{1,40}")
 KINDS = ("sim", "field")
@@ -114,6 +125,24 @@ def clean_pose(data):
     return pose
 
 
+def _json_object(raw):
+    try:
+        data = json.loads(raw or b"{}")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _vehicle_for(token, tokens, data):
+    """(vehicle id, None) or (None, error response) for a parsed request."""
+    vid = token_vehicle(token, tokens) or fleet_vehicle(token, data.get("vehicle"))
+    if vid is None:
+        return None, JsonResponse({"error": "A valid vehicle token is required"}, status=401)
+    if data.get("vehicle", vid) != vid:
+        return None, JsonResponse({"error": "This token is for another vehicle"}, status=403)
+    return vid, None
+
+
 @csrf_exempt
 @require_POST
 def vehicle_pose(request):
@@ -125,17 +154,12 @@ def vehicle_pose(request):
         return JsonResponse({"error": "A valid vehicle token is required"}, status=401)
     if len(request.body) > MAX_BODY_BYTES:
         return JsonResponse({"error": "Pose too large"}, status=413)
-    try:
-        data = json.loads(request.body or b"{}")
-    except (ValueError, UnicodeDecodeError):
+    data = _json_object(request.body)
+    if data is None:
         return JsonResponse({"error": "Invalid JSON"}, status=400)
-    if not isinstance(data, dict):
-        return JsonResponse({"error": "Invalid JSON"}, status=400)
-    vid = token_vehicle(token, tokens) or fleet_vehicle(token, data.get("vehicle"))
-    if vid is None:
-        return JsonResponse({"error": "A valid vehicle token is required"}, status=401)
-    if data.get("vehicle", vid) != vid:
-        return JsonResponse({"error": "This token is for another vehicle"}, status=403)
+    vid, error = _vehicle_for(token, tokens, data)
+    if error:
+        return error
     pose = clean_pose(data)
     if pose is None:
         return JsonResponse({"error": "lat and lon are required"}, status=400)
@@ -148,6 +172,70 @@ def vehicle_pose(request):
     return JsonResponse({"ok": True})
 
 
+def jpeg_size(data):
+    """(width, height) of a JPEG within FRAME_MAX_SIDE, else None. Reads only the header."""
+    if not data.startswith(b"\xff\xd8\xff"):
+        return None
+    try:
+        with Image.open(BytesIO(data)) as im:
+            if im.format != "JPEG":
+                return None
+            w, h = im.size
+    except Exception:
+        return None
+    return (w, h) if 0 < w <= FRAME_MAX_SIDE and 0 < h <= FRAME_MAX_SIDE else None
+
+
+@csrf_exempt
+@require_POST
+def vehicle_frame(request):
+    """One camera frame (image/jpeg body) from a vehicle; the optional X-Frame-Meta header
+    carries the JSON {vehicle, captured (unix s), pose fields at capture}."""
+    tokens = pose_tokens()
+    if not (tokens or settings.VEHICLE_FLEET_SECRET):
+        return JsonResponse({"error": "Vehicle frames are not configured"}, status=503)
+    token = bearer(request)
+    if token is None:
+        return JsonResponse({"error": "A valid vehicle token is required"}, status=401)
+    if len(request.body) > FRAME_MAX_BYTES:
+        return JsonResponse({"error": "Frame too large"}, status=413)
+    raw_meta = request.headers.get("X-Frame-Meta", "")
+    meta = _json_object(raw_meta.encode()) if len(raw_meta) <= MAX_BODY_BYTES else None
+    if meta is None:
+        return JsonResponse({"error": "X-Frame-Meta must be a JSON object"}, status=400)
+    vid, error = _vehicle_for(token, tokens, meta)
+    if error:
+        return error
+    size = jpeg_size(request.body)
+    if size is None:
+        return JsonResponse({"error": "The body must be a JPEG"}, status=400)
+    t = now()
+    info = {"w": size[0], "h": size[1], "bytes": len(request.body), "received": t}
+    pose = clean_pose(meta)
+    if pose:
+        info["pose"] = pose
+    captured = meta.get("captured")
+    if _finite(captured) and abs(captured - t) <= CAPTURE_SKEW_SEC:
+        info["captured"] = float(captured)
+    live = caches["live"]
+    info["seq"] = (live.get(f"frame_info:{vid}") or {}).get("seq", 0) + 1
+    live.set(f"frame:{vid}", bytes(request.body), FRAME_TTL_SEC)
+    live.set(f"frame_info:{vid}", info, FRAME_TTL_SEC)
+    return JsonResponse({"ok": True, "seq": info["seq"]})
+
+
+@require_GET
+def vehicle_frame_image(request, vid):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Sign in to see vehicle cameras"}, status=401)
+    jpeg = caches["live"].get(f"frame:{vid}") if VEHICLE_ID.fullmatch(vid) else None
+    if jpeg is None:
+        return JsonResponse({"error": "No recent frame from this vehicle"}, status=404)
+    resp = HttpResponse(jpeg, content_type="image/jpeg")
+    resp["Cache-Control"] = "private, no-store"
+    return resp
+
+
 @require_GET
 def vehicles_live(request):
     if not request.user.is_authenticated:
@@ -158,11 +246,16 @@ def vehicles_live(request):
     poses = found.values()
     if len(found) < len(ids):  # sims come and go; forget the ones whose pose expired
         live.set(IDS_KEY, sorted(p["id"] for p in poses), None)
+    frames = live.get_many([f"frame_info:{p['id']}" for p in poses])
     t = now()
     vehicles = []
     for pose in poses:
         pose = dict(pose)
         pose["age_sec"] = round(max(0.0, t - pose.pop("received")), 2)
+        info = frames.get(f"frame_info:{pose['id']}")
+        if info:
+            pose["frame"] = {"seq": info["seq"], "w": info["w"], "h": info["h"],
+                             "age_sec": round(max(0.0, t - info["received"]), 2)}
         vehicles.append(pose)
     vehicles.sort(key=lambda p: p["age_sec"])
     return JsonResponse({"vehicles": vehicles})

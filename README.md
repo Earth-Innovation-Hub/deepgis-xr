@@ -178,6 +178,11 @@ roads into one labelled graph.
   **chase** view sits behind and above it with a marker. Combine it with
   `describe_view` ("follow the twin and tell me what its camera sees").
   Say "stop" to let go.
+- A vehicle that also posts camera frames shows its latest frame in the
+  bottom-left corner while it is followed, with the frame's age, beside the
+  DeepGIS view from the same pose. The twin's gimbal camera sends about one
+  960×540 JPEG a second. Each frame keeps the vehicle's pose at capture, so
+  frames can later be placed on the map.
 - Read-only by design: each token may post for one vehicle only, nothing on
   this path sends anything to a vehicle, and a pose expires after 60 s.
 - Heights are drawn as the globe's terrain height at the vehicle's take-off
@@ -429,6 +434,18 @@ deepgis-xr/
   Returns `{"vehicles": [{id, name, kind, lat, lon, ..., age_sec}, ...]}`,
   freshest first; vehicles whose pose expired drop off the list. The page
   polls it four times a second while following.
+- `POST /label/api/vehicles/frame/`: a vehicle's latest camera frame, with
+  the same token as its poses.
+  - **Body:** one JPEG (`Content-Type: image/jpeg`, at most 600 KB and
+    4096 px a side). The optional `X-Frame-Meta` header is a JSON object:
+    `vehicle`, `captured` (Unix seconds) and any of the pose fields above,
+    as they were at capture.
+  - **Returns:** `{"ok": true, "seq": n}`. The frame is kept for 60 s.
+  - **Errors:** as for poses, plus 400 when the body is not a JPEG or the
+    header is not a JSON object.
+- `GET /label/api/vehicles/<id>/frame.jpg`: that frame, for signed-in users
+  only (401 otherwise); 404 when there is none. `vehicles/live/` adds
+  `frame: {seq, w, h, age_sec}` to each vehicle that has one.
 
 ### Viewers and access
 

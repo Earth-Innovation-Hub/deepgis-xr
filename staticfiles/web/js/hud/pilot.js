@@ -3,7 +3,8 @@
 // land, look, stop, wait, show_layer, hide_layer, describe_view, follow_vehicle);
 // they run here, in order, on the drone (hud/drone.js). describe_view posts one frame of the
 // globe to /label/api/pilot/describe/ and lists what the lab's model sees. follow_vehicle
-// rides the camera on a live vehicle's pose from /label/api/vehicles/live/ until stop.
+// rides the camera on a live vehicle's pose from /label/api/vehicles/live/ until stop,
+// with the vehicle's own camera frames in a corner when it posts them.
 // On Earth place names go to OpenStreetMap, then
 // Cesium Ion; elsewhere names come from the IAU gazetteer
 // (scripts/build_planet_nomenclature.py) and the page's preset sites, and the
@@ -1863,12 +1864,57 @@
 
     const vehicleName = (v) => v.name || v.id;
 
+    // Picture-in-picture of the followed vehicle's latest camera frame, for vehicles
+    // that post frames (/label/api/vehicles/frame/); the pose list carries the frame's seq
+    const FRAME_STALE_SEC = 10;
+
+    function showFrame(f, p) {
+        if (f.pipClosed || !p.frame) return;
+        if (!f.pip) {
+            const box = document.createElement('div');
+            box.style.cssText = 'position:fixed;left:16px;bottom:70px;z-index:1000;width:min(40vw,440px);' +
+                'background:rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.3);border-radius:6px;' +
+                'overflow:hidden;color:#fff;font:12px sans-serif;box-shadow:0 2px 12px rgba(0,0,0,.5)';
+            const img = document.createElement('img');
+            img.alt = `${vehicleName(p)} camera`;
+            img.style.cssText = 'display:block;width:100%;height:auto;background:#111';
+            const bar = document.createElement('div');
+            bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 4px 3px 8px';
+            const label = document.createElement('span');
+            const close = document.createElement('button');
+            close.type = 'button';
+            close.textContent = '\u00d7';
+            close.title = 'Hide the camera';
+            close.style.cssText = 'background:none;border:0;color:#fff;font-size:16px;line-height:1;cursor:pointer;padding:0 4px';
+            close.addEventListener('click', () => { hideFrame(f); f.pipClosed = true; });
+            bar.append(label, close);
+            box.append(img, bar);
+            document.body.appendChild(box);
+            f.pip = { box, img, label, seq: null };
+        }
+        const { img, label } = f.pip;
+        if (p.frame.seq !== f.pip.seq) {
+            f.pip.seq = p.frame.seq;
+            img.src = `/label/api/vehicles/${encodeURIComponent(p.id)}/frame.jpg?seq=${p.frame.seq}`;
+        }
+        const age = p.frame.age_sec;
+        const stale = age > FRAME_STALE_SEC;
+        img.style.opacity = stale ? '0.45' : '1';
+        label.textContent = `${vehicleName(p)} camera · ${stale ? `last frame ${Math.round(age)} s ago` : `${age.toFixed(1)} s old`}`;
+    }
+
+    function hideFrame(f) {
+        if (f.pip) f.pip.box.remove();
+        f.pip = null;
+    }
+
     function stopFollow() {
         if (!follow) return;
         const f = follow;
         follow = null;
         clearTimeout(f.timer);
         f.off();
+        hideFrame(f);
         const viewer = getViewer();
         if (f.marker) viewer.entities.remove(f.marker);
         viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
@@ -1891,6 +1937,7 @@
                         pitch: rad(clamp(Number.isFinite(p.gimbal_pitch_deg) ? p.gimbal_pitch_deg : -90, -89.9, 45)),
                     };
                     if (view === 'camera' && Number.isFinite(p.hfov_deg)) viewer.camera.frustum.fov = rad(p.hfov_deg);
+                    showFrame(f, p);
                     if (f.lost) addMsg('step', `${vehicleName(p)} is reporting again`);
                     f.lost = false;
                     viewer.scene.requestRender();
@@ -2089,7 +2136,8 @@
             await until(() => follow?.shown || Date.now() > settle, id);
             const where = Number.isFinite(v.up_m) ? `, ${fmtM(v.up_m)} above its take-off point` : '';
             addMsg('step', `Following ${vehicleName(v)} ${view === 'chase' ? 'from behind' : 'through its camera'}` +
-                   `${where}, heading ${Math.round(((v.heading_deg || 0) + 360) % 360)}°. Say "stop" to let go.`);
+                   `${where}, heading ${Math.round(((v.heading_deg || 0) + 360) % 360)}°.` +
+                   `${v.frame ? ' Its camera is at the bottom left.' : ''} Say "stop" to let go.`);
         },
 
         async wait(a, id) {
