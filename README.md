@@ -49,13 +49,17 @@ data layers:
 - on the Moon: *"orbit Tycho and show elevation as a colormap"*
 - on any globe: *"do a visual analysis of the viewport camera scene and list
   what you observe"*
+- on Earth: *"sync the view with the OpenUAV sim camera"*, *"chase the
+  locutus drone"*
 
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
-`hide_layer`, `describe_view`). Django validates and clamps them, and the page
-runs them on the existing drone controls. It never touches a real vehicle.
+`hide_layer`, `describe_view`, `follow_vehicle`). Django validates and clamps
+them, and the page runs them on the existing drone controls. It never touches
+a real vehicle.
 `describe_view` sends one frame of the 3D view to the lab's vision model,
-which returns a summary and a list of what it sees. Off Earth the
+which returns a summary and a list of what it sees. `follow_vehicle` locks
+the view to a live vehicle (see [Live vehicles](#-live-vehicles)). Off Earth the
 pilot resolves IAU feature names from the USGS Gazetteer of Planetary
 Nomenclature and flies at orbiter scale. See
 [AI Pilot architecture](#-ai-pilot-architecture).
@@ -155,6 +159,25 @@ roads into one labelled graph.
   (`staticfiles/web/js/planet-bodies.js`)
 - The same HUD, toolbar, instruments, camera drone and AI pilot as Earth
 
+### 🛰️ Live vehicles
+- A vehicle's publisher posts its latest pose (position, heading, gimbal
+  pitch, camera field of view) a few times a second to
+  `POST /label/api/vehicles/pose/`. The first publisher is the `deepgis_pose`
+  node in the DREAMS Lab `dreams_llm_ros2` stack, which reads a PX4 SITL +
+  Gazebo simulation in an OpenUAV container; field vehicles are next.
+- On Earth, ask the pilot to follow a vehicle. The **camera** view looks
+  through the vehicle's camera (its heading, gimbal pitch and field of
+  view), so a simulated flight can be seen over the real DeepGIS world; the
+  **chase** view sits behind and above it with a marker. Combine it with
+  `describe_view` ("follow the twin and tell me what its camera sees").
+  Say "stop" to let go.
+- Read-only by design: each token may post for one vehicle only, nothing on
+  this path sends anything to a vehicle, and a pose expires after 60 s.
+- Heights are drawn as the globe's terrain height at the vehicle's take-off
+  point plus its height above that point, so no geoid model is needed. A
+  simulated vehicle flies over a flat world, so away from its take-off point
+  its height above the real terrain differs from the simulation's.
+
 ### 🌤️ Weather Stations
 - National Weather Service stations (21 defaults across CA, AZ, CO, NV)
 - Temperature labels, icons, popups; refresh every 15 minutes
@@ -220,7 +243,7 @@ python manage.py runserver
 Tests and lint:
 
 ```bash
-python manage.py test deepgis_xr.apps.web.tests   # 54 tests: AI pilot, planet viewer, twin access
+python manage.py test deepgis_xr.apps.web.tests   # 60 tests: AI pilot, planet viewer, twin access, vehicles
 docker run --rm -v "$PWD":/w -w /w node:22-alpine node --test 'tests/js/*.test.js'   # planet registry
 pytest
 ruff check .
@@ -295,13 +318,14 @@ deepgis-xr/
 │   │       ├── views/                # pages, missions, auth_ajax, ai_reports,
 │   │       │                         # training_datasets, semi_supervised,
 │   │       │                         # models_3d, pilot (AI pilot + relays),
-│   │       │                         # twin_access, legacy
+│   │       │                         # twin_access, vehicles (live poses), legacy
 │   │       ├── world_sampler.py      # adaptive spatial sampler
 │   │       ├── world_sampler_api/    # sampling + AI viewport API
 │   │       │   ├── core.py, http.py  # helpers + HTTP endpoints
 │   │       │   └── analyzers/        # per-model analyzers (sam, yolov8,
 │   │       │                         # grounding_dino, maskrcnn_rocks, ...)
-│   │       ├── tests/                # test_pilot, test_planet, test_twin_access
+│   │       ├── tests/                # test_pilot, test_planet, test_twin_access,
+│   │       │                         # test_vehicles
 │   │       ├── templates/web/
 │   │       │   ├── label_search.html         # Earth viewer
 │   │       │   ├── label_moon_viewer.html    # Moon and planet viewer
@@ -373,6 +397,26 @@ deepgis-xr/
   returns one PNG packing height, hillshade, slope and coverage, plus relief
   and slope figures. `?list=1` lists the stored surveys and their bounds.
   20 requests/min per user, cached for 24 hours.
+
+### Live vehicles
+
+- `POST /label/api/vehicles/pose/`: a vehicle's latest pose. Needs
+  `Authorization: Bearer <token>` with a token listed (as its SHA-256) in
+  `VEHICLE_POSE_TOKENS`; no session or CSRF.
+  - **Body** (JSON, at most 4 KB): `{"vehicle", "name", "kind": "sim" |
+    "field", "lat", "lon", "up_m", "alt_amsl", "ref": {lat, lon, alt_amsl},
+    "heading_deg", "gimbal_pitch_deg", "hfov_deg", "speed_mps", "armed",
+    "landed"}`. Only `lat` and `lon` are required; `up_m` is the height
+    above `ref`, the take-off point. Out-of-range numbers are dropped, not
+    clamped.
+  - **Returns:** `{"ok": true}`. The pose is kept for 60 s in the shared
+    `live` cache.
+  - **Errors:** 503 if no tokens are configured, 401 for a missing or
+    unknown token, 403 if `vehicle` is not the token's vehicle, 413, and 400
+    for invalid JSON or a missing position.
+- `GET /label/api/vehicles/live/`: signed-in users only (401 otherwise).
+  Returns `{"vehicles": [{id, name, kind, lat, lon, ..., age_sec}, ...]}`,
+  freshest first. The page polls it four times a second while following.
 
 ### Viewers and access
 
@@ -482,6 +526,9 @@ Browser: run actions in order on the drone controls
        └─ wait for tiles, capture the canvas as a JPEG,
           POST /label/api/pilot/describe/ ──► MCP describe_image ──► vision model
           returns {summary, observations}, shown in the chat and kept in history
+     follow_vehicle {vehicle?, view: camera | chase}   (Earth only)
+       └─ poll GET /label/api/vehicles/live/ and ease the camera to each pose;
+          poses arrive from publishers via POST /label/api/vehicles/pose/
 ```
 
 Design rules:
@@ -605,7 +652,11 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
    see"). The pilot captures the current frame and lists what the vision
    model sees. Treat the list as a model's reading of the picture, not a
    measurement.
-5. Press **Stop** at any time.
+5. On Earth, follow a live vehicle ("sync the view with the OpenUAV sim
+   camera", "chase the locutus drone"). Without a name the pilot picks the
+   vehicle that reported most recently. If its poses stop for 3 s the view
+   holds and the panel says so.
+6. Press **Stop** at any time.
 
 ### AI Viewport Analysis
 1. Open DeepGIS Search and the **AI** panel.
@@ -708,6 +759,13 @@ DEEPGIS_PILOT_MCP_URL=http://<mcp-host>:8766/mcp
 DEEPGIS_PILOT_MCP_TOKEN=         # the READ-ONLY server's token, never a command-enabled one
 # DEEPGIS_PILOT_TIMEOUT_SEC=90
 # DEEPGIS_PILOT_RATE_PER_MIN=12
+
+# Live vehicles (optional; the pose endpoint returns 503 without tokens)
+# One "vehicle_id:sha256(token)" per vehicle, comma-separated; the token
+# itself stays with the vehicle's publisher.
+VEHICLE_POSE_TOKENS=
+# Shared cache for live poses, so every gunicorn worker sees them
+LIVE_CACHE_URL=redis://redis:6379/1
 ```
 
 ### Static Files
@@ -749,6 +807,10 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ## 📊 Recent Updates
 
 ### October 2026: planets, colour maps and terrain
+- **Follow a live vehicle** (`eef4e13`): the pilot's `follow_vehicle` action locks the
+  Earth view to a live vehicle, through its camera or from behind, using
+  poses from `POST /label/api/vehicles/pose/` (token per vehicle, read-only).
+  The first publisher is the OpenUAV PX4 SITL + Gazebo digital twin.
 - **Visual analysis of the view** (`4186fdf`): the pilot's `describe_view`
   action captures the 3D view and asks the lab's vision model, through the
   read-only MCP server's `describe_image` tool, to summarise it and list what
@@ -857,6 +919,8 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] Moon and planet viewers (ten more bodies) sharing Earth's HUD, drone
       and AI pilot
 - [x] AI pilot visual analysis of the view (`describe_view`)
+- [x] Follow a live vehicle (`follow_vehicle`), starting with the OpenUAV
+      PX4 SITL + Gazebo twin
 
 ### 🔧 Next
 - [ ] AI pilot: a sign-in path for lab members, persistent rate limiting
@@ -866,7 +930,10 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [ ] `kernelcal` integration: MaxCal World Sampler, Model-Kernel Selector,
       terrain diagnostics endpoint
 - [ ] Mission export to MAVLink waypoints
-- [ ] Real-time telemetry (MAVLink/ROS) on the globe
+- [ ] Field vehicles on the globe (MAVLink/ROS telemetry over Starlink or
+      cellular), with tracks and status alongside the live pose
+- [ ] Export a DeepGIS area (terrain and imagery) as a Gazebo world, so
+      OpenUAV simulations fly over the real ground
 - [ ] WebXR/VR globe exploration
 - [ ] Mars high-resolution imagery and terrain (HiRISE/CTX) in the planet viewer
 - [ ] Data layers for the remaining bodies
