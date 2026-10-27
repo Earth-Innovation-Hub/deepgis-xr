@@ -12,7 +12,8 @@ public sources in the browser (off Earth: drawn from the body's terrain or
 elevation map; the sea layers come through pilot_ocean below, the lidar
 terrain through pilot_topo); place names are geocoded in the browser, off Earth from the
 IAU planetary gazetteer. describe_view sends one frame of the canvas to pilot_describe,
-which asks the same model what it sees (dreams_mcp's describe_image).
+which asks the same model what it sees (dreams_mcp's describe_image). follow_vehicle
+(Earth only) rides the camera on a live vehicle's pose from views/vehicles.py.
 Nothing here touches a real vehicle.
 """
 
@@ -34,7 +35,11 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
-                "show_layer", "hide_layer", "describe_view")
+                "show_layer", "hide_layer", "describe_view", "follow_vehicle")
+# Vehicles report positions on Earth only
+EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
+FOLLOW_VIEWS = ("camera", "chase")
+VEHICLE_NAME = re.compile(r"[a-z0-9_-]{1,40}")
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
@@ -50,7 +55,8 @@ MAX_MESSAGE_CHARS = 600
 PROMISE_RE = re.compile(r"\b(show|showing|fly|flying|orbit|orbiting|pull|pulling|bring|bringing|head|heading|"
                         r"zoom|zooming|display|displaying|draw|drawing|load|loading|switch|switching|climb|climbing|"
                         r"land|landing|descend|descending|take off|taking off|"
-                        r"take a look|describe|describing|analy[sz]e|analy[sz]ing)\b", re.IGNORECASE)
+                        r"take a look|describe|describing|analy[sz]e|analy[sz]ing|"
+                        r"follow|following|sync|syncing|ride along|riding along)\b", re.IGNORECASE)
 
 # Display names; keys match planet-bodies.js and web/geo/nomenclature/<body>.json
 BODIES = {
@@ -103,6 +109,8 @@ PILOT_SCHEMA = {
                     "pitch_deg": {"type": "number"},
                     "heading_deg": {"type": "number"},
                     "seconds": {"type": "number"},
+                    "vehicle": {"type": "string"},
+                    "view": {"enum": list(FOLLOW_VIEWS)},
                 },
                 "required": ["type"],
             },
@@ -114,10 +122,12 @@ PILOT_SCHEMA = {
 # example with place before kind leads the model to skip kind, which drops the layer
 FIELD_ORDER = tuple(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
 LAYER_FIELDS = ("type", "kind", "place", "colormap", "lat", "lon", "radius_m", "distance_km")
+FOLLOW_FIELDS = ("type", "vehicle", "view")
 # Layers drawn as colour maps; a colour map named in the message applies to them
 RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "lidar_dem")
 COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
-PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("show_layer", "hide_layer"))
+PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in EARTH_ONLY_TYPES)
+PLANET_LAYER_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t != "follow_vehicle")
 # Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/pilot.js)
 PLANET_LAYER_KINDS = {
     "moon": ("elevation", "slope", "contours"),
@@ -133,9 +143,10 @@ PLANET_LAYER_DOCS = {
 
 def _planet_schema(kinds):
     item = dict(PILOT_SCHEMA["properties"]["actions"]["items"])
-    props = {k: v for k, v in item["properties"].items() if k not in ("distance_km", "colormap")}
+    props = {k: v for k, v in item["properties"].items()
+             if k not in ("distance_km", "colormap", "vehicle", "view")}
     if kinds:
-        props["type"] = {"enum": list(ACTION_TYPES)}
+        props["type"] = {"enum": list(PLANET_LAYER_ACTION_TYPES)}
         props["kind"] = {"enum": list(kinds)}
     else:
         props.pop("kind")
@@ -186,6 +197,7 @@ Actions (all heights are metres ABOVE GROUND):
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
+- follow_vehicle: lock the camera to a live vehicle that reports its position to DeepGIS, such as the OpenUAV PX4 simulation drone (the digital twin "locutus"), and keep following until stop. Fields: vehicle (its name, only if the user names one); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
@@ -196,6 +208,7 @@ Rules:
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
+- A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a vehicle is a follow_vehicle request. Never state where a vehicle is or what it is doing in reply; the viewer reports it.
 - If the request is any other question or not a flight request, answer it in reply and return no actions.
 - Never say in reply that you will show, fly, orbit, look at or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
 
@@ -216,6 +229,9 @@ Examples (actions only):
 - "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
 - "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
 - "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
+- "sync the view with the OpenUAV sim camera" -> [{"type": "follow_vehicle", "view": "camera"}]
+- "chase the locutus drone" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"}]
+- "follow the twin and tell me what its camera sees" -> [{"type": "follow_vehicle", "view": "camera"}, {"type": "describe_view"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -281,7 +297,7 @@ def clean_actions(raw, body="earth"):
         types, limits, kinds = ACTION_TYPES, LIMITS, LAYER_KINDS
     else:
         kinds = PLANET_LAYER_KINDS.get(body, ())
-        types, limits = (ACTION_TYPES if kinds else PLANET_ACTION_TYPES), PLANET_LIMITS
+        types, limits = (PLANET_LAYER_ACTION_TYPES if kinds else PLANET_ACTION_TYPES), PLANET_LIMITS
     out = []
     for a in raw if isinstance(raw, list) else []:
         if not isinstance(a, dict) or a.get("type") not in types:
@@ -302,6 +318,11 @@ def clean_actions(raw, body="earth"):
                 act[field] = v
         if isinstance(a.get("clockwise"), bool):
             act["clockwise"] = a["clockwise"]
+        if act["type"] == "follow_vehicle":
+            vehicle = a.get("vehicle")
+            if isinstance(vehicle, str) and VEHICLE_NAME.fullmatch(vehicle.strip().lower()):
+                act["vehicle"] = vehicle.strip().lower()
+            act["view"] = a.get("view") if a.get("view") in FOLLOW_VIEWS else "camera"
         if act["type"] in ("show_layer", "hide_layer"):
             kind = a.get("kind")
             if kind in kinds:
@@ -316,7 +337,8 @@ def clean_actions(raw, body="earth"):
         else:
             act.pop("distance_km", None)
         fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
-                  else ("type",) if act["type"] == "describe_view" else FIELD_ORDER)
+                  else ("type",) if act["type"] == "describe_view" else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
+                  else FIELD_ORDER)
         act = {k: act[k] for k in FIELD_ORDER if k in act and k in fields}
         if act["type"] == "show_layer":
             # An orbit runs until its laps end; draw the layer before it, not after

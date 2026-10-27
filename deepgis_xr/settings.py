@@ -225,6 +225,19 @@ DEEPGIS_PILOT_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_MCP_TOKEN', '')
 DEEPGIS_PILOT_TIMEOUT_SEC = float(os.environ.get('DEEPGIS_PILOT_TIMEOUT_SEC', '90'))
 DEEPGIS_PILOT_RATE_PER_MIN = int(os.environ.get('DEEPGIS_PILOT_RATE_PER_MIN', '12'))
 
+# Live vehicle poses for the pilot's follow_vehicle (views/vehicles.py).
+# "vehicle_id:sha256hex,..."; each publisher holds its own token, the server only the hash.
+VEHICLE_POSE_TOKENS = os.environ.get('VEHICLE_POSE_TOKENS', '')
+# Every gunicorn worker must see the same latest pose, so production points the
+# "live" cache at redis; without LIVE_CACHE_URL each process keeps its own.
+LIVE_CACHE_URL = os.environ.get('LIVE_CACHE_URL', '')
+CACHES = {
+    'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'},
+    'live': ({'BACKEND': 'django.core.cache.backends.redis.RedisCache', 'LOCATION': LIVE_CACHE_URL}
+             if LIVE_CACHE_URL else
+             {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache', 'LOCATION': 'live'}),
+}
+
 # Custom user model
 AUTH_USER_MODEL = 'deepgis_auth.User'
 

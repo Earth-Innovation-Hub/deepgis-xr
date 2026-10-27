@@ -68,6 +68,7 @@ from .rock_label import (
 )
 from .models_3d import get_3d_model, list_stl_models
 from .pilot import pilot_chat, pilot_describe, pilot_ocean, pilot_topo
+from .vehicles import vehicle_pose, vehicles_live
 from .twin_access import twin_access
 from .planet import label_planet_viewer
 from .pages import (
@@ -108,6 +109,8 @@ __all__ = [
     "pilot_describe",
     "pilot_ocean",
     "pilot_topo",
+    "vehicle_pose",
+    "vehicles_live",
     "twin_access",
     "label_planet_viewer",
 ]

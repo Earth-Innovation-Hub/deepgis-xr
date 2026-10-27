@@ -170,6 +170,26 @@ class CleanActionsTests(TestCase):
         self.assertIn("- describe_view:", pilot.planet_prompt("europa"))
         self.assertIn("- describe_view:", pilot.SYSTEM_PROMPT)
 
+    def test_follow_vehicle_on_earth_only(self):
+        plan = [{"type": "follow_vehicle", "vehicle": " Locutus ", "view": "chase", "alt_m": 50, "place": "Bishop"},
+                {"type": "follow_vehicle", "vehicle": "rm -rf /", "view": "cockpit"},
+                {"type": "describe_view"}]
+        self.assertEqual(pilot.clean_actions(plan), [
+            {"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"},
+            {"type": "follow_vehicle", "view": "camera"},
+            {"type": "describe_view"}])
+        self.assertEqual(pilot.clean_actions(plan, body="moon"), [{"type": "describe_view"}])
+        self.assertEqual(pilot.clean_actions(plan, body="mars"), [{"type": "describe_view"}])
+        for schema in (pilot.PLANET_SCHEMA, pilot.PLANET_LAYER_SCHEMAS["moon"]):
+            props = schema["properties"]["actions"]["items"]["properties"]
+            self.assertNotIn("follow_vehicle", props["type"]["enum"])
+            self.assertNotIn("vehicle", props)
+        self.assertIn("show_layer", pilot.PLANET_LAYER_SCHEMAS["moon"]["properties"]["actions"]["items"]
+                      ["properties"]["type"]["enum"])
+        self.assertIn("- follow_vehicle:", pilot.SYSTEM_PROMPT)
+        self.assertNotIn("follow_vehicle", pilot.planet_prompt("moon"))
+        self.assertTrue(pilot.PROMISE_RE.search("Syncing the view with the twin's camera now."))
+
     def test_layers_per_body(self):
         plan = [{"type": "show_layer", "kind": "slope"}, {"type": "show_layer", "kind": "elevation"}]
         self.assertEqual(pilot.clean_actions(plan, body="mars"), [{"type": "show_layer", "kind": "elevation"}])

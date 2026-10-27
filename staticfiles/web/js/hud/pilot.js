@@ -1,8 +1,10 @@
 // DeepGIS AI pilot chat, shared by the Earth, Moon and planet viewers.
 // POST /label/api/pilot/ turns a request into actions (goto, orbit, takeoff,
-// land, look, stop, wait, show_layer, hide_layer, describe_view); they run here,
-// in order, on the drone (hud/drone.js). describe_view posts one frame of the
-// globe to /label/api/pilot/describe/ and lists what the lab's model sees. On Earth place names go to OpenStreetMap, then
+// land, look, stop, wait, show_layer, hide_layer, describe_view, follow_vehicle);
+// they run here, in order, on the drone (hud/drone.js). describe_view posts one frame of the
+// globe to /label/api/pilot/describe/ and lists what the lab's model sees. follow_vehicle
+// rides the camera on a live vehicle's pose from /label/api/vehicles/live/ until stop.
+// On Earth place names go to OpenStreetMap, then
 // Cesium Ion; elsewhere names come from the IAU gazetteer
 // (scripts/build_planet_nomenclature.py) and the page's preset sites, and the
 // data layers (PLANET_LAYERS) are drawn from the body's terrain or elevation maps.
@@ -1832,10 +1834,114 @@
         getViewer()?.camera.cancelFlight();
     }
 
-    // Cancels the running plan as well as the motion
-    function stopAll() {
+    // follow_vehicle: the camera rides on a vehicle that posts its pose to DeepGIS (the
+    // OpenUAV PX4 twin today). Poses are polled and the camera eases toward the latest
+    // one every frame. Heights are metres above the vehicle's local origin (its take-off
+    // point) added to the terrain height there, so no geoid model is needed.
+    const VEHICLES_URL = '/label/api/vehicles/live/';
+    const FOLLOW_POLL_MS = 250;
+    const FOLLOW_STALE_SEC = 3;
+    const CHASE_RANGE_M = 40;
+    let follow = null;
+    const originGround = new Map();
+
+    async function liveVehicles() {
+        const resp = await fetch(VEHICLES_URL, { credentials: 'same-origin' });
+        if (resp.status === 401) throw new Error('Following a vehicle is for signed-in users.');
+        if (!resp.ok) throw new Error(`Vehicle list failed (HTTP ${resp.status})`);
+        return (await resp.json()).vehicles || [];
+    }
+
+    async function vehicleHeight(v) {
+        if (v.ref && Number.isFinite(v.up_m)) {
+            const key = `${v.ref.lat.toFixed(7)},${v.ref.lon.toFixed(7)}`;
+            if (!originGround.has(key)) originGround.set(key, await groundHeight(rad(v.ref.lon), rad(v.ref.lat)));
+            return originGround.get(key) + v.up_m;
+        }
+        return (await groundHeight(rad(v.lon), rad(v.lat))) + (Number.isFinite(v.up_m) ? v.up_m : 2);
+    }
+
+    const vehicleName = (v) => v.name || v.id;
+
+    function stopFollow() {
+        if (!follow) return;
+        const f = follow;
+        follow = null;
+        clearTimeout(f.timer);
+        f.off();
+        const viewer = getViewer();
+        if (f.marker) viewer.entities.remove(f.marker);
+        viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        viewer.camera.frustum.fov = f.fov;
+        viewer.scene.requestRender();
+    }
+
+    function startFollow(v, view) {
+        const viewer = getViewer();
+        const f = { id: v.id, view, fov: viewer.camera.frustum.fov, pose: null, shown: null, lost: false };
+        follow = f;
+        const poll = async () => {
+            try {
+                const p = (await liveVehicles()).find(x => x.id === f.id);
+                if (follow !== f) return;
+                if (p && p.age_sec < FOLLOW_STALE_SEC) {
+                    f.pose = {
+                        pos: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, await vehicleHeight(p), ellipsoid()),
+                        heading: rad(p.heading_deg || 0),
+                        pitch: rad(clamp(Number.isFinite(p.gimbal_pitch_deg) ? p.gimbal_pitch_deg : -90, -89.9, 45)),
+                    };
+                    if (view === 'camera' && Number.isFinite(p.hfov_deg)) viewer.camera.frustum.fov = rad(p.hfov_deg);
+                    if (f.lost) addMsg('step', `${vehicleName(p)} is reporting again`);
+                    f.lost = false;
+                    viewer.scene.requestRender();
+                } else if (!f.lost && follow === f) {
+                    f.lost = true;
+                    addMsg('step', `No pose from ${vehicleName(v)} for ${FOLLOW_STALE_SEC} s; holding the last view`);
+                }
+            } catch (e) { /* the next poll retries */ }
+            if (follow === f) f.timer = setTimeout(poll, FOLLOW_POLL_MS);
+        };
+        let last = performance.now();
+        f.off = viewer.scene.preRender.addEventListener(() => {
+            if (!f.pose) return;
+            const now = performance.now();
+            const k = 1 - Math.exp(-Math.min(1, (now - last) / 1000) * 6);
+            last = now;
+            if (!f.shown) {
+                f.shown = { pos: Cesium.Cartesian3.clone(f.pose.pos), heading: f.pose.heading, pitch: f.pose.pitch };
+            } else {
+                Cesium.Cartesian3.lerp(f.shown.pos, f.pose.pos, k, f.shown.pos);
+                f.shown.heading += k * Cesium.Math.negativePiToPi(f.pose.heading - f.shown.heading);
+                f.shown.pitch += k * (f.pose.pitch - f.shown.pitch);
+            }
+            const camera = viewer.camera;
+            if (view === 'chase') {
+                camera.lookAt(f.shown.pos, new Cesium.HeadingPitchRange(f.shown.heading, rad(-25), CHASE_RANGE_M));
+            } else {
+                camera.setView({ destination: f.shown.pos,
+                                 orientation: { heading: f.shown.heading, pitch: f.shown.pitch, roll: 0 } });
+            }
+            if (Cesium.Cartesian3.distance(f.shown.pos, f.pose.pos) > 0.05) viewer.scene.requestRender();
+        });
+        if (view === 'chase') {
+            f.marker = viewer.entities.add({
+                position: new Cesium.CallbackProperty(() => f.shown?.pos, false),
+                point: { pixelSize: 12, color: Cesium.Color.ORANGE, outlineColor: Cesium.Color.WHITE,
+                         outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                label: { text: vehicleName(v), font: '13px sans-serif', pixelOffset: new Cesium.Cartesian2(0, -18),
+                         fillColor: Cesium.Color.WHITE, showBackground: true,
+                         disableDepthTestDistance: Number.POSITIVE_INFINITY },
+            });
+        }
+        poll();
+    }
+
+    // Cancels the running plan as well as the motion; a plan that only describes the
+    // view keeps following, so "what do you see?" looks through the vehicle's camera
+    function stopAll(keepFollow = false) {
         runId++;
         haltMotion();
+        if (!keepFollow) stopFollow();
     }
 
     async function verticalTo(height, speed, id) {
@@ -1952,7 +2058,32 @@
 
         async stop() {
             haltMotion();
+            stopFollow();
             addMsg('step', 'Stopped');
+        },
+
+        async follow_vehicle(a, id) {
+            if (!isEarth) throw new Error(`No vehicles report positions on ${body}`);
+            const list = await liveVehicles();
+            check(id);
+            const live = list.filter(v => v.age_sec < FOLLOW_STALE_SEC);
+            if (!live.length) {
+                addMsg('step', list.length
+                    ? `No vehicle is reporting right now (${list.map(v => `${vehicleName(v)}: last pose ${Math.round(v.age_sec)} s ago`).join('; ')})`
+                    : 'No vehicle is reporting its position to DeepGIS right now');
+                return;
+            }
+            const wanted = (a.vehicle || '').toLowerCase();
+            const named = wanted && live.find(v => v.id === wanted || vehicleName(v).toLowerCase().includes(wanted));
+            const v = named || live[0];
+            if (wanted && !named) addMsg('step', `No live vehicle called "${a.vehicle}"`);
+            const view = a.view === 'chase' ? 'chase' : 'camera';
+            startFollow(v, view);
+            const settle = Date.now() + 5000;
+            await until(() => follow?.shown || Date.now() > settle, id);
+            const where = Number.isFinite(v.up_m) ? `, ${fmtM(v.up_m)} above its take-off point` : '';
+            addMsg('step', `Following ${vehicleName(v)} ${view === 'chase' ? 'from behind' : 'through its camera'}` +
+                   `${where}, heading ${Math.round(((v.heading_deg || 0) + 360) % 360)}°. Say "stop" to let go.`);
         },
 
         async wait(a, id) {
@@ -2118,7 +2249,7 @@
             return !(next && next.type === 'orbit' && samePlace(a, next));
         });
         // A new plan replaces whatever is flying now
-        stopAll();
+        stopAll(actions.every(a => a.type === 'describe_view'));
         const id = runId;
         try {
             // Describing the view as it is needs no 3D switch
@@ -2133,7 +2264,7 @@
                 }
                 await runners[a.type](a, id);
             }
-            if (actions.some(a => a.type !== 'stop')) addMsg('step', 'Done');
+            if (actions.some(a => a.type !== 'stop') && !follow) addMsg('step', 'Done');
         } catch (e) {
             if (e instanceof Cancelled) return;
             addMsg('error', e.message || String(e));

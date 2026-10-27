@@ -65,6 +65,9 @@ urlpatterns = [
     path('label/api/pilot/describe/', views.pilot_describe, name='pilot_describe'),  # describe_view: one canvas frame to the lab's vision model
     path('label/api/pilot/ocean/', views.pilot_ocean, name='pilot_ocean'),  # NOAA ERDDAP relay for the sea layers
     path('label/api/pilot/topo/', views.pilot_topo, name='pilot_topo'),  # OpenTopography lidar stored in data/topo
+    # Live vehicle poses for follow_vehicle (views/vehicles.py): token-only ingest, signed-in reads
+    path('label/api/vehicles/pose/', views.vehicle_pose, name='vehicle_pose'),
+    path('label/api/vehicles/live/', views.vehicles_live, name='vehicles_live'),
     # nginx auth_request target for the OpenUAV twin panel (views/twin_access.py)
     path('label/api/twin-access/', views.twin_access, name='twin_access'),
 
