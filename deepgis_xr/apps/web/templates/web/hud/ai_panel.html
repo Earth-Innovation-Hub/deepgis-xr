@@ -10,23 +10,8 @@
                 <option value="sam"{% if hud_body != "earth" %} selected{% endif %}>SAM (Universal Segmentation)</option>
                 <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
                 <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
-                <option value="grounded_sam">Grounded-SAM-2 (Detection + Seg) 🎯🔍</option>
                 {% if hud_body == "earth" %}
                 <option value="maskrcnn_rocks" selected>MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
-                <option value="maskrcnn_house">MaskRCNN House (Tornado/Eureka) 🏠</option>
-                <option value="maskrcnn_hypolith">MaskRCNN Hypolith (Gobabeb/Namib) 🦠</option>
-                <option value="maskrcnn_litter">MaskRCNN Litter (DeepGIS dynamics) 🗑️</option>
-                <option value="maskrcnn_roadkill">MaskRCNN Roadkill (Sarah preview, e0004) 🦝</option>
-                <option value="maskrcnn_newlife">MaskRCNN NewLife (DeepGIS biology) 🌱</option>
-                {% endif %}
-                {% if hud_body == "earth" or hud_body == "moon" %}
-                <option value="maskrcnn_brent_moon_craters">MaskRCNN Moon Craters — Brent (LROC NAC) 🌑</option>
-                <option value="maskrcnn_harish_moon_craters">MaskRCNN Moon Craters — Harish (LROC NAC, e0099) 🌒</option>
-                {% endif %}
-                <option value="zero_shot">Zero-Shot (COCO)</option>
-                <option value="mask2former">Mask2Former (Accurate)</option>
-                {% if hud_body == "earth" %}
-                <option value="prithvi">Prithvi-EO (Earth Observation) 🌍</option>
                 {% endif %}
             </select>
         </div>
@@ -86,41 +71,6 @@
                 <input type="range" class="form-range" id="gdTextThreshold" min="10" max="90" step="5" value="25">
             </div>
         </div>
-        <!-- Zero-Shot Options -->
-        <div id="zeroShotOptions" style="display: none;">
-            <div class="form-group mb-3">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="zeroShotConfidenceValue">0.50</span></label>
-                <input type="range" class="form-range" id="zeroShotConfidence" min="0" max="100" step="5" value="50">
-            </div>
-        </div>
-        <!-- Mask2Former Options -->
-        <div id="mask2formerOptions" style="display: none;">
-            <div class="form-group mb-3">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="mask2formerConfidenceValue">0.50</span></label>
-                <input type="range" class="form-range" id="mask2formerConfidence" min="0" max="100" step="5" value="50">
-            </div>
-        </div>
-        <!-- Grounded-SAM-2 Options -->
-        <div id="groundedSamOptions" style="display: none;">
-            <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
-                <input type="text" class="form-control form-control-sm" id="groundedSamPrompt" 
-                       value="{% if hud_body == "earth" %}building . roof . road . vehicle . parking lot . field . crop row . orchard . irrigation canal . tree . shrub . grass . wetland . water . bare soil . rock . boulder . outcrop . crater . debris . erosion channel{% else %}crater . small crater . boulder . rock . outcrop . ridge . rille . scarp . channel . dune . regolith . debris . shadow{% endif %}"
-                       placeholder="{% if hud_body == "earth" %}Detect and segment: building . road . field . tree . rock . crater{% else %}Detect and segment: crater . boulder . ridge . rille{% endif %}"
-                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
-                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Uses the same vocabulary as Grounding DINO, with SAM-2 masks added.
-                </small>
-            </div>
-            <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Box Threshold: <span id="gsBoxThresholdValue">0.35</span></label>
-                <input type="range" class="form-range" id="gsBoxThreshold" min="10" max="90" step="5" value="35">
-            </div>
-            <div class="form-group mb-3">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Threshold: <span id="gsTextThresholdValue">0.25</span></label>
-                <input type="range" class="form-range" id="gsTextThreshold" min="10" max="90" step="5" value="25">
-            </div>
-        </div>
         {% if hud_body == "earth" %}
         <!-- MaskRCNN Rocks Options -->
         <div id="maskrcnnRocksOptions" style="display: none;">
@@ -131,7 +81,7 @@
                        placeholder="e.g. bishop_hero_e0004"
                        style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
                 <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Full registry: GET http://192.168.0.232:5002/api/models
+                    Checkpoint IDs are listed by the rocks service at <code>/api/models</code>.
                 </small>
             </div>
             <div class="form-group mb-2">
@@ -143,57 +93,7 @@
                 <input type="number" class="form-control form-control-sm" id="maskrcnnRocksMaxDet" value="200" min="1" max="2000" step="10">
             </div>
         </div>
-        <!-- MaskRCNN House (Tornado/Eureka) Options -->
-        <div id="maskrcnnHouseOptions" style="display: none;">
-            <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = server default):</label>
-                <input type="text" class="form-control form-control-sm" id="maskrcnnHouseModelId"
-                       value=""
-                       placeholder="e.g. tornado_detector_eureka_aug_mult_e0039"
-                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
-                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Full registry: GET http://192.168.0.232:5003/api/models
-                </small>
-            </div>
-            <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnHouseScoreValue">0.50</span></label>
-                <input type="range" class="form-range" id="maskrcnnHouseScore" min="10" max="95" step="5" value="50">
-            </div>
-            <div class="form-group mb-3">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
-                <input type="number" class="form-control form-control-sm" id="maskrcnnHouseMaxDet" value="200" min="1" max="2000" step="10">
-            </div>
-        </div>
         {% endif %}
-        <!--
-            Shared options panel for the six MaskRCNN sibling services
-            (hypolith / litter / roadkill / newlife / brent + harish moon
-            craters). All six branches accept the same triplet of inputs
-            (model_id, score_threshold, max_detections), so we keep one
-            panel and let the toggle code repoint the registry hint to
-            the right port (5004-5009). Placeholder model_id is updated
-            per-branch in the analysisTypeSelect change handler below.
-        -->
-        <div id="maskrcnnSiblingOptions" style="display: none;">
-            <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model ID (blank = service default):</label>
-                <input type="text" class="form-control form-control-sm" id="maskrcnnSiblingModelId"
-                       value=""
-                       placeholder=""
-                       style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
-                <small id="maskrcnnSiblingRegistryHint" style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Full registry: GET http://192.168.0.232:5004/api/models
-                </small>
-            </div>
-            <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnSiblingScoreValue">0.50</span></label>
-                <input type="range" class="form-range" id="maskrcnnSiblingScore" min="10" max="95" step="5" value="50">
-            </div>
-            <div class="form-group mb-3">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Max Detections:</label>
-                <input type="number" class="form-control form-control-sm" id="maskrcnnSiblingMaxDet" value="200" min="1" max="2000" step="10">
-            </div>
-        </div>
         <button class="btn btn-success w-100" id="analyzeViewportBtn">
             <i class="fas fa-brain me-2"></i>Analyze Viewport
         </button>
@@ -218,9 +118,7 @@
         <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">Kernels to query:</div>
         <div class="d-flex flex-wrap gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
             <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelMrRocks" checked> MR-rocks 🪨</label>
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelMrHouse" checked> MR-house 🏠</label>
             <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelGroundingDino"> GD</label>
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelGroundedSam"> GS-2</label>
             <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelSam"> SAM</label>
         </div>
         <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">Ground truth:</div>

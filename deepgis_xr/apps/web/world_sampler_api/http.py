@@ -21,16 +21,9 @@ wired in `deepgis_xr/apps/web/urls.py`):
 
 `analyze_viewport` dispatches per `model_type` to the per-model
 `_analyze_viewport_<model>` branches, imported from the `analyzers/`
-subpackage below. The remote-MaskRCNN family (`maskrcnn_rocks`,
-`maskrcnn_house`, `maskrcnn_hypolith`, `maskrcnn_litter`,
-`maskrcnn_roadkill`, `maskrcnn_newlife`,
-`maskrcnn_brent_moon_craters`, `maskrcnn_harish_moon_craters`) all
-share a single ``services/maskrcnn-rocks/`` Docker image at runtime;
-each branch differs only in env-driven model + label config and the
-port it answers on (5002–5009). The new branches use the
-``analyzers/_maskrcnn_remote.py`` helper to share HTTP plumbing;
-``maskrcnn_rocks`` and ``maskrcnn_house`` keep their own inline
-implementations until the Analyzer ABC refactor folds them in.
+subpackage below. Only the types in ``VIEWPORT_MODEL_TYPES`` (SAM,
+YOLOv8, Grounding DINO, MaskRCNN rocks, plus the bbox-only
+urban-spectral analysis) are dispatched; anything else gets a 400.
 
 The dispatch is still an explicit if/elif chain inside the handler;
 it will move to ``ANALYZER_REGISTRY.dispatch(model_type, ...)`` when
@@ -54,21 +47,21 @@ from .core import (
 )
 from .analyzers import (
     _analyze_viewport_sam,
-    _analyze_viewport_zero_shot,
-    _analyze_viewport_mask2former,
     _analyze_viewport_yolov8,
     _analyze_viewport_grounding_dino,
-    _analyze_viewport_grounded_sam,
-    _analyze_viewport_prithvi,
     _analyze_viewport_maskrcnn_rocks,
-    _analyze_viewport_maskrcnn_house,
-    _analyze_viewport_maskrcnn_hypolith,
-    _analyze_viewport_maskrcnn_litter,
-    _analyze_viewport_maskrcnn_roadkill,
-    _analyze_viewport_maskrcnn_newlife,
-    _analyze_viewport_maskrcnn_brent_moon_craters,
-    _analyze_viewport_maskrcnn_harish_moon_craters,
     _analyze_viewport_urban_spectral,
+)
+
+# Model types `analyze_viewport` will run. The other analyzers in
+# `analyzers/` stay importable (SceneGraph adapters and AI reports
+# reference their names) but are no longer offered or dispatched.
+VIEWPORT_MODEL_TYPES = (
+    'sam',
+    'yolov8',
+    'grounding_dino',
+    'maskrcnn_rocks',
+    'urban_spectral',
 )
 
 
@@ -572,7 +565,7 @@ def get_scored_locations(request):
 @csrf_exempt
 def analyze_viewport(request):
     """
-    Analyze viewport image using Segment Anything Model (SAM).
+    Analyze a viewport image with one of ``VIEWPORT_MODEL_TYPES``.
     
     POST /webclient/sampler/analyze-viewport
     Body: {
@@ -584,8 +577,9 @@ def analyze_viewport(request):
             "heading": 353.3,
             "pitch": -8.7
         },
-        "model_type": "vit_b" | "vit_l" | "vit_h",  // SAM model size
-        "min_area": 100  // Minimum mask area in pixels
+        "model_type": "sam" | "yolov8" | "grounding_dino" | "maskrcnn_rocks" | "urban_spectral",
+        "sam_model": "vit_b" | "vit_l" | "vit_h",  // SAM model size
+        "min_area": 100  // Minimum mask area in pixels (SAM)
     }
     
     Returns: {
@@ -616,10 +610,19 @@ def analyze_viewport(request):
         data = json.loads(request.body)
         image_data = data.get('image')
         location = data.get('location', {})
-        analysis_type = data.get('model_type', 'sam')  # 'sam' or 'zero_shot'
+        analysis_type = data.get('model_type', 'sam')
         sam_model = data.get('sam_model', 'vit_b')  # For SAM: 'vit_b', 'vit_l', 'vit_h'
         min_area = data.get('min_area', 100)  # For SAM
-        confidence_threshold = data.get('confidence_threshold', 0.5)  # For zero-shot
+        confidence_threshold = data.get('confidence_threshold', 0.5)  # For YOLOv8
+
+        if analysis_type not in VIEWPORT_MODEL_TYPES:
+            return JsonResponse({
+                'status': 'error',
+                'message': (
+                    f'Unsupported model_type {analysis_type!r}; '
+                    f'expected one of {", ".join(VIEWPORT_MODEL_TYPES)}'
+                ),
+            }, status=400)
 
         # Bbox-only analyzers short-circuit before the "image required" check
         # because they consume a geographic viewport rather than a rendered
@@ -706,13 +709,7 @@ def analyze_viewport(request):
             sys.path.insert(0, scripts_dir_str)
         
         # Route to appropriate analysis based on analysis_type
-        if analysis_type == 'zero_shot':
-            # Zero-Shot Detection path
-            return _analyze_viewport_zero_shot(image, location, confidence_threshold, scripts_dir)
-        elif analysis_type == 'mask2former':
-            # Mask2Former path (pre-trained COCO)
-            return _analyze_viewport_mask2former(image, location, confidence_threshold, scripts_dir)
-        elif analysis_type == 'yolov8':
+        if analysis_type == 'yolov8':
             # YOLOv8 path (fast object detection)
             yolo_model = data.get('yolo_model', 'yolov8n')
             class_filter = data.get('class_filter', '')
@@ -731,88 +728,12 @@ def analyze_viewport(request):
                 scripts_dir,
                 analysis_context=data.get('annotation_context') or {},
             )
-        elif analysis_type == 'grounded_sam':
-            # Grounded-SAM-2 path (detection + high-quality segmentation)
-            text_prompt = data.get('text_prompt', 'object')
-            box_threshold = data.get('box_threshold', 0.35)
-            text_threshold = data.get('text_threshold', 0.25)
-            return _analyze_viewport_grounded_sam(image, location, text_prompt, box_threshold, text_threshold, scripts_dir)
-        elif analysis_type == 'prithvi':
-            # Prithvi-EO path (Earth Observation foundation model)
-            return _analyze_viewport_prithvi(image, location, scripts_dir)
         elif analysis_type == 'maskrcnn_rocks':
             # MaskRCNN-Rocks path (remote rock instance-segmentation API on port 5002)
             model_id = (data.get('model_id') or '').strip()
             score_threshold = float(data.get('score_threshold', 0.5))
             max_detections = int(data.get('max_detections', 200))
             return _analyze_viewport_maskrcnn_rocks(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_house':
-            # MaskRCNN-House path (Tornado/Eureka damage detector on port 5003 by default).
-            # Same upstream Docker image as maskrcnn-rocks, different env-driven model.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_house(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_hypolith':
-            # MaskRCNN-Hypolith path (Gobabeb-Namib hypolith detector on port 5004).
-            # Default DEFAULT_MODEL_ID=gobabeb_hero_e0011, classes background,hypolith.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_hypolith(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_litter':
-            # MaskRCNN-Litter path (DeepGIS litter-dynamics detector on port 5005).
-            # Default DEFAULT_MODEL_ID=litter_dynamics_hero_e0008, classes background,litter.
-            # NOTE: shares weights with maskrcnn_newlife — see analyzer docstring.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_litter(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_roadkill':
-            # MaskRCNN-Roadkill path (Sarah's roadkill detector on port 5006).
-            # Default DEFAULT_MODEL_ID=roadkill__sarah_e0004, classes background,roadkill.
-            # Caveat: only 4 epochs of training — preview-quality, not production.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_roadkill(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_newlife':
-            # MaskRCNN-NewLife path (DeepGIS biology ground-imagery detector on port 5007).
-            # Default DEFAULT_MODEL_ID=new_life_hero_e0008, classes background,organism.
-            # NOTE: shares weights with maskrcnn_litter — see analyzer docstring.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_newlife(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_brent_moon_craters':
-            # MaskRCNN-Brent-Moon-Craters path (Brent's lunar LROC-NAC detector on port 5008).
-            # Default DEFAULT_MODEL_ID=moon_craters_brent_brent_e0009, classes background,crater.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_brent_moon_craters(
-                image, location, model_id, score_threshold, max_detections, scripts_dir
-            )
-        elif analysis_type == 'maskrcnn_harish_moon_craters':
-            # MaskRCNN-Harish-Moon-Craters path (Harish Anand's lunar LROC-NAC detector on port 5009).
-            # Default DEFAULT_MODEL_ID=hanand_stragglers_download.openuas.us_e0099,
-            # classes background,crater. Companion to maskrcnn_brent_moon_craters.
-            model_id = (data.get('model_id') or '').strip()
-            score_threshold = float(data.get('score_threshold', 0.5))
-            max_detections = int(data.get('max_detections', 200))
-            return _analyze_viewport_maskrcnn_harish_moon_craters(
                 image, location, model_id, score_threshold, max_detections, scripts_dir
             )
         else:

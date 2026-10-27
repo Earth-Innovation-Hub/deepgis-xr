@@ -103,13 +103,15 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # Enable GPU access
+    # Enable GPU access. DEEPGIS_WEB_GPU picks the host GPU index; set it
+    # to a GPU that isn't driving a display or simulator, because SAM's
+    # local fallback keeps its model resident in the gunicorn worker.
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              device_ids: ["${DEEPGIS_WEB_GPU:-0}"]
               capabilities: [gpu]
     # `migrate --noinput` runs once on container start, then `exec` hands
     # PID 1 over to gunicorn so signals (SIGTERM from `docker stop`) reach
