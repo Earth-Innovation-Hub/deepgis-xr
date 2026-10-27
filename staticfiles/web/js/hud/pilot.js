@@ -2075,8 +2075,14 @@
             }
             const wanted = (a.vehicle || '').toLowerCase();
             const named = wanted && live.find(v => v.id === wanted || vehicleName(v).toLowerCase().includes(wanted));
+            if (wanted && !named) {
+                addMsg('step', `No live vehicle called "${a.vehicle}". Live now: ${live.map(vehicleName).join(', ')}`);
+                return;
+            }
             const v = named || live[0];
-            if (wanted && !named) addMsg('step', `No live vehicle called "${a.vehicle}"`);
+            if (!named && live.length > 1) {
+                addMsg('step', `Also live: ${live.slice(1).map(vehicleName).join(', ')} (name one to follow it)`);
+            }
             const view = a.view === 'chase' ? 'chase' : 'camera';
             startFollow(v, view);
             const settle = Date.now() + 5000;

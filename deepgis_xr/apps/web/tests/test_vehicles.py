@@ -29,6 +29,7 @@ TWIN_POSE = {
 
 @override_settings(
     VEHICLE_POSE_TOKENS=f"locutus:{digest(TOKEN)}, boat1:{digest(OTHER)}, bad entry",
+    VEHICLE_FLEET_SECRET="",
     CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
             "live": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "vehicles-test"}},
 )
@@ -86,3 +87,21 @@ class VehiclePoseTests(TestCase):
         self.assertEqual([(p["id"], p["age_sec"]) for p in listed], [("boat1", 0.0), ("locutus", 10.0)])
         caches["live"].delete("vehicle:locutus")  # what the 60 s expiry does
         self.assertEqual([p["id"] for p in self.client.get(LIVE_URL).json()["vehicles"]], ["boat1"])
+        self.assertEqual(caches["live"].get(vehicles.IDS_KEY), ["boat1"])
+
+    @override_settings(VEHICLE_FLEET_SECRET="fleet-secret", VEHICLE_FLEET_PREFIX="openuav-")
+    def test_launched_sims_post_only_as_themselves(self):
+        sim = {"vehicle": "openuav-alice", "lat": 47.3979, "lon": 8.5461, "up_m": 12.0, "kind": "sim"}
+        alice = vehicles.fleet_token("fleet-secret", "openuav-alice")
+        self.assertEqual(self.post(sim, token=alice).status_code, 200)
+        self.assertEqual(self.post({**sim, "vehicle": "openuav-bob"}, token=alice).status_code, 401)
+        self.assertEqual(self.post({**sim, "vehicle": "locutus"}, token=alice).status_code, 401)
+        self.assertEqual(self.post({k: v for k, v in sim.items() if k != "vehicle"}, token=alice).status_code, 401)
+        locutus_as_fleet = vehicles.fleet_token("fleet-secret", "locutus")
+        self.assertEqual(self.post({**sim, "vehicle": "locutus"}, token=locutus_as_fleet).status_code, 401)
+        self.assertEqual(self.post(sim, token=TOKEN).status_code, 403)  # the twin's token, another id
+        with override_settings(VEHICLE_POSE_TOKENS=""):
+            self.assertEqual(self.post(sim, token=alice).status_code, 200)
+        self.client.force_login(self.user)
+        [pose] = self.client.get(LIVE_URL).json()["vehicles"]
+        self.assertEqual((pose["id"], pose["up_m"]), ("openuav-alice", 12.0))

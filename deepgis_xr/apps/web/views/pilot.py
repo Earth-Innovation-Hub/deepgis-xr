@@ -39,7 +39,7 @@ ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
 # Vehicles report positions on Earth only
 EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
 FOLLOW_VIEWS = ("camera", "chase")
-VEHICLE_NAME = re.compile(r"[a-z0-9_-]{1,40}")
+VEHICLE_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
@@ -197,7 +197,7 @@ Actions (all heights are metres ABOVE GROUND):
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
-- follow_vehicle: lock the camera to a live vehicle that reports its position to DeepGIS, such as the OpenUAV PX4 simulation drone (the digital twin "locutus"), and keep following until stop. Fields: vehicle (its name, only if the user names one); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
+- follow_vehicle: lock the camera to a live vehicle that reports its position to DeepGIS, and keep following until stop. Vehicles: the digital twin "locutus" (also "the twin"), and students' OpenUAV simulations, named after their username. Fields: vehicle (its name, only if the user names one or says "the twin"); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
@@ -231,7 +231,8 @@ Examples (actions only):
 - "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
 - "sync the view with the OpenUAV sim camera" -> [{"type": "follow_vehicle", "view": "camera"}]
 - "chase the locutus drone" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"}]
-- "follow the twin and tell me what its camera sees" -> [{"type": "follow_vehicle", "view": "camera"}, {"type": "describe_view"}]
+- "follow the twin and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "camera"}, {"type": "describe_view"}]
+- "chase alice's OpenUAV sim" -> [{"type": "follow_vehicle", "vehicle": "alice", "view": "chase"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.

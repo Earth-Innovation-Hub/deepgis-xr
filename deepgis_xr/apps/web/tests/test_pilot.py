@@ -173,10 +173,12 @@ class CleanActionsTests(TestCase):
     def test_follow_vehicle_on_earth_only(self):
         plan = [{"type": "follow_vehicle", "vehicle": " Locutus ", "view": "chase", "alt_m": 50, "place": "Bishop"},
                 {"type": "follow_vehicle", "vehicle": "rm -rf /", "view": "cockpit"},
+                {"type": "follow_vehicle", "vehicle": "Jane.Doe"},
                 {"type": "describe_view"}]
         self.assertEqual(pilot.clean_actions(plan), [
             {"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"},
             {"type": "follow_vehicle", "view": "camera"},
+            {"type": "follow_vehicle", "vehicle": "jane.doe", "view": "camera"},
             {"type": "describe_view"}])
         self.assertEqual(pilot.clean_actions(plan, body="moon"), [{"type": "describe_view"}])
         self.assertEqual(pilot.clean_actions(plan, body="mars"), [{"type": "describe_view"}])

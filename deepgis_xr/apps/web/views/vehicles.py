@@ -8,7 +8,10 @@ signed-in viewers poll vehicles_live and fly the camera with it. Nothing here se
 anything to a vehicle.
 
 Tokens are configured as VEHICLE_POSE_TOKENS = "vehicle_id:sha256hex,...": the server
-keeps only the hash, and a token may only post for its own vehicle id.
+keeps only the hash, and a token may only post for its own vehicle id. Sims started by
+the OpenUAV launcher instead hold HMAC-SHA256(VEHICLE_FLEET_SECRET, vehicle id) for an id
+starting with VEHICLE_FLEET_PREFIX, so each sim can post only as itself and none needs
+configuring here.
 """
 
 import hashlib
@@ -50,16 +53,32 @@ def pose_tokens():
     return out
 
 
-def token_vehicle(request, tokens):
+def bearer(request):
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None
-    digest = hashlib.sha256(auth[7:].strip().encode()).hexdigest()
+    token = auth[7:].strip() if auth.startswith("Bearer ") else ""
+    return token or None
+
+
+def token_vehicle(token, tokens):
+    digest = hashlib.sha256(token.encode()).hexdigest()
     found = None
     for known, vid in tokens.items():
         if hmac.compare_digest(known, digest):
             found = vid
     return found
+
+
+def fleet_token(secret, vid):
+    return hmac.new(secret.encode(), vid.encode(), hashlib.sha256).hexdigest()
+
+
+def fleet_vehicle(token, vid):
+    """vid if token is the launcher's token for this sim, else None."""
+    secret, prefix = settings.VEHICLE_FLEET_SECRET, settings.VEHICLE_FLEET_PREFIX
+    if not (secret and prefix and isinstance(vid, str) and vid.startswith(prefix)
+            and VEHICLE_ID.fullmatch(vid)):
+        return None
+    return vid if hmac.compare_digest(fleet_token(secret, vid), token) else None
 
 
 def _finite(v):
@@ -99,10 +118,10 @@ def clean_pose(data):
 @require_POST
 def vehicle_pose(request):
     tokens = pose_tokens()
-    if not tokens:
+    if not (tokens or settings.VEHICLE_FLEET_SECRET):
         return JsonResponse({"error": "Vehicle poses are not configured"}, status=503)
-    vid = token_vehicle(request, tokens)
-    if vid is None:
+    token = bearer(request)
+    if token is None:
         return JsonResponse({"error": "A valid vehicle token is required"}, status=401)
     if len(request.body) > MAX_BODY_BYTES:
         return JsonResponse({"error": "Pose too large"}, status=413)
@@ -112,6 +131,9 @@ def vehicle_pose(request):
         return JsonResponse({"error": "Invalid JSON"}, status=400)
     if not isinstance(data, dict):
         return JsonResponse({"error": "Invalid JSON"}, status=400)
+    vid = token_vehicle(token, tokens) or fleet_vehicle(token, data.get("vehicle"))
+    if vid is None:
+        return JsonResponse({"error": "A valid vehicle token is required"}, status=401)
     if data.get("vehicle", vid) != vid:
         return JsonResponse({"error": "This token is for another vehicle"}, status=403)
     pose = clean_pose(data)
@@ -132,7 +154,10 @@ def vehicles_live(request):
         return JsonResponse({"error": "Sign in to follow vehicles"}, status=401)
     live = caches["live"]
     ids = live.get(IDS_KEY) or []
-    poses = live.get_many([f"vehicle:{vid}" for vid in ids]).values()
+    found = live.get_many([f"vehicle:{vid}" for vid in ids])
+    poses = found.values()
+    if len(found) < len(ids):  # sims come and go; forget the ones whose pose expired
+        live.set(IDS_KEY, sorted(p["id"] for p in poses), None)
     t = now()
     vehicles = []
     for pose in poses:

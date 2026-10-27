@@ -228,6 +228,10 @@ DEEPGIS_PILOT_RATE_PER_MIN = int(os.environ.get('DEEPGIS_PILOT_RATE_PER_MIN', '1
 # Live vehicle poses for the pilot's follow_vehicle (views/vehicles.py).
 # "vehicle_id:sha256hex,..."; each publisher holds its own token, the server only the hash.
 VEHICLE_POSE_TOKENS = os.environ.get('VEHICLE_POSE_TOKENS', '')
+# Launched OpenUAV sims: the launcher gives each one the token HMAC-SHA256(secret, vehicle id)
+# for an id starting with the prefix, so new sims need no configuration here.
+VEHICLE_FLEET_SECRET = os.environ.get('VEHICLE_FLEET_SECRET', '')
+VEHICLE_FLEET_PREFIX = os.environ.get('VEHICLE_FLEET_PREFIX', 'openuav-')
 # Every gunicorn worker must see the same latest pose, so production points the
 # "live" cache at redis; without LIVE_CACHE_URL each process keeps its own.
 LIVE_CACHE_URL = os.environ.get('LIVE_CACHE_URL', '')
