@@ -47,11 +47,15 @@ data layers:
 - *"sea surface temperature of Monterey Bay"*
 - *"show the lidar of the Volcanic Tablelands fault scarps"*
 - on the Moon: *"orbit Tycho and show elevation as a colormap"*
+- on any globe: *"do a visual analysis of the viewport camera scene and list
+  what you observe"*
 
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
-`hide_layer`). Django validates and clamps them, and the page runs them on
-the existing drone controls. It never touches a real vehicle. Off Earth the
+`hide_layer`, `describe_view`). Django validates and clamps them, and the page
+runs them on the existing drone controls. It never touches a real vehicle.
+`describe_view` sends one frame of the 3D view to the lab's vision model,
+which returns a summary and a list of what it sees. Off Earth the
 pilot resolves IAU feature names from the USGS Gazetteer of Planetary
 Nomenclature and flies at orbiter scale. See
 [AI Pilot architecture](#-ai-pilot-architecture).
@@ -216,7 +220,7 @@ python manage.py runserver
 Tests and lint:
 
 ```bash
-python manage.py test deepgis_xr.apps.web.tests   # 48 tests: AI pilot, planet viewer, twin access
+python manage.py test deepgis_xr.apps.web.tests   # 54 tests: AI pilot, planet viewer, twin access
 docker run --rm -v "$PWD":/w -w /w node:22-alpine node --test 'tests/js/*.test.js'   # planet registry
 pytest
 ruff check .
@@ -265,7 +269,8 @@ while `DEBUG=False`. After changing Python code or templates, run
 - Mask R-CNN rocks, remote API, `MASKRCNN_ROCKS_API_URL`
 - AI pilot: a language model reached through a read-only MCP server
   (`dreams_mcp_ro` from the DREAMS Lab `dreams_llm_ros2` stack),
-  `DEEPGIS_PILOT_MCP_URL`
+  `DEEPGIS_PILOT_MCP_URL`; its `ask_robot_llm` tool plans and its
+  `describe_image` tool (a vision-capable model) answers `describe_view`
 - PyTorch 2.5.1 + CUDA 12.1 stays in the image only for the admin training task
 
 **Infrastructure**
@@ -345,6 +350,16 @@ deepgis-xr/
   - **Errors:** 401 `login_required` (with `login_url`), 400 for an empty or
     invalid message, 429 when rate-limited, 503 if the pilot is not
     configured, and 502 if the model is unavailable.
+- `POST /label/api/pilot/describe/`: the `describe_view` action. Same
+  sign-in and CSRF rules; 6 requests/min per user.
+  - **Body:** `{"image": "data:image/jpeg;base64,...", "body": "mars",
+    "view": {..., pitch_deg}, "question": "..."}`. The image is one JPEG or
+    PNG frame of the canvas (the page sends a JPEG at most 1280 px wide),
+    up to 3 MB encoded.
+  - **Returns:** `{"summary": "...", "observations": ["...", ...], "model":
+    "...", "duration_sec": ...}`, at most 12 observations. Expect 15 to 25 s.
+  - **Errors:** 401, 400 for a missing or non-image `image`, 429, 503, and
+    502 as above.
 - `GET /label/api/pilot/ocean/?kind=&south=&north=&west=&east=`: relay for
   the `sea_temp` and `chlorophyll` layers, because NOAA ERDDAP sends no CORS
   headers. Signed-in users only; two allow-listed datasets, so it is not an
@@ -463,6 +478,10 @@ Browser: run actions in order on the drone controls
        └─ LAYERS[kind].load() fetches from the public source in the browser
           (or through /label/api/pilot/ocean/ and /topo/), then the page
           draws, lists and cites the result
+     describe_view
+       └─ wait for tiles, capture the canvas as a JPEG,
+          POST /label/api/pilot/describe/ ──► MCP describe_image ──► vision model
+          returns {summary, observations}, shown in the chat and kept in history
 ```
 
 Design rules:
@@ -581,7 +600,12 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
    for colour layers ("in viridis"). Click a drawn feature for details and
    source links. "Hide the faults" removes one layer; "clear all layers"
    removes them all. OpenStreetMap layers can take up to a minute.
-4. Press **Stop** at any time.
+4. Ask what is in view ("do a visual analysis of the viewport camera scene
+   and list what you observe", or "fly to Olympus Mons and describe what you
+   see"). The pilot captures the current frame and lists what the vision
+   model sees. Treat the list as a model's reading of the picture, not a
+   measurement.
+5. Press **Stop** at any time.
 
 ### AI Viewport Analysis
 1. Open DeepGIS Search and the **AI** panel.
@@ -725,6 +749,10 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ## 📊 Recent Updates
 
 ### October 2026: planets, colour maps and terrain
+- **Visual analysis of the view** (`4186fdf`): the pilot's `describe_view`
+  action captures the 3D view and asks the lab's vision model, through the
+  read-only MCP server's `describe_image` tool, to summarise it and list what
+  it sees. Works on Earth, the Moon and every planet viewer.
 - **AI panel trimmed** (`4253571`): the AI Viewport Analysis panel offers
   SAM, YOLOv8, Grounding DINO and Mask R-CNN rocks only, and
   `analyze-viewport` rejects other model types. The web container's GPU is
@@ -828,6 +856,7 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
       contours, OpenTopography catalog, stored lidar)
 - [x] Moon and planet viewers (ten more bodies) sharing Earth's HUD, drone
       and AI pilot
+- [x] AI pilot visual analysis of the view (`describe_view`)
 
 ### 🔧 Next
 - [ ] AI pilot: a sign-in path for lab members, persistent rate limiting
