@@ -165,6 +165,13 @@ roads into one labelled graph.
   `POST /label/api/vehicles/pose/`. The first publisher is the `deepgis_pose`
   node in the DREAMS Lab `dreams_llm_ros2` stack, which reads a PX4 SITL +
   Gazebo simulation in an OpenUAV container; field vehicles are next.
+- Every OpenUAV sim can join: the OpenUAV launcher starts a small read-only
+  agent in each sim container it launches, which waits for the student to
+  start PX4 and then posts the sim's pose as `openuav-<username>`. Its token
+  is derived from one shared secret (`VEHICLE_FLEET_SECRET`), so new sims
+  need no configuration here, and each can post only as itself. Ask for one
+  by name ("chase alice's OpenUAV sim"). A sim appears wherever its world
+  is set on Earth (PX4's stock worlds are at its Zurich default).
 - On Earth, ask the pilot to follow a vehicle. The **camera** view looks
   through the vehicle's camera (its heading, gimbal pitch and field of
   view), so a simulated flight can be seen over the real DeepGIS world; the
@@ -245,7 +252,7 @@ python manage.py runserver
 Tests and lint:
 
 ```bash
-python manage.py test deepgis_xr.apps.web.tests   # 60 tests: AI pilot, planet viewer, twin access, vehicles
+python manage.py test deepgis_xr.apps.web.tests   # 61 tests: AI pilot, planet viewer, twin access, vehicles
 docker run --rm -v "$PWD":/w -w /w node:22-alpine node --test 'tests/js/*.test.js'   # planet registry
 pytest
 ruff check .
@@ -404,7 +411,9 @@ deepgis-xr/
 
 - `POST /label/api/vehicles/pose/`: a vehicle's latest pose. Needs
   `Authorization: Bearer <token>` with a token listed (as its SHA-256) in
-  `VEHICLE_POSE_TOKENS`; no session or CSRF.
+  `VEHICLE_POSE_TOKENS`, or, for a `vehicle` starting with
+  `VEHICLE_FLEET_PREFIX` (default `openuav-`), the hex
+  HMAC-SHA256(`VEHICLE_FLEET_SECRET`, vehicle id); no session or CSRF.
   - **Body** (JSON, at most 4 KB): `{"vehicle", "name", "kind": "sim" |
     "field", "lat", "lon", "up_m", "alt_amsl", "ref": {lat, lon, alt_amsl},
     "heading_deg", "gimbal_pitch_deg", "hfov_deg", "speed_mps", "armed",
@@ -413,12 +422,13 @@ deepgis-xr/
     clamped.
   - **Returns:** `{"ok": true}`. The pose is kept for 60 s in the shared
     `live` cache.
-  - **Errors:** 503 if no tokens are configured, 401 for a missing or
-    unknown token, 403 if `vehicle` is not the token's vehicle, 413, and 400
-    for invalid JSON or a missing position.
+  - **Errors:** 503 if neither tokens nor a fleet secret are configured,
+    401 for a missing or unknown token, 403 if `vehicle` is not the token's
+    vehicle, 413, and 400 for invalid JSON or a missing position.
 - `GET /label/api/vehicles/live/`: signed-in users only (401 otherwise).
   Returns `{"vehicles": [{id, name, kind, lat, lon, ..., age_sec}, ...]}`,
-  freshest first. The page polls it four times a second while following.
+  freshest first; vehicles whose pose expired drop off the list. The page
+  polls it four times a second while following.
 
 ### Viewers and access
 
@@ -655,9 +665,10 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
    model sees. Treat the list as a model's reading of the picture, not a
    measurement.
 5. On Earth, follow a live vehicle ("sync the view with the OpenUAV sim
-   camera", "chase the locutus drone"). Without a name the pilot picks the
-   vehicle that reported most recently. If its poses stop for 3 s the view
-   holds and the panel says so.
+   camera", "chase the locutus drone", "chase alice's OpenUAV sim").
+   Without a name the pilot picks the vehicle that reported most recently
+   and lists the others; a name that is not live lists the live ones. If
+   its poses stop for 3 s the view holds and the panel says so.
 6. Press **Stop** at any time.
 
 ### AI Viewport Analysis
@@ -766,6 +777,10 @@ DEEPGIS_PILOT_MCP_TOKEN=         # the READ-ONLY server's token, never a command
 # One "vehicle_id:sha256(token)" per vehicle, comma-separated; the token
 # itself stays with the vehicle's publisher.
 VEHICLE_POSE_TOKENS=
+# Sims started by the OpenUAV launcher: the same secret as the launcher's
+# DEEPGIS_FLEET_SECRET (openssl rand -hex 32)
+VEHICLE_FLEET_SECRET=
+# VEHICLE_FLEET_PREFIX=openuav-
 # Shared cache for live poses, so every gunicorn worker sees them
 LIVE_CACHE_URL=redis://redis:6379/1
 ```
@@ -809,6 +824,10 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ## 📊 Recent Updates
 
 ### October 2026: planets, colour maps and terrain
+- **Every OpenUAV sim on the globe** (`79de0b7`): sims launched by the
+  OpenUAV launcher post their poses with per-sim tokens derived from one
+  shared secret (`VEHICLE_FLEET_SECRET`), and the pilot follows any of them
+  by name.
 - **Follow a live vehicle** (`eef4e13`): the pilot's `follow_vehicle` action locks the
   Earth view to a live vehicle, through its camera or from behind, using
   poses from `POST /label/api/vehicles/pose/` (token per vehicle, read-only).
