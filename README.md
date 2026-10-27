@@ -175,8 +175,10 @@ roads into one labelled graph.
   this path sends anything to a vehicle, and a pose expires after 60 s.
 - Heights are drawn as the globe's terrain height at the vehicle's take-off
   point plus its height above that point, so no geoid model is needed. A
-  simulated vehicle flies over a flat world, so away from its take-off point
-  its height above the real terrain differs from the simulation's.
+  simulation's ground matches the real ground only where its world was
+  built from it (the twin's Gazebo world is a survey of the few hundred
+  metres around its take-off point, flat beyond), so farther out its height
+  above the real terrain differs from the simulation's.
 
 ### 🌤️ Weather Stations
 - National Weather Service stations (21 defaults across CA, AZ, CO, NV)
