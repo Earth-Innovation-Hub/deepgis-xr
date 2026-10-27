@@ -1,7 +1,8 @@
 // DeepGIS AI pilot chat, shared by the Earth, Moon and planet viewers.
 // POST /label/api/pilot/ turns a request into actions (goto, orbit, takeoff,
-// land, look, stop, wait, show_layer, hide_layer); they run here, in order,
-// on the drone (hud/drone.js). On Earth place names go to OpenStreetMap, then
+// land, look, stop, wait, show_layer, hide_layer, describe_view); they run here,
+// in order, on the drone (hud/drone.js). describe_view posts one frame of the
+// globe to /label/api/pilot/describe/ and lists what the lab's model sees. On Earth place names go to OpenStreetMap, then
 // Cesium Ion; elsewhere names come from the IAU gazetteer
 // (scripts/build_planet_nomenclature.py) and the page's preset sites, and the
 // data layers (PLANET_LAYERS) are drawn from the body's terrain or elevation maps.
@@ -18,6 +19,7 @@
     const history = [];
     const geocodeCache = new Map();
     let runId = 0; // bumped to cancel the running plan
+    let lastMessage = ''; // the request a describe_view answers
 
     class Cancelled extends Error {}
 
@@ -95,6 +97,7 @@
             lon: Cesium.Math.toDegrees(cam.longitude),
             height_agl: cam.height - ground,
             heading_deg: Cesium.Math.toDegrees(viewer.camera.heading),
+            pitch_deg: Cesium.Math.toDegrees(viewer.camera.pitch),
         };
         const t = viewTarget();
         if (t) view.target = { lat: Cesium.Math.toDegrees(t.latitude), lon: Cesium.Math.toDegrees(t.longitude) };
@@ -1788,6 +1791,34 @@
         check(id);
     }
 
+    const PILOT_DESCRIBE_URL = '/label/api/pilot/describe/';
+    const CAPTURE_MAX_PX = 1280;
+
+    // One frame of the globe as a JPEG data URL. It is read in postRender, while the
+    // WebGL drawing buffer still holds the frame (the viewer does not preserve it).
+    function captureView() {
+        const scene = getViewer().scene;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { off(); reject(new Error('the view did not render')); }, 5000);
+            const off = scene.postRender.addEventListener(() => {
+                off();
+                clearTimeout(timer);
+                try {
+                    const src = scene.canvas;
+                    const k = Math.min(1, CAPTURE_MAX_PX / Math.max(src.width, src.height));
+                    const c = document.createElement('canvas');
+                    c.width = Math.round(src.width * k);
+                    c.height = Math.round(src.height * k);
+                    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+                    resolve(c.toDataURL('image/jpeg', 0.85));
+                } catch (e) {
+                    reject(new Error(`could not read the view (${e.message || e})`));
+                }
+            });
+            scene.requestRender();
+        });
+    }
+
     function setInput(elId, value) {
         const el = document.getElementById(elId);
         if (!el) return;
@@ -2029,6 +2060,36 @@
             if (removed.length) addMsg('step', `Removed: ${removed.map(k => specs[k].title.toLowerCase()).join(', ')}`);
             else addMsg('step', a.kind ? `No ${specs[a.kind]?.title.toLowerCase() || a.kind} layer is shown` : 'No layers are shown');
         },
+
+        async describe_view(a, id) {
+            const scene = getViewer().scene;
+            const settle = Date.now() + 8000;
+            await until(() => scene.globe.tilesLoaded || Date.now() > settle, id);
+            const working = addMsg('step', 'Looking at the view...');
+            let data;
+            try {
+                const image = await captureView();
+                const resp = await fetch(PILOT_DESCRIBE_URL, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                    body: JSON.stringify({ image, body, view: await currentView(), question: lastMessage }),
+                });
+                data = await resp.json().catch(() => ({}));
+                if (!resp.ok) throw new Error(data.error || `View analysis failed (HTTP ${resp.status})`);
+            } finally {
+                working.remove();
+            }
+            check(id);
+            const observations = data.observations || [];
+            if (data.summary) addMsg('ai', data.summary);
+            observations.forEach(o => addMsg('step', `• ${o}`));
+            if (!data.summary && !observations.length) addMsg('step', 'Nothing to report in this view');
+            // Follow-up questions ("what is the dark patch on the left?") can refer to it
+            history.push({ role: 'assistant',
+                           content: `What I saw in the view: ${[data.summary, ...observations].join(' ')}`.slice(0, 2000) });
+            history.splice(0, Math.max(0, history.length - 8));
+        },
     };
 
     // Heading and tilt only exist in 3D; the page opens in 2D
@@ -2060,7 +2121,8 @@
         stopAll();
         const id = runId;
         try {
-            if (actions.some(a => a.type !== 'stop')) await ensure3D(id);
+            // Describing the view as it is needs no 3D switch
+            if (actions.some(a => a.type !== 'stop' && a.type !== 'describe_view')) await ensure3D(id);
             for (const [i, a] of actions.entries()) {
                 check(id);
                 // Frame the area unless a later step moves the camera anyway; off Earth
@@ -2085,6 +2147,7 @@
         const message = input.value.trim();
         if (!message || !getViewer()) return;
         input.value = '';
+        lastMessage = message;
         addMsg('user', message);
         const thinking = addMsg('step', 'Thinking...');
         sendBtn.disabled = true;

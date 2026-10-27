@@ -160,6 +160,16 @@ class CleanActionsTests(TestCase):
                                {"type": "orbit", "place": "Tycho", "radius_m": 60000.0, "alt_m": 500000.0},
                                {"type": "hide_layer"}])
 
+    def test_describe_view_keeps_only_its_type(self):
+        plan = [{"type": "goto", "place": "Olympus Mons"},
+                {"type": "describe_view", "place": "Olympus Mons", "kind": "elevation", "seconds": 3}]
+        for body in ("earth", "mars", "europa"):
+            self.assertEqual(pilot.clean_actions(plan, body=body),
+                             [{"type": "goto", "place": "Olympus Mons"}, {"type": "describe_view"}])
+        self.assertIn("describe_view", pilot.PLANET_SCHEMA["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+        self.assertIn("- describe_view:", pilot.planet_prompt("europa"))
+        self.assertIn("- describe_view:", pilot.SYSTEM_PROMPT)
+
     def test_layers_per_body(self):
         plan = [{"type": "show_layer", "kind": "slope"}, {"type": "show_layer", "kind": "elevation"}]
         self.assertEqual(pilot.clean_actions(plan, body="mars"), [{"type": "show_layer", "kind": "elevation"}])
@@ -317,6 +327,73 @@ class PilotChatTests(TestCase):
         with mock.patch.object(pilot.requests, "post", return_value=mcp_response(plan)):
             codes = [self.post({"message": "hi"}).status_code for _ in range(4)]
         self.assertEqual(codes, [200, 200, 200, 429])
+
+
+DESCRIBE_URL = "/label/api/pilot/describe/"
+PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+PNG_URL = "data:image/png;base64," + PNG_B64
+
+
+@override_settings(DEEPGIS_PILOT_MCP_TOKEN="test-token")
+class PilotDescribeTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user(username="pilot", password="pw")
+        self.client = Client()
+
+    def post(self, payload, client=None):
+        return (client or self.client).post(DESCRIBE_URL, json.dumps(payload), content_type="application/json")
+
+    def test_requires_login_and_csrf(self):
+        self.assertEqual(self.post({"image": PNG_URL}).status_code, 401)
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.user)
+        self.assertEqual(self.post({"image": PNG_URL}, client).status_code, 403)
+
+    def test_rejects_bad_images_and_bodies(self):
+        self.client.force_login(self.user)
+        gif = "data:image/gif;base64,R0lGODlhAQABAAAAACw="
+        not_png = "data:image/png;base64,R0lGODlhAQABAAAAACw="
+        for image in (None, "", gif, not_png, PNG_B64, "data:image/png;base64," + "A" * pilot.MAX_IMAGE_CHARS):
+            self.assertEqual(self.post({"image": image}).status_code, 400)
+        self.assertEqual(self.post({"image": PNG_URL, "body": "vulcan"}).status_code, 400)
+
+    def test_asks_describe_image_and_cleans_the_answer(self):
+        self.client.force_login(self.user)
+        seen = {"summary": " Cratered plains under low sun. ",
+                "observations": ["A large crater in the centre.", "", 7, "x" * 400]}
+        view = {"lat": -43.3, "lon": -11.2, "height_agl": 52000, "heading_deg": 0, "pitch_deg": -35.2}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(seen)) as post:
+            resp = self.post({"image": PNG_URL, "body": "moon", "view": view,
+                              "question": "do a visual analysis of the viewport camera scene and list what you observe"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["summary"], "Cratered plains under low sun.")
+        self.assertEqual(resp.json()["observations"], ["A large crater in the centre.", "x" * 300])
+        params = post.call_args.kwargs["json"]["params"]
+        self.assertEqual(params["name"], "describe_image")
+        args = params["arguments"]
+        self.assertEqual(args["image"], PNG_B64)
+        self.assertEqual(args["json_schema"], pilot.DESCRIBE_SCHEMA)
+        self.assertIn("3D globe of the Moon", args["system_prompt"])
+        self.assertNotIn("buildings", args["system_prompt"])
+        self.assertIn("lat -43.30000, lon -11.20000, 52000 m above ground", args["prompt"])
+        self.assertIn("tilted 35 deg below the horizon", args["prompt"])
+        self.assertIn("The user asked: do a visual analysis", args["prompt"])
+
+    def test_backend_errors_are_502(self):
+        self.client.force_login(self.user)
+        with mock.patch.object(pilot.requests, "post", side_effect=pilot.requests.Timeout("slow")):
+            self.assertEqual(self.post({"image": PNG_URL}).status_code, 502)
+        not_json = mcp_response(None)
+        with mock.patch.object(pilot.requests, "post", return_value=not_json):
+            self.assertEqual(self.post({"image": PNG_URL}).status_code, 502)
+
+    def test_rate_limited(self):
+        self.client.force_login(self.user)
+        seen = {"summary": "ok", "observations": []}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(seen)):
+            codes = [self.post({"image": PNG_URL}).status_code for _ in range(pilot.DESCRIBE_RATE_PER_MIN + 1)]
+        self.assertEqual(codes[-2:], [200, 429])
 
 
 OCEAN_URL = "/label/api/pilot/ocean/"

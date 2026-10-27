@@ -11,7 +11,8 @@ takeoff / land / orbit controls, or as data layers (show_layer) fetched from
 public sources in the browser (off Earth: drawn from the body's terrain or
 elevation map; the sea layers come through pilot_ocean below, the lidar
 terrain through pilot_topo); place names are geocoded in the browser, off Earth from the
-IAU planetary gazetteer.
+IAU planetary gazetteer. describe_view sends one frame of the canvas to pilot_describe,
+which asks the same model what it sees (dreams_mcp's describe_image).
 Nothing here touches a real vehicle.
 """
 
@@ -33,7 +34,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
-                "show_layer", "hide_layer")
+                "show_layer", "hide_layer", "describe_view")
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
@@ -48,7 +49,8 @@ MAX_MESSAGE_CHARS = 600
 # such a reply gets one more try
 PROMISE_RE = re.compile(r"\b(show|showing|fly|flying|orbit|orbiting|pull|pulling|bring|bringing|head|heading|"
                         r"zoom|zooming|display|displaying|draw|drawing|load|loading|switch|switching|climb|climbing|"
-                        r"land|landing|descend|descending|take off|taking off)\b", re.IGNORECASE)
+                        r"land|landing|descend|descending|take off|taking off|"
+                        r"take a look|describe|describing|analy[sz]e|analy[sz]ing)\b", re.IGNORECASE)
 
 # Display names; keys match planet-bodies.js and web/geo/nomenclature/<body>.json
 BODIES = {
@@ -183,6 +185,7 @@ Actions (all heights are metres ABOVE GROUND):
   - topo_datasets: which lidar, drone and elevation datasets OpenTopography has around a place, with their footprints, dates and links (default 15 km; mostly the US). Also for "what lidar is there" or "OpenTopography data" requests.
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
+- describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
@@ -192,8 +195,9 @@ Rules:
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
-- If the request is a question or not a flight request, answer it in reply and return no actions.
-- Never say in reply that you will show, fly, orbit or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
+- A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
+- If the request is any other question or not a flight request, answer it in reply and return no actions.
+- Never say in reply that you will show, fly, orbit, look at or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
 
 Examples (actions only):
 - "show active faults near Bishop" -> [{"type": "show_layer", "kind": "faults", "place": "Bishop, California"}]
@@ -210,6 +214,8 @@ Examples (actions only):
 - "elevation map of Mount Whitney" -> [{"type": "show_layer", "kind": "elevation", "place": "Mount Whitney, California"}]
 - "show the lidar hillshade of the fault scarps in the Volcanic Tablelands" -> [{"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California"}]
 - "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
+- "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
+- "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -222,6 +228,7 @@ Actions (all heights are metres ABOVE GROUND):
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
 - stop: stop all motion immediately.
 - wait: hover for seconds.
+- describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
 {layer_actions}
 Rules:
 - place is the feature's official IAU name as in the Gazetteer of Planetary Nomenclature, without the body or feature type unless it is part of the name: "Tycho", "Mare Imbrium", "Olympus Mons", "Valles Marineris". On the Moon the Apollo landing sites are "Apollo 11" to "Apollo 17". Use lat/lon (planetocentric, east-positive degrees) only when the user gives coordinates.
@@ -230,12 +237,15 @@ Rules:
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the camera is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 {layer_rules}
-- If the request is a question or not a flight request, answer it briefly in reply and return no actions; never invent feature facts you are unsure of.
+- A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
+- If the request is any other question or not a flight request, answer it briefly in reply and return no actions; never invent feature facts you are unsure of.
 
 Examples (actions only):
 - "orbit Tycho twice" -> [{{"type": "orbit", "place": "Tycho", "revolutions": 2}}]
 - "fly to the Apollo 15 site at 5 km" -> [{{"type": "goto", "place": "Apollo 15", "alt_m": 5000}}]
 - "go to 18.4 N 77.7 E and look at the horizon" -> [{{"type": "goto", "lat": 18.4, "lon": 77.7, "pitch_deg": 0}}]
+- "do a visual analysis of the viewport camera scene and list what you observe" -> [{{"type": "describe_view"}}]
+- "fly to Olympus Mons and describe what you see" -> [{{"type": "goto", "place": "Olympus Mons"}}, {{"type": "describe_view"}}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real spacecraft."""
 
 PLANET_LAYER_RULES = """- Use show_layer for any request to show, colour or map elevation, height, topography{slope_words}; "heat map" or "colormap" means elevation unless another kind is named. Set place as for goto, or omit place and lat/lon for "here" or "in view"; set radius_m only when the user gives a distance.
@@ -306,7 +316,7 @@ def clean_actions(raw, body="earth"):
         else:
             act.pop("distance_km", None)
         fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
-                  else FIELD_ORDER)
+                  else ("type",) if act["type"] == "describe_view" else FIELD_ORDER)
         act = {k: act[k] for k in FIELD_ORDER if k in act and k in fields}
         if act["type"] == "show_layer":
             # An orbit runs until its laps end; draw the layer before it, not after
@@ -460,6 +470,107 @@ def pilot_chat(request):
     return JsonResponse({
         "reply": reply.strip()[:1000],
         "actions": actions,
+        "model": out.get("model", ""),
+        "duration_sec": out.get("duration_sec"),
+    })
+
+
+# describe_view: the page posts one frame of the Cesium canvas and the lab's
+# (vision-capable) model lists what it sees, through dreams_mcp's describe_image.
+DESCRIBE_RATE_PER_MIN = 6
+MAX_IMAGE_CHARS = 3_000_000  # base64; the page sends a JPEG of at most 1280 px a side
+IMAGE_DATA_URL = re.compile(r"data:image/(?:jpeg|png);base64,([A-Za-z0-9+/]+=*)")
+MAX_OBSERVATIONS = 12
+DESCRIBE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "observations": {"type": "array", "maxItems": MAX_OBSERVATIONS, "items": {"type": "string"}},
+    },
+    "required": ["summary", "observations"],
+}
+VISION_PROMPT = """You are the eyes of the AI pilot in the DeepGIS viewer. The image is one frame from a virtual camera flying over a 3D globe of {body}, rendered by Cesium from {imagery} draped over the terrain. Describe only what is actually visible in it.
+- observations: 4 to 10 short sentences, each about one thing you see and where it is in the frame (left, centre, upper right, foreground, near the horizon). Cover landforms and terrain (craters, ridges, mountains, valleys, channels, dunes, plains, cliffs), surface colour, brightness and texture, shadows and lighting{earth_things}. Mention colour maps, markers, labels or lines drawn on the globe, and black sky or the edge of the globe if visible.
+- Say how sure you are when unsure ("possibly a small crater"). Do not invent names, sizes, ages or other facts you cannot see; name a feature only if a label in the image shows it.
+- If blurry, low-resolution or missing imagery tiles dominate the frame, say so once.
+- summary: one or two sentences on the scene as a whole."""
+
+
+def vision_prompt(body):
+    earth = body == "earth"
+    return VISION_PROMPT.format(
+        body=BODIES[body], imagery="satellite and aerial imagery" if earth else "orbiter imagery",
+        earth_things=", and also water, vegetation, fields, roads, buildings and clouds" if earth else "")
+
+
+def _image_b64(image):
+    """Plain base64 of a JPEG or PNG data URL from the page; None if it is not one."""
+    if not isinstance(image, str) or len(image) > MAX_IMAGE_CHARS:
+        return None
+    m = IMAGE_DATA_URL.fullmatch(image)
+    if not m:
+        return None
+    try:
+        head = base64.b64decode(m.group(1)[:16])
+    except ValueError:
+        return None
+    return m.group(1) if head.startswith((b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n")) else None
+
+
+@require_POST
+def pilot_describe(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "login_required",
+                             "login_url": "/label/admin/login/"}, status=401)
+    if not settings.DEEPGIS_PILOT_MCP_TOKEN:
+        return JsonResponse({"error": "The AI pilot is not configured on this server."}, status=503)
+    try:
+        data = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    body = data.get("body", "earth")
+    if not isinstance(body, str) or body not in BODIES:
+        return JsonResponse({"error": "Unknown body"}, status=400)
+    image = _image_b64(data.get("image"))
+    if not image:
+        return JsonResponse({"error": "image must be a JPEG or PNG data URL under 3 MB"}, status=400)
+    if _rate_limited(request.user.pk, "pilot-describe", DESCRIBE_RATE_PER_MIN):
+        return JsonResponse({"error": "Too many view analyses; wait a minute."}, status=429)
+
+    lines = [_describe_view(data.get("view"))]
+    view = data.get("view") if isinstance(data.get("view"), dict) else {}
+    pitch = view.get("pitch_deg")
+    if isinstance(pitch, (int, float)) and not isinstance(pitch, bool) and math.isfinite(pitch):
+        lines.append(f"The camera is tilted {abs(pitch):.0f} deg below the horizon.")
+    question = data.get("question")
+    if isinstance(question, str) and question.strip():
+        lines.append("The user asked: " + question.strip()[:MAX_MESSAGE_CHARS])
+    lines.append("List what you observe in this image.")
+    timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
+    args = {
+        "image": image,
+        "prompt": "\n".join(ln for ln in lines if ln),
+        "system_prompt": vision_prompt(body),
+        "json_schema": DESCRIBE_SCHEMA,
+        "temperature": 0.2,
+        "max_tokens": 900,
+        "timeout_sec": timeout,
+    }
+    try:
+        out = call_mcp_tool("describe_image", args, timeout + 10)
+    except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
+        return JsonResponse({"error": f"AI pilot unavailable: {type(e).__name__}"}, status=502)
+    seen = out.get("json") if isinstance(out, dict) else None
+    if not isinstance(seen, dict):
+        return JsonResponse({"error": "The AI pilot could not read the view; try again."}, status=502)
+    summary = seen.get("summary") if isinstance(seen.get("summary"), str) else ""
+    observations = [o.strip()[:300] for o in seen.get("observations") or []
+                    if isinstance(o, str) and o.strip()][:MAX_OBSERVATIONS]
+    return JsonResponse({
+        "summary": summary.strip()[:600],
+        "observations": observations,
         "model": out.get("model", ""),
         "duration_sec": out.get("duration_sec"),
     })
