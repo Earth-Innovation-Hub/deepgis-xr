@@ -13,11 +13,10 @@ from osgeo import gdal, osr
 from deepgis_xr.apps.web.views import pilot
 
 URL = "/label/api/pilot/"
+MODELS_URL = "/label/api/pilot/models/"
 
 
-def mcp_response(plan, model="test-model"):
-    """A streamable-HTTP (SSE) MCP tools/call reply carrying ask_robot_llm's result."""
-    result = {"response": json.dumps(plan), "model": model, "duration_sec": 1.2, "json": plan}
+def mcp_result_response(result):
     body = {"jsonrpc": "2.0", "id": 1,
             "result": {"content": [{"type": "text", "text": json.dumps(result)}],
                        "structuredContent": {"result": result}, "isError": False}}
@@ -25,6 +24,12 @@ def mcp_response(plan, model="test-model"):
                      headers={"Content-Type": "text/event-stream"})
     resp.raise_for_status = mock.Mock()
     return resp
+
+
+def mcp_response(plan, model="test-model"):
+    """A streamable-HTTP (SSE) MCP tools/call reply carrying ask_robot_llm's result."""
+    return mcp_result_response(
+        {"response": json.dumps(plan), "model": model, "duration_sec": 1.2, "json": plan})
 
 
 class CleanActionsTests(TestCase):
@@ -215,6 +220,7 @@ class PilotChatTests(TestCase):
         resp = self.post({"message": "orbit Tempe Town Lake"})
         self.assertEqual(resp.status_code, 401)
         self.assertEqual(resp.json()["error"], "login_required")
+        self.assertEqual(self.client.get(MODELS_URL).status_code, 401)
 
     def test_requires_post(self):
         self.client.force_login(self.user)
@@ -257,6 +263,27 @@ class PilotChatTests(TestCase):
         self.assertIn("lat 33.43000, lon -111.94000, 812 m above ground", args["prompt"])
         self.assertIn("looking at lat 33.43200", args["prompt"])
         self.assertTrue(args["prompt"].endswith("User: orbit around tempe town lake twice"))
+
+    def test_models_and_selected_model(self):
+        self.client.force_login(self.user)
+        catalog = {"default_model": "unsloth/gemma-4-26B-A4B-it-GGUF",
+                   "models": ["unsloth/gemma-4-26B-A4B-it-GGUF", "qwen3.8:27b", "other-model"]}
+        with mock.patch.object(pilot.requests, "post",
+                               return_value=mcp_result_response(catalog)) as post:
+            resp = self.client.get(MODELS_URL)
+        self.assertEqual(resp.json(), {
+            "default_model": "unsloth/gemma-4-26B-A4B-it-GGUF",
+            "models": ["unsloth/gemma-4-26B-A4B-it-GGUF", "qwen3.8:27b"],
+        })
+        self.assertEqual(post.call_args.kwargs["json"]["params"]["name"], "list_models")
+
+        plan = {"reply": "ok", "actions": []}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(plan)) as post:
+            resp = self.post({"message": "hi", "model": "qwen3.8:27b"})
+        self.assertEqual(resp.status_code, 200)
+        args = post.call_args.kwargs["json"]["params"]["arguments"]
+        self.assertEqual(args["model"], "qwen3.8:27b")
+        self.assertEqual(self.post({"message": "hi", "model": "not-installed"}).status_code, 400)
 
     def test_planet_request(self):
         self.client.force_login(self.user)

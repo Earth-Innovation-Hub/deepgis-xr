@@ -19,6 +19,10 @@
             {% endif %}
         </div>
         <form class="pilot-form" id="pilotForm" autocomplete="off">
+            <select id="pilotModel" aria-label="AI model" title="AI model"
+                    style="max-width: 10rem; background: rgba(15,23,42,.9); color: inherit; border: 1px solid rgba(148,163,184,.35); border-radius: 4px;">
+                <option value="">Gemma (default)</option>
+            </select>
             <input type="text" id="pilotInput" maxlength="600" placeholder="{% if hud_body == "earth" %}Orbit around Tempe Town Lake{% elif hud_body == "moon" %}Orbit Tycho{% else %}Fly to a named feature{% endif %}">
             <button type="submit" id="pilotSendBtn" title="Send"><i class="fas fa-paper-plane"></i></button>
             <button type="button" class="pilot-stop" id="pilotStopBtn" title="Stop all motion"><i class="fas fa-stop"></i></button>

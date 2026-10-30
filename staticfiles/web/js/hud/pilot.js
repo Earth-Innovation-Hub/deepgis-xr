@@ -15,6 +15,7 @@
     const log = document.getElementById('pilotLog');
     const form = document.getElementById('pilotForm');
     const input = document.getElementById('pilotInput');
+    const modelSelect = document.getElementById('pilotModel');
     const sendBtn = document.getElementById('pilotSendBtn');
     const stopBtn = document.getElementById('pilotStopBtn');
     if (!panel || !toggleBtn || !form) return;
@@ -28,6 +29,26 @@
 
     const body = panel.dataset.body || 'earth';
     const isEarth = body === 'earth';
+
+    async function loadModels() {
+        if (!modelSelect) return;
+        try {
+            const resp = await fetch('/label/api/pilot/models/', { credentials: 'same-origin' });
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const models = [...new Set(data.models || [])];
+            if (!models.length) return;
+            modelSelect.replaceChildren(...models.map(name => {
+                const option = document.createElement('option');
+                option.value = name;
+                option.textContent = `${name.toLowerCase().includes('gemma') ? 'Gemma' : 'Qwen'} · ${name}`;
+                return option;
+            }));
+            if (data.default_model) modelSelect.value = data.default_model;
+        } catch (_) {
+            // Keep the server-default Gemma option when discovery is unavailable.
+        }
+    }
     // Flight envelope: Earth is flown at drone scale, other bodies at orbiter scale
     const SCALE = isEarth
         ? { alt: 20000, radius: 20000, orbitAlt: 3000, speed: 150, climb: 50 }
@@ -2341,7 +2362,10 @@
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
-                body: JSON.stringify({ message, history, body, view: await currentView() }),
+                body: JSON.stringify({
+                    message, history, body, view: await currentView(),
+                    model: modelSelect?.value || '',
+                }),
             });
             const data = await resp.json().catch(() => ({}));
             thinking.remove();
@@ -2366,5 +2390,6 @@
         }
     });
 
+    loadModels();
     console.log('[AI Pilot] Initialized');
 })();

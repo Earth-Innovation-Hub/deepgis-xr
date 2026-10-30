@@ -441,6 +441,42 @@ def call_mcp_tool(name, arguments, timeout):
     return structured if structured is not None else json.loads(text)
 
 
+MODEL_CACHE_KEY = "pilot-model-catalog"
+MODEL_CACHE_SEC = 60
+
+
+def _model_catalog(refresh=False):
+    """Only expose active Gemma/Qwen choices; backend URLs never reach the browser."""
+    if not refresh and (cached := cache.get(MODEL_CACHE_KEY)):
+        return cached
+    raw = call_mcp_tool("list_models", {}, 10)
+    names = [str(name) for name in raw.get("models", [])
+             if isinstance(name, str)
+             and ("gemma" in name.lower() or name.lower().startswith("qwen"))]
+    default = str(raw.get("default_model") or "")
+    if default and "gemma" in default.lower() and default not in names:
+        names.insert(0, default)
+    names = list(dict.fromkeys(names))
+    if default not in names:
+        default = next((name for name in names if "gemma" in name.lower()), names[0] if names else "")
+    out = {"default_model": default, "models": names}
+    cache.set(MODEL_CACHE_KEY, out, MODEL_CACHE_SEC)
+    return out
+
+
+@require_GET
+def pilot_models(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "login_required",
+                             "login_url": "/label/admin/login/"}, status=401)
+    if not settings.DEEPGIS_PILOT_MCP_TOKEN:
+        return JsonResponse({"error": "The AI pilot is not configured on this server."}, status=503)
+    try:
+        return JsonResponse(_model_catalog())
+    except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
+        return JsonResponse({"error": f"Model list unavailable: {type(e).__name__}"}, status=502)
+
+
 @require_POST
 def pilot_chat(request):
     if not request.user.is_authenticated:
@@ -458,6 +494,16 @@ def pilot_chat(request):
     body = data.get("body", "earth")
     if not isinstance(body, str) or body not in BODIES:
         return JsonResponse({"error": "Unknown body"}, status=400)
+    model = data.get("model", "")
+    if not isinstance(model, str):
+        return JsonResponse({"error": "Unknown model"}, status=400)
+    model = model.strip()
+    if model:
+        try:
+            if model not in _model_catalog()["models"]:
+                return JsonResponse({"error": "Unknown model"}, status=400)
+        except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
+            return JsonResponse({"error": f"Model list unavailable: {type(e).__name__}"}, status=502)
     if _rate_limited(request.user.pk):
         return JsonResponse({"error": "Too many requests; wait a minute."}, status=429)
 
@@ -473,6 +519,8 @@ def pilot_chat(request):
         "max_tokens": 800,
         "timeout_sec": timeout,
     }
+    if model:
+        args["model"] = model
     for attempt in range(2):
         try:
             out = call_mcp_tool("ask_robot_llm", args, timeout + 10)
