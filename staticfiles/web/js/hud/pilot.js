@@ -30,6 +30,14 @@
     const body = panel.dataset.body || 'earth';
     const isEarth = body === 'earth';
 
+    function modelLabel(name) {
+        const id = name.toLowerCase();
+        if (id.includes('gemma')) return 'Gemma';
+        if (id.includes('robot')) return 'Qwen robot';
+        const size = id.match(/(\d+(?:\.\d+)?)b/);
+        return size ? `Qwen ${size[1].replace(/\.0$/, '')}B` : 'Qwen';
+    }
+
     async function loadModels() {
         if (!modelSelect) return;
         try {
@@ -38,13 +46,18 @@
             const data = await resp.json();
             const models = [...new Set(data.models || [])];
             if (!models.length) return;
-            modelSelect.replaceChildren(...models.map(name => {
+            const labels = models.map(modelLabel);
+            modelSelect.replaceChildren(...models.map((name, i) => {
                 const option = document.createElement('option');
                 option.value = name;
-                option.textContent = `${name.toLowerCase().includes('gemma') ? 'Gemma' : 'Qwen'} · ${name}`;
+                option.title = name;
+                option.textContent = labels.filter(label => label === labels[i]).length > 1
+                    ? `${labels[i]} · ${name.split('/').pop()}` : labels[i];
                 return option;
             }));
             if (data.default_model) modelSelect.value = data.default_model;
+            const selected = modelSelect.selectedOptions[0];
+            modelSelect.title = selected ? selected.title || selected.textContent : 'AI model';
         } catch (_) {
             // Keep the server-default Gemma option when discovery is unavailable.
         }
@@ -2390,6 +2403,10 @@
         }
     });
 
+    modelSelect?.addEventListener('change', () => {
+        const selected = modelSelect.selectedOptions[0];
+        modelSelect.title = selected ? selected.title || selected.textContent : 'AI model';
+    });
     loadModels();
     console.log('[AI Pilot] Initialized');
 })();

@@ -78,8 +78,9 @@
     position: fixed;
     bottom: 70px;
     right: 120px;
-    width: 340px;
-    max-height: 55vh;
+    width: min(560px, calc(100vw - 148px));
+    height: min(68vh, 680px);
+    max-height: calc(100vh - 86px);
     display: none;
     flex-direction: column;
     background: rgba(15, 23, 42, 0.92);
@@ -91,15 +92,28 @@
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 .pilot-panel.visible { display: flex; }
+.pilot-panel .hud-panel-header { flex-shrink: 0; margin-bottom: 8px; }
+.pilot-header-tools { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.pilot-model {
+    width: 8.6rem;
+    max-width: 34vw;
+    background: rgba(30, 41, 59, 0.95);
+    color: #fde68a;
+    border: 1px solid rgba(245, 158, 11, 0.55);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font: 600 0.75rem/1.2 system-ui, sans-serif;
+}
+.pilot-model:focus { outline: none; border-color: #f59e0b; }
 .pilot-log {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    min-height: 80px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
     margin-bottom: 8px;
-    font-size: 0.8rem;
+    font-size: 0.88rem;
 }
 .pilot-msg {
     padding: 6px 9px;
@@ -114,7 +128,7 @@
 .pilot-msg.error { align-self: flex-start; color: #fca5a5; font-size: 0.75rem; padding: 0 9px; }
 .pilot-msg.geo { align-self: flex-start; color: #fde68a; font-size: 0.74rem; padding: 0 9px; }
 .pilot-msg a { color: #fbbf24; }
-.pilot-form { display: flex; gap: 6px; }
+.pilot-form { display: flex; gap: 6px; flex-shrink: 0; }
 .pilot-form input {
     flex: 1;
     min-width: 0;
@@ -1255,4 +1269,8 @@
 }
 .keyboard-shortcuts-legend::-webkit-scrollbar-thumb:hover {
     background: rgba(59, 130, 246, 0.5);
+}
+
+@media (max-width: 760px) {
+    .pilot-panel { right: 8px; left: 8px; width: auto; height: min(62vh, 560px); }
 }
