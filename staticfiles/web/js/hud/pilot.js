@@ -125,19 +125,42 @@
         return hit ? Cesium.Cartographic.fromCartesian(hit, ellipsoid()) : null;
     }
 
+    // What the camera drone is doing, in words views/pilot.py accepts (ACTIVITY_RE)
+    function droneActivity() {
+        if (follow) return `following ${follow.id} (${follow.view === 'chase' ? 'chase' : 'camera'} view)`;
+        const drone = window.DeepGISDrone || {};
+        if (drone.isOrbiting?.()) return 'orbiting';
+        if (drone.isVerticalActive?.()) return 'climbing or descending';
+        return '';
+    }
+
+    // The drone's telemetry, sent with each request so the model can answer
+    // "where are we?" and "what dam is this?"
     async function currentView() {
         const viewer = getViewer();
-        const cam = viewer.camera.positionCartographic;
+        const camera = viewer.camera;
+        const cam = camera.positionCartographic;
         const ground = await groundHeight(cam.longitude, cam.latitude);
         const view = {
             lat: Cesium.Math.toDegrees(cam.latitude),
             lon: Cesium.Math.toDegrees(cam.longitude),
             height_agl: cam.height - ground,
-            heading_deg: Cesium.Math.toDegrees(viewer.camera.heading),
-            pitch_deg: Cesium.Math.toDegrees(viewer.camera.pitch),
+            ground_elev_m: ground,
+            heading_deg: Cesium.Math.toDegrees(camera.heading),
+            pitch_deg: Cesium.Math.toDegrees(camera.pitch),
+            roll_deg: Cesium.Math.toDegrees(camera.roll),
+            hfov_deg: Cesium.Math.toDegrees(camera.frustum.fov),
         };
         const t = viewTarget();
-        if (t) view.target = { lat: Cesium.Math.toDegrees(t.latitude), lon: Cesium.Math.toDegrees(t.longitude) };
+        if (t) {
+            view.target = {
+                lat: Cesium.Math.toDegrees(t.latitude), lon: Cesium.Math.toDegrees(t.longitude),
+                elev_m: t.height,
+                range_m: Cesium.Cartesian3.distance(camera.positionWC, Cesium.Cartographic.toCartesian(t, ellipsoid())),
+            };
+        }
+        const activity = droneActivity();
+        if (activity) view.activity = activity;
         return view;
     }
 

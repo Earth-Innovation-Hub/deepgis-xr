@@ -24,6 +24,7 @@ import os
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from urllib.parse import quote
 
 import numpy as np
@@ -47,6 +48,9 @@ LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "lidar_dem", "topo_datasets")
 # Colour maps a raster layer can be drawn in (COLORMAPS in hud/pilot.js)
 COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm", "rdylgn")
+# The model now and then writes coordinates as a place: "lat 37.41, lon -118.52"
+COORD_PLACE = re.compile(r"\s*(?:lat(?:itude)?\s*)?(-?\d{1,2}(?:\.\d+)?)\s*,?\s*(?:lon(?:gitude)?\s*)?(-?\d{1,3}(?:\.\d+)?)\s*",
+                         re.IGNORECASE)
 MAX_ACTIONS = 8
 MAX_HISTORY = 8
 MAX_MESSAGE_CHARS = 600
@@ -207,7 +211,8 @@ Rules:
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
-- A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
+- The request starts with the drone's telemetry ("Current view") and, for questions about the surroundings, the places OpenStreetMap names around the point in view. Answer where-and-which questions from them in reply with no actions ("what dam are we looking at?", "where are we?", "what lake is that?", "how high are we?", "which way are we facing?"): name the best match nearest the point in view, say it is from the map and the drone's position, and give height, heading or distance from the telemetry when asked. Never name a place that is not listed; if none fits, say so and use describe_view.
+- A question about what is visible or what the scene looks like is a describe_view request. Never describe the view yourself in reply; say you will take a look.
 - A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a vehicle is a follow_vehicle request. Never state where a vehicle is or what it is doing in reply; the viewer reports it.
 - If the request is any other question or not a flight request, answer it in reply and return no actions.
 - Never say in reply that you will show, fly, orbit, look at or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
@@ -228,6 +233,8 @@ Examples (actions only):
 - "show the lidar hillshade of the fault scarps in the Volcanic Tablelands" -> [{"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California"}]
 - "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
 - "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
+- "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
+- "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
 - "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
 - "sync the view with the OpenUAV sim camera" -> [{"type": "follow_vehicle", "view": "camera"}]
 - "chase the locutus drone" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"}]
@@ -254,6 +261,7 @@ Rules:
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the camera is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 {layer_rules}
+- The request starts with the camera's telemetry ("Current view"); answer where-are-we, how-high and which-way questions from it in reply with no actions.
 - A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
 - If the request is any other question or not a flight request, answer it briefly in reply and return no actions; never invent feature facts you are unsure of.
 
@@ -306,9 +314,11 @@ def clean_actions(raw, body="earth"):
         act = {"type": a["type"]}
         lim = LAYER_LIMITS if body == "earth" and act["type"] == "show_layer" else limits
         place = a.get("place")
-        if isinstance(place, str) and place.strip():
-            act["place"] = place.strip()[:120]
         lat, lon = a.get("lat"), a.get("lon")
+        if isinstance(place, str) and (m := COORD_PLACE.fullmatch(place)) and lat is None and lon is None:
+            lat, lon = float(m.group(1)), float(m.group(2))
+        elif isinstance(place, str) and place.strip():
+            act["place"] = place.strip()[:120]
         if (isinstance(lat, (int, float)) and isinstance(lon, (int, float))
                 and not isinstance(lat, bool) and not isinstance(lon, bool)
                 and -90 <= lat <= 90 and -180 <= lon <= 180):
@@ -380,28 +390,167 @@ def named_colormap(message):
     return found.pop() if len(found) == 1 else None
 
 
+COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+# What the page reports the camera drone doing (droneActivity in hud/pilot.js)
+ACTIVITY_RE = re.compile(r"orbiting|climbing or descending|following [a-z0-9_.-]{1,40} \((?:camera|chase) view\)")
+
+
+def _compass(deg):
+    return COMPASS[round((deg % 360) / 45) % 8]
+
+
+def _distance(m):
+    return f"{m:.0f} m" if m < 1000 else f"{m / 1000:.1f} km"
+
+
+def _view_num(src, key):
+    v = src.get(key) if isinstance(src, dict) else None
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
 def _describe_view(view):
-    """One line about the current camera for the prompt; empty if unusable."""
+    """The camera drone's telemetry for the prompt, one line; empty if unusable."""
     if not isinstance(view, dict):
         return ""
-
-    def f(key, src=view):
-        v = src.get(key) if isinstance(src, dict) else None
-        return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
-
+    f = lambda key, src=view: _view_num(src, key)  # noqa: E731
     lat, lon, agl, hdg = f("lat"), f("lon"), f("height_agl"), f("heading_deg")
     if lat is None or lon is None:
         return ""
     line = f"Current view: camera at lat {lat:.5f}, lon {lon:.5f}"
     if agl is not None:
         line += f", {agl:.0f} m above ground"
+    if (ground := f("ground_elev_m")) is not None:
+        line += f" (ground elevation {ground:.0f} m)"
     if hdg is not None:
-        line += f", heading {hdg:.0f} deg"
+        line += f", heading {hdg % 360:.0f} deg ({_compass(hdg)})"
+    if (pitch := f("pitch_deg")) is not None:
+        line += (f", camera tilted {abs(pitch):.0f} deg below the horizon" if pitch < 0
+                 else f", camera {pitch:.0f} deg above the horizon")
+    if (roll := f("roll_deg")) is not None and abs(roll) >= 1:
+        line += f", rolled {roll:.0f} deg"
     tgt = view.get("target")
     tlat, tlon = f("lat", tgt), f("lon", tgt)
     if tlat is not None and tlon is not None:
         line += f"; looking at lat {tlat:.5f}, lon {tlon:.5f}"
+        extra = []
+        if (rng := f("range_m", tgt)) is not None:
+            extra.append(f"{_distance(rng)} away")
+            if (fov := f("hfov_deg")) is not None and 1 <= fov <= 170:
+                extra.append(f"view about {_distance(2 * rng * math.tan(math.radians(fov) / 2))} across")
+        if (elev := f("elev_m", tgt)) is not None:
+            extra.append(f"ground elevation {elev:.0f} m")
+        if extra:
+            line += f" ({', '.join(extra)})"
+    activity = view.get("activity")
+    if isinstance(activity, str) and ACTIVITY_RE.fullmatch(activity):
+        line += f"; the drone is {activity}"
     return line + "."
+
+
+# Questions about the surroundings ("what dam is this?", "where are we?") also get what
+# OpenStreetMap names around the point in view, so the model can name it.
+SITUATIONAL_RE = re.compile(
+    r"\b(where|what|what's|which|identify|called|named|nearby|near (?:here|us|me|by)|around (?:here|us|me)|"
+    r"here|this|that|these|those|we|we're|us|our|looking|facing|landmark|location|position|coordinates|"
+    r"altitude|elevation|how (?:high|far|low|big))\b", re.IGNORECASE)
+PHOTON_REVERSE_URL = "https://photon.komoot.io/reverse"
+NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
+GEO_HEADERS = {"User-Agent": "DeepGIS-XR AI pilot (https://deepgis.org)"}
+NEARBY_TIMEOUT_SEC = 4
+NEARBY_CACHE_SEC = 24 * 3600
+NEARBY_FAIL_CACHE_SEC = 120
+MAX_NEARBY = 10
+NEARBY_RADII = (500, 1000, 2000, 4000)
+OSM_KIND_NAMES = {"highway": "road", "building": "building", "boundary": "boundary"}
+
+
+def _nearby_radius(view):
+    tgt = view.get("target") if isinstance(view.get("target"), dict) else {}
+    rng, fov = _view_num(tgt, "range_m"), _view_num(view, "hfov_deg")
+    half = rng * math.tan(math.radians(fov) / 2) if rng and fov and 1 <= fov <= 170 else _view_num(view, "height_agl")
+    return next((r for r in NEARBY_RADII if (half or 0) <= r), NEARBY_RADII[-1])
+
+
+def _osm_kind(key, value):
+    if key in OSM_KIND_NAMES or value in (None, "", "yes", "other"):
+        return OSM_KIND_NAMES.get(key, str(key or "place").replace("_", " "))
+    return str(value).replace("_", " ")
+
+
+def _offset(lat, lon, plat, plon):
+    """Distance (m) and compass direction from (lat, lon) to (plat, plon)."""
+    dy = math.radians(plat - lat) * 6371000
+    dx = math.radians(plon - lon) * 6371000 * math.cos(math.radians(lat))
+    return math.hypot(dx, dy), _compass(math.degrees(math.atan2(dx, dy)))
+
+
+def _photon_places(lat, lon, radius):
+    """Named OpenStreetMap features around a point, nearest first: [(dist_m, name, kind, direction)].
+    Photon answers in under a second; the public Overpass servers often take 15-30 s."""
+    resp = requests.get(PHOTON_REVERSE_URL, headers=GEO_HEADERS, timeout=NEARBY_TIMEOUT_SEC,
+                        params={"lat": f"{lat:.5f}", "lon": f"{lon:.5f}", "radius": radius / 1000,
+                                "limit": 2 * MAX_NEARBY, "lang": "en"})
+    resp.raise_for_status()
+    found = {}
+    for feat in resp.json().get("features") or []:
+        props, coords = feat.get("properties") or {}, (feat.get("geometry") or {}).get("coordinates")
+        name = props.get("name")
+        if not isinstance(name, str) or not name.strip() or not isinstance(coords, list) or len(coords) != 2:
+            continue
+        plon, plat = coords
+        ext = props.get("extent")  # [west, north, east, south] for ways and areas
+        if isinstance(ext, list) and len(ext) == 4:
+            plon, plat = min(max(lon, ext[0]), ext[2]), min(max(lat, ext[3]), ext[1])
+        dist, way = _offset(lat, lon, plat, plon)
+        key = name.strip().casefold()
+        if key not in found or dist < found[key][0]:
+            found[key] = (dist, name.strip()[:80], _osm_kind(props.get("osm_key"), props.get("osm_value")), way)
+    return sorted(found.values())[:MAX_NEARBY]
+
+
+def _reverse_area(lat, lon):
+    resp = requests.get(NOMINATIM_REVERSE_URL, headers=GEO_HEADERS, timeout=NEARBY_TIMEOUT_SEC,
+                        params={"lat": f"{lat:.5f}", "lon": f"{lon:.5f}", "format": "jsonv2",
+                                "zoom": 12, "accept-language": "en"})
+    resp.raise_for_status()
+    name = resp.json().get("display_name")
+    return name[:200] if isinstance(name, str) else ""
+
+
+def nearby_places(view):
+    """What OpenStreetMap names around the point in view, as a prompt line; "" if unknown."""
+    if not isinstance(view, dict):
+        return ""
+    tgt = view.get("target") if isinstance(view.get("target"), dict) else view
+    lat, lon = _view_num(tgt, "lat"), _view_num(tgt, "lon")
+    if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return ""
+    radius = _nearby_radius(view)
+    key = f"pilot-nearby:v2:{lat:.3f}:{lon:.3f}:{radius}"
+    if (hit := cache.get(key)) is not None:
+        return hit
+    with ThreadPoolExecutor(2) as pool:
+        jobs = pool.submit(_photon_places, lat, lon, radius), pool.submit(_reverse_area, lat, lon)
+        places, area = [], ""
+        try:
+            places = jobs[0].result(timeout=NEARBY_TIMEOUT_SEC + 1)
+        except (requests.RequestException, ValueError, FutureTimeout):
+            pass
+        try:
+            area = jobs[1].result(timeout=NEARBY_TIMEOUT_SEC + 1)
+        except (requests.RequestException, ValueError, FutureTimeout):
+            pass
+    parts = []
+    if places:
+        parts.append(f"Named places within {_distance(radius)} of the point in view (OpenStreetMap, nearest first): "
+                     + "; ".join(f"{name} ({kind}, " + ("at the point in view" if dist < 30
+                                                        else f"{_distance(dist)} {way}") + ")"
+                                 for dist, name, kind, way in places) + ".")
+    if area:
+        parts.append(f"Area: {area}.")
+    line = " ".join(parts)
+    cache.set(key, line, NEARBY_CACHE_SEC if places else NEARBY_FAIL_CACHE_SEC)
+    return line
 
 
 def _rate_limited(user_id, scope="pilot", per_min=None):
@@ -507,8 +656,10 @@ def pilot_chat(request):
     if _rate_limited(request.user.pk):
         return JsonResponse({"error": "Too many requests; wait a minute."}, status=429)
 
-    view_line = _describe_view(data.get("view"))
-    prompt = (view_line + "\n" if view_line else "") + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
+    context = [_describe_view(data.get("view"))]
+    if body == "earth" and context[0] and SITUATIONAL_RE.search(message):
+        context.append(nearby_places(data.get("view")))
+    prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     args = {
         "prompt": prompt,
@@ -562,9 +713,9 @@ DESCRIBE_SCHEMA = {
 }
 VISION_PROMPT = """You are the eyes of the AI pilot in the DeepGIS viewer. The image is one frame from a virtual camera flying over a 3D globe of {body}, rendered by Cesium from {imagery} draped over the terrain. Describe only what is actually visible in it.
 - observations: 4 to 10 short sentences, each about one thing you see and where it is in the frame (left, centre, upper right, foreground, near the horizon). Cover landforms and terrain (craters, ridges, mountains, valleys, channels, dunes, plains, cliffs), surface colour, brightness and texture, shadows and lighting{earth_things}. Mention colour maps, markers, labels or lines drawn on the globe, and black sky or the edge of the globe if visible.
-- Say how sure you are when unsure ("possibly a small crater"). Do not invent names, sizes, ages or other facts you cannot see; name a feature only if a label in the image shows it.
+- Say how sure you are when unsure ("possibly a small crater"). Do not invent names, sizes, ages or other facts you cannot see; name a feature only if a label in the image shows it or it fits a place listed in the location context (then say so, e.g. "an earthen dam, likely Pleasant Valley Dam per the map").
 - If blurry, low-resolution or missing imagery tiles dominate the frame, say so once.
-- summary: one or two sentences on the scene as a whole."""
+- summary: one or two sentences on the scene as a whole; if the location context names the main feature and it fits what you see, name it here and answer the user's question."""
 
 
 def vision_prompt(body):
@@ -611,10 +762,8 @@ def pilot_describe(request):
         return JsonResponse({"error": "Too many view analyses; wait a minute."}, status=429)
 
     lines = [_describe_view(data.get("view"))]
-    view = data.get("view") if isinstance(data.get("view"), dict) else {}
-    pitch = view.get("pitch_deg")
-    if isinstance(pitch, (int, float)) and not isinstance(pitch, bool) and math.isfinite(pitch):
-        lines.append(f"The camera is tilted {abs(pitch):.0f} deg below the horizon.")
+    if body == "earth" and lines[0]:
+        lines.append(nearby_places(data.get("view")))
     question = data.get("question")
     if isinstance(question, str) and question.strip():
         lines.append("The user asked: " + question.strip()[:MAX_MESSAGE_CHARS])
