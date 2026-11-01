@@ -1919,6 +1919,31 @@
         return (await groundHeight(rad(v.lon), rad(v.lat))) + (Number.isFinite(v.up_m) ? v.up_m : 2);
     }
 
+    // The camera view's eye: the vehicle's height plus its camera mount, but never closer
+    // than CAMERA_CLEARANCE_M to the globe's terrain under it. A robot on the ground (or one
+    // that drove up a slope the globe's ~30 m terrain models differently) would otherwise
+    // put the eye at or under the surface, which renders black.
+    const CAMERA_MOUNT_M = { rover: 0.3, boat: 1.0 };
+    const CAMERA_CLEARANCE_M = 2;
+    // Cameras that look ahead, for vehicles that report no gimbal pitch
+    const FORWARD_CAMERA_PITCH = { rover: 0, boat: -5 };
+    const groundHere = new Map();
+
+    async function cameraHeight(v) {
+        const key = `${v.lat.toFixed(5)},${v.lon.toFixed(5)}`;
+        if (!groundHere.has(key)) {
+            if (groundHere.size > 500) groundHere.clear();
+            groundHere.set(key, await groundHeight(rad(v.lon), rad(v.lat)));
+        }
+        const eye = (await vehicleHeight(v)) + (CAMERA_MOUNT_M[v.platform] || 0);
+        return Math.max(eye, groundHere.get(key) + CAMERA_CLEARANCE_M);
+    }
+
+    function cameraPitchDeg(v) {
+        if (Number.isFinite(v.gimbal_pitch_deg)) return v.gimbal_pitch_deg;
+        return FORWARD_CAMERA_PITCH[v.platform] ?? -90;
+    }
+
     const vehicleName = (v) => v.name || v.id;
 
     // Picture-in-picture of the followed vehicle's latest camera frame, for vehicles
@@ -2066,9 +2091,10 @@
                 if (follow !== f) return;
                 if (p && p.age_sec < FOLLOW_STALE_SEC) {
                     f.pose = {
-                        pos: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, await vehicleHeight(p), ellipsoid()),
+                        pos: Cesium.Cartesian3.fromDegrees(p.lon, p.lat,
+                            await (view === 'camera' ? cameraHeight(p) : vehicleHeight(p)), ellipsoid()),
                         heading: rad(p.heading_deg || 0),
-                        pitch: rad(clamp(Number.isFinite(p.gimbal_pitch_deg) ? p.gimbal_pitch_deg : -90, -89.9, 45)),
+                        pitch: rad(clamp(cameraPitchDeg(p), -89.9, 45)),
                     };
                     if (view === 'camera' && Number.isFinite(p.hfov_deg)) viewer.camera.frustum.fov = rad(p.hfov_deg);
                     showFrame(f, p);
