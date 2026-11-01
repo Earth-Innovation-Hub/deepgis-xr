@@ -35,6 +35,8 @@ from django.core.cache import cache
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
+from . import robots
+
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
                 "show_layer", "hide_layer", "describe_view", "follow_vehicle")
 # Vehicles report positions on Earth only
@@ -201,7 +203,7 @@ Actions (all heights are metres ABOVE GROUND):
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
-- follow_vehicle: lock the camera to a live vehicle that reports its position to DeepGIS, and keep following until stop. Vehicles: the digital twin "locutus" (also "the twin"), and students' OpenUAV simulations, named after their username. Fields: vehicle (its name, only if the user names one or says "the twin"); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
+- follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line, e.g. "locutus-rover" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
@@ -210,10 +212,12 @@ Rules:
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
+- While the drone is orbiting or following (Current view says so), a request only to show or hide layers or to look at the view returns only show_layer, hide_layer or describe_view, with no orbit, goto or stop: the drone keeps flying. Leave place out when the user means the area being orbited.
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - The request starts with the drone's telemetry ("Current view") and, for questions about the surroundings, the places OpenStreetMap names around the point in view. Answer where-and-which questions from them in reply with no actions ("what dam are we looking at?", "where are we?", "what lake is that?", "how high are we?", "which way are we facing?"): name the best match nearest the point in view, say it is from the map and the drone's position, and give height, heading or distance from the telemetry when asked. Never name a place that is not listed; if none fits, say so and use describe_view.
 - A question about what is visible or what the scene looks like is a describe_view request. Never describe the view yourself in reply; say you will take a look.
-- A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a vehicle is a follow_vehicle request. Never state where a vehicle is or what it is doing in reply; the viewer reports it.
+- A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a robot is a follow_vehicle request; its reply only says which robot you will follow.
+- The Robots line lists the robots DeepGIS knows: id, name, platform, airframe and site, whether it is live, and its distance and direction from the point in view. Answer which robots exist, are live or are nearby, where one is, how far it is or what kind it is in reply from that line, nearest first, with no actions unless the user also asks to follow one. Use the robots' names in reply. Never invent a robot, a position or a distance that is not listed; if none is listed, say no robot is reporting.
 - If the request is any other question or not a flight request, answer it in reply and return no actions.
 - Never say in reply that you will show, fly, orbit, look at or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
 
@@ -233,13 +237,17 @@ Examples (actions only):
 - "show the lidar hillshade of the fault scarps in the Volcanic Tablelands" -> [{"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California"}]
 - "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
 - "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
+- "remove all the layers" -> [{"type": "hide_layer"}]
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
 - "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
 - "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
 - "sync the view with the OpenUAV sim camera" -> [{"type": "follow_vehicle", "view": "camera"}]
 - "chase the locutus drone" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"}]
 - "follow the twin and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "camera"}, {"type": "describe_view"}]
-- "chase alice's OpenUAV sim" -> [{"type": "follow_vehicle", "vehicle": "alice", "view": "chase"}]
+- "chase alice's OpenUAV sim" -> [{"type": "follow_vehicle", "vehicle": "openuav-alice", "view": "chase"}]
+- "what robots are nearby?" -> [] (reply names the robots in the Robots line, nearest first, with distance, direction and whether each is live)
+- "show me the boat" -> [{"type": "follow_vehicle", "vehicle": "heron-tempe", "view": "chase"}]
+- "follow the rover and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "locutus-rover", "view": "camera"}, {"type": "describe_view"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -275,6 +283,7 @@ Examples (actions only):
 
 PLANET_LAYER_RULES = """- Use show_layer for any request to show, colour or map elevation, height, topography{slope_words}; "heat map" or "colormap" means elevation unless another kind is named. Set place as for goto, or omit place and lat/lon for "here" or "in view"; set radius_m only when the user gives a distance.
 - Put show_layer before an orbit or goto of the same place.
+- While the camera is orbiting (Current view says so), a request only to show or hide layers returns only show_layer or hide_layer, with no orbit, goto or stop: the camera keeps flying.
 - Never state heights, ranges or slopes in reply; the viewer measures them and lists them with their source.
 - Example: "orbit Tycho and show elevation as a colormap" -> [{{"type": "show_layer", "kind": "elevation", "place": "Tycho"}}, {{"type": "orbit", "place": "Tycho"}}]"""
 
@@ -331,8 +340,10 @@ def clean_actions(raw, body="earth"):
             act["clockwise"] = a["clockwise"]
         if act["type"] == "follow_vehicle":
             vehicle = a.get("vehicle")
-            if isinstance(vehicle, str) and VEHICLE_NAME.fullmatch(vehicle.strip().lower()):
-                act["vehicle"] = vehicle.strip().lower()
+            if isinstance(vehicle, str) and vehicle.strip():
+                vid = robots.resolve(vehicle) or robots.canonical_id(vehicle)
+                if VEHICLE_NAME.fullmatch(vid):
+                    act["vehicle"] = vid
             act["view"] = a.get("view") if a.get("view") in FOLLOW_VIEWS else "camera"
         if act["type"] in ("show_layer", "hide_layer"):
             kind = a.get("kind")
@@ -553,6 +564,66 @@ def nearby_places(view):
     return line
 
 
+# Questions about robots ("what robots are nearby?", "follow the rover") get the robots
+# DeepGIS knows, from views/robots.py, measured from the point in view.
+ROBOT_RE = re.compile(
+    r"\b(robots?|vehicles?|drones?|rovers?|boats?|usvs?|ugvs?|uavs?|auvs?|sims?|simulations?|twins?|"
+    r"fleet|follow|chase|sync|ride|heron|locutus|openuav|quadcopters?|vessels?)\b", re.IGNORECASE)
+MAX_ROBOTS_IN_PROMPT = 12
+PLATFORM_NAMES = {"multicopter": "quadcopter drone", "fixed_wing": "fixed-wing drone", "vtol": "VTOL drone",
+                  "rover": "ground rover", "legged": "legged robot", "boat": "boat",
+                  "submarine": "underwater vehicle"}
+
+
+def _ago(sec):
+    if sec < 90:
+        return f"{sec:.0f} s ago"
+    if sec < 5400:
+        return f"{sec / 60:.0f} min ago"
+    if sec < 172800:
+        return f"{sec / 3600:.0f} h ago"
+    return f"{sec / 86400:.0f} days ago"
+
+
+def _robot_phrase(r):
+    what = PLATFORM_NAMES.get(r.get("platform"), "robot")
+    details = ", ".join(x for x in (r.get("airframe"), "simulated" if r.get("kind") == "sim" else "field robot",
+                                      r.get("site")) if x)
+    text = f'{r["id"]} = "{r.get("name") or r["id"]}", a {what} ({details})'
+    if r.get("online"):
+        state = ["live"]
+        if r.get("armed") is True:
+            state.append("armed")
+        if isinstance(r.get("speed_mps"), (int, float)) and r["speed_mps"] >= 0.3:
+            state.append(f"moving {r['speed_mps']:.1f} m/s")
+        elif r.get("landed") is True or r.get("speed_mps") is not None:
+            state.append("stationary")
+        if r.get("frame"):
+            state.append("camera feed")
+    else:
+        state = [f"offline, last seen {_ago(r['last_seen_sec'])}" if "last_seen_sec" in r else "offline, never reported"]
+    if "distance_m" in r:
+        state.append(f"{_distance(r['distance_m'])} {r['direction']} of the point in view")
+    return f"{text}: {', '.join(state)}"
+
+
+def robots_context(view):
+    """One line listing the robots DeepGIS knows, nearest to the point in view first."""
+    lat = lon = None
+    if isinstance(view, dict):
+        tgt = view.get("target") if isinstance(view.get("target"), dict) else {}
+        lat, lon = _view_num(tgt, "lat"), _view_num(tgt, "lon")
+        if lat is None or lon is None:
+            lat, lon = _view_num(view, "lat"), _view_num(view, "lon")
+    try:
+        rows = robots.nearby(lat, lon, include_offline=True, limit=MAX_ROBOTS_IN_PROMPT)
+    except Exception:
+        return "Robots: the robot list is unavailable right now."
+    if not rows:
+        return "Robots: none known to DeepGIS."
+    return "Robots: " + "; ".join(_robot_phrase(r) for r in rows) + "."
+
+
 def _rate_limited(user_id, scope="pilot", per_min=None):
     key = f"{scope}-rate:{user_id}:{int(time.time() // 60)}"
     if cache.add(key, 1, timeout=90):
@@ -592,6 +663,21 @@ def call_mcp_tool(name, arguments, timeout):
 
 MODEL_CACHE_KEY = "pilot-model-catalog"
 MODEL_CACHE_SEC = 60
+
+
+
+def _record_use(request, kind, model, duration, ok):
+    """One line per pilot call, for the superuser console. Never raises."""
+    try:
+        rec = {"t": time.time(), "user": request.user.get_username(),
+               "superuser": bool(request.user.is_superuser), "kind": kind,
+               "model": model or "", "duration_sec": duration, "ok": bool(ok)}
+        dest = "/app/var/ops/llm-usage.jsonl"
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + chr(10))
+    except OSError:
+        pass
 
 
 def _model_catalog(refresh=False):
@@ -659,6 +745,8 @@ def pilot_chat(request):
     context = [_describe_view(data.get("view"))]
     if body == "earth" and context[0] and SITUATIONAL_RE.search(message):
         context.append(nearby_places(data.get("view")))
+    if body == "earth" and ROBOT_RE.search(message):
+        context.append(robots_context(data.get("view")))
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     args = {
@@ -689,6 +777,7 @@ def pilot_chat(request):
         if cmap and a["type"] == "show_layer" and a.get("kind") in RASTER_KINDS:
             a["colormap"] = cmap
     actions = [{k: a[k] for k in FIELD_ORDER if k in a} for a in actions]
+    _record_use(request, "chat", out.get("model", ""), out.get("duration_sec"), True)
     return JsonResponse({
         "reply": reply.strip()[:1000],
         "actions": actions,
@@ -762,6 +851,9 @@ def pilot_describe(request):
         return JsonResponse({"error": "Too many view analyses; wait a minute."}, status=429)
 
     lines = [_describe_view(data.get("view"))]
+    if data.get("source") == "vehicle_camera":
+        lines.append("This image is the followed vehicle's own onboard camera, a simulated camera in "
+                     "its Gazebo digital twin, not the globe: describe it as that camera's view.")
     if body == "earth" and lines[0]:
         lines.append(nearby_places(data.get("view")))
     question = data.get("question")
@@ -788,6 +880,7 @@ def pilot_describe(request):
     summary = seen.get("summary") if isinstance(seen.get("summary"), str) else ""
     observations = [o.strip()[:300] for o in seen.get("observations") or []
                     if isinstance(o, str) and o.strip()][:MAX_OBSERVATIONS]
+    _record_use(request, "describe", out.get("model", ""), out.get("duration_sec"), True)
     return JsonResponse({
         "summary": summary.strip()[:600],
         "observations": observations,

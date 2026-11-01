@@ -1960,6 +1960,22 @@
         label.textContent = `${vehicleName(p)} camera · ${stale ? `last frame ${Math.round(age)} s ago` : `${age.toFixed(1)} s old`}`;
     }
 
+    // While riding a vehicle's camera, its own latest frame is the view to describe
+    async function followedFrame() {
+        const f = follow;
+        if (!f || f.view === 'chase' || !f.frame || f.frame.age_sec > FRAME_STALE_SEC) return null;
+        const resp = await fetch(`/label/api/vehicles/${encodeURIComponent(f.id)}/frame.jpg?seq=${f.frame.seq}`,
+            { credentials: 'same-origin' });
+        if (!resp.ok) return null;
+        const blob = await resp.blob();
+        return new Promise((resolve) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = () => resolve(null);
+            r.readAsDataURL(blob);
+        });
+    }
+
     function hideFrame(f) {
         if (f.pip) f.pip.box.remove();
         f.pip = null;
@@ -1971,6 +1987,7 @@
         follow = null;
         clearTimeout(f.timer);
         f.off();
+        if (f.changed) f.changed();
         hideFrame(f);
         const viewer = getViewer();
         if (f.marker) viewer.entities.remove(f.marker);
@@ -1979,9 +1996,69 @@
         viewer.scene.requestRender();
     }
 
-    function startFollow(v, view) {
+    // Every live robot stays on the globe as its own pin, independent of follow / orbit /
+    // goto, so changing the view does not wipe the fleet.
+    const FLEET_POLL_MS = 1000;
+    const FLEET_KEEP_SEC = 60;
+    const FLEET_COLOR = {
+        multicopter: Cesium.Color.ORANGE, fixed_wing: Cesium.Color.ORANGE, vtol: Cesium.Color.ORANGE,
+        rover: Cesium.Color.YELLOW, legged: Cesium.Color.LIME,
+        boat: Cesium.Color.DODGERBLUE, submarine: Cesium.Color.DEEPSKYBLUE,
+    };
+    const fleet = new Map();
+
+    function fleetStyle(v) {
+        const following = follow && follow.id === v.id;
+        const color = following ? Cesium.Color.CYAN : (FLEET_COLOR[v.platform] || Cesium.Color.WHITE);
+        return { color, pixelSize: following ? 16 : 10, outline: following ? 3 : 2 };
+    }
+
+    async function syncFleet() {
         const viewer = getViewer();
-        const f = { id: v.id, view, fov: viewer.camera.frustum.fov, pose: null, shown: null, lost: false };
+        if (!viewer) return;
+        let list = [];
+        try { list = await liveVehicles(); } catch (e) { return; }
+        const seen = new Set();
+        for (const v of list) {
+            if (v.age_sec > FLEET_KEEP_SEC) continue;
+            seen.add(v.id);
+            const height = await vehicleHeight(v);
+            const pos = Cesium.Cartesian3.fromDegrees(v.lon, v.lat, height, ellipsoid());
+            const style = fleetStyle(v);
+            let row = fleet.get(v.id);
+            if (!row) {
+                row = { entity: viewer.entities.add({
+                    position: pos,
+                    point: { pixelSize: style.pixelSize, color: style.color, outlineColor: Cesium.Color.WHITE,
+                             outlineWidth: style.outline, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                    label: { text: vehicleName(v), font: '13px sans-serif', pixelOffset: new Cesium.Cartesian2(0, -18),
+                             fillColor: Cesium.Color.WHITE, showBackground: true,
+                             disableDepthTestDistance: Number.POSITIVE_INFINITY },
+                }) };
+                fleet.set(v.id, row);
+            } else {
+                row.entity.position = pos;
+                row.entity.point.pixelSize = style.pixelSize;
+                row.entity.point.color = style.color;
+                row.entity.point.outlineWidth = style.outline;
+                row.entity.label.text = vehicleName(v);
+            }
+        }
+        for (const [id, row] of fleet) {
+            if (!seen.has(id)) {
+                viewer.entities.remove(row.entity);
+                fleet.delete(id);
+            }
+        }
+    }
+
+    if (isEarth) setInterval(syncFleet, FLEET_POLL_MS);
+
+    function startFollow(v, view) {
+        stopFollow();
+        const viewer = getViewer();
+        const f = { id: v.id, view, fov: viewer.camera.frustum.fov, pose: null, shown: null,
+                    lost: false, chaseReady: false };
         follow = f;
         const poll = async () => {
             try {
@@ -1995,6 +2072,7 @@
                     };
                     if (view === 'camera' && Number.isFinite(p.hfov_deg)) viewer.camera.frustum.fov = rad(p.hfov_deg);
                     showFrame(f, p);
+                    f.frame = p.frame || null;
                     if (f.lost) addMsg('step', `${vehicleName(p)} is reporting again`);
                     f.lost = false;
                     viewer.scene.requestRender();
@@ -2006,6 +2084,7 @@
             if (follow === f) f.timer = setTimeout(poll, FOLLOW_POLL_MS);
         };
         let last = performance.now();
+        f.changed = viewer.camera.changed.addEventListener(() => viewer.scene.requestRender());
         f.off = viewer.scene.preRender.addEventListener(() => {
             if (!f.pose) return;
             const now = performance.now();
@@ -2019,24 +2098,32 @@
                 f.shown.pitch += k * (f.pose.pitch - f.shown.pitch);
             }
             const camera = viewer.camera;
+            if (viewer.scene.mode !== Cesium.SceneMode.SCENE3D) {
+                if (!Cesium.Matrix4.equals(camera.transform, Cesium.Matrix4.IDENTITY)) {
+                    camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+                }
+                f.chaseReady = false;
+                return;
+            }
             if (view === 'chase') {
-                camera.lookAt(f.shown.pos, new Cesium.HeadingPitchRange(f.shown.heading, rad(-25), CHASE_RANGE_M));
+                // Follow the vehicle's position; leave heading/pitch/range to Cesium's
+                // look-at controller so the mouse can orbit and zoom around it.
+                const transform = Cesium.Transforms.eastNorthUpToFixedFrame(f.shown.pos, ellipsoid());
+                if (!f.chaseReady) {
+                    camera.lookAt(f.shown.pos, new Cesium.HeadingPitchRange(f.shown.heading, rad(-25), CHASE_RANGE_M));
+                    f.chaseReady = true;
+                } else {
+                    camera.lookAtTransform(transform);
+                }
             } else {
+                if (!Cesium.Matrix4.equals(camera.transform, Cesium.Matrix4.IDENTITY)) {
+                    camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+                }
                 camera.setView({ destination: f.shown.pos,
                                  orientation: { heading: f.shown.heading, pitch: f.shown.pitch, roll: 0 } });
             }
             if (Cesium.Cartesian3.distance(f.shown.pos, f.pose.pos) > 0.05) viewer.scene.requestRender();
         });
-        if (view === 'chase') {
-            f.marker = viewer.entities.add({
-                position: new Cesium.CallbackProperty(() => f.shown?.pos, false),
-                point: { pixelSize: 12, color: Cesium.Color.ORANGE, outlineColor: Cesium.Color.WHITE,
-                         outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY },
-                label: { text: vehicleName(v), font: '13px sans-serif', pixelOffset: new Cesium.Cartesian2(0, -18),
-                         fillColor: Cesium.Color.WHITE, showBackground: true,
-                         disableDepthTestDistance: Number.POSITIVE_INFINITY },
-            });
-        }
         poll();
     }
 
@@ -2194,7 +2281,8 @@
             const where = Number.isFinite(v.up_m) ? `, ${fmtM(v.up_m)} above its take-off point` : '';
             addMsg('step', `Following ${vehicleName(v)} ${view === 'chase' ? 'from behind' : 'through its camera'}` +
                    `${where}, heading ${Math.round(((v.heading_deg || 0) + 360) % 360)}°.` +
-                   `${v.frame ? ' Its camera is at the bottom left.' : ''} Say "stop" to let go.`);
+                   `${v.frame ? ' Its camera is at the bottom left.' : ''}` +
+                   `${view === 'chase' ? ' Drag to orbit, scroll to zoom.' : ''} Say "stop" to let go.`);
         },
 
         async wait(a, id) {
@@ -2310,12 +2398,14 @@
             const working = addMsg('step', 'Looking at the view...');
             let data;
             try {
-                const image = await captureView();
+                const onboard = await followedFrame().catch(() => null);
+                const image = onboard || await captureView();
+                const source = onboard ? 'vehicle_camera' : 'globe';
                 const resp = await fetch(PILOT_DESCRIBE_URL, {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
-                    body: JSON.stringify({ image, body, view: await currentView(), question: lastMessage }),
+                    body: JSON.stringify({ image, body, source, view: await currentView(), question: lastMessage }),
                 });
                 data = await resp.json().catch(() => ({}));
                 if (!resp.ok) throw new Error(data.error || `View analysis failed (HTTP ${resp.status})`);
@@ -2352,6 +2442,13 @@
     const samePlace = (x, y) => (x.place && x.place === y.place) ||
         (Number.isFinite(x.lat) && x.lat === y.lat && x.lon === y.lon);
 
+    // Plans of only these leave the camera alone, so they run alongside an orbit,
+    // a flight or a follow instead of replacing it
+    const PASSIVE_TYPES = new Set(['show_layer', 'hide_layer', 'describe_view']);
+    let plansRunning = 0;
+    const droneMoving = () => plansRunning > 0 || !!follow ||
+        !!drone().isOrbiting?.() || !!drone().isVerticalActive?.();
+
     async function runPlan(actions) {
         // An orbit flies to its own start point; a goto to the same place first is a detour
         actions = actions.filter((a, i) => {
@@ -2359,26 +2456,32 @@
             const next = actions.slice(i + 1).find(b => b.type !== 'show_layer');
             return !(next && next.type === 'orbit' && samePlace(a, next));
         });
-        // A new plan replaces whatever is flying now
-        stopAll(actions.every(a => a.type === 'describe_view'));
+        const passive = actions.every(a => PASSIVE_TYPES.has(a.type));
+        const keepMoving = passive && droneMoving();
+        // Any other plan replaces whatever is flying now; a passive one shares the running
+        // plan's id, so Stop still cancels both
+        if (!passive) stopAll();
         const id = runId;
+        plansRunning++;
         try {
             // Describing the view as it is needs no 3D switch
             if (actions.some(a => a.type !== 'stop' && a.type !== 'describe_view')) await ensure3D(id);
             for (const [i, a] of actions.entries()) {
                 check(id);
-                // Frame the area unless a later step moves the camera anyway; off Earth
-                // a layer for the area in view (sized from the camera) stays put
+                // Frame the area unless a later step moves the camera anyway or the drone is
+                // busy flying; off Earth a layer for the area in view (sized from the camera) stays put
                 if (a.type === 'show_layer') {
-                    a.frame = !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit') &&
+                    a.frame = !keepMoving && !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit') &&
                         (isEarth || !!a.place || Number.isFinite(a.lat));
                 }
                 await runners[a.type](a, id);
             }
-            if (actions.some(a => a.type !== 'stop') && !follow) addMsg('step', 'Done');
+            if (actions.some(a => a.type !== 'stop') && !follow && !keepMoving) addMsg('step', 'Done');
         } catch (e) {
             if (e instanceof Cancelled) return;
             addMsg('error', e.message || String(e));
+        } finally {
+            plansRunning--;
         }
     }
 
@@ -2431,5 +2534,12 @@
         modelSelect.title = selected ? selected.title || selected.textContent : 'AI model';
     });
     loadModels();
+    // These widgets take the camera; leave the fleet pins, drop the chase lock.
+    document.querySelectorAll('button').forEach(btn => {
+        const t = btn.textContent.trim().toLowerCase();
+        if (t === 'home' || t === 'fly forward' || t === 'orbit') {
+            btn.addEventListener('click', () => { if (follow) stopFollow(); });
+        }
+    });
     console.log('[AI Pilot] Initialized');
 })();

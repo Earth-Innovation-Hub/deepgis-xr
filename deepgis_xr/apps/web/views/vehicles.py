@@ -17,11 +17,17 @@ Camera frames work the same way: the vehicle POSTs a JPEG to vehicle_frame with 
 token (metadata, including the pose at capture, in the X-Frame-Meta header), only the
 latest is kept, vehicles_live says which vehicles have one, and signed-in viewers fetch
 it from vehicle_frame_image.
+
+Robot identity (one hyphenated id per robot, its name, platform, aliases), last-known
+positions and a downsampled track live in the database through views/robots.py;
+vehicles_nearby searches them for the AI pilot and, with a ROBOT_READ_TOKENS token, for
+the DREAMS Lab MCP's find_robots.
 """
 
 import hashlib
 import hmac
 import json
+import logging
 import math
 import re
 from io import BytesIO
@@ -34,13 +40,17 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from PIL import Image
 
+from . import robots
+
+log = logging.getLogger(__name__)
+
 MAX_BODY_BYTES = 4096
 POSE_TTL_SEC = 60  # a vehicle silent this long drops off the list
 FRAME_TTL_SEC = 60
 FRAME_MAX_BYTES = 600 * 1024
 FRAME_MAX_SIDE = 4096
 CAPTURE_SKEW_SEC = 600  # a capture time further than this from the server's clock is dropped
-IDS_KEY = "vehicles:ids"
+IDS_KEY = robots.IDS_KEY
 VEHICLE_ID = re.compile(r"[a-z0-9_-]{1,40}")
 KINDS = ("sim", "field")
 # (min, max); out-of-range numbers are dropped, not clamped: a bad pose must not fly the camera
@@ -169,6 +179,10 @@ def vehicle_pose(request):
     ids = live.get(IDS_KEY) or []
     if vid not in ids:
         live.set(IDS_KEY, sorted({*ids, vid}), None)
+    try:
+        robots.record_pose(vid, pose)
+    except Exception:  # the live pose is what viewers need; the database copy can lag
+        log.exception("could not record %s in the database", vid)
     return JsonResponse({"ok": True})
 
 
@@ -240,22 +254,63 @@ def vehicle_frame_image(request, vid):
 def vehicles_live(request):
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Sign in to follow vehicles"}, status=401)
-    live = caches["live"]
-    ids = live.get(IDS_KEY) or []
-    found = live.get_many([f"vehicle:{vid}" for vid in ids])
-    poses = found.values()
-    if len(found) < len(ids):  # sims come and go; forget the ones whose pose expired
-        live.set(IDS_KEY, sorted(p["id"] for p in poses), None)
-    frames = live.get_many([f"frame_info:{p['id']}" for p in poses])
-    t = now()
-    vehicles = []
-    for pose in poses:
-        pose = dict(pose)
-        pose["age_sec"] = round(max(0.0, t - pose.pop("received")), 2)
-        info = frames.get(f"frame_info:{pose['id']}")
-        if info:
-            pose["frame"] = {"seq": info["seq"], "w": info["w"], "h": info["h"],
-                             "age_sec": round(max(0.0, t - info["received"]), 2)}
-        vehicles.append(pose)
-    vehicles.sort(key=lambda p: p["age_sec"])
-    return JsonResponse({"vehicles": vehicles})
+    reg = robots.registry()
+    return JsonResponse({"vehicles": [robots.enrich(p, reg) for p in robots.live_poses()]})
+
+
+def read_token_ok(request):
+    """A bearer token whose sha256 is listed in ROBOT_READ_TOKENS ("hex,hex")."""
+    token = bearer(request)
+    if not token:
+        return False
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    known = [d.strip() for d in (settings.ROBOT_READ_TOKENS or "").split(",") if d.strip()]
+    return any(hmac.compare_digest(d, digest) for d in known)
+
+
+def _query_float(q, key):
+    try:
+        v = float(q.get(key, ""))
+    except ValueError:
+        return None
+    return v if math.isfinite(v) else None
+
+
+NEARBY_MAX_RADIUS_M = 20_000_000
+NEARBY_MAX_LIMIT = 200
+
+
+@require_GET
+def vehicles_nearby(request):
+    """Robots near a point or another robot, of a platform, or matching a name.
+
+    GET lat, lon (or near=<robot id or name>), radius_m (0 = any distance), platform
+    ("rover", "drones", "boat"...), q (a name, alias or platform word), offline=1 to include
+    known robots that are not reporting (at their last-known position), limit.
+    """
+    if not (request.user.is_authenticated or read_token_ok(request)):
+        return JsonResponse({"error": "Sign in or present a robot read token"}, status=401)
+    q = request.GET
+    lat, lon = _query_float(q, "lat"), _query_float(q, "lon")
+    if (lat is None) != (lon is None) or (lat is not None and not _latlon(lat, lon)):
+        return JsonResponse({"error": "lat and lon must be given together and be valid"}, status=400)
+    center = {"lat": lat, "lon": lon} if lat is not None else None
+    near = q.get("near", "").strip()
+    if near:
+        everyone = robots.nearby(include_offline=True, limit=NEARBY_MAX_LIMIT)
+        vid = robots.resolve(near, [r["id"] for r in everyone])
+        anchor = next((r for r in everyone if r["id"] == vid and "lat" in r), None)
+        if anchor is None:
+            return JsonResponse({"error": f"No robot called {near!r} with a known position"}, status=404)
+        lat, lon = anchor["lat"], anchor["lon"]
+        center = {"lat": lat, "lon": lon, "robot": vid}
+    radius = min(max(_query_float(q, "radius_m") or 0.0, 0.0), NEARBY_MAX_RADIUS_M)
+    try:
+        limit = min(max(int(q.get("limit", 50)), 1), NEARBY_MAX_LIMIT)
+    except ValueError:
+        limit = 50
+    rows = robots.nearby(lat, lon, radius, q.get("platform", ""), q.get("q", ""),
+                         include_offline=q.get("offline", "") in ("1", "true", "yes"), limit=limit)
+    if center and center.get("robot"):
+        rows = [r for r in rows if r["id"] != center["robot"]]
+    return JsonResponse({"center": center, "radius_m": radius or None, "robots": rows})

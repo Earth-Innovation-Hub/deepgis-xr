@@ -258,6 +258,18 @@ class Vehicle(models.Model):
     name = models.CharField(max_length=200)
     vehicle_type = models.ForeignKey(VehicleType, on_delete=models.CASCADE)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='INACTIVE')
+
+    # Identity for robot search (views/robots.py); vehicle_id is the robot's one id
+    kind = models.CharField(max_length=10, choices=[('sim', 'Simulation'), ('field', 'Field robot')],
+                            default='sim')
+    platform = models.CharField(max_length=20, blank=True, default='',
+                                help_text="multicopter, fixed_wing, vtol, rover, legged, boat, submarine or other")
+    airframe = models.CharField(max_length=120, blank=True, default='')
+    site = models.CharField(max_length=200, blank=True, default='')
+    aliases = JSONField(default=list, blank=True, help_text='Other names users call it, e.g. ["the rover"]')
+    mcp_robot = models.CharField(max_length=50, blank=True, default='',
+                                 help_text="Its robot id on the DREAMS Lab MCP, if the lab LLM serves it")
+    description = models.TextField(blank=True, default='')
     
     # Current Position (most recent)
     current_latitude = models.DecimalField(max_digits=17, decimal_places=14, null=True, blank=True)
