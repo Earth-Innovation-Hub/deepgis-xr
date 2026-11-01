@@ -49,8 +49,8 @@ data layers:
 - on the Moon: *"orbit Tycho and show elevation as a colormap"*
 - on any globe: *"do a visual analysis of the viewport camera scene and list
   what you observe"*
-- on Earth: *"sync the view with the OpenUAV sim camera"*, *"chase the
-  locutus drone"*
+- on Earth: *"sync the view with the OpenUAV sim camera"*, *"chase kestrel"*,
+  *"what robots are nearby?"*, *"orbit the Locutus world"*
 
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
@@ -185,6 +185,20 @@ roads into one labelled graph.
   frames can later be placed on the map.
 - Read-only by design: each token may post for one vehicle only, nothing on
   this path sends anything to a vehicle, and a pose expires after 60 s.
+- **Robots are named by callsign.** A robot's id is a callsign, independent
+  of the simulation (*world*) or container it runs in: the DREAMS Lab twins
+  are `kestrel` (multirotor) and `badger` (rover) in the Locutus world, and
+  `otter` (boat) in the Tempe Town Lake world. A `Vehicle` row holds each
+  robot's identity (name, platform, airframe, world as `site`, aliases), its
+  last-known position and a downsampled track (at most every 10 s, kept 14
+  days); the live pose stays in the cache. Aliases resolve to the callsign
+  ("the rover" → badger, "heron" → otter), and "drone" or "robot" means
+  every platform.
+- The pilot knows the robots: *"what robots are nearby?"*, *"how far is
+  otter from the other robots?"*, *"which robots are in the Locutus world?"*
+  are answered from the registry, nearest first. A world or a robot named as
+  a place (*"orbit the Locutus world"*, *"fly to badger"*) flies to the
+  robot, or to the middle of that world's robots.
 - Heights are drawn as the globe's terrain height at the vehicle's take-off
   point plus its height above that point, so no geoid model is needed. A
   simulation's ground matches the real ground only where its world was
@@ -332,7 +346,8 @@ deepgis-xr/
 │   │       ├── views/                # pages, missions, auth_ajax, ai_reports,
 │   │       │                         # training_datasets, semi_supervised,
 │   │       │                         # models_3d, pilot (AI pilot + relays),
-│   │       │                         # twin_access, vehicles (live poses), legacy
+│   │       │                         # twin_access, vehicles (live poses), robots
+│   │       │                         # (registry, aliases, nearby), legacy
 │   │       ├── world_sampler.py      # adaptive spatial sampler
 │   │       ├── world_sampler_api/    # sampling + AI viewport API
 │   │       │   ├── core.py, http.py  # helpers + HTTP endpoints
@@ -446,6 +461,15 @@ deepgis-xr/
 - `GET /label/api/vehicles/<id>/frame.jpg`: that frame, for signed-in users
   only (401 otherwise); 404 when there is none. `vehicles/live/` adds
   `frame: {seq, w, h, age_sec}` to each vehicle that has one.
+- `GET /label/api/vehicles/nearby/`: robots near a point or another robot,
+  for signed-in users or a bearer token from `ROBOT_READ_TOKENS`.
+  - **Query:** `lat` and `lon`, or `near=<callsign or alias>`; `radius_m`
+    (0 = any distance); `platform` (`multirotor`, `rover`, `boat`, `drones`...);
+    `q` (a callsign, alias, world or platform word); `offline=1` to include
+    robots with only a last-known position; `limit`.
+  - **Returns:** `{"robots": [{id, name, platform, airframe, site, online,
+    lat, lon, distance_m, bearing_deg, direction, ...}, ...]}`, live first,
+    then nearest.
 
 ### Viewers and access
 
@@ -682,7 +706,7 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
    model sees. Treat the list as a model's reading of the picture, not a
    measurement.
 5. On Earth, follow a live vehicle ("sync the view with the OpenUAV sim
-   camera", "chase the locutus drone", "chase alice's OpenUAV sim").
+   camera", "chase kestrel", "follow the rover", "chase alice's OpenUAV sim").
    Without a name the pilot picks the vehicle that reported most recently
    and lists the others; a name that is not live lists the live ones. If
    its poses stop for 3 s the view holds and the panel says so.

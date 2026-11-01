@@ -2001,7 +2001,7 @@
     const FLEET_POLL_MS = 1000;
     const FLEET_KEEP_SEC = 60;
     const FLEET_COLOR = {
-        multicopter: Cesium.Color.ORANGE, fixed_wing: Cesium.Color.ORANGE, vtol: Cesium.Color.ORANGE,
+        multirotor: Cesium.Color.ORANGE, multicopter: Cesium.Color.ORANGE, fixed_wing: Cesium.Color.ORANGE, vtol: Cesium.Color.ORANGE,
         rover: Cesium.Color.YELLOW, legged: Cesium.Color.LIME,
         boat: Cesium.Color.DODGERBLUE, submarine: Cesium.Color.DEEPSKYBLUE,
     };

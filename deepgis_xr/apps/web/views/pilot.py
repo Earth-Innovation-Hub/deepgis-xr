@@ -43,6 +43,7 @@ ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
 EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
 FOLLOW_VIEWS = ("camera", "chase")
 VEHICLE_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
+VEHICLE_SPOKEN = re.compile(r"[A-Za-z0-9_. '\u2019-]{1,60}")  # "Jane.Doe", "alice's sim"; not "rm -rf /"
 # Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
@@ -203,7 +204,7 @@ Actions (all heights are metres ABOVE GROUND):
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
-- follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line, e.g. "locutus-rover" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
+- follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
 - Write place names so a geocoder finds them: include the city and state or country, e.g. "Tempe Town Lake, Tempe, Arizona". Use lat/lon only when the user gives coordinates.
@@ -242,12 +243,14 @@ Examples (actions only):
 - "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
 - "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
 - "sync the view with the OpenUAV sim camera" -> [{"type": "follow_vehicle", "view": "camera"}]
-- "chase the locutus drone" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "chase"}]
-- "follow the twin and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "locutus", "view": "camera"}, {"type": "describe_view"}]
+- "chase kestrel" -> [{"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}]
+- "follow the multirotor and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "kestrel", "view": "camera"}, {"type": "describe_view"}]
 - "chase alice's OpenUAV sim" -> [{"type": "follow_vehicle", "vehicle": "openuav-alice", "view": "chase"}]
 - "what robots are nearby?" -> [] (reply names the robots in the Robots line, nearest first, with distance, direction and whether each is live)
-- "show me the boat" -> [{"type": "follow_vehicle", "vehicle": "heron-tempe", "view": "chase"}]
-- "follow the rover and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "locutus-rover", "view": "camera"}, {"type": "describe_view"}]
+- "show me the boat" -> [{"type": "follow_vehicle", "vehicle": "otter", "view": "chase"}]
+- "follow the rover and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "badger", "view": "camera"}, {"type": "describe_view"}]
+- "which robots are in the Locutus world?" -> [] (reply lists the Robots line entries whose site is that world)
+- "orbit the Locutus world" -> [{"type": "orbit", "place": "Locutus world"}] (a world or a robot as a place: write its name as place; DeepGIS puts it at its robots)
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
@@ -332,6 +335,14 @@ def clean_actions(raw, body="earth"):
                 and not isinstance(lat, bool) and not isinstance(lon, bool)
                 and -90 <= lat <= 90 and -180 <= lon <= 180):
             act["lat"], act["lon"] = float(lat), float(lon)
+        if body == "earth" and "place" in act and "lat" not in act:
+            try:
+                spot = robots.locate(act["place"])
+            except Exception:
+                spot = None
+            if spot:
+                act["lat"], act["lon"] = round(spot["lat"], 6), round(spot["lon"], 6)
+                act["place"] = spot["label"][:120]
         for field in lim:
             v = _num(a.get(field), field, lim)
             if v is not None:
@@ -341,7 +352,8 @@ def clean_actions(raw, body="earth"):
         if act["type"] == "follow_vehicle":
             vehicle = a.get("vehicle")
             if isinstance(vehicle, str) and vehicle.strip():
-                vid = robots.resolve(vehicle) or robots.canonical_id(vehicle)
+                vid = robots.resolve(vehicle) or (
+                    robots.canonical_id(vehicle) if VEHICLE_SPOKEN.fullmatch(vehicle.strip()) else "")
                 if VEHICLE_NAME.fullmatch(vid):
                     act["vehicle"] = vid
             act["view"] = a.get("view") if a.get("view") in FOLLOW_VIEWS else "camera"
@@ -568,9 +580,10 @@ def nearby_places(view):
 # DeepGIS knows, from views/robots.py, measured from the point in view.
 ROBOT_RE = re.compile(
     r"\b(robots?|vehicles?|drones?|rovers?|boats?|usvs?|ugvs?|uavs?|auvs?|sims?|simulations?|twins?|"
-    r"fleet|follow|chase|sync|ride|heron|locutus|openuav|quadcopters?|vessels?)\b", re.IGNORECASE)
+    r"fleet|follow|chase|sync|ride|heron|locutus|openuav|quadcopters?|multirotors?|vessels?|callsigns?|"
+    r"worlds?)\b", re.IGNORECASE)
 MAX_ROBOTS_IN_PROMPT = 12
-PLATFORM_NAMES = {"multicopter": "quadcopter drone", "fixed_wing": "fixed-wing drone", "vtol": "VTOL drone",
+PLATFORM_NAMES = {"multirotor": "multirotor drone", "fixed_wing": "fixed-wing drone", "vtol": "VTOL drone",
                   "rover": "ground rover", "legged": "legged robot", "boat": "boat",
                   "submarine": "underwater vehicle"}
 
@@ -586,7 +599,7 @@ def _ago(sec):
 
 
 def _robot_phrase(r):
-    what = PLATFORM_NAMES.get(r.get("platform"), "robot")
+    what = PLATFORM_NAMES.get(robots.PLATFORM_ALIASES.get(r.get("platform"), r.get("platform")), "robot")
     details = ", ".join(x for x in (r.get("airframe"), "simulated" if r.get("kind") == "sim" else "field robot",
                                       r.get("site")) if x)
     text = f'{r["id"]} = "{r.get("name") or r["id"]}", a {what} ({details})'
@@ -745,7 +758,7 @@ def pilot_chat(request):
     context = [_describe_view(data.get("view"))]
     if body == "earth" and context[0] and SITUATIONAL_RE.search(message):
         context.append(nearby_places(data.get("view")))
-    if body == "earth" and ROBOT_RE.search(message):
+    if body == "earth" and (ROBOT_RE.search(message) or robots.mentions_robot(message)):
         context.append(robots_context(data.get("view")))
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC

@@ -255,7 +255,7 @@ def vehicles_live(request):
     if not request.user.is_authenticated:
         return JsonResponse({"error": "Sign in to follow vehicles"}, status=401)
     reg = robots.registry()
-    return JsonResponse({"vehicles": [robots.enrich(p, reg) for p in robots.live_poses()]})
+    return JsonResponse({"vehicles": [robots.enrich(p, reg) for p in robots.live_poses(now())]})
 
 
 def read_token_ok(request):

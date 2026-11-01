@@ -1,9 +1,11 @@
 """
 Robot registry and nearby search: simulations today, field robots later.
 
-A robot has one id everywhere: lowercase and hyphenated ("locutus-rover"). Its publisher
-posts as that id (views/vehicles.py), the DREAMS Lab MCP serves it as robot=<id>, and the
-AI pilot follows it by that id. Students' OpenUAV sims are openuav-<username>.
+A robot's id is its callsign ("kestrel", "badger", "otter"): lowercase, hyphenated, unique,
+and independent of the world or container it runs in. Its publisher posts as that id
+(views/vehicles.py), the DREAMS Lab MCP serves it as robot=<id>, and the AI pilot follows it
+by that id. The world it is in ("Locutus world", "Tempe Town Lake world") is its site, so a
+query for a world finds every robot in it. Students' OpenUAV sims are openuav-<username>.
 
 core.Vehicle holds each robot's identity (name, platform, airframe, site, aliases, its
 MCP id) and last-known position; core.VehiclePosition holds a downsampled track. The
@@ -35,7 +37,7 @@ REGISTRY_SEC = 30
 
 # platform -> (VehicleType name, category, icon)
 PLATFORMS = {
-    "multicopter": ("Multicopter", "DRONE", "\U0001F681"),
+    "multirotor": ("Multirotor", "DRONE", "\U0001F681"),
     "fixed_wing": ("Fixed-wing", "DRONE", "\u2708\ufe0f"),
     "vtol": ("VTOL", "DRONE", "\U0001F6E9\ufe0f"),
     "rover": ("Rover", "GROUND", "\U0001F699"),
@@ -45,10 +47,14 @@ PLATFORMS = {
     "other": ("Other", "OTHER", "\U0001F4CD"),
 }
 # words in a query -> the platforms they mean
+PLATFORM_ALIASES = {"multicopter": "multirotor"}  # older platform names stored or sent
+# "drone" means any uncrewed robot here: aerial, ground, surface or underwater
 PLATFORM_WORDS = {
-    "drone": ("multicopter", "fixed_wing", "vtol"), "uav": ("multicopter", "fixed_wing", "vtol"),
-    "aircraft": ("multicopter", "fixed_wing", "vtol"), "aerial": ("multicopter", "fixed_wing", "vtol"),
-    "quadcopter": ("multicopter",), "copter": ("multicopter",), "multicopter": ("multicopter",),
+    "drone": tuple(p for p in PLATFORMS if p != "other"), "robot": tuple(p for p in PLATFORMS if p != "other"),
+    "uav": ("multirotor", "fixed_wing", "vtol"),
+    "aircraft": ("multirotor", "fixed_wing", "vtol"), "aerial": ("multirotor", "fixed_wing", "vtol"),
+    "quadcopter": ("multirotor",), "copter": ("multirotor",), "multicopter": ("multirotor",),
+    "quadrotor": ("multirotor",), "hexacopter": ("multirotor",),
     "plane": ("fixed_wing", "vtol"), "fixed-wing": ("fixed_wing",), "vtol": ("vtol",),
     "rover": ("rover",), "ugv": ("rover", "legged"), "ground": ("rover", "legged"),
     "legged": ("legged",), "dog": ("legged",),
@@ -62,7 +68,7 @@ _registry = {"t": -1e9, "data": {}}
 
 
 def canonical_id(text):
-    """"Locutus_Rover", "the locutus rover", "alice's sim" -> "locutus-rover", ...; "" if empty."""
+    """"Kestrel", "the badger", "alice's sim" -> "kestrel", "badger", "alice-sim"; "" if empty."""
     if not isinstance(text, str):
         return ""
     s = text.strip().lower()
@@ -78,6 +84,7 @@ def platform_set(text):
     key = canonical_id(text).rstrip("s") if text else ""
     if not key:
         return None
+    key = PLATFORM_ALIASES.get(key, key)
     if key.replace("-", "_") in PLATFORMS:
         return {key.replace("-", "_")}
     return set(PLATFORM_WORDS.get(key, ())) or None
@@ -86,7 +93,8 @@ def platform_set(text):
 def _vehicle_info(v):
     info = {
         "id": v.vehicle_id, "name": v.name, "kind": v.kind or "sim",
-        "platform": v.platform or "other", "airframe": v.airframe, "site": v.site,
+        "platform": PLATFORM_ALIASES.get(v.platform, v.platform) or "other", "airframe": v.airframe,
+        "site": v.site,
         "aliases": [a for a in (v.aliases or []) if isinstance(a, str)],
         "mcp_robot": v.mcp_robot, "description": v.description,
     }
@@ -114,6 +122,22 @@ def _matches(info, key):
     return key in {canonical_id(a) for a in info.get("aliases", ())}
 
 
+def mentions_robot(text):
+    """True when text names a known robot by id or alias ("chase kestrel"), as a whole word."""
+    if not isinstance(text, str) or not text.strip():
+        return False
+    words = canonical_id(text)
+    if not words:
+        return False
+    padded = f"-{words}-"
+    for vid, info in registry().items():
+        for name in (vid, *info.get("aliases", ())):
+            key = canonical_id(name)
+            if key and f"-{key}-" in padded:
+                return True
+    return False
+
+
 def resolve(name, live_ids=()):
     """The robot id a user's name for it means, or None: an id, a display name, an alias
     ("the rover"), or a username for an OpenUAV sim ("alice", "alice's sim")."""
@@ -122,7 +146,7 @@ def resolve(name, live_ids=()):
         return None
     reg = registry()
     known = set(reg) | set(live_ids)
-    trimmed = re.sub(r"-(?:openuav-)?(?:sim|simulation|drone)$", "", key)
+    trimmed = re.sub(r"-(?:openuav-)?(?:sim|simulation|drone|robot|multirotor|rover|boat)$", "", key)
     for k in dict.fromkeys((key, trimmed)):
         if k in known:
             return k
@@ -133,6 +157,34 @@ def resolve(name, live_ids=()):
         if prefix and prefix + k in known:
             return prefix + k
     return None
+
+
+def _world_key(site):
+    """"Locutus world (digital twin, ...)" -> "locutus"; "" when the site names no world."""
+    m = re.match(r"\s*(.+?)\s+world\b", site or "", re.IGNORECASE)
+    return canonical_id(m.group(1)) if m else ""
+
+
+def locate(place):
+    """{"lat", "lon", "label"} for a place that names a robot ("badger") or a world
+    ("Locutus world"), which no geocoder knows: the robot's position, or the middle of
+    the world's robots. None for anything else."""
+    key = canonical_id(place)
+    if not key:
+        return None
+    vid = resolve(place)
+    # A world only when named as one: "Tempe Town Lake" is also a real place for the geocoder
+    world = re.sub(r"-(?:world|twin|digital-twin|sim|simulation)$", "", key)
+    if not vid and world == key:
+        return None
+    rows = [r for r in nearby(include_offline=True, limit=500) if "lat" in r and "lon" in r]
+    hits = ([r for r in rows if r["id"] == vid] if vid
+            else [r for r in rows if world and _world_key(r.get("site")) == world])
+    if not hits:
+        return None
+    names = ", ".join(r.get("name") or r["id"] for r in hits)
+    return {"lat": sum(r["lat"] for r in hits) / len(hits), "lon": sum(r["lon"] for r in hits) / len(hits),
+            "label": names if vid else f"{place.strip()} ({names})"}
 
 
 def _distance_m(lat1, lon1, lat2, lon2):
@@ -158,7 +210,7 @@ def _vehicle_type(platform):
 
 def _new_vehicle(vid, pose):
     fleet = settings.VEHICLE_FLEET_PREFIX and vid.startswith(settings.VEHICLE_FLEET_PREFIX)
-    platform = "multicopter" if fleet else "other"
+    platform = "multirotor" if fleet else "other"
     owner = None
     if fleet:
         from django.contrib.auth import get_user_model
@@ -208,8 +260,9 @@ def mark_offline(ids):
         Vehicle.objects.filter(vehicle_id__in=list(ids), status="ACTIVE").update(status="INACTIVE")
 
 
-def live_poses():
-    """Latest pose of every robot reporting now, with age_sec and its frame, freshest first."""
+def live_poses(t=None):
+    """Latest pose of every robot reporting now, with age_sec and its frame, freshest first.
+    t is the clock the poses' received times came from (default time.time())."""
     live = caches["live"]
     ids = live.get(IDS_KEY) or []
     found = live.get_many([f"vehicle:{vid}" for vid in ids])
@@ -221,7 +274,7 @@ def live_poses():
         except Exception:
             log.exception("could not mark robots offline")
     frames = live.get_many([f"frame_info:{p['id']}" for p in poses])
-    t = time.time()
+    t = time.time() if t is None else t
     out = []
     for pose in poses:
         pose = dict(pose)

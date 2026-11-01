@@ -175,6 +175,21 @@ class CleanActionsTests(TestCase):
         self.assertIn("- describe_view:", pilot.planet_prompt("europa"))
         self.assertIn("- describe_view:", pilot.SYSTEM_PROMPT)
 
+    def test_world_or_robot_as_place_flies_to_its_robots(self):
+        rows = [{"id": "kestrel", "name": "Kestrel", "site": "Locutus world (digital twin)", "lat": 37.0, "lon": -118.0},
+                {"id": "badger", "name": "Badger", "site": "Locutus world (digital twin)", "lat": 37.002, "lon": -118.0},
+                {"id": "otter", "name": "Otter", "site": "Tempe Town Lake world (digital twin)",
+                 "lat": 33.43, "lon": -111.93}]
+        with mock.patch.object(pilot.robots, "nearby", return_value=rows), \
+                mock.patch.object(pilot.robots, "resolve", side_effect=lambda p: {"badger": "badger"}.get(p.lower())):
+            out = pilot.clean_actions([{"type": "orbit", "place": "Locutus world"},
+                                       {"type": "goto", "place": "badger"},
+                                       {"type": "orbit", "place": "Tempe Town Lake"}])
+        self.assertEqual(out, [
+            {"type": "orbit", "place": "Locutus world (Kestrel, Badger)", "lat": 37.001, "lon": -118.0},
+            {"type": "goto", "place": "Badger", "lat": 37.002, "lon": -118.0},
+            {"type": "orbit", "place": "Tempe Town Lake"}])
+
     def test_follow_vehicle_on_earth_only(self):
         plan = [{"type": "follow_vehicle", "vehicle": " Locutus ", "view": "chase", "alt_m": 50, "place": "Bishop"},
                 {"type": "follow_vehicle", "vehicle": "rm -rf /", "view": "cockpit"},
