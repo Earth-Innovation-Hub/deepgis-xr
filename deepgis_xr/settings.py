@@ -224,6 +224,11 @@ DEEPGIS_PILOT_MCP_URL = os.environ.get('DEEPGIS_PILOT_MCP_URL', 'http://10.99.0.
 DEEPGIS_PILOT_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_MCP_TOKEN', '')
 DEEPGIS_PILOT_TIMEOUT_SEC = float(os.environ.get('DEEPGIS_PILOT_TIMEOUT_SEC', '90'))
 DEEPGIS_PILOT_RATE_PER_MIN = int(os.environ.get('DEEPGIS_PILOT_RATE_PER_MIN', '12'))
+# Superusers' robot commands from the AI pilot (pilot_robot_command): the command-enabled
+# dreams_mcp and a token of its own (its DREAMS_MCP_EXTRA_TOKENS), both only in .env.
+# Unset, the pilot offers no robot commands.
+DEEPGIS_PILOT_CONTROL_MCP_URL = os.environ.get('DEEPGIS_PILOT_CONTROL_MCP_URL', '')
+DEEPGIS_PILOT_CONTROL_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_CONTROL_MCP_TOKEN', '')
 
 # Live vehicle poses for the pilot's follow_vehicle (views/vehicles.py).
 # "vehicle_id:sha256hex,..."; each publisher holds its own token, the server only the hash.

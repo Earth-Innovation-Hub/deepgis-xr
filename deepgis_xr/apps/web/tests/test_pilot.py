@@ -441,6 +441,190 @@ class PilotChatTests(TestCase):
         self.assertEqual(codes, [200, 200, 200, 429])
 
 
+ROBOT_COMMAND_URL = "/label/api/pilot/robot-command/"
+CONTROL_ROBOTS = {"default": "kestrel", "robots": [
+    {"robot": "kestrel", "aliases": ["Quad"], "type": "multirotor", "commands": True},
+    {"robot": "badger", "aliases": [], "type": "rover", "commands": True},
+    {"robot": "orca", "aliases": [], "type": "boat", "commands": False},
+]}
+CONTROL = {"kestrel": {"type": "multirotor", "aliases": ["quad"]}, "badger": {"type": "rover", "aliases": []}}
+
+
+class RobotCommandCleanTests(TestCase):
+    def test_dropped_without_control(self):
+        raw = [{"type": "robot_command", "vehicle": "kestrel", "command": "land"}]
+        self.assertEqual(pilot.clean_actions(raw), [])
+        self.assertEqual(pilot.clean_actions(raw, "moon", CONTROL), [])
+
+    def test_kept_for_commandable_robots(self):
+        raw = [{"type": "robot_command", "vehicle": "kestrel", "command": "instruct",
+                "instruction": "  take off\nand fly 20 m north  ", "place": "ignored"},
+               {"type": "robot_command", "vehicle": "quad", "command": "land"},
+               {"type": "robot_command", "vehicle": "orca", "command": "land"},
+               {"type": "robot_command", "vehicle": "badger", "command": "instruct"},
+               {"type": "robot_command", "vehicle": "badger", "command": "self_destruct"},
+               {"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}]
+        self.assertEqual(pilot.clean_actions(raw, "earth", CONTROL), [
+            {"type": "robot_command", "vehicle": "kestrel", "command": "instruct",
+             "instruction": "take off and fly 20 m north"},
+            {"type": "robot_command", "vehicle": "kestrel", "command": "land"},
+            {"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}])
+
+    def test_control_schema_extends_pilot_schema(self):
+        items = pilot.CONTROL_SCHEMA["properties"]["actions"]["items"]["properties"]
+        self.assertIn("robot_command", items["type"]["enum"])
+        self.assertEqual(items["command"]["enum"], list(pilot.ROBOT_COMMANDS))
+        self.assertNotIn("robot_command", pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+        self.assertNotIn("command", pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
+
+
+@override_settings(DEEPGIS_PILOT_MCP_TOKEN="test-token", DEEPGIS_PILOT_CONTROL_MCP_URL="http://control.test/mcp",
+                   DEEPGIS_PILOT_CONTROL_MCP_TOKEN="control-token")
+class RobotCommandTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user(username="pilot", password="pw",
+                                                         phone_number="+14805550101")
+        self.admin = get_user_model().objects.create_superuser(username="boss", email="b@example.org", password="pw",
+                                                               phone_number="+14805550102")
+        self.client = Client()
+        fd, self.log_path = tempfile.mkstemp(suffix=".jsonl")
+        os.close(fd)
+        os.remove(self.log_path)
+        patcher = mock.patch.object(pilot, "ROBOT_COMMAND_LOG", self.log_path)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.addCleanup(lambda: os.path.exists(self.log_path) and os.remove(self.log_path))
+
+    def chat(self, message):
+        return self.client.post(URL, json.dumps({"message": message}), content_type="application/json")
+
+    def command(self, payload, client=None):
+        return (client or self.client).post(ROBOT_COMMAND_URL, json.dumps(payload), content_type="application/json")
+
+    def test_regular_user_chat_has_no_control(self):
+        self.client.force_login(self.user)
+        plan = {"reply": "Proposing it.", "actions": [{"type": "robot_command", "vehicle": "kestrel", "command": "land"}]}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(plan)) as post:
+            resp = self.chat("land kestrel")
+        self.assertEqual(resp.json()["actions"], [])
+        self.assertEqual(post.call_count, 1)
+        args = post.call_args.kwargs["json"]["params"]["arguments"]
+        self.assertEqual(args["json_schema"], pilot.PILOT_SCHEMA)
+        self.assertNotIn("Robot control", args["system_prompt"])
+
+    def test_superuser_chat_offers_commandable_robots(self):
+        self.client.force_login(self.admin)
+        plan = {"reply": "I'll propose a survey for kestrel; confirm it below.",
+                "actions": [{"type": "robot_command", "vehicle": "kestrel", "command": "instruct",
+                             "instruction": "take off and survey a 40 m square at 15 m"},
+                            {"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}]}
+        with mock.patch.object(pilot.requests, "post",
+                               side_effect=[mcp_result_response(CONTROL_ROBOTS), mcp_response(plan)]) as post:
+            resp = self.chat("kestrel, take off and survey a 40 m square at 15 m")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["actions"], [
+            {"type": "robot_command", "vehicle": "kestrel", "command": "instruct",
+             "instruction": "take off and survey a 40 m square at 15 m"},
+            {"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}])
+        listing, ask = post.call_args_list
+        self.assertEqual(listing.args[0], "http://control.test/mcp")
+        self.assertEqual(listing.kwargs["headers"]["Authorization"], "Bearer control-token")
+        self.assertEqual(listing.kwargs["json"]["params"]["name"], "list_robots")
+        self.assertEqual(ask.kwargs["headers"]["Authorization"], "Bearer test-token")
+        args = ask.kwargs["json"]["params"]["arguments"]
+        self.assertEqual(args["json_schema"], pilot.CONTROL_SCHEMA)
+        self.assertIn("kestrel (multirotor drone); badger (ground rover).", args["system_prompt"])
+        self.assertNotIn("orca", args["system_prompt"])
+
+    def test_superuser_chat_without_command_server(self):
+        self.client.force_login(self.admin)
+        plan = {"reply": "OK.", "actions": [{"type": "robot_command", "vehicle": "kestrel", "command": "land"}]}
+        with mock.patch.object(pilot.requests, "post",
+                               side_effect=[pilot.requests.ConnectionError("down"), mcp_response(plan)]) as post:
+            resp = self.chat("land kestrel")
+        self.assertEqual(resp.json()["actions"], [])
+        self.assertEqual(post.call_args.kwargs["json"]["params"]["arguments"]["json_schema"], pilot.PILOT_SCHEMA)
+
+    def test_command_needs_superuser(self):
+        payload = {"vehicle": "kestrel", "command": "land"}
+        with mock.patch.object(pilot.requests, "post") as post:
+            self.assertEqual(self.command(payload).status_code, 401)
+            self.client.force_login(self.user)
+            self.assertEqual(self.command(payload).status_code, 403)
+        post.assert_not_called()
+
+    def test_command_enforces_csrf(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.admin)
+        with mock.patch.object(pilot.requests, "post") as post:
+            self.assertEqual(self.command({"vehicle": "kestrel", "command": "land"}, client).status_code, 403)
+        post.assert_not_called()
+
+    @override_settings(DEEPGIS_PILOT_CONTROL_MCP_URL="")
+    def test_command_unconfigured(self):
+        self.client.force_login(self.admin)
+        self.assertEqual(self.command({"vehicle": "kestrel", "command": "land"}).status_code, 503)
+
+    def test_instruct_preview(self):
+        self.client.force_login(self.admin)
+        result = {"command": "instruction", "id": "abc", "before": {"armed": False}, "accepted": True,
+                  "result": "dry_run", "message": "plan only (dry run): take off to 15 m",
+                  "plan": {"steps": ["take off to 15 m"], "waypoints": 1, "path_m": 0.0, "end": "hold"}}
+        with mock.patch.object(pilot.requests, "post",
+                               side_effect=[mcp_result_response(CONTROL_ROBOTS), mcp_result_response(result)]) as post:
+            resp = self.command({"vehicle": "Quad", "command": "instruct", "instruction": "take off", "dry_run": True})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"type": "robot_command", "vehicle": "kestrel", "command": "instruct",
+                                       "instruction": "take off", "dry_run": True, "accepted": True,
+                                       "result": "dry_run", "message": result["message"], "plan": result["plan"]})
+        params = post.call_args.kwargs["json"]["params"]
+        self.assertEqual(post.call_args.args[0], "http://control.test/mcp")
+        self.assertEqual(params["name"], "instruct")
+        self.assertEqual(params["arguments"], {"text": "take off", "dry_run": True, "wait_sec": 0,
+                                               "robot": "kestrel", "requested_by": "deepgis:boss"})
+        with open(self.log_path) as fh:
+            rec = json.loads(fh.read())
+        self.assertEqual((rec["user"], rec["vehicle"], rec["dry_run"], rec["result"]), ("boss", "kestrel", True, "dry_run"))
+
+    def test_return_home(self):
+        self.client.force_login(self.admin)
+        result = {"command": "rtl", "accepted": True, "verified": True, "message": "RTL sent"}
+        with mock.patch.object(pilot.requests, "post",
+                               side_effect=[mcp_result_response(CONTROL_ROBOTS), mcp_result_response(result)]) as post:
+            resp = self.command({"vehicle": "badger", "command": "return_home", "dry_run": True})
+        self.assertEqual(resp.json()["dry_run"], False)
+        self.assertEqual(resp.json()["verified"], True)
+        params = post.call_args.kwargs["json"]["params"]
+        self.assertEqual(params["name"], "return_home_and_land")
+        self.assertEqual(params["arguments"], {"reason": "DeepGIS AI Pilot (boss)", "robot": "badger",
+                                               "requested_by": "deepgis:boss"})
+
+    def test_unknown_or_read_only_robot(self):
+        self.client.force_login(self.admin)
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_result_response(CONTROL_ROBOTS)) as post:
+            self.assertEqual(self.command({"vehicle": "orca", "command": "land"}).status_code, 400)
+            self.assertEqual(self.command({"vehicle": "kestrel", "command": "instruct"}).status_code, 400)
+        self.assertEqual(post.call_count, 1)  # list_robots only, cached
+
+    def test_timeout_may_have_sent(self):
+        self.client.force_login(self.admin)
+        with mock.patch.object(pilot.requests, "post",
+                               side_effect=[mcp_result_response(CONTROL_ROBOTS), pilot.requests.Timeout()]):
+            resp = self.command({"vehicle": "kestrel", "command": "land"})
+        self.assertEqual(resp.status_code, 502)
+        self.assertIn("may still have reached", resp.json()["error"])
+
+    def test_rate_limit(self):
+        self.client.force_login(self.admin)
+        result = {"command": "land", "accepted": True}
+        with mock.patch.object(pilot, "ROBOT_COMMAND_RATE_PER_MIN", 1), \
+                mock.patch.object(pilot.requests, "post",
+                                  side_effect=[mcp_result_response(CONTROL_ROBOTS), mcp_result_response(result)]):
+            codes = [self.command({"vehicle": "kestrel", "command": "land"}).status_code for _ in range(2)]
+        self.assertEqual(codes, [200, 429])
+
+
 DESCRIBE_URL = "/label/api/pilot/describe/"
 PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 PNG_URL = "data:image/png;base64," + PNG_B64

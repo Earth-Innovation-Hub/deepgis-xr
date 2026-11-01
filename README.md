@@ -55,8 +55,16 @@ data layers:
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
 `hide_layer`, `describe_view`, `follow_vehicle`). Django validates and clamps
-them, and the page runs them on the existing drone controls. It never touches
-a real vehicle.
+them, and the page runs them on the existing drone controls. These actions
+never touch a vehicle.
+
+Superusers can also command the lab's robots (the PX4 digital twins) from
+the same chat, for example *"kestrel, take off and survey a 40 m square at
+15 m"*, *"drive the rover 10 m north and let me watch"* or *"send kestrel
+home"*. The model proposes a `robot_command`, and the chat shows it as a
+card. Nothing is sent until you press **Send**. **Preview plan** asks the
+robot's mission supervisor for the plan without flying it. See
+[Robot commands](#robot-commands-superusers).
 `describe_view` sends one frame of the 3D view to the lab's vision model,
 which returns a summary and a list of what it sees. `follow_vehicle` locks
 the view to a live vehicle (see [Live vehicles](#-live-vehicles)). Off Earth the
@@ -271,7 +279,7 @@ python manage.py runserver
 Tests and lint:
 
 ```bash
-python manage.py test deepgis_xr.apps.web.tests   # 61 tests: AI pilot, planet viewer, twin access, vehicles
+python manage.py test deepgis_xr.apps.web.tests   # 83 tests: AI pilot (and robot commands), planet viewer, twin access, vehicles
 docker run --rm -v "$PWD":/w -w /w node:22-alpine node --test 'tests/js/*.test.js'   # planet registry
 pytest
 ruff check .
@@ -321,7 +329,9 @@ while `DEBUG=False`. After changing Python code or templates, run
 - AI pilot: a language model reached through a read-only MCP server
   (`dreams_mcp_ro` from the DREAMS Lab `dreams_llm_ros2` stack),
   `DEEPGIS_PILOT_MCP_URL`; its `ask_robot_llm` tool plans and its
-  `describe_image` tool (a vision-capable model) answers `describe_view`
+  `describe_image` tool (a vision-capable model) answers `describe_view`.
+  Superusers' confirmed robot commands go to the command-enabled `dreams_mcp`
+  instead (`DEEPGIS_PILOT_CONTROL_MCP_URL`, with its own token)
 - PyTorch 2.5.1 + CUDA 12.1 stays in the image only for the admin training task
 
 **Infrastructure**
@@ -403,6 +413,24 @@ deepgis-xr/
   - **Errors:** 401 `login_required` (with `login_url`), 400 for an empty or
     invalid message, 429 when rate-limited, 503 if the pilot is not
     configured, and 502 if the model is unavailable.
+  - For superusers, when robot commands are configured, the schema also
+    offers `robot_command {vehicle, command, instruction?}`. It is kept only
+    for robots the command server lists as taking commands.
+- `POST /label/api/pilot/robot-command/`: sends one confirmed
+  `robot_command`. Superusers only (403 otherwise), CSRF, 6 commands/min per
+  user.
+  - **Body:** `{"vehicle": "kestrel", "command": "instruct" | "return_home" |
+    "land", "instruction": "...", "dry_run": false}`. `instruction` is
+    required for `instruct`. `dry_run` (instruct only) plans without moving
+    anything.
+  - **Returns:** the cleaned command plus the supervisor's `accepted`,
+    `result` (`dry_run`, `in_progress`, `rejected`, `needs_clarification`,
+    and so on), `message`, and for instructions the `plan` (steps,
+    waypoints, path length, how it ends). Every command is appended to
+    `var/ops/robot-commands.jsonl` with the user's name.
+  - **Errors:** 401, 403, 400 for an unknown robot or command, 429, 503 if
+    not configured, and 502 if the command server fails. On a timeout the
+    command may still have reached the robot, and the message says so.
 - `POST /label/api/pilot/describe/`: the `describe_view` action. Same
   sign-in and CSRF rules; 6 requests/min per user.
   - **Body:** `{"image": "data:image/jpeg;base64,...", "body": "mars",
@@ -582,7 +610,35 @@ Browser: run actions in order on the drone controls
      follow_vehicle {vehicle?, view: camera | chase}   (Earth only)
        └─ poll GET /label/api/vehicles/live/ and ease the camera to each pose;
           poses arrive from publishers via POST /label/api/vehicles/pose/
+     robot_command {vehicle, command, instruction?}  (superusers, Earth only)
+       └─ not run: shown as a card with Preview plan / Send / Cancel;
+          Send ──► POST /label/api/pilot/robot-command/ (superuser · CSRF · rate limit · log)
+                ──► command-enabled MCP server (dreams_mcp): instruct |
+                    return_home_and_land | land_in_place
+                ──► mission supervisor (geofence, altitude band, battery,
+                    failsafes) ──► the twin's executor ──► PX4
 ```
+
+### Robot commands (superusers)
+
+- The model only proposes a command; nothing is sent until the user presses
+  **Send** on its card. Non-superusers never see the action: their schema
+  and prompt do not offer it, and the server drops it.
+- The robots offered are the ones the command server's `list_robots` marks
+  as taking commands (cached for 60 s). If the server is unreachable, the
+  pilot offers no commands.
+- DeepGIS holds its own token for the command server
+  (`DEEPGIS_PILOT_CONTROL_MCP_TOKEN`). It is separate from the lab's main
+  token, so it can be revoked on its own. Each command carries
+  `requested_by: deepgis:<username>`, which the supervisor records in its
+  ledger.
+- Limits are not enforced here. The robot's mission supervisor checks every
+  waypoint against its geofence, altitude band, battery and failsafes, and
+  rejects what fails.
+- Plain-language instructions are planned by the robot LLM through the
+  supervisor's `instruct` tool. Its planner describes a multicopter, so
+  instructions suit kestrel; for the rover and the boat, use return home and
+  land.
 
 Design rules:
 
@@ -710,7 +766,13 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
    Without a name the pilot picks the vehicle that reported most recently
    and lists the others; a name that is not live lists the live ones. If
    its poses stop for 3 s the view holds and the panel says so.
-6. Press **Stop** at any time.
+6. Press **Stop** at any time. Stop moves only the camera. It does not stop a
+   robot; to stop one, ask the pilot to send it home or land it.
+7. Superusers: ask a robot to do something ("kestrel, take off and fly 20 m
+   north at 15 m", "send kestrel home"). Check the card, optionally press
+   **Preview plan**, then press **Send**. The chat shows whether the robot's
+   supervisor accepted the command. Ask the pilot to chase the robot to
+   watch it.
 
 ### AI Viewport Analysis
 1. Open DeepGIS Search and the **AI** panel.
@@ -813,6 +875,10 @@ DEEPGIS_PILOT_MCP_URL=http://<mcp-host>:8766/mcp
 DEEPGIS_PILOT_MCP_TOKEN=         # the READ-ONLY server's token, never a command-enabled one
 # DEEPGIS_PILOT_TIMEOUT_SEC=90
 # DEEPGIS_PILOT_RATE_PER_MIN=12
+# Robot commands for superusers (optional; without both, the pilot offers none).
+# The command-enabled server, with a token of its own (its DREAMS_MCP_EXTRA_TOKENS).
+# DEEPGIS_PILOT_CONTROL_MCP_URL=http://<mcp-host>:8765/mcp
+# DEEPGIS_PILOT_CONTROL_MCP_TOKEN=
 
 # Live vehicles (optional; the pose endpoint returns 503 without tokens)
 # One "vehicle_id:sha256(token)" per vehicle, comma-separated; the token

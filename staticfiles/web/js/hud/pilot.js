@@ -9,6 +9,9 @@
 // Cesium Ion; elsewhere names come from the IAU gazetteer
 // (scripts/build_planet_nomenclature.py) and the page's preset sites, and the
 // data layers (PLANET_LAYERS) are drawn from the body's terrain or elevation maps.
+// For superusers the server may also return robot_command, a command for one of the lab's
+// robots: it does not run with the plan but becomes a card in the chat, and is posted to
+// /label/api/pilot/robot-command/ only when the user presses Send (Preview plans it only).
 (function initAiPilot() {
     const panel = document.getElementById('pilotPanel');
     const toggleBtn = document.getElementById('hudPilotBtn');
@@ -2511,6 +2514,95 @@
         }
     }
 
+    const ROBOT_COMMAND_URL = '/label/api/pilot/robot-command/';
+    const ROBOT_COMMAND_NAMES = { instruct: 'instruction', return_home: 'return home and land', land: 'land now' };
+
+    function robotCommandCard(a) {
+        const card = addMsg('robot', '');
+        const title = document.createElement('div');
+        title.className = 'pilot-robot-title';
+        title.textContent = `Command for ${a.vehicle}: ${ROBOT_COMMAND_NAMES[a.command] || a.command}`;
+        card.appendChild(title);
+        if (a.instruction) {
+            const text = document.createElement('div');
+            text.className = 'pilot-robot-text';
+            text.textContent = `“${a.instruction}”`;
+            card.appendChild(text);
+        }
+        const row = document.createElement('div');
+        row.className = 'pilot-robot-buttons';
+        const button = (label, cls) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = cls;
+            b.textContent = label;
+            row.appendChild(b);
+            return b;
+        };
+        const preview = a.command === 'instruct' ? button('Preview plan', 'preview') : null;
+        const send = button('Send', 'send');
+        const cancel = button('Cancel', 'cancel');
+        card.appendChild(row);
+        const busy = on => [preview, send, cancel].forEach(b => { if (b) b.disabled = on; });
+        cancel.addEventListener('click', () => { row.remove(); addMsg('step', `Not sent to ${a.vehicle}`); });
+        preview?.addEventListener('click', () => postRobotCommand(a, true, busy));
+        send.addEventListener('click', async () => {
+            if (await postRobotCommand(a, false, busy)) row.remove();
+        });
+        log.scrollTop = log.scrollHeight;
+    }
+
+    // true once the server has answered a real send (accepted or not), so the card can't send twice
+    async function postRobotCommand(a, dryRun, busy) {
+        busy(true);
+        const working = addMsg('step', dryRun ? `Planning for ${a.vehicle} (nothing is sent)...` : `Sending to ${a.vehicle}...`);
+        try {
+            const resp = await fetch(ROBOT_COMMAND_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                body: JSON.stringify({ vehicle: a.vehicle, command: a.command,
+                                       instruction: a.instruction || '', dry_run: dryRun }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            working.remove();
+            if (!resp.ok) {
+                addMsg('error', data.error || `Command failed (HTTP ${resp.status})`);
+                return false;
+            }
+            reportRobotResult(data);
+            return !dryRun;
+        } catch (err) {
+            working.remove();
+            addMsg('error', `Command failed: ${err.message || err}`);
+            return false;
+        } finally {
+            busy(false);
+        }
+    }
+
+    function reportRobotResult(d) {
+        const plan = d.plan && typeof d.plan === 'object' ? d.plan : null;
+        if (d.accepted === false || d.result === 'rejected' || d.result === 'needs_clarification') {
+            addMsg('error', `${d.vehicle}: ${d.message || d.result || 'rejected'}`);
+            return;
+        }
+        if (d.dry_run) addMsg('ai', `Plan for ${d.vehicle} (not sent):`);
+        else if (d.accepted == null) addMsg('ai', `Sent to ${d.vehicle}; no acknowledgement yet. ${d.message || ''}`.trim());
+        else addMsg('ai', `${d.vehicle} accepted it${d.message ? `: ${d.message}` : ''}`);
+        if (plan) {
+            (Array.isArray(plan.steps) ? plan.steps : []).forEach(s => addMsg('step', `• ${s}`));
+            const parts = [];
+            if (Number.isFinite(plan.waypoints)) parts.push(`${plan.waypoints} waypoints`);
+            if (Number.isFinite(plan.path_m)) parts.push(`${Math.round(plan.path_m)} m`);
+            if (plan.end) parts.push(`then ${plan.end}`);
+            if (parts.length) addMsg('step', parts.join(', '));
+        } else if (d.dry_run && d.message) {
+            addMsg('step', d.message);
+        }
+        if (!d.dry_run && d.result === 'in_progress') addMsg('step', `${d.vehicle} is on its way; chase it to watch`);
+    }
+
     stopBtn.addEventListener('click', () => { stopAll(); addMsg('step', 'Stopped'); });
 
     form.addEventListener('submit', async (e) => {
@@ -2546,7 +2638,10 @@
             history.push({ role: 'user', content: message },
                          { role: 'assistant', content: JSON.stringify({ reply: data.reply, actions: data.actions }) });
             history.splice(0, Math.max(0, history.length - 8));
-            if (data.actions && data.actions.length) runPlan(data.actions);
+            const actions = data.actions || [];
+            actions.filter(a => a.type === 'robot_command').forEach(robotCommandCard);
+            const camera = actions.filter(a => a.type !== 'robot_command');
+            if (camera.length) runPlan(camera);
         } catch (err) {
             thinking.remove();
             addMsg('error', `Request failed: ${err.message || err}`);

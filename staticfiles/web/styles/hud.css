@@ -128,6 +128,15 @@
 .pilot-msg.error { align-self: flex-start; color: #fca5a5; font-size: 0.75rem; padding: 0 9px; }
 .pilot-msg.geo { align-self: flex-start; color: #fde68a; font-size: 0.74rem; padding: 0 9px; }
 .pilot-msg a { color: #fbbf24; }
+.pilot-msg.robot { align-self: flex-start; max-width: 92%; background: rgba(120, 53, 15, 0.55);
+    border: 1px solid rgba(251, 191, 36, 0.6); color: #fef3c7; }
+.pilot-robot-title { font-weight: 600; }
+.pilot-robot-text { margin-top: 3px; font-style: italic; }
+.pilot-robot-buttons { display: flex; gap: 6px; margin-top: 6px; }
+.pilot-robot-buttons button { border: 0; border-radius: 6px; padding: 3px 10px; font-size: 0.78rem; cursor: pointer;
+    background: rgba(51, 65, 85, 0.9); color: #e2e8f0; }
+.pilot-robot-buttons button.send { background: #d97706; color: #111827; font-weight: 600; }
+.pilot-robot-buttons button:disabled { opacity: 0.5; cursor: default; }
 .pilot-form { display: flex; gap: 6px; flex-shrink: 0; }
 .pilot-form input {
     flex: 1;

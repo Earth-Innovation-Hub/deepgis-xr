@@ -14,7 +14,13 @@ terrain through pilot_topo); place names are geocoded in the browser, off Earth 
 IAU planetary gazetteer. describe_view sends one frame of the canvas to pilot_describe,
 which asks the same model what it sees (dreams_mcp's describe_image). follow_vehicle
 (Earth only) rides the camera on a live vehicle's pose from views/vehicles.py.
-Nothing here touches a real vehicle.
+
+For superusers only, the model may also propose robot_command: a command for one of
+the lab's robots that take commands (the digital twins). The chat shows it as a card;
+nothing is sent until the user confirms it there, which posts it to
+pilot_robot_command, which calls the command-enabled dreams_mcp
+(DEEPGIS_PILOT_CONTROL_MCP_*). The mission supervisor still checks every command
+(geofence, altitude band, battery, failsafes). No other path here touches a vehicle.
 """
 
 import base64
@@ -130,6 +136,28 @@ PILOT_SCHEMA = {
 FIELD_ORDER = tuple(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
 LAYER_FIELDS = ("type", "kind", "place", "colormap", "lat", "lon", "radius_m", "distance_km")
 FOLLOW_FIELDS = ("type", "vehicle", "view")
+
+# Superusers' robot commands: dreams_mcp tools on the command-enabled server
+ROBOT_COMMANDS = ("instruct", "return_home", "land")
+ROBOT_FIELDS = ("type", "vehicle", "command", "instruction")
+MAX_INSTRUCTION_CHARS = 300
+
+
+def _control_schema():
+    props = dict(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
+    props["type"] = {"enum": [*ACTION_TYPES, "robot_command"]}
+    keys = list(props)
+    at = keys.index("vehicle") + 1
+    ordered = {k: props[k] for k in keys[:at]}
+    ordered["command"] = {"enum": list(ROBOT_COMMANDS)}
+    ordered["instruction"] = {"type": "string"}
+    ordered.update({k: props[k] for k in keys[at:]})
+    items = {**PILOT_SCHEMA["properties"]["actions"]["items"], "properties": ordered}
+    actions = {**PILOT_SCHEMA["properties"]["actions"], "items": items}
+    return {**PILOT_SCHEMA, "properties": {**PILOT_SCHEMA["properties"], "actions": actions}}
+
+
+CONTROL_SCHEMA = _control_schema()
 # Layers drawn as colour maps; a colour map named in the message applies to them
 RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "lidar_dem")
 COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
@@ -253,6 +281,26 @@ Examples (actions only):
 - "orbit the Locutus world" -> [{"type": "orbit", "place": "Locutus world"}] (a world or a robot as a place: write its name as place; DeepGIS puts it at its robots)
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
+CONTROL_PROMPT = """
+
+Robot control: this user may also command these robots (simulated digital twins of the lab's vehicles): {robots}.
+- robot_command: propose a command for one of them. Fields: vehicle (its callsign); command: "instruct" (with instruction: what the robot should do, in plain words, keeping every distance, height, direction, pattern and ending the user gave), "return_home" (go back to its home position and land or stop there) or "land" (land where it is). The chat shows it to the user, who confirms it before anything is sent.
+- Use robot_command only when the user asks a robot itself to move or act: take off, fly, drive, sail, go somewhere, survey, orbit something, hold, point its camera, go home, land. A request about the view (orbit kestrel, fly to the rover, follow or chase the boat, show me badger) moves the camera, not the robot: use goto, orbit or follow_vehicle as before. "The drone" with no robot named is the camera drone.
+- Put follow_vehicle (chase) for the same vehicle after a robot_command when the user wants to watch it, or when the robot is far from the view.
+- In reply, say which command you are proposing and that it waits for confirmation; never say it has been sent or done.
+Examples (actions only):
+- "kestrel, take off and survey a 40 m square at 15 m" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "instruct", "instruction": "take off and do a 40 x 40 m lawnmower survey at 15 m altitude"}}, {{"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}}]
+- "drive the rover 10 m north" -> [{{"type": "robot_command", "vehicle": "badger", "command": "instruct", "instruction": "drive 10 m north"}}]
+- "send kestrel home" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "return_home"}}]
+- "land the drone kestrel now" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "land"}}]"""
+
+
+def control_prompt(control):
+    names = "; ".join(f'{cs} ({PLATFORM_NAMES.get(robots.PLATFORM_ALIASES.get(r["type"], r["type"]), "robot")})'
+                      for cs, r in control.items())
+    return CONTROL_PROMPT.format(robots=names)
+
+
 PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying over a 3D globe of {body} (Cesium) in the DeepGIS viewer. Turn the user's request into a short friendly reply and a list of actions, executed in order.
 
 Actions (all heights are metres ABOVE GROUND):
@@ -312,8 +360,41 @@ def _num(v, field, limits=LIMITS):
     return max(lo, min(hi, float(v)))
 
 
-def clean_actions(raw, body="earth"):
-    """Keep known action types and fields, clamp numbers, drop bad coordinates."""
+def control_vehicle(name, control):
+    """The callsign in control (robots that take commands) that name means, or ""."""
+    if not isinstance(name, str) or not name.strip() or not control:
+        return ""
+    key = name.strip().lower()
+    for cs, r in control.items():
+        if key == cs or key in r["aliases"]:
+            return cs
+    try:
+        vid = robots.resolve(name)
+    except Exception:
+        vid = ""
+    return vid if vid in control else ""
+
+
+def clean_robot_command(a, control):
+    """A robot_command for a robot in control, or None."""
+    vehicle = control_vehicle(a.get("vehicle"), control)
+    command = a.get("command")
+    if not vehicle or command not in ROBOT_COMMANDS:
+        return None
+    act = {"type": "robot_command", "vehicle": vehicle, "command": command}
+    text = a.get("instruction")
+    text = " ".join(text.split())[:MAX_INSTRUCTION_CHARS] if isinstance(text, str) else ""
+    if text:
+        act["instruction"] = text
+    elif command == "instruct":
+        return None
+    return act
+
+
+def clean_actions(raw, body="earth", control=None):
+    """Keep known action types and fields, clamp numbers, drop bad coordinates.
+    control: {callsign: robot} that this user may command (superusers); robot_command
+    actions for anything else are dropped."""
     if body == "earth":
         types, limits, kinds = ACTION_TYPES, LIMITS, LAYER_KINDS
     else:
@@ -321,6 +402,12 @@ def clean_actions(raw, body="earth"):
         types, limits = (PLANET_LAYER_ACTION_TYPES if kinds else PLANET_ACTION_TYPES), PLANET_LIMITS
     out = []
     for a in raw if isinstance(raw, list) else []:
+        if isinstance(a, dict) and a.get("type") == "robot_command" and body == "earth" and control:
+            if cmd := clean_robot_command(a, control):
+                out.append(cmd)
+            if len(out) == MAX_ACTIONS:
+                break
+            continue
         if not isinstance(a, dict) or a.get("type") not in types:
             continue
         act = {"type": a["type"]}
@@ -387,7 +474,7 @@ def clean_actions(raw, body="earth"):
     return out
 
 
-def _clean_history(raw, body="earth"):
+def _clean_history(raw, body="earth", control=None):
     hist = []
     for h in raw if isinstance(raw, list) else []:
         if (isinstance(h, dict) and h.get("role") in ("user", "assistant")
@@ -401,7 +488,7 @@ def _clean_history(raw, body="earth"):
                     plan = None
                 if isinstance(plan, dict) and "actions" in plan:
                     content = json.dumps({"reply": str(plan.get("reply", "")),
-                                          "actions": clean_actions(plan["actions"], body)})
+                                          "actions": clean_actions(plan["actions"], body, control)})
             hist.append({"role": h["role"], "content": content[:2000]})
     return hist[-MAX_HISTORY:]
 
@@ -647,13 +734,16 @@ def _rate_limited(user_id, scope="pilot", per_min=None):
         return False
 
 
-def call_mcp_tool(name, arguments, timeout):
-    """One stateless MCP tools/call over streamable HTTP; returns the tool result."""
+def call_mcp_tool(name, arguments, timeout, control=False):
+    """One stateless MCP tools/call over streamable HTTP; returns the tool result.
+    control: on the command-enabled server (superusers' robot commands only)."""
+    url, token = ((settings.DEEPGIS_PILOT_CONTROL_MCP_URL, settings.DEEPGIS_PILOT_CONTROL_MCP_TOKEN) if control
+                  else (settings.DEEPGIS_PILOT_MCP_URL, settings.DEEPGIS_PILOT_MCP_TOKEN))
     resp = requests.post(
-        settings.DEEPGIS_PILOT_MCP_URL,
+        url,
         json={"jsonrpc": "2.0", "id": 1, "method": "tools/call",
               "params": {"name": name, "arguments": arguments}},
-        headers={"Authorization": f"Bearer {settings.DEEPGIS_PILOT_MCP_TOKEN}",
+        headers={"Authorization": f"Bearer {token}",
                  "Accept": "application/json, text/event-stream"},
         timeout=timeout,
     )
@@ -676,6 +766,33 @@ def call_mcp_tool(name, arguments, timeout):
 
 MODEL_CACHE_KEY = "pilot-model-catalog"
 MODEL_CACHE_SEC = 60
+CONTROL_CACHE_KEY = "pilot-control-robots"
+CONTROL_CACHE_SEC = 60
+CONTROL_FAIL_CACHE_SEC = 15
+
+
+def control_configured():
+    return bool(settings.DEEPGIS_PILOT_CONTROL_MCP_URL and settings.DEEPGIS_PILOT_CONTROL_MCP_TOKEN)
+
+
+def control_robots(user):
+    """{callsign: {"type", "aliases"}} of the robots user may command: superusers only, the
+    robots the command server says take commands; {} when unconfigured or unreachable."""
+    if not (user.is_authenticated and user.is_superuser and control_configured()):
+        return {}
+    cached = cache.get(CONTROL_CACHE_KEY)
+    if cached is not None:
+        return cached
+    try:
+        raw = call_mcp_tool("list_robots", {}, 8, control=True)
+        out = {str(r["robot"]): {"type": str(r.get("type") or ""),
+                                 "aliases": [str(x).lower() for x in r.get("aliases") or []]}
+               for r in raw.get("robots", []) if r.get("commands") and VEHICLE_NAME.fullmatch(str(r.get("robot")))}
+    except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError, AttributeError):
+        cache.set(CONTROL_CACHE_KEY, {}, CONTROL_FAIL_CACHE_SEC)
+        return {}
+    cache.set(CONTROL_CACHE_KEY, out, CONTROL_CACHE_SEC)
+    return out
 
 
 
@@ -762,11 +879,18 @@ def pilot_chat(request):
         context.append(robots_context(data.get("view")))
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
+    control = control_robots(request.user) if body == "earth" else {}
+    if body != "earth":
+        system_prompt, schema = planet_prompt(body), PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA)
+    elif control:
+        system_prompt, schema = SYSTEM_PROMPT + control_prompt(control), CONTROL_SCHEMA
+    else:
+        system_prompt, schema = SYSTEM_PROMPT, PILOT_SCHEMA
     args = {
         "prompt": prompt,
-        "system_prompt": SYSTEM_PROMPT if body == "earth" else planet_prompt(body),
-        "json_schema": PILOT_SCHEMA if body == "earth" else PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA),
-        "history": _clean_history(data.get("history"), body),
+        "system_prompt": system_prompt,
+        "json_schema": schema,
+        "history": _clean_history(data.get("history"), body, control),
         "temperature": 0.2,
         "max_tokens": 800,
         "timeout_sec": timeout,
@@ -782,14 +906,15 @@ def pilot_chat(request):
         if not isinstance(plan, dict):
             return JsonResponse({"error": "The AI pilot returned no plan; try rephrasing."}, status=502)
         reply = plan.get("reply") if isinstance(plan.get("reply"), str) else ""
-        actions = clean_actions(plan.get("actions"), body)
+        actions = clean_actions(plan.get("actions"), body, control)
         if actions or not PROMISE_RE.search(reply):
             break
     cmap = named_colormap(message) if body == "earth" else None
     for a in actions:
         if cmap and a["type"] == "show_layer" and a.get("kind") in RASTER_KINDS:
             a["colormap"] = cmap
-    actions = [{k: a[k] for k in FIELD_ORDER if k in a} for a in actions]
+    actions = [{k: a[k] for k in (ROBOT_FIELDS if a["type"] == "robot_command" else FIELD_ORDER) if k in a}
+               for a in actions]
     _record_use(request, "chat", out.get("model", ""), out.get("duration_sec"), True)
     return JsonResponse({
         "reply": reply.strip()[:1000],
@@ -797,6 +922,83 @@ def pilot_chat(request):
         "model": out.get("model", ""),
         "duration_sec": out.get("duration_sec"),
     })
+
+
+# robot_command, confirmed in the chat: one dreams_mcp command tool on the command server
+ROBOT_COMMAND_RATE_PER_MIN = 6
+ROBOT_COMMAND_TIMEOUT_SEC = 150  # instruct waits up to 120 s for the robot LLM to plan
+ROBOT_RESULT_KEYS = ("accepted", "verified", "result", "message", "plan", "steps", "llm_summary")
+ROBOT_COMMAND_LOG = "/app/var/ops/robot-commands.jsonl"
+
+
+def _record_command(request, cmd, dry_run, ok, result):
+    """One line per command sent from DeepGIS, for the superuser console. Never raises."""
+    try:
+        rec = {"t": time.time(), "user": request.user.get_username(), "dry_run": dry_run, "ok": ok,
+               **cmd, "accepted": result.get("accepted"), "result": result.get("result"),
+               "message": str(result.get("message") or result.get("error") or "")[:300]}
+        os.makedirs(os.path.dirname(ROBOT_COMMAND_LOG), exist_ok=True)
+        with open(ROBOT_COMMAND_LOG, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + chr(10))
+    except OSError:
+        pass
+
+
+def _short(v, limit=4000):
+    """A tool result field small enough for the browser."""
+    if isinstance(v, (str, int, float, bool)) or v is None:
+        return v[:limit] if isinstance(v, str) else v
+    text = json.dumps(v, default=str)
+    return v if len(text) <= limit else text[:limit]
+
+
+@require_POST
+def pilot_robot_command(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "login_required", "login_url": "/label/admin/login/"}, status=401)
+    if not request.user.is_superuser:
+        return JsonResponse({"error": "Robot commands are for superusers."}, status=403)
+    if not control_configured():
+        return JsonResponse({"error": "Robot commands are not configured on this server."}, status=503)
+    try:
+        data = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    if not isinstance(data, dict):
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    control = control_robots(request.user)
+    if not control:
+        return JsonResponse({"error": "The robot command server is unavailable."}, status=502)
+    cmd = clean_robot_command(data, control)
+    if not cmd:
+        return JsonResponse({"error": "Unknown robot or command."}, status=400)
+    dry_run = data.get("dry_run") is True and cmd["command"] == "instruct"
+    if _rate_limited(request.user.pk, "robot", ROBOT_COMMAND_RATE_PER_MIN):
+        return JsonResponse({"error": "Too many robot commands; wait a minute."}, status=429)
+
+    user = request.user.get_username()
+    who = f"deepgis:{user}"
+    if cmd["command"] == "instruct":
+        tool, args = "instruct", {"text": cmd["instruction"], "dry_run": dry_run, "wait_sec": 0}
+    else:
+        reason = f"DeepGIS AI Pilot ({user})" + (f": {cmd['instruction']}" if "instruction" in cmd else "")
+        tool = "return_home_and_land" if cmd["command"] == "return_home" else "land_in_place"
+        args = {"reason": reason}
+    args.update(robot=cmd["vehicle"], requested_by=who)
+    try:
+        out = call_mcp_tool(tool, args, ROBOT_COMMAND_TIMEOUT_SEC, control=True)
+    except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
+        if isinstance(e, requests.Timeout):
+            err = {"error": "No answer from the robot command server in time; the command may still "
+                            "have reached the robot, so check it before sending again."}
+        else:
+            err = {"error": f"Command failed: {type(e).__name__}: {str(e)[:200]}"}
+        _record_command(request, cmd, dry_run, False, err)
+        return JsonResponse(err, status=502)
+    out = out if isinstance(out, dict) else {}
+    _record_command(request, cmd, dry_run, True, out)
+    return JsonResponse({**cmd, "dry_run": dry_run,
+                         **{k: _short(out[k]) for k in ROBOT_RESULT_KEYS if k in out}})
 
 
 # describe_view: the page posts one frame of the Cesium canvas and the lab's
