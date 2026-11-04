@@ -296,6 +296,48 @@ while `DEBUG=False`. After changing Python code or templates, run
 
 ## 🏗️ Architecture
 
+### Deployment overview
+
+How deepgis.org is served in the DREAMS Lab deployment. The public edge is the
+only internet-facing host; it reaches the lab servers over an outbound-dialled
+WireGuard overlay, so the lab side opens no inbound ports. Robot topics cross
+between the simulators and the GPU server as ROS 2 topics over Zenoh.
+
+```mermaid
+flowchart LR
+  U["Browser / phone / VR<br/>(DeepGIS + AI pilot)"] --> DNS["DNS"]
+  DNS --> EDGE["Public edge<br/>nginx TLS + WireGuard hub"]
+  EDGE -- "/label/, /api/v1/" --> XR
+  EDGE -- "everything else" --> PORTAL
+  EDGE -- "LLM studio host" --> UNS
+  EDGE -- "/openuav/llm/ panel MCP" --> MCP
+  subgraph APP["Lab app server (apps + storage)"]
+    XR["deepgis-xr<br/>Django 5.2, Cesium, AI pilot"]
+    PORTAL["dreams-lab-portal<br/>lab site, OpenUAV manager"]
+    TWIN["PX4 SITL + Gazebo twin<br/>kestrel (multirotor), badger (rover)"]
+    BOAT["Boat twin: otter"]
+  end
+  subgraph GPU["Lab GPU server"]
+    OLL["Robot language model"]
+    UNS["Unsloth Studio"]
+    BR["llm_bridge + mission_supervisor<br/>per robot"]
+    MCP["dreams_mcp (commands)<br/>dreams_mcp_ro (read-only)"]
+    ZR["Zenoh router"]
+  end
+  XR -- "pilot chat" --> MCP
+  MCP --> BR --> OLL
+  TWIN -- "Zenoh sidecar, topics only" --> ZR --> BR
+  BOAT --> ZR
+  BR -- "typed commands" --> ZR
+  TWIN -- "pose + camera frames" --> XR
+```
+
+The language model only proposes; the mission supervisor checks every command
+against its limits (geofence, altitude band, battery, telemetry age), and each
+vehicle's executor is the only writer of PX4 setpoints. deepgis-xr talks to the
+read-only MCP server for the AI pilot and to the command-enabled one only for
+superusers' confirmed robot commands.
+
 ### Technology Stack
 
 **Backend**
