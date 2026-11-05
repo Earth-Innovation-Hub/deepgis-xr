@@ -409,8 +409,9 @@ deepgis-xr/
 │   │       │   ├── core.py, http.py  # helpers + HTTP endpoints
 │   │       │   └── analyzers/        # per-model analyzers (sam, yolov8,
 │   │       │                         # grounding_dino, maskrcnn_rocks, ...)
+│   │       ├── templatetags/hud_tags.py  # Layers panel catalog (#hudLayerCatalog)
 │   │       ├── tests/                # test_pilot, test_planet, test_twin_access,
-│   │       │                         # test_vehicles
+│   │       │                         # test_vehicles, test_layers_panel
 │   │       ├── templates/web/
 │   │       │   ├── label_search.html         # Earth viewer
 │   │       │   ├── label_moon_viewer.html    # Moon and planet viewer
@@ -420,7 +421,8 @@ deepgis-xr/
 │   └── settings.py
 ├── services/topology/                # standalone Flask tile/3D-tiles server
 ├── staticfiles/web/                  # tracked JS, CSS, vendor libs
-│   ├── js/hud/                       # shared HUD, drone, actions (actions.js: LAYERS) and AI pilot
+│   ├── js/hud/                       # shared HUD, drone, actions (actions.js: LAYERS),
+│   │                                 # Layers panel (layers-panel.js) and AI pilot
 │   ├── js/planet-bodies.js           # body registry: radii, imagery, terrain
 │   └── geo/                          # tempe-geology.geojson, nomenclature/<body>.json
 ├── scripts/                          # sync_assets.sh, GLB optimizer, API clients,
@@ -706,6 +708,17 @@ Design rules:
   features to draw, an optional imagery overlay, the chat lines and the
   source citations. One runner draws, lists, cites and frames them all, so
   adding a kind adds no prompt rules or server checks beyond its name.
+- **Layers panel.** The toolbar's Layers button opens the same layers as
+  toggles (`hud/layers-panel.js`), grouped by theme, on Earth and on bodies
+  with terrain layers (Moon, Mars, Pluto). Each row takes a radius in km and,
+  for colour-map kinds on Earth, a colour map; its readings, legend and
+  sources appear under the row. Layers load around the point in view, or
+  around a place typed at the top (Enter reloads the ticked rows there and
+  frames it). Rows tick and untick when the pilot shows or hides a layer.
+  The kinds, colour maps and radius range come from `layer_catalog(body)` in
+  `views/pilot.py`, so the panel offers exactly what `clean_actions` accepts;
+  layers fetched through this server (sea temperature, chlorophyll, stored
+  lidar) are locked until you sign in. On Earth the tile catalog follows.
   - `geology` lists curated sites in the circle, samples the Macrostrat map
     at 15 points (the most detailed map at each), lists up to 8 units with
     the source map citation, and drapes the map at 55% opacity.
@@ -949,13 +962,15 @@ LIVE_CACHE_URL=redis://redis:6379/1
 - The tracked source is `staticfiles/`. After adding or changing a file
   there, copy it into `STATIC_ROOT` with `python manage.py collectstatic`, or
   copy the single file.
-- The viewers load `hud/actions.js?v=…` and `hud/pilot.js?v=…` with version
+- The viewers load `hud/actions.js?v=…`, `hud/layers-panel.js?v=…`,
+  `hud/pilot.js?v=…` and `hud.css?v=…` with version
   tags hard-coded in `label_search.html` and `label_moon_viewer.html`. Bump
   the tag of each file you change.
 - `hud/actions.js` holds the pilot's actions and data layers and exposes them
   as `window.DeepGISActions` (`run(actions, sink)`, `stop()`, `layers()`,
   `shown()`, `on('layers', fn)`), so toolbar widgets run the same
   `show_layer`, `goto`, `describe_view` or `follow_vehicle` the model asks for.
+  `show_layer` with `frame: false` draws without moving the camera.
   A sink, `{msg(kind, text), legend?(spec), described?(data)}`, receives the
   progress lines; `logSink(element)` writes them as chat-style lines.
   `hud/pilot.js` is only the chat and the robot command cards.
@@ -1090,6 +1105,8 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] Experience URL sharing and QR codes; 2D/3D/Columbus switching
 - [x] 3D Buildings layer (OpenStreetMap)
 - [x] Hierarchical tile catalog with time scrubber and comparison modes
+- [x] Layers panel: the AI pilot's data layers as toolbar toggles, kept in
+      step with the pilot
 - [x] Django 5.2 LTS, Python 3.10, Ubuntu 22.04 image
 - [x] AI pilot (language-driven camera drone) with sourced data layers
       (geology, faults, flood zones, fires, rivers, land cover, soils,

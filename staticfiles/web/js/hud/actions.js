@@ -2373,7 +2373,10 @@
             });
             if (recolour) applyGlobeMaterial();
             if (!shownLayers.size) layerArea = null;
-            if (removed.length) layersChanged();
+            if (removed.length) {
+                viewer.scene.requestRender();
+                layersChanged();
+            }
             if (quiet) return;
             const specs = layerSpecs();
             if (removed.length) out.msg('step', `Removed: ${removed.map(k => specs[k].title.toLowerCase()).join(', ')}`);
@@ -2451,13 +2454,13 @@
         plansRunning++;
         try {
             // Describing the view as it is needs no 3D switch
-            if (actions.some(a => a.type !== 'stop' && a.type !== 'describe_view')) await ensure3D(id, out);
+            if (actions.some(a => !['stop', 'describe_view', 'hide_layer'].includes(a.type))) await ensure3D(id, out);
             for (const [i, a] of actions.entries()) {
                 check(id);
                 // Frame the area unless a later step moves the camera anyway or the drone is
                 // busy flying; off Earth a layer for the area in view (sized from the camera) stays put
                 if (a.type === 'show_layer') {
-                    a.frame = !keepMoving && !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit') &&
+                    a.frame = a.frame !== false && !keepMoving && !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit') &&
                         (isEarth || !!a.place || Number.isFinite(a.lat));
                 }
                 await runners[a.type](a, id, out);
@@ -2484,7 +2487,8 @@
         isEarth,
         run: (actions, out) => runPlan(actions, out || quietSink),
         stop: () => stopAll(),
-        layers: () => Object.entries(layerSpecs()).map(([kind, spec]) => ({ kind, title: spec.title })),
+        layers: () => Object.entries(layerSpecs()).map(([kind, spec]) => ({
+            kind, title: spec.title, radius: typeof spec.radius === 'number' ? spec.radius : null })),
         shown: () => [...shownLayers.keys()],
         on: (type, fn) => events.addEventListener(type, (e) => fn(e.detail)),
         following: () => (follow ? { id: follow.id, view: follow.view } : null),

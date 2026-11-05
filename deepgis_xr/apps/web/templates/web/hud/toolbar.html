@@ -1,7 +1,9 @@
+{% load hud_tags %}
     <!-- ========== HUD BOTTOM TOOLBAR ========== -->
     <div class="hud-toolbar" id="hudToolbar">
-        {% if hud_body == "earth" %}
-        <button class="hud-btn" id="hudLayersBtn" data-panel="layersPanel" title="Site / Dataset / Time-step layer catalog">
+        {% hud_has_layers hud_body as has_layers %}
+        {% if has_layers %}
+        <button class="hud-btn" id="hudLayersBtn" data-panel="layersPanel" title="Data layers{% if hud_body == "earth" %} and the Site / Dataset / Time-step catalog{% endif %}">
             <i class="fas fa-layer-group"></i>
             <span>Layers</span>
         </button>

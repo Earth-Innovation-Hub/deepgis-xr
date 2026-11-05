@@ -50,12 +50,12 @@ EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
 FOLLOW_VIEWS = ("camera", "chase")
 VEHICLE_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
 VEHICLE_SPOKEN = re.compile(r"[A-Za-z0-9_. '\u2019-]{1,60}")  # "Jane.Doe", "alice's sim"; not "rm -rf /"
-# Data layers the page knows how to fetch, draw and cite (LAYERS in hud/pilot.js)
+# Data layers the page knows how to fetch, draw and cite (LAYERS in hud/actions.js)
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
                "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "slope", "contours",
                "lidar_dem", "topo_datasets")
-# Colour maps a raster layer can be drawn in (COLORMAPS in hud/pilot.js)
+# Colour maps a raster layer can be drawn in (COLORMAPS in hud/actions.js)
 COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm", "rdylgn")
 # The model now and then writes coordinates as a place: "lat 37.41, lon -118.52"
 COORD_PLACE = re.compile(r"\s*(?:lat(?:itude)?\s*)?(-?\d{1,2}(?:\.\d+)?)\s*,?\s*(?:lon(?:gitude)?\s*)?(-?\d{1,3}(?:\.\d+)?)\s*",
@@ -163,7 +163,7 @@ RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chl
 COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
 PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in EARTH_ONLY_TYPES)
 PLANET_LAYER_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t != "follow_vehicle")
-# Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/pilot.js)
+# Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/actions.js)
 PLANET_LAYER_KINDS = {
     "moon": ("elevation", "slope", "contours"),
     "mars": ("elevation",),
@@ -174,6 +174,25 @@ PLANET_LAYER_DOCS = {
     "slope": "terrain slope (steepness) as a colour map",
     "contours": "elevation contour lines",
 }
+
+# Layers fetched through this server's relays (pilot_ocean, pilot_topo), which need a sign-in
+SIGNIN_LAYER_KINDS = ("sea_temp", "chlorophyll", "lidar_dem")
+
+
+def layer_catalog(body):
+    """What the HUD's Layers panel offers on a body (hud/layers-panel.js): the kinds the
+    pilot may show there, those drawn in a colour map, and the radius range it accepts."""
+    if body == "earth":
+        kinds, colormaps, limits = LAYER_KINDS, COLORMAPS, LAYER_LIMITS
+    else:
+        kinds, colormaps, limits = PLANET_LAYER_KINDS.get(body, ()), (), PLANET_LIMITS
+    return {
+        "kinds": list(kinds),
+        "colormaps": list(colormaps),
+        "colormap_kinds": [k for k in RASTER_KINDS if k in kinds] if colormaps else [],
+        "signin_kinds": [k for k in SIGNIN_LAYER_KINDS if k in kinds],
+        "radius_m": list(limits["radius_m"]),
+    }
 
 
 def _planet_schema(kinds):

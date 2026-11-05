@@ -3,13 +3,13 @@ The DeepGIS HUD: the Earth search viewer's toolbar, panels and flight widgets,
 shared by every planetary viewer. hud_body is "earth" or a planet-bodies.js id;
 parts that need Earth data or Earth-only scripts are switched on it.
 {% endcomment %}
-{% load static %}
+{% load static hud_tags %}
 <div id="hudConfig" hidden data-body="{{ hud_body }}"
      {% if hud_body == "earth" %}data-geology-url="{% static 'web/geo/tempe-geology.geojson' %}"{% else %}{% with "web/geo/nomenclature/"|add:hud_body|add:".json" as gazetteer %}data-gazetteer-url="{% static gazetteer %}"{% endwith %}{% endif %}></div>
 {% include "web/hud/toolbar.html" %}
 {% include "web/hud/pilot_panel.html" %}
     <!-- ========== HUD FLOATING PANELS ========== -->
-{% if hud_body == "earth" %}{% include "web/hud/layers_panel.html" %}{% endif %}
+{% hud_has_layers hud_body as has_layers %}{% if has_layers %}{% include "web/hud/layers_panel.html" %}{% endif %}
 {% include "web/hud/view_panel.html" %}
 {% include "web/hud/ai_panel.html" %}
 {% include "web/hud/tools_panel.html" %}
