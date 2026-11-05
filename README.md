@@ -1029,6 +1029,21 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 
 ## 📊 Recent Updates
 
+### November 2026: pilot widgets and immersive VR
+- **Immersive VR on the Meta Quest** (`5de41e7`): `hud/xr.js` replaces the
+  old WebXR module, which never drew into the headset. Each eye is rendered
+  at its own pose and cropped into the XR framebuffer; thumbsticks fly,
+  snap-turn and climb. Works on Earth and every planet viewer.
+- **Pilot widgets** (`41c862a`): "Describe this view" in the AI panel and
+  "Fly to place" (goto, orbit, typed `lat, lon`) in the View panel.
+- **Layers panel** (`f9a58e4`): the pilot's data layers as toolbar toggles,
+  grouped by theme, with radius and colour map per row, kept in step with
+  the pilot; also on the Moon, Mars and Pluto. Hidden layers now disappear
+  at once instead of on the next camera move.
+- **Shared actions module** (`8e224ec`): the pilot's runners and data layers
+  moved to `hud/actions.js` (`window.DeepGISActions`), so widgets and the
+  pilot run the same actions.
+
 ### October 2026: planets, colour maps and terrain
 - **Every OpenUAV sim on the globe** (`79de0b7`): sims launched by the
   OpenUAV launcher post their poses with per-sim tokens derived from one
