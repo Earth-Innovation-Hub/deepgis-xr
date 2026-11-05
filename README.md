@@ -225,6 +225,8 @@ roads into one labelled graph.
   and orbit with adjustable radius, speed, laps, direction, pitch and yaw
 - **Measurement tools**, GLB/GLTF models, raster and vector layers
 - **Shareable URLs and QR codes** capturing camera and drone state (press `S`)
+- **Immersive VR** (WebXR) on headsets such as the Meta Quest, on Earth and
+  every planet viewer
 
 ---
 
@@ -422,7 +424,7 @@ deepgis-xr/
 ├── services/topology/                # standalone Flask tile/3D-tiles server
 ├── staticfiles/web/                  # tracked JS, CSS, vendor libs
 │   ├── js/hud/                       # shared HUD, drone, actions (actions.js: LAYERS),
-│   │                                 # Layers panel (layers-panel.js) and AI pilot
+│   │                                 # Layers panel (layers-panel.js), AI pilot, VR (xr.js)
 │   ├── js/planet-bodies.js           # body registry: radii, imagery, terrain
 │   └── geo/                          # tempe-geology.geojson, nomenclature/<body>.json
 ├── scripts/                          # sync_assets.sh, GLB optimizer, API clients,
@@ -863,6 +865,29 @@ IAU-named feature ("fly to Olympus Mons").
 In DeepGIS Search, check **3D Buildings (OSM)** in the **View** panel or press
 `B`. This works best in 3D view (`V`).
 
+### Immersive VR (Meta Quest)
+Open the viewer in the headset's browser (Meta Quest Browser), click **VR** in
+the HUD toolbar, then **Enter VR**. You stand where the camera was, at true
+scale, facing the camera's heading. The left thumbstick flies along and
+across where you look; the right one turns in 30° steps (left, right) and
+climbs or descends (up, down). Speed grows with height above the ground.
+**Headset resolution** trades sharpness for frame rate (70% by default).
+Leave with **Exit VR** or the Meta button; the globe view continues from
+where you were.
+
+How it works (`staticfiles/web/js/hud/xr.js`): Cesium 1.111 has no WebXR
+support, so each XR frame renders the scene once per eye with the camera at
+that eye's pose, then copies the picture into the headset's framebuffer.
+Cesium keeps only symmetric frusta correct across its multi-frustum passes,
+so each eye is drawn with a symmetric frustum wide enough for both eyes and
+its own part is cropped out with `blitFramebuffer`. In headset browsers the
+canvas is created XR-compatible and single-sample (`window.DeepGISXRContext`,
+read by `core/cesium-init.js` and the planet viewer), so the copy needs no
+multisample resolve; FXAA smooths edges instead. Desktop browsers take the
+resolve path. During a session the default render loop, mouse controls and
+request-render mode are off, and terrain detail is relaxed
+(`maximumScreenSpaceError` 4); all of it is restored on exit.
+
 ### Weather Stations
 Click **Weather** in the HUD toolbar, enable stations, and load all states or
 CA, AZ, CO or NV individually. Click a station for details.
@@ -1114,6 +1139,7 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] Layers panel: the AI pilot's data layers as toolbar toggles, kept in
       step with the pilot
 - [x] Pilot widgets: "Describe this view" and "Fly to place" (goto, orbit)
+- [x] Immersive WebXR on the Meta Quest (per-eye rendering, thumbstick flight)
 - [x] Django 5.2 LTS, Python 3.10, Ubuntu 22.04 image
 - [x] AI pilot (language-driven camera drone) with sourced data layers
       (geology, faults, flood zones, fires, rivers, land cover, soils,
@@ -1139,7 +1165,6 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
       cellular), with tracks and status alongside the live pose
 - [ ] Export a DeepGIS area (terrain and imagery) as a Gazebo world, so
       OpenUAV simulations fly over the real ground
-- [ ] WebXR/VR globe exploration
 - [ ] Mars high-resolution imagery and terrain (HiRISE/CTX) in the planet viewer
 - [ ] Data layers for the remaining bodies
 

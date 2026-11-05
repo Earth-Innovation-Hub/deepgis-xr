@@ -265,7 +265,9 @@
                     globe: new Cesium.Globe(PLANET_ELLIPSOID),
                     mapProjection: new Cesium.GeographicProjection(PLANET_ELLIPSOID),
                     baseLayer: false,
-                    skyAtmosphere: false
+                    skyAtmosphere: false,
+                    // XR-compatible, single-sample canvas in headset browsers (hud/xr.js)
+                    contextOptions: { webgl: { ...window.DeepGISXRContext } }
                 });
 
                 window.DeepGISMoon.viewer = viewer;
@@ -864,6 +866,7 @@
     <script src="{% static 'web/js/hud/layers-panel.js' %}?v=20261111a"></script>
     <script src="{% static 'web/js/hud/pilot-widgets.js' %}?v=20261111a"></script>
     <script src="{% static 'web/js/hud/pilot.js' %}?v=20261110e"></script>
+    <script src="{% static 'web/js/hud/xr.js' %}?v=20261111a"></script>
     <script src="{% static 'web/js/widgets/altimeter.js' %}?v=20261021"></script>
     <script type="module">
         import { initializeNavigation } from "{% static 'web/js/widgets/navigation.js' %}?v=20261021";

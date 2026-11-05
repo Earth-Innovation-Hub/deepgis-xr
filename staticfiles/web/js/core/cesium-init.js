@@ -105,7 +105,9 @@ export async function initializeCesium(updateLoadingStatus) {
         preserveDrawingBuffer: true,
         webgl: {
           powerPreference: "high-performance",
-          failIfMajorPerformanceCaveat: false
+          failIfMajorPerformanceCaveat: false,
+          // XR-compatible, single-sample canvas in headset browsers (hud/xr.js)
+          ...window.DeepGISXRContext
         }
       },
       // Render at native device pixels. Viewer (1.111) ignores a resolutionScale

@@ -42,37 +42,6 @@ AppState.utils = {
 
 // Lazy loading functions for heavy features
 const lazyLoaders = {
-  webxr: async () => {
-    if (!AppState.features.webxr) {
-      try {
-        // Import path: go up from js/ to web/, then into features/
-        const webxrModule = await import('../features/webxr.js');
-      AppState.features.webxr = webxrModule.default;
-      return webxrModule;
-      } catch (error) {
-        console.warn('Failed to load WebXR module:', error);
-        // Return a fallback module with error handling
-        return {
-          checkWebXRSupport: async () => {
-            const statusElement = document.getElementById('vrStatus');
-            if (statusElement) {
-              statusElement.textContent = 'VR Status: WebXR module not available';
-              statusElement.style.color = '#ef4444';
-            }
-            return false;
-          },
-          enterWebXR: async () => {
-            alert('WebXR module not available. Please check the console for details.');
-          },
-          exitWebXR: async () => {
-            // No-op if module not loaded
-          }
-        };
-      }
-    }
-    return AppState.features.webxr;
-  },
-  
   models: async () => {
     if (!AppState.features.models) {
       try {
@@ -317,26 +286,11 @@ function addLazyEventHandler(elementId, loaderFn, methodName, args = []) {
         await module[methodName](...args);
       } else {
         console.warn(`Method ${methodName} not found in lazy-loaded module for ${elementId}`);
-        // Show user-friendly error for WebXR
-        if (elementId === 'checkVRSupport') {
-          const statusElement = document.getElementById('vrStatus');
-          if (statusElement) {
-            statusElement.textContent = 'VR Status: WebXR module not available';
-            statusElement.style.color = '#ef4444';
-          }
-        }
       }
     } catch (error) {
       console.error(`Error loading feature from ${elementId}:`, error);
-      // Show user-friendly error for WebXR
-      if (elementId === 'checkVRSupport') {
-        const statusElement = document.getElementById('vrStatus');
-        if (statusElement) {
-          statusElement.textContent = 'VR Status: Error loading WebXR module';
-          statusElement.style.color = '#ef4444';
-        }
-      } else if (typeof updateStatusIndicator === 'function') {
-      updateStatusIndicator(`Error: ${error.message}`);
+      if (typeof updateStatusIndicator === 'function') {
+        updateStatusIndicator(`Error: ${error.message}`);
       }
     }
   });
@@ -531,10 +485,6 @@ function setupEventHandlers(viewer) {
     }
   });
 
-  // WebXR controls - using helper function to reduce duplication
-  addLazyEventHandler('checkVRSupport', lazyLoaders.webxr, 'checkWebXRSupport');
-  addLazyEventHandler('enterVR', lazyLoaders.webxr, 'enterWebXR');
-  addLazyEventHandler('exitVR', lazyLoaders.webxr, 'exitWebXR');
 
   // Measurement tools - using helper function to reduce duplication
   addLazyEventHandler('measureDistance', lazyLoaders.measurements, 'startDistanceMeasurement', [viewer]);
