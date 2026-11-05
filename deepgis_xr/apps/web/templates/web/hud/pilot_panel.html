@@ -1,7 +1,5 @@
-{% load static %}
-    <!-- AI Pilot chat (views/pilot.py); actions run on the drone widgets below -->
-    <div class="pilot-panel" id="pilotPanel" data-body="{{ hud_body }}"
-         {% if hud_body == "earth" %}data-geology-url="{% static 'web/geo/tempe-geology.geojson' %}"{% else %}{% with "web/geo/nomenclature/"|add:hud_body|add:".json" as gazetteer %}data-gazetteer-url="{% static gazetteer %}"{% endwith %}{% endif %}>
+    <!-- AI Pilot chat (views/pilot.py); actions run through hud/actions.js on the drone widgets below -->
+    <div class="pilot-panel" id="pilotPanel">
         <div class="hud-panel-header">
             <div class="hud-panel-title"><i class="fas fa-robot" style="color: #f59e0b;"></i> AI Pilot</div>
             <div class="pilot-header-tools">

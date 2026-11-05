@@ -363,7 +363,7 @@ superusers' confirmed robot commands.
 - CesiumJS 1.111, hand-written ES modules in `staticfiles/web/js/` (no build step)
 - Bootstrap UI, HUD toolbar with floating panels, shared by every globe:
   template partials in `templates/web/hud/` and scripts in
-  `staticfiles/web/js/hud/` (panels, shortcuts, drone, pilot, models, share)
+  `staticfiles/web/js/hud/` (panels, shortcuts, drone, actions, pilot, models, share)
 - Geocoding: OpenStreetMap Nominatim, falling back to Cesium Ion
 
 **AI / ML** (the web image ships no model weights; they are fetched on first use)
@@ -420,7 +420,7 @@ deepgis-xr/
 │   └── settings.py
 ├── services/topology/                # standalone Flask tile/3D-tiles server
 ├── staticfiles/web/                  # tracked JS, CSS, vendor libs
-│   ├── js/hud/                       # shared HUD, drone and AI pilot (pilot.js: LAYERS)
+│   ├── js/hud/                       # shared HUD, drone, actions (actions.js: LAYERS) and AI pilot
 │   ├── js/planet-bodies.js           # body registry: radii, imagery, terrain
 │   └── geo/                          # tempe-geology.geojson, nomenclature/<body>.json
 ├── scripts/                          # sync_assets.sh, GLB optimizer, API clients,
@@ -701,7 +701,7 @@ Design rules:
   radius_m}` the model picks only the kind, the centre and the radius; the
   prompt tells it never to describe layer contents in its reply. Django
   accepts only the known kinds (`LAYER_KINDS` on Earth, `PLANET_LAYER_KINDS`
-  per body). Each kind in `LAYERS` (in `staticfiles/web/js/hud/pilot.js`)
+  per body). Each kind in `LAYERS` (in `staticfiles/web/js/hud/actions.js`)
   has a default radius and a `load()` that returns
   features to draw, an optional imagery overlay, the chat lines and the
   source citations. One runner draws, lists, cites and frames them all, so
@@ -949,9 +949,16 @@ LIVE_CACHE_URL=redis://redis:6379/1
 - The tracked source is `staticfiles/`. After adding or changing a file
   there, copy it into `STATIC_ROOT` with `python manage.py collectstatic`, or
   copy the single file.
-- The viewers load `hud/pilot.js?v=…` with a version tag hard-coded in
-  `label_search.html` and `label_moon_viewer.html`. Bump it with every
-  `pilot.js` change.
+- The viewers load `hud/actions.js?v=…` and `hud/pilot.js?v=…` with version
+  tags hard-coded in `label_search.html` and `label_moon_viewer.html`. Bump
+  the tag of each file you change.
+- `hud/actions.js` holds the pilot's actions and data layers and exposes them
+  as `window.DeepGISActions` (`run(actions, sink)`, `stop()`, `layers()`,
+  `shown()`, `on('layers', fn)`), so toolbar widgets run the same
+  `show_layer`, `goto`, `describe_view` or `follow_vehicle` the model asks for.
+  A sink, `{msg(kind, text), legend?(spec), described?(data)}`, receives the
+  progress lines; `logSink(element)` writes them as chat-style lines.
+  `hud/pilot.js` is only the chat and the robot command cards.
 - Avoid directories named `data/` for tracked assets, because `.gitignore`
   excludes them. That is why the geology file lives in `staticfiles/web/geo/`.
 
