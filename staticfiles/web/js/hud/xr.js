@@ -17,7 +17,9 @@
 // right stick snap-turns and climbs or descends. The right controller's laser clicks the
 // cockpit (hud/xr-cockpit.js) or, on the ground, flies there with the trigger (grip and
 // trigger orbits). B stops, X shows the cockpit in front of you or hides it, Y the layers
-// wing; the wrist menu on the left controller does both and re-centres them.
+// wing, A the AI pilot comms; the wrist menu on the left controller does all three and
+// re-centres them. Comms' TYPE focuses a hidden text field, which brings up the headset's
+// system keyboard (and its dictation mic); Enter or SEND asks the pilot (hud/pilot.js).
 
 // WebGL options for Cesium viewers; read by core/cesium-init.js and the planet viewer
 window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.userAgent)
@@ -367,6 +369,58 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             .finally(() => ck.setBusy(kind, false));
     }
 
+    // The field the system keyboard types into; its text is mirrored on the comms panel
+    function keyboardField(s) {
+        if (s.kbd) return s.kbd;
+        const el = document.createElement('input');
+        el.type = 'text';
+        el.autocomplete = 'off';
+        el.enterKeyHint = 'send';
+        el.setAttribute('aria-label', 'Message for the AI pilot');
+        el.style.cssText = 'position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;border:0;padding:0;';
+        el.addEventListener('input', () => s.cockpit?.typed(el.value));
+        el.addEventListener('focus', () => s.cockpit?.keyboard(true));
+        el.addEventListener('blur', () => s.cockpit?.keyboard(false));
+        el.addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            sendTyped(s);
+        });
+        document.body.appendChild(el);
+        s.kbd = el;
+        return el;
+    }
+
+    function openKeyboard(s, head) {
+        const ck = s.cockpit;
+        if (!ck || !window.DeepGISPilot) return;
+        ck.showComms(head);
+        if (s.session.isSystemKeyboardSupported === false) {
+            ck.status('No system keyboard in this browser: use the quick prompts', 'error');
+            return;
+        }
+        keyboardField(s).focus();
+    }
+
+    function ask(s, text) {
+        const pilot = window.DeepGISPilot;
+        if (!pilot || !text.trim()) return false;
+        if (pilot.busy()) {
+            s.cockpit?.status('The pilot is still answering', 'step');
+            return false;
+        }
+        pilot.ask(text);
+        return true;
+    }
+
+    function sendTyped(s) {
+        const el = s.kbd;
+        if (!el || !ask(s, el.value)) return;
+        el.value = '';
+        el.blur();
+        s.cockpit?.typed('');
+    }
+
     function act(s, action, source, head) {
         const hud = window.DeepGISActions, ck = s.cockpit;
         if (action === 'stop') {
@@ -380,6 +434,17 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             if (ck && !ck.toggleWing(head)) ck.status('No data layers on this body', 'step');
         } else if (action === 'centre') {
             ck?.centre(head);
+        } else if (action === 'pilot') {
+            if (ck && !ck.toggleComms(head)) ck.status('The AI pilot is not on this page', 'step');
+        } else if (action === 'type') {
+            openKeyboard(s, head);
+        } else if (action === 'send') {
+            sendTyped(s);
+        } else if (action === 'clear') {
+            if (s.kbd) s.kbd.value = '';
+            ck?.typed('');
+        } else if (action?.prompt) {
+            ask(s, action.prompt);
         } else if (action?.layer) {
             toggleLayer(s, action.layer, action.title);
         } else if (action?.locked) {
@@ -460,6 +525,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             if (input.pressed.has(`right${SECONDARY}`)) act(s, 'stop', s.aimed.source, head);
             if (input.pressed.has(`left${PRIMARY}`)) s.cockpit?.toggle(head);
             if (input.pressed.has(`left${SECONDARY}`)) act(s, 'layers', null, head);
+            if (input.pressed.has(`right${PRIMARY}`)) act(s, 'pilot', null, head);
             s.cockpit?.update(frame, pose.transform.matrix, readout(s, pose));
             const target = s.projection ? projectionTarget(s.gl, s.binding, s.projection, s.cache)
                 : layerTarget(s.gl, s.session.renderState.baseLayer);
@@ -522,6 +588,15 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
                 xr.cockpit = null;
             }
             if (!xr.cockpit) await session.updateRenderState({ layers: [xr.projection] });
+            const s = xr;
+            if (s.cockpit && window.DeepGISPilot) {
+                s.unsubscribePilot = window.DeepGISPilot.on((e) => s.cockpit?.pilotEvent(e));
+                // Focusing inside the select event counts as a user gesture for the keyboard
+                session.addEventListener('select', () => {
+                    if (xr !== s || !s.aimed?.panel) return;
+                    if (s.cockpit.click(s.aimed.panel) === 'type') keyboardField(s).focus();
+                });
+            }
         } else {
             const layer = new XRWebGLLayer(session, gl, { antialias: false, depth: false, framebufferScaleFactor: scaleFactor });
             await session.updateRenderState({ baseLayer: layer });
@@ -529,7 +604,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         session.requestAnimationFrame(onFrame);
         enterBtn.disabled = true;
         exitBtn.disabled = false;
-        status(xr.cockpit ? 'in VR: X shows or hides the cockpit, trigger flies to where the laser points'
+        status(xr.cockpit ? 'in VR: X cockpit, Y layers, A AI pilot; trigger flies to where the laser points'
             : 'in VR (no cockpit panels on this headset): sticks fly, trigger flies to the laser', '#10b981');
     }
 
@@ -540,6 +615,8 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         const { viewer, saved, rig } = s;
         const scene = viewer.scene, camera = viewer.camera, canvas = scene.canvas;
         s.cockpit?.destroy();
+        s.unsubscribePilot?.();
+        s.kbd?.remove();
         if (s.lasers) scene.primitives.remove(s.lasers);
         if (s.markers) scene.primitives.remove(s.markers);
         releaseAnimationFrames();

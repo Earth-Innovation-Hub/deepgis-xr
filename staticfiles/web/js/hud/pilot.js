@@ -5,6 +5,10 @@
 // For superusers the server may also return robot_command, a command for one of the lab's
 // robots: it does not run with the plan but becomes a card in the chat, and is posted to
 // /label/api/pilot/robot-command/ only when the user presses Send (Preview plans it only).
+// window.DeepGISPilot lets other panels (the VR comms panel, hud/xr-cockpit.js) ask through
+// the same path and mirror the chat: on(fn) gets {type: 'add', id, kind, text} for each line
+// and {type: 'remove', id} when a passing line ("Thinking...") goes. Robot commands are
+// mirrored as a notice only; they are sent from the card in this chat.
 (function initAiPilot() {
     const panel = document.getElementById('pilotPanel');
     const toggleBtn = document.getElementById('hudPilotBtn');
@@ -65,8 +69,37 @@
         toggleBtn.classList.remove('active');
     });
 
+    const listeners = new Set();
+    const recent = [];
+    let seq = 0;
+    function emit(e) {
+        if (e.type === 'add') {
+            recent.push(e);
+            recent.splice(0, Math.max(0, recent.length - 40));
+        } else {
+            const i = recent.findIndex(r => r.id === e.id);
+            if (i >= 0) recent.splice(i, 1);
+        }
+        listeners.forEach((fn) => {
+            try { fn(e); } catch (err) { console.error('[AI Pilot] listener failed', err); }
+        });
+    }
+    const announce = (kind, text) => {
+        const id = ++seq;
+        emit({ type: 'add', id, kind, text: String(text ?? '') });
+        return id;
+    };
+
+    const base = hud.logSink(log);
     const out = {
-        ...hud.logSink(log),
+        ...base,
+        msg(kind, text, href) {
+            const el = base.msg(kind, text, href);
+            const id = announce(kind, text);
+            const remove = el.remove.bind(el);
+            el.remove = () => { remove(); emit({ type: 'remove', id }); };
+            return el;
+        },
         // Follow-up questions ("what is the dark patch on the left?") can refer to it
         described(data) {
             history.push({ role: 'assistant',
@@ -80,10 +113,11 @@
     const ROBOT_COMMAND_NAMES = { instruct: 'instruction', return_home: 'return home and land', land: 'land now' };
 
     function robotCommandCard(a) {
-        const card = addMsg('robot', '');
+        const card = base.msg('robot', '');
         const title = document.createElement('div');
         title.className = 'pilot-robot-title';
         title.textContent = `Command for ${a.vehicle}: ${ROBOT_COMMAND_NAMES[a.command] || a.command}`;
+        announce('robot', `${title.textContent}. Review and send it from the chat on the page.`);
         card.appendChild(title);
         if (a.instruction) {
             const text = document.createElement('div');
@@ -167,11 +201,13 @@
 
     stopBtn.addEventListener('click', () => { hud.stop(); addMsg('step', 'Stopped'); });
 
-    form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const message = input.value.trim();
-        if (!message || !getViewer()) return;
-        input.value = '';
+    let asking = false;
+
+    // false when there is nothing to send or a request is already out
+    async function ask(text) {
+        const message = String(text || '').trim();
+        if (!message || asking || !getViewer()) return false;
+        asking = true;
         addMsg('user', message);
         const thinking = addMsg('step', 'Thinking...');
         sendBtn.disabled = true;
@@ -208,9 +244,26 @@
             thinking.remove();
             addMsg('error', `Request failed: ${err.message || err}`);
         } finally {
+            asking = false;
             sendBtn.disabled = false;
         }
+        return true;
+    }
+
+    form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (asking || !input.value.trim()) return;
+        const message = input.value;
+        input.value = '';
+        ask(message);
     });
+
+    window.DeepGISPilot = {
+        ask,
+        busy: () => asking,
+        recent: () => recent.slice(),
+        on: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    };
 
     modelSelect?.addEventListener('change', () => {
         const selected = modelSelect.selectedOptions[0];

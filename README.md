@@ -882,8 +882,14 @@ plus the pilot's last status message. To its left, the **layers wing** lists
 the data layers in the same groups as the Layers panel. Pointing at a row and
 pulling the trigger shows that layer around the point in view, or hides it.
 Layers that are fetched through the server are marked SIGN IN until you sign in
-on the page. Look at your left controller for the **wrist menu**: COCKPIT,
-LAYERS, CENTRE (brings both panels in front of you) and STOP.
+on the page. To the right, the **AI pilot comms** panel is the pilot chat,
+shared with the chat on the page. Quick prompts (describe the view, what is
+here, orbit this, climb 1 km) ask at a touch. TYPE opens the headset's system
+keyboard (its mic button dictates), and Enter or SEND asks. Questions about
+"the view" refer to where you are looking. A robot command the pilot proposes
+is announced but has to be sent from its card in the page chat. Look at your
+left controller for the **wrist menu**: COCKPIT, LAYERS, PILOT, TYPE, CENTRE
+(brings the panels in front of you) and STOP.
 
 | Control | Action |
 |---|---|
@@ -893,6 +899,7 @@ LAYERS, CENTRE (brings both panels in front of you) and STOP.
 | B | Stop the flight or orbit |
 | X | Show the cockpit in front of you, or hide it |
 | Y | Show or hide the layers wing |
+| A | Show or hide the AI pilot comms |
 | Any thumbstick | Takes over from the autopilot |
 
 How it works (`staticfiles/web/js/hud/xr.js`): Cesium 1.111 has no WebXR
@@ -911,8 +918,8 @@ request-render mode are off, and terrain detail is relaxed
 Where the browser supports WebXR Layers (Quest Browser does), the globe goes
 into a projection layer and the cockpit (`hud/xr-cockpit.js`) into its own
 compositor layers: the console is a cylinder layer, the compass a quad
-locked to the head, the layers wing a quad beside the console and the wrist
-menu a quad in the left controller's grip space, both drawn on 2D canvases and redrawn only when a
+locked to the head, the layers wing and pilot comms quads on either side of the console and the
+wrist menu a quad in the left controller's grip space, both drawn on 2D canvases and redrawn only when a
 reading changes. The compositor samples them at full lens resolution,
 so text stays sharp whatever the globe's resolution. The console stays
 where it was placed (in front of the craft) and turns only with snap turns
@@ -1075,6 +1082,10 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **VR layers wing and wrist menu**: every data layer can be toggled with the
   laser in VR (Y shows the wing); a wrist menu on the left controller.
   Layer groups now come from `layer_catalog` for both the desktop panel and VR.
+- **VR AI pilot comms**: the pilot chat in VR, with quick prompts and the Quest
+  system keyboard and dictation (A shows it). `hud/pilot.js` now exposes
+  `window.DeepGISPilot` (`ask`, `busy`, `recent`, `on`) so other panels can ask
+  and mirror the chat.
 - **Pilot widgets** (`41c862a`): "Describe this view" in the AI panel and
   "Fly to place" (goto, orbit, typed `lat, lon`) in the View panel.
 - **Layers panel** (`f9a58e4`): the pilot's data layers as toolbar toggles,

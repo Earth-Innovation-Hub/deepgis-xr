@@ -5,6 +5,8 @@
 // - Compass: a faint quad locked to the head, at the top of the view.
 // - Layers wing: the data layers as toggles, left of the console (Y shows or hides it).
 //   Kinds and groups come from views/pilot.py (layer_catalog, #hudLayerCatalog).
+// - Pilot comms: the AI pilot chat (hud/pilot.js, window.DeepGISPilot) right of the console,
+//   with quick prompts and a line typed on the headset's system keyboard (hud/xr.js).
 // - Wrist menu: on the left controller, shown while you look at it.
 // The laser (hud/xr.js) hovers and clicks buttons through pick/hover/click; click returns
 // an action for hud/xr.js to run.
@@ -20,8 +22,16 @@
     const COMPASS = { width: 1024, height: 96, metres: [0.52, 0.0488], y: 0.21, z: -1.0 };
     // Counter-clockwise from the console's centre, so to the left
     const WING = { width: 1100, metres: 0.72, yaw: Cesium.Math.toRadians(57), dist: 1.05, drop: 0.06, line: 36, top: 112 };
+    // Mirrors the wing on the right
+    const COMMS = { width: 1100, height: 780, metres: 0.72, yaw: Cesium.Math.toRadians(-57), dist: 1.05, drop: 0.06, line: 34 };
+    const QUICK_PROMPTS = [
+        ['DESCRIBE', 'Describe what I am looking at'],
+        ['WHAT IS HERE', 'What is the place in view, and what is it known for?'],
+        ['ORBIT THIS', 'Orbit the point in view'],
+        ['CLIMB 1 KM', 'Climb 1 km higher where we are'],
+    ];
     // In the left grip space: above the controller towards the wrist, tilted up to the eyes
-    const WRIST = { width: 560, height: 360, metres: [0.14, 0.09], at: { x: 0, y: 0.045, z: 0.07 }, tilt: Cesium.Math.toRadians(-50) };
+    const WRIST = { width: 660, height: 360, metres: [0.165, 0.09], at: { x: 0, y: 0.045, z: 0.07 }, tilt: Cesium.Math.toRadians(-50) };
     const REDRAW_MS = 70;
     const CARDINALS = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
 
@@ -184,6 +194,22 @@
             .filter(([, rows]) => rows.length);
     }
 
+    // Words into lines no wider than w in the context's current font
+    function wrap(ctx, text, w) {
+        const lines = [];
+        let line = '';
+        String(text).split(/\s+/).filter(Boolean).forEach((word) => {
+            const next = line ? `${line} ${word}` : word;
+            if (ctx.measureText(next).width <= w || !line) line = next;
+            else {
+                lines.push(line);
+                line = word;
+            }
+        });
+        if (line) lines.push(line);
+        return lines;
+    }
+
     // Groups into two columns of about the same height
     function wingColumns(groups) {
         const lines = (g) => 1 + g[1].length;
@@ -204,6 +230,8 @@
         const wingLines = Math.max(...columns.map(c => c.reduce((n, g) => n + 1 + g[1].length, 0)), 1);
         WING.height = WING.top + wingLines * WING.line + 30;
         const wingMetres = [WING.metres, WING.metres * WING.height / WING.width];
+        const commsMetres = [COMMS.metres, COMMS.metres * COMMS.height / COMMS.width];
+        const pilot = window.DeepGISPilot;
         const wristOffset = rigid(WRIST.at, { x: Math.sin(WRIST.tilt / 2), y: 0, z: 0, w: Math.cos(WRIST.tilt / 2) });
 
         const panels = {};
@@ -226,12 +254,19 @@
                 width: wingMetres[0], height: wingMetres[1],
             }), WING.width, WING.height, drawWing);
         }
+        if (pilot) {
+            addPanel('comms', binding.createQuadLayer({
+                space, viewPixelWidth: COMMS.width, viewPixelHeight: COMMS.height, layout: 'mono',
+                width: commsMetres[0], height: commsMetres[1],
+            }), COMMS.width, COMMS.height, drawComms);
+        }
         // Created once the left controller's grip space is known (wristFor)
         addPanel('wrist', null, WRIST.width, WRIST.height, drawWrist);
 
         const state = {
-            console: false, wing: false, wrist: false, yaw: 0, head: { x: 0, y: 0, z: 0 },
-            consoleMatrix: null, wingMatrix: null, wristMatrix: null, wristSpace: null,
+            console: false, wing: false, comms: false, wrist: false, yaw: 0, head: { x: 0, y: 0, z: 0 },
+            consoleMatrix: null, wingMatrix: null, commsMatrix: null, wristMatrix: null, wristSpace: null,
+            log: pilot ? pilot.recent() : [], typed: '', keyboard: false, asking: false,
             hover: null, hit: null, cursor: null,
             status: 'Cockpit online', statusKind: 'step', statusAt: performance.now(),
             data: null, compassHeading: null, busy: new Set(), shownKey: '', presented: '',
@@ -242,6 +277,7 @@
             const layers = [];
             if (state.console) layers.push(panels.console.layer, panels.compass.layer);
             if (state.wing && panels.wing) layers.push(panels.wing.layer);
+            if (state.comms && panels.comms) layers.push(panels.comms.layer);
             if (state.wrist && panels.wrist.layer) layers.push(panels.wrist.layer);
             const key = layers.map(l => Object.keys(panels).find(id => panels[id].layer === l)).join();
             if (key === state.presented) return;
@@ -256,13 +292,16 @@
             const centre = { x: m[12], y: m[13] - CONSOLE.drop, z: m[14] };
             panels.console.layer.transform = new XRRigidTransform(centre, yawQuat(state.yaw));
             state.consoleMatrix = rigid(centre, yawQuat(state.yaw));
-            if (panels.wing) {
-                const yaw = state.yaw + WING.yaw;
-                const at = { x: m[12] - Math.sin(yaw) * WING.dist, y: m[13] - WING.drop, z: m[14] - Math.cos(yaw) * WING.dist };
-                panels.wing.layer.transform = new XRRigidTransform(at, yawQuat(yaw));
-                state.wingMatrix = rigid(at, yawQuat(yaw));
-            }
-            dirty('console', 'wing');
+            const side = (id, spec) => {
+                if (!panels[id]) return null;
+                const yaw = state.yaw + spec.yaw;
+                const at = { x: m[12] - Math.sin(yaw) * spec.dist, y: m[13] - spec.drop, z: m[14] - Math.cos(yaw) * spec.dist };
+                panels[id].layer.transform = new XRRigidTransform(at, yawQuat(yaw));
+                return rigid(at, yawQuat(yaw));
+            };
+            state.wingMatrix = side('wing', WING);
+            state.commsMatrix = side('comms', COMMS);
+            dirty('console', 'wing', 'comms');
         }
 
         function setConsole(on, head) {
@@ -276,12 +315,30 @@
         // false when this body has no data layers
         function setWing(on, head) {
             if (!panels.wing) return false;
-            if (on && head && !state.console) place(head);
+            if (on && head && !state.console && !state.comms) place(head);
             state.wing = on;
             if (!on && state.hit?.panel === 'wing') state.hover = state.hit = null;
             dirty('wing', 'wrist');
             presentNow();
             return true;
+        }
+
+        // false without the AI pilot on this page
+        function setComms(on, head) {
+            if (!panels.comms) return false;
+            if (on && head && !state.console && !state.wing) place(head);
+            state.comms = on;
+            if (!on && state.hit?.panel === 'comms') state.hover = state.hit = null;
+            dirty('comms', 'console', 'wrist');
+            presentNow();
+            return true;
+        }
+
+        function pilotEvent(e) {
+            if (e.type === 'add') state.log.push(e);
+            else state.log = state.log.filter(r => r.id !== e.id);
+            state.log.splice(0, Math.max(0, state.log.length - 40));
+            dirty('comms');
         }
 
         function wristFor(src) {
@@ -349,6 +406,9 @@
             if (state.console) hits.push({ panel: 'console', ...pickConsole(o, d) });
             if (state.wing && state.wingMatrix) {
                 hits.push({ panel: 'wing', ...pickQuad(state.wingMatrix, wingMetres[0], wingMetres[1], WING.width, WING.height, o, d) });
+            }
+            if (state.comms && state.commsMatrix) {
+                hits.push({ panel: 'comms', ...pickQuad(state.commsMatrix, commsMetres[0], commsMetres[1], COMMS.width, COMMS.height, o, d) });
             }
             if (state.wrist && state.wristMatrix && hand !== 'left') {
                 hits.push({ panel: 'wrist', ...pickQuad(state.wristMatrix, WRIST.metres[0], WRIST.metres[1], WRIST.width, WRIST.height, o, d) });
@@ -489,15 +549,21 @@
                 { id: 'hide', label: 'HIDE', color: C.line, action: 'hide' },
             ];
             if (panels.wing) defs.push({ id: 'layers', label: 'LAYERS', color: C.green, action: 'layers', on: state.wing });
-            const bw = 220, bh = 66, total = defs.length * bw + (defs.length - 1) * 24;
-            p.buttons = defs.map((b, i) => ({ ...b, x: W / 2 - total / 2 + i * (bw + 24), y: H - bh - 30, w: bw, h: bh }));
+            if (panels.comms) defs.push({ id: 'pilot', label: 'PILOT', color: C.amber, action: 'pilot', on: state.comms });
+            // Between the two hint blocks (each about 360 px from its edge)
+            const bgap = 20, bw = Math.min(220, (W - 2 * 450 - (defs.length - 1) * bgap) / defs.length), bh = 66;
+            const total = defs.length * bw + (defs.length - 1) * bgap;
+            p.buttons = defs.map((b, i) => ({ ...b, x: W / 2 - total / 2 + i * (bw + bgap), y: H - bh - 30, w: bw, h: bh }));
             p.buttons.forEach(b => button(ctx, b, isHot('console', b)));
             ctx.fillStyle = C.dim;
             ctx.font = `500 20px ${MONO}`;
-            ctx.textAlign = 'left';
             ctx.textBaseline = 'middle';
-            ctx.fillText('X cockpit · Y layers · B stop', 70, H - 78);
-            ctx.fillText('trigger fly · grip+trigger orbit', 70, H - 50);
+            ctx.textAlign = 'left';
+            ctx.fillText(`X cockpit${panels.wing ? ' · Y layers' : ''}`, 70, H - 78);
+            ctx.fillText(`B stop${panels.comms ? ' · A pilot' : ''}`, 70, H - 50);
+            ctx.textAlign = 'right';
+            ctx.fillText('trigger: fly there', W - 70, H - 78);
+            ctx.fillText('grip+trigger: orbit', W - 70, H - 50);
             cursorDot(ctx, 'console');
         }
 
@@ -588,13 +654,92 @@
             const defs = [
                 { id: 'cockpit', label: 'COCKPIT', color: C.line, action: 'cockpit', on: state.console },
                 { id: 'layers', label: 'LAYERS', color: C.green, action: 'layers', on: state.wing },
+                { id: 'pilot', label: 'PILOT', color: C.amber, action: 'pilot', on: state.comms },
+                { id: 'type', label: 'TYPE', color: C.amber, action: 'type', on: state.keyboard },
                 { id: 'centre', label: 'CENTRE', color: C.line, action: 'centre', on: false },
                 { id: 'stop', label: 'STOP', color: C.red, action: 'stop' },
-            ].filter(b => b.id !== 'layers' || panels.wing);
-            const m = 30, gap = 20, bw = (W - 2 * m - gap) / 2, bh = (H - 2 * m - gap) / 2;
-            p.buttons = defs.map((b, i) => ({ ...b, x: m + (i % 2) * (bw + gap), y: m + Math.floor(i / 2) * (bh + gap), w: bw, h: bh }));
-            p.buttons.forEach(b => button(ctx, b, isHot('wrist', b), 40));
+            ].filter(b => (b.id !== 'layers' || panels.wing) && ((b.id !== 'pilot' && b.id !== 'type') || panels.comms));
+            const cols = defs.length > 4 ? 3 : 2, rows = Math.ceil(defs.length / cols);
+            const m = 30, gap = 20, bw = (W - 2 * m - (cols - 1) * gap) / cols, bh = (H - 2 * m - (rows - 1) * gap) / rows;
+            p.buttons = defs.map((b, i) => ({ ...b, x: m + (i % cols) * (bw + gap), y: m + Math.floor(i / cols) * (bh + gap), w: bw, h: bh }));
+            p.buttons.forEach(b => button(ctx, b, isHot('wrist', b), cols === 3 ? 32 : 40));
             cursorDot(ctx, 'wrist');
+        }
+
+        const LOG_COLORS = { user: C.amber, ai: C.text, step: C.soft, error: C.red, robot: C.amber };
+
+        function drawComms(p) {
+            const ctx = p.canvas.getContext('2d');
+            const W = COMMS.width, H = COMMS.height;
+            glassPanel(ctx, W, H, 28);
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = C.amber;
+            ctx.font = `700 32px ${MONO}`;
+            ctx.fillText('AI PILOT', 40, 48);
+            ctx.fillStyle = C.soft;
+            ctx.font = `500 20px ${MONO}`;
+            ctx.fillText(state.asking ? 'thinking…' : 'TYPE opens the keyboard; its mic dictates', 40, 82);
+            const close = { id: 'close', label: 'CLOSE', color: C.line, action: 'pilot', x: W - 196, y: 26, w: 156, h: 52 };
+
+            // Log, newest at the bottom
+            const top = 108, bottom = H - 262, x = 40, w = W - 80;
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - 10, top - 8, w + 20, bottom - top + 16);
+            ctx.font = `500 24px ${MONO}`;
+            const lines = [];
+            for (let i = state.log.length - 1; i >= 0 && lines.length * COMMS.line < bottom - top; i--) {
+                const r = state.log[i];
+                const prefix = r.kind === 'user' ? '> ' : r.kind === 'ai' ? '◆ ' : r.kind === 'error' ? '! ' : '  ';
+                const wrapped = wrap(ctx, `${prefix}${r.text}`, w);
+                for (let j = wrapped.length - 1; j >= 0; j--) lines.unshift([wrapped[j], LOG_COLORS[r.kind] || C.soft]);
+            }
+            const fit = Math.floor((bottom - top) / COMMS.line);
+            const shown = lines.slice(-fit);
+            if (!shown.length) {
+                ctx.fillStyle = C.dim;
+                ctx.fillText('Ask the pilot to fly, explain what you see, or show layers.', x, top + COMMS.line / 2);
+            }
+            shown.forEach(([text, color], i) => {
+                ctx.fillStyle = color;
+                ctx.fillText(text, x, top + i * COMMS.line + COMMS.line / 2);
+            });
+
+            // Typed line
+            const iy = H - 240, ih = 60;
+            bracketBox(ctx, x - 10, iy, w + 20, ih, 10);
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+            ctx.fill();
+            ctx.lineWidth = state.keyboard ? 3 : 2;
+            ctx.strokeStyle = state.keyboard ? C.amber : C.dim;
+            ctx.stroke();
+            ctx.font = `500 26px ${MONO}`;
+            let typed = state.typed;
+            while (typed && ctx.measureText(`> ${typed}_`).width > w - 20) typed = typed.slice(1);
+            ctx.fillStyle = state.typed ? C.text : C.dim;
+            ctx.fillText(state.typed ? `> ${typed}${state.keyboard ? '_' : ''}` : '> press TYPE, then type or tap the mic', x + 6, iy + ih / 2);
+
+            // Keyboard buttons, then quick prompts
+            const row = (defs, y, h, font) => {
+                const g = 18, bw = (w + 20 - (defs.length - 1) * g) / defs.length;
+                return defs.map((b, i) => {
+                    const btn = { ...b, x: x - 10 + i * (bw + g), y, w: bw, h };
+                    button(ctx, btn, isHot('comms', btn), font);
+                    return btn;
+                });
+            };
+            const keys = row([
+                { id: 'type', label: 'TYPE', color: C.amber, action: 'type', on: state.keyboard },
+                { id: 'send', label: 'SEND', color: C.green, action: 'send', on: !!state.typed.trim() && !state.asking },
+                { id: 'clear', label: 'CLEAR', color: C.line, action: 'clear', on: !!state.typed },
+            ], H - 166, 60, 28);
+            const quick = row(QUICK_PROMPTS.map(([label, text], i) => ({
+                id: `q${i}`, label, color: C.line, action: { prompt: text }, on: !state.asking,
+            })), H - 90, 56, 22);
+            button(ctx, close, isHot('comms', close), 24);
+            p.buttons = [close, ...keys, ...quick];
+            cursorDot(ctx, 'comms');
         }
 
         function upload(layer, cnv, frame) {
@@ -625,6 +770,11 @@
                 state.compassHeading = heading;
                 dirty('compass');
             }
+            const asking = !!pilot?.busy();
+            if (asking !== state.asking) {
+                state.asking = asking;
+                dirty('comms');
+            }
             const shownKey = `${(hud?.shown() || []).join()}|${[...state.busy].join()}`;
             if (shownKey !== state.shownKey) {
                 state.shownKey = shownKey;
@@ -643,7 +793,7 @@
         }
 
         function destroy() {
-            state.console = state.wing = state.wrist = false;
+            state.console = state.wing = state.comms = state.wrist = false;
             Object.values(panels).forEach(p => p.layer?.destroy?.());
         }
 
@@ -653,6 +803,11 @@
             toggle: (head) => setConsole(!state.console, head),
             hide: () => setConsole(false),
             toggleWing: (head) => setWing(!state.wing, head),
+            toggleComms: (head) => setComms(!state.comms, head),
+            showComms: (head) => state.comms || setComms(true, head),
+            pilotEvent,
+            typed: (text) => { state.typed = text; dirty('comms'); },
+            keyboard: (on) => { state.keyboard = on; dirty('comms', 'wrist'); },
             centre: (head) => { place(head); setConsole(true); },
             visible: (id = 'console') => visible(id),
             canvases: Object.fromEntries(Object.entries(panels).map(([id, p]) => [id, p.canvas])),
