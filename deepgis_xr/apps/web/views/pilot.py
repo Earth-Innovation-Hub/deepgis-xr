@@ -177,17 +177,32 @@ PLANET_LAYER_DOCS = {
 
 # Layers fetched through this server's relays (pilot_ocean, pilot_topo), which need a sign-in
 SIGNIN_LAYER_KINDS = ("sea_temp", "chlorophyll", "lidar_dem")
+# How the Layers panel and the VR layers wing group the kinds; the rest go under "Other"
+LAYER_GROUPS = (
+    ("Hazards", ("faults", "flood", "fires")),
+    ("Ground", ("geology", "landcover", "soils")),
+    ("Terrain", ("elevation", "slope", "contours", "lidar_dem", "topo_datasets")),
+    ("Water", ("river", "sea_temp", "chlorophyll")),
+    ("Remote sensing", ("surface_temp", "ndvi")),
+    ("Weather now", ("humidity", "air_temp")),
+    ("Life and places", ("wildlife", "trails", "springs", "mines")),
+)
 
 
 def layer_catalog(body):
-    """What the HUD's Layers panel offers on a body (hud/layers-panel.js): the kinds the
-    pilot may show there, those drawn in a colour map, and the radius range it accepts."""
+    """What the HUD's Layers panel (hud/layers-panel.js) and the VR layers wing
+    (hud/xr-cockpit.js) offer on a body: the kinds the pilot may show there, grouped,
+    those drawn in a colour map, and the radius range it accepts."""
     if body == "earth":
         kinds, colormaps, limits = LAYER_KINDS, COLORMAPS, LAYER_LIMITS
     else:
         kinds, colormaps, limits = PLANET_LAYER_KINDS.get(body, ()), (), PLANET_LIMITS
+    grouped = {k for _, ks in LAYER_GROUPS for k in ks}
+    groups = [[title, [k for k in ks if k in kinds]] for title, ks in LAYER_GROUPS]
+    groups.append(["Other", [k for k in kinds if k not in grouped]])
     return {
         "kinds": list(kinds),
+        "groups": [g for g in groups if g[1]],
         "colormaps": list(colormaps),
         "colormap_kinds": [k for k in RASTER_KINDS if k in kinds] if colormaps else [],
         "signin_kinds": [k for k in SIGNIN_LAYER_KINDS if k in kinds],

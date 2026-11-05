@@ -1,8 +1,8 @@
 // HUD Layers panel, data layers (web/hud/layers_panel.html): the AI pilot's layers as
-// toggles. Each one runs show_layer / hide_layer through window.DeepGISActions
+// toggles, in the catalog's groups. Each one runs show_layer / hide_layer through window.DeepGISActions
 // (hud/actions.js) around the point in view, or around a place typed above the list, and
-// lists the layer's readings, legend and sources under its row. The kinds, colour maps and
-// radius range come from views/pilot.py (layer_catalog, #hudLayerCatalog); layers the
+// lists the layer's readings, legend and sources under its row. The kinds, groups, colour
+// maps and radius range come from views/pilot.py (layer_catalog, #hudLayerCatalog); layers the
 // pilot shows or hides tick and untick here too.
 (function initLayersPanel() {
     const mount = document.getElementById('dataLayersMount');
@@ -17,16 +17,6 @@
     const signinKinds = new Set(catalog.signin_kinds);
     const colormapKinds = new Set(catalog.colormap_kinds);
     const [minRadius, maxRadius] = catalog.radius_m;
-
-    const GROUPS = [
-        ['Hazards', ['faults', 'flood', 'fires']],
-        ['Ground', ['geology', 'landcover', 'soils']],
-        ['Terrain', ['elevation', 'slope', 'contours', 'lidar_dem', 'topo_datasets']],
-        ['Water', ['river', 'sea_temp', 'chlorophyll']],
-        ['Remote sensing', ['surface_temp', 'ndvi']],
-        ['Weather now', ['humidity', 'air_temp']],
-        ['Life and places', ['wildlife', 'trails', 'springs', 'mines']],
-    ];
 
     function el(tag, className, text) {
         const e = document.createElement(tag);
@@ -167,13 +157,10 @@
     });
     mount.append(el('div', 'dl-heading', 'Data layers'), where);
 
-    const grouped = new Set(GROUPS.flatMap(([, ks]) => ks));
-    const groups = GROUPS.map(([title, ks]) => [title, ks.filter(k => kinds.includes(k))]);
-    const rest = kinds.filter(k => !grouped.has(k));
-    if (rest.length) groups.push(['Other', rest]);
-    groups.filter(([, ks]) => ks.length).forEach(([title, ks]) => {
-        mount.append(el('div', 'dl-group', title), ...ks.map(makeRow));
-    });
+    catalog.groups.map(([title, ks]) => [title, ks.filter(k => kinds.includes(k))])
+        .filter(([, ks]) => ks.length).forEach(([title, ks]) => {
+            mount.append(el('div', 'dl-group', title), ...ks.map(makeRow));
+        });
 
     hud.on('layers', sync);
     sync();

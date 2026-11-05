@@ -47,6 +47,15 @@ class LayersPanelTests(TestCase):
         self.assertEqual(moon["radius_m"], list(pilot.PLANET_LIMITS["radius_m"]))
         self.assertEqual(pilot.layer_catalog("venus")["kinds"], [])
 
+    def test_groups_cover_each_kind_once(self):
+        for body in ("earth", *pilot.PLANET_LAYER_KINDS):
+            cat = pilot.layer_catalog(body)
+            grouped = [k for _, ks in cat["groups"] for k in ks]
+            self.assertEqual(sorted(grouped), sorted(cat["kinds"]), body)
+            self.assertTrue(all(ks for _, ks in cat["groups"]), body)
+        self.assertEqual(pilot.layer_catalog("moon")["groups"], [["Terrain", ["elevation", "slope", "contours"]]])
+        self.assertNotIn("Other", [t for t, _ in pilot.layer_catalog("earth")["groups"]])
+
     def test_search_page_has_data_layers_and_tile_catalog(self):
         resp = self.client.get("/label/3d/search/")
         self.assertEqual(resp.status_code, 200)

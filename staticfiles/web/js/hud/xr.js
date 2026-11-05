@@ -16,7 +16,8 @@
 // Controls: the left stick flies along and across where you look (left grip boosts); the
 // right stick snap-turns and climbs or descends. The right controller's laser clicks the
 // cockpit (hud/xr-cockpit.js) or, on the ground, flies there with the trigger (grip and
-// trigger orbits). B stops, X shows the cockpit in front of you or hides it.
+// trigger orbits). B stops, X shows the cockpit in front of you or hides it, Y the layers
+// wing; the wrist menu on the left controller does both and re-centres them.
 
 // WebGL options for Cesium viewers; read by core/cesium-init.js and the planet viewer
 window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.userAgent)
@@ -267,7 +268,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
                 });
             }
             const p = src.targetRaySpace && frame.getPose(src.targetRaySpace, space);
-            if (p) rays[hand] = { matrix: p.transform.matrix, source: src };
+            if (p) rays[hand] = { matrix: p.transform.matrix, source: src, hand };
         }
         input.ray = rays.right || rays.left || null;
         return input;
@@ -322,7 +323,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         const m = input.ray.matrix;
         const o = [m[12], m[13], m[14]], d = [-m[8], -m[9], -m[10]];
         const enu = enuRotation(rig.origin, scene.globe.ellipsoid);
-        result.panel = s.cockpit?.pick(o, d) || null;
+        result.panel = s.cockpit?.pick(o, d, input.ray.hand) || null;
         const start = worldPoint(enu, rig, o[0] + d[0] * 0.05, o[1] + d[1] * 0.05, o[2] + d[2] * 0.05);
         const dir = Cesium.Cartesian3.normalize(toWorld(enu, rig.heading, d[0], d[1], d[2]), new Cesium.Cartesian3());
         let end;
@@ -339,21 +340,50 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         return result;
     }
 
+    // The cockpit's status line shows the latest message, so the closing "Done" is dropped.
+    // msg returns a line the runners may remove() once its step is over.
     function sinkFor(s) {
+        const line = { remove() {} };
         return {
-            msg: (kind, text) => s.cockpit?.status(text, kind),
+            msg: (kind, text) => {
+                if (kind !== 'step' || text !== 'Done') s.cockpit?.status(text, kind);
+                return line;
+            },
             legend: (spec) => s.cockpit?.status(spec.title, 'step'),
             described: () => {},
         };
     }
 
-    function act(s, action, source) {
-        const hud = window.DeepGISActions;
+    // A layers wing row: show the layer around the point in view, or hide it
+    function toggleLayer(s, kind, title) {
+        const hud = window.DeepGISActions, ck = s.cockpit;
+        if (!hud || !ck || ck.busy(kind)) return;
+        const on = hud.shown().includes(kind);
+        ck.setBusy(kind, true);
+        ck.status(`${on ? 'Hiding' : 'Loading'} ${title}`, 'step');
+        const plan = on ? [{ type: 'hide_layer', kind }] : [{ type: 'show_layer', kind, frame: false }];
+        Promise.resolve(hud.run(plan, sinkFor(s)))
+            .catch(e => ck.status(e.message || String(e), 'error'))
+            .finally(() => ck.setBusy(kind, false));
+    }
+
+    function act(s, action, source, head) {
+        const hud = window.DeepGISActions, ck = s.cockpit;
         if (action === 'stop') {
             hud?.stop();
-            s.cockpit?.status('Stopped', 'step');
+            ck?.status('Stopped', 'step');
         } else if (action === 'hide') {
-            s.cockpit?.hide();
+            ck?.hide();
+        } else if (action === 'cockpit') {
+            ck?.toggle(head);
+        } else if (action === 'layers') {
+            if (ck && !ck.toggleWing(head)) ck.status('No data layers on this body', 'step');
+        } else if (action === 'centre') {
+            ck?.centre(head);
+        } else if (action?.layer) {
+            toggleLayer(s, action.layer, action.title);
+        } else if (action?.locked) {
+            ck?.status(`${action.title} is fetched through the server: sign in on the page first`, 'error');
         }
         buzz(source);
     }
@@ -413,20 +443,23 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             if (flying && s.rig.auto) window.DeepGISActions?.stop();
             const t = advance(s.viewer, s.rig, time);
             if (dt) move(s.viewer, pose, s.rig, input, dt);
+            const head = pose.transform.matrix;
+            s.cockpit?.track(frame, head);
             s.aimed = aim(s, input);
-            s.cockpit?.hover(s.aimed.panel);
+            if (s.cockpit?.hover(s.aimed.panel)) buzz(s.aimed.source, 0.15, 10);
             if (input.pressed.has(`right${TRIGGER}`) || input.pressed.has(`left${TRIGGER}`)) {
                 const source = s.aimed.source;
                 if (s.aimed.panel) {
                     const action = s.cockpit.click(s.aimed.panel);
-                    if (action) act(s, action, source);
+                    if (action) act(s, action, source, head);
                 } else if (s.aimed.ground) {
                     flyToGround(s, s.aimed.ground, input.held.has(`right${GRIP}`));
                     buzz(source, 0.6, 40);
                 }
             }
-            if (input.pressed.has(`right${SECONDARY}`)) act(s, 'stop', s.aimed.source);
-            if (input.pressed.has(`left${PRIMARY}`)) s.cockpit?.toggle(pose.transform.matrix);
+            if (input.pressed.has(`right${SECONDARY}`)) act(s, 'stop', s.aimed.source, head);
+            if (input.pressed.has(`left${PRIMARY}`)) s.cockpit?.toggle(head);
+            if (input.pressed.has(`left${SECONDARY}`)) act(s, 'layers', null, head);
             s.cockpit?.update(frame, pose.transform.matrix, readout(s, pose));
             const target = s.projection ? projectionTarget(s.gl, s.binding, s.projection, s.cache)
                 : layerTarget(s.gl, s.session.renderState.baseLayer);
@@ -481,7 +514,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             const viewerSpace = await session.requestReferenceSpace('viewer');
             try {
                 xr.cockpit = window.DeepGISCockpit?.create({
-                    binding: xr.binding, gl, space: xr.space, viewerSpace,
+                    binding: xr.binding, gl, session, space: xr.space, viewerSpace,
                     present: (layers) => session.updateRenderState({ layers: [xr.projection, ...layers] }),
                 });
             } catch (e) {
