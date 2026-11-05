@@ -869,11 +869,25 @@ In DeepGIS Search, check **3D Buildings (OSM)** in the **View** panel or press
 Open the viewer in the headset's browser (Meta Quest Browser), click **VR** in
 the HUD toolbar, then **Enter VR**. You stand where the camera was, at true
 scale, facing the camera's heading. The left thumbstick flies along and
-across where you look; the right one turns in 30° steps (left, right) and
-climbs or descends (up, down). Speed grows with height above the ground.
-**Headset resolution** trades sharpness for frame rate (70% by default).
-Leave with **Exit VR** or the Meta button; the globe view continues from
-where you were.
+across where you look (hold the left grip to boost); the right one turns in
+30° steps (left, right) and climbs or descends (up, down). Speed grows with
+height above the ground. **Headset resolution** trades sharpness for frame
+rate (70% by default). Leave with **Exit VR** or the Meta button; the globe
+view continues from where you were.
+
+A cockpit console curves around you below eye level, with a compass strip
+above the view: height above ground, speed, heading tape, position, and
+lights for autopilot, shown data layers and the laser target's distance,
+plus the pilot's last status message.
+
+| Control | Action |
+|---|---|
+| Right trigger at the ground | Fly there at the current height |
+| Right grip + trigger at the ground | Orbit that point |
+| Trigger at a console button | STOP or HIDE |
+| B | Stop the flight or orbit |
+| X | Show the cockpit in front of you, or hide it |
+| Any thumbstick | Takes over from the autopilot |
 
 How it works (`staticfiles/web/js/hud/xr.js`): Cesium 1.111 has no WebXR
 support, so each XR frame renders the scene once per eye with the camera at
@@ -887,6 +901,20 @@ multisample resolve; FXAA smooths edges instead. Desktop browsers take the
 resolve path. During a session the default render loop, mouse controls and
 request-render mode are off, and terrain detail is relaxed
 (`maximumScreenSpaceError` 4); all of it is restored on exit.
+
+Where the browser supports WebXR Layers (Quest Browser does), the globe goes
+into a projection layer and the cockpit (`hud/xr-cockpit.js`) into its own
+compositor layers: the console is a cylinder layer and the compass a quad
+locked to the head, both drawn on 2D canvases and redrawn only when a
+reading changes. The compositor samples them at full lens resolution,
+so text stays sharp whatever the globe's resolution. The console stays
+where it was placed (in front of the craft) and turns only with snap turns
+or X. Without Layers support the globe falls back to a plain `XRWebGLLayer`
+and the cockpit is off. The laser is a Cesium polyline in the scene. It picks
+console buttons by intersecting the ray with the cylinder, and the ground
+with `globe.pick`. Pilot actions (fly-to, orbit, drone animations) keep
+running in VR because the page's `requestAnimationFrame` callbacks are run
+from the XR frame loop, and the rig adopts whatever the camera does.
 
 ### Weather Stations
 Click **Weather** in the HUD toolbar, enable stations, and load all states or
@@ -1034,6 +1062,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   old WebXR module, which never drew into the headset. Each eye is rendered
   at its own pose and cropped into the XR framebuffer; thumbsticks fly,
   snap-turn and climb. Works on Earth and every planet viewer.
+- **VR cockpit** (`hud/xr-cockpit.js`): a sci-fi console and compass in
+  WebXR compositor layers, a controller laser to fly to or orbit any point,
+  STOP and HIDE buttons, X to toggle the cockpit, B to stop.
 - **Pilot widgets** (`41c862a`): "Describe this view" in the AI panel and
   "Fly to place" (goto, orbit, typed `lat, lon`) in the View panel.
 - **Layers panel** (`f9a58e4`): the pilot's data layers as toolbar toggles,

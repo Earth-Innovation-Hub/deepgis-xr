@@ -5,6 +5,8 @@ from django.test import TestCase
 
 JS = Path(settings.BASE_DIR) / "staticfiles" / "web" / "js"
 SCRIPT = r'<script src="[^"\\]*/web/js/hud/xr\.js\?v=\w+"></script>'
+COCKPIT_THEN_XR = (r'<script src="[^"\\]*/web/js/hud/xr-cockpit\.js\?v=\w+"></script>\s*'
+                   r'<script src="[^"\\]*/web/js/hud/xr\.js\?v=\w+"></script>')
 
 
 class ImmersiveVRTests(TestCase):
@@ -16,6 +18,7 @@ class ImmersiveVRTests(TestCase):
             for needle in ('id="enterVR"', 'id="exitVR"', 'id="vrResolution"', 'id="vrStatus"'):
                 self.assertContains(resp, needle, msg_prefix=url)
             self.assertRegex(resp.content.decode(), SCRIPT)
+            self.assertRegex(resp.content.decode(), COCKPIT_THEN_XR)
 
     def test_viewers_take_the_headset_context_options(self):
         self.assertIn("...window.DeepGISXRContext", (JS / "core" / "cesium-init.js").read_text(encoding="utf-8"))
