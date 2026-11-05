@@ -1307,3 +1307,15 @@
 .dl-results { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto;
     margin: 2px 0 6px 22px; font-size: 0.8rem; }
 .dl-results .pilot-msg { align-self: stretch; padding: 0; }
+
+/* ========== AI PILOT WIDGETS (hud/pilot-widgets.js) ========== */
+.pw-section { margin-bottom: 4px; }
+.pw-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.pw-input { flex: 1; min-width: 0; padding: 4px 8px; }
+.pw-row .btn { width: auto; flex: none; margin: 0; }
+.pw-buttons .btn { flex: 1; }
+.pw-results { display: flex; flex-direction: column; gap: 4px; max-height: 240px; overflow-y: auto; font-size: 0.82rem; }
+.pw-results .pilot-msg { align-self: stretch; max-width: none; }
+.pw-note { color: #94a3b8; font-size: 0.75rem; }
+.pw-note a { color: #fbbf24; }
+.pw-rule { border-color: rgba(148, 163, 184, 0.25); margin: 12px 0; }

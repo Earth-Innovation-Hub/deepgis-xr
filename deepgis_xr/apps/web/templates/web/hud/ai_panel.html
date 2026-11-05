@@ -4,6 +4,22 @@
             <div class="hud-panel-title"><i class="fas fa-brain" style="color: #10b981;"></i> AI Viewport Analysis</div>
             <button class="hud-panel-close" onclick="closeHudPanel('aiPanel')"><i class="fas fa-times"></i></button>
         </div>
+        <!-- Describe this view: the AI pilot's describe_view (hud/pilot-widgets.js) -->
+        <div class="pw-section" id="describeView">
+            <div class="dl-heading">Describe this view</div>
+            {% if user.is_authenticated %}
+            <div class="pw-row">
+                <input type="text" class="dl-input pw-input" id="describeQuestion" maxlength="600"
+                       placeholder="Optional question: {% if hud_body == "earth" %}what rock is exposed here?{% else %}how old is this crater?{% endif %}"
+                       aria-label="Question about the view">
+                <button class="btn btn-primary btn-sm" id="describeViewBtn" type="button"><i class="fas fa-eye me-1"></i>Describe</button>
+            </div>
+            <div class="pw-results" id="describeResults" hidden></div>
+            {% else %}
+            <small class="pw-note">The vision model needs a sign-in. <a href="/label/admin/login/?next={{ request.get_full_path|urlencode }}">Sign in</a></small>
+            {% endif %}
+        </div>
+        <hr class="pw-rule">
         <div class="form-group mb-3">
             <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Analysis Type:</label>
             <select class="form-select form-select-sm" id="analysisTypeSelect">

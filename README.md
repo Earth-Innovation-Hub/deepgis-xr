@@ -719,6 +719,12 @@ Design rules:
   `views/pilot.py`, so the panel offers exactly what `clean_actions` accepts;
   layers fetched through this server (sea temperature, chlorophyll, stored
   lidar) are locked until you sign in. On Earth the tile catalog follows.
+- **Pilot widgets** (`hud/pilot-widgets.js`). The AI panel's "Describe this
+  view" runs `describe_view` with an optional question (signed-in users; the
+  same `/label/api/pilot/describe/` endpoint and rate limit). The View panel's
+  "Fly to place" runs `goto` or `orbit` with the pilot's place lookup, or with
+  typed `lat, lon`; an orbit fills in the drone orbit widget's radius, laps
+  and speed, and Stop halts it.
   - `geology` lists curated sites in the circle, samples the Macrostrat map
     at 15 points (the most detailed map at each), lists up to 8 units with
     the source map citation, and drapes the map at 55% opacity.
@@ -963,7 +969,7 @@ LIVE_CACHE_URL=redis://redis:6379/1
   there, copy it into `STATIC_ROOT` with `python manage.py collectstatic`, or
   copy the single file.
 - The viewers load `hud/actions.js?v=…`, `hud/layers-panel.js?v=…`,
-  `hud/pilot.js?v=…` and `hud.css?v=…` with version
+  `hud/pilot-widgets.js?v=…`, `hud/pilot.js?v=…` and `hud.css?v=…` with version
   tags hard-coded in `label_search.html` and `label_moon_viewer.html`. Bump
   the tag of each file you change.
 - `hud/actions.js` holds the pilot's actions and data layers and exposes them
@@ -1107,6 +1113,7 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] Hierarchical tile catalog with time scrubber and comparison modes
 - [x] Layers panel: the AI pilot's data layers as toolbar toggles, kept in
       step with the pilot
+- [x] Pilot widgets: "Describe this view" and "Fly to place" (goto, orbit)
 - [x] Django 5.2 LTS, Python 3.10, Ubuntu 22.04 image
 - [x] AI pilot (language-driven camera drone) with sourced data layers
       (geology, faults, flood zones, fires, rivers, land cover, soils,
