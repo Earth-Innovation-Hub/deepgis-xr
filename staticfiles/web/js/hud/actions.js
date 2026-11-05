@@ -1978,9 +1978,14 @@
         const viewer = getViewer();
         if (f.marker) viewer.entities.remove(f.marker);
         viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
-        viewer.camera.frustum.fov = f.fov;
+        if (f.fov != null) viewer.camera.frustum.fov = f.fov;
         viewer.scene.requestRender();
     }
+
+    // In immersive VR (hud/xr.js) each eye sets its own camera and frustum, so a follow
+    // leaves the frustum alone and is stepped once per XR frame (followStep) instead of
+    // before every render; the headset rig then rides on the camera it placed.
+    const inXR = () => !!window.DeepGISXR?.active?.();
 
     // Every live robot stays on the globe as its own pin, independent of follow / orbit /
     // goto, so changing the view does not wipe the fleet.
@@ -1992,6 +1997,7 @@
         boat: Cesium.Color.DODGERBLUE, submarine: Cesium.Color.DEEPSKYBLUE,
     };
     const fleet = new Map();
+    let fleetList = [], fleetError = null;
 
     function fleetStyle(v) {
         const following = follow && follow.id === v.id;
@@ -2003,7 +2009,14 @@
         const viewer = getViewer();
         if (!viewer) return;
         let list = [];
-        try { list = await liveVehicles(); } catch (e) { return; }
+        try {
+            list = await liveVehicles();
+            fleetList = list;
+            fleetError = null;
+        } catch (e) {
+            fleetError = e.message || String(e);
+            return;
+        }
         const seen = new Set();
         for (const v of list) {
             if (v.age_sec > FLEET_KEEP_SEC) continue;
@@ -2043,7 +2056,7 @@
     function startFollow(v, view, out) {
         stopFollow();
         const viewer = getViewer();
-        const f = { id: v.id, view, fov: viewer.camera.frustum.fov, pose: null, shown: null,
+        const f = { id: v.id, view, fov: inXR() ? null : viewer.camera.frustum.fov, pose: null, shown: null,
                     lost: false, chaseReady: false };
         follow = f;
         const poll = async () => {
@@ -2057,7 +2070,7 @@
                         heading: rad(p.heading_deg || 0),
                         pitch: rad(clamp(cameraPitchDeg(p), -89.9, 45)),
                     };
-                    if (view === 'camera' && Number.isFinite(p.hfov_deg)) viewer.camera.frustum.fov = rad(p.hfov_deg);
+                    if (view === 'camera' && Number.isFinite(p.hfov_deg) && f.fov != null) viewer.camera.frustum.fov = rad(p.hfov_deg);
                     showFrame(f, p);
                     f.frame = p.frame || null;
                     if (f.lost) out.msg('step', `${vehicleName(p)} is reporting again`);
@@ -2072,7 +2085,8 @@
         };
         let last = performance.now();
         f.changed = viewer.camera.changed.addEventListener(() => viewer.scene.requestRender());
-        f.off = viewer.scene.preRender.addEventListener(() => {
+        f.off = viewer.scene.preRender.addEventListener(() => { if (!inXR()) f.step(false); });
+        f.step = (xr) => {
             if (!f.pose) return;
             const now = performance.now();
             const k = 1 - Math.exp(-Math.min(1, (now - last) / 1000) * 6);
@@ -2092,7 +2106,17 @@
                 f.chaseReady = false;
                 return;
             }
-            if (view === 'chase') {
+            if (view === 'chase' && xr) {
+                // Behind and above it, along its heading
+                const d = CHASE_RANGE_M, behind = Cesium.Matrix4.multiplyByPoint(
+                    Cesium.Transforms.eastNorthUpToFixedFrame(f.shown.pos, ellipsoid()),
+                    new Cesium.Cartesian3(-Math.sin(f.shown.heading) * d * Math.cos(rad(25)),
+                                          -Math.cos(f.shown.heading) * d * Math.cos(rad(25)), d * Math.sin(rad(25))),
+                    new Cesium.Cartesian3());
+                if (!Cesium.Matrix4.equals(camera.transform, Cesium.Matrix4.IDENTITY)) camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+                camera.setView({ destination: behind, orientation: { heading: f.shown.heading, pitch: rad(-25), roll: 0 } });
+                f.chaseReady = false;
+            } else if (view === 'chase') {
                 // Follow the vehicle's position; leave heading/pitch/range to Cesium's
                 // look-at controller so the mouse can orbit and zoom around it.
                 const transform = Cesium.Transforms.eastNorthUpToFixedFrame(f.shown.pos, ellipsoid());
@@ -2110,7 +2134,7 @@
                                  orientation: { heading: f.shown.heading, pitch: f.shown.pitch, roll: 0 } });
             }
             if (Cesium.Cartesian3.distance(f.shown.pos, f.pose.pos) > 0.05) viewer.scene.requestRender();
-        });
+        };
         poll();
     }
 
@@ -2492,6 +2516,9 @@
         shown: () => [...shownLayers.keys()],
         on: (type, fn) => events.addEventListener(type, (e) => fn(e.detail)),
         following: () => (follow ? { id: follow.id, view: follow.view } : null),
+        followStep: () => follow?.step(true),
+        // The live fleet as last polled (every FLEET_POLL_MS on Earth), and why it failed
+        vehicles: () => ({ list: fleetList.slice(), error: fleetError }),
         currentView,
         csrfToken,
         logSink,

@@ -20,6 +20,10 @@
 // wing, A the AI pilot comms; the wrist menu on the left controller does all three and
 // re-centres them. Comms' TYPE focuses a hidden text field, which brings up the headset's
 // system keyboard (and its dictation mic); Enter or SEND asks the pilot (hud/pilot.js).
+// The Robots panel flies to a robot or rides on it (follow_vehicle, stepped from advance);
+// taking the sticks lets go. A comfort vignette darkens the edges of view while the ground
+// streams past, and short WebAudio tones mark hovers, presses and the pilot's replies
+// (both can be switched off in the VR panel).
 
 // WebGL options for Cesium viewers; read by core/cesium-init.js and the planet viewer
 window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.userAgent)
@@ -31,6 +35,8 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
     const enterBtn = document.getElementById('enterVR');
     const exitBtn = document.getElementById('exitVR');
     const scaleSel = document.getElementById('vrResolution');
+    const comfortBox = document.getElementById('vrComfort');
+    const soundBox = document.getElementById('vrSounds');
     if (!statusEl || !enterBtn || !exitBtn) return;
 
     const DEADZONE = 0.15;
@@ -231,7 +237,8 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         due.forEach(cb => frames.request.call(window, cb));
     }
 
-    // Level rig pose -> animation frames and tweens -> a camera they moved carries the rig
+    // Level rig pose -> animation frames, tweens and a vehicle follow -> a camera they moved
+    // carries the rig
     function advance(viewer, rig, now) {
         const camera = viewer.camera;
         camera.setView({ destination: rig.origin, orientation: { heading: rig.heading, pitch: 0, roll: 0 } });
@@ -239,6 +246,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         const heading = camera.heading;
         flushAnimationFrames(now);
         viewer.scene.initializeFrame();
+        window.DeepGISActions?.followStep?.();
         const time = viewer.clock.tick();
         rig.auto = Cesium.Cartesian3.distance(camera.positionWC, base) > 1e-3 ||
             Math.abs(Cesium.Math.negativePiToPi(camera.heading - heading)) > 1e-5;
@@ -421,6 +429,97 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         s.cockpit?.typed('');
     }
 
+    // Robots panel: fly to the robot, ride its camera, chase it, or let go
+    function robotCommand(s, { robotCmd, id, name }) {
+        const hud = window.DeepGISActions;
+        if (!hud) return;
+        if (robotCmd === 'release') {
+            const was = hud.following();
+            hud.stop();
+            s.cockpit?.status(was ? `Released ${was.id}` : 'Not following a robot', 'step');
+            return;
+        }
+        const v = hud.vehicles().list.find(x => x.id === id);
+        if (!v) {
+            s.cockpit?.status(`${name || id} is not in the fleet any more`, 'error');
+            return;
+        }
+        const plan = robotCmd === 'fly'
+            ? [{ type: 'goto', lat: v.lat, lon: v.lon, alt_m: 120, pitch_deg: -60 }]
+            : [{ type: 'follow_vehicle', vehicle: v.id, view: robotCmd === 'chase' ? 'chase' : 'camera' }];
+        hud.run(plan, sinkFor(s));
+        sfxPlay(s, 'engage');
+    }
+
+    // Cockpit sounds: short synthesized tones, so there is nothing to download
+    function createSfx() {
+        let ctx = null;
+        const tone = (freq, ms, { type = 'sine', gain = 0.05, slide = 1, delay = 0 } = {}) => {
+            const t = ctx.currentTime + delay / 1000, end = t + ms / 1000;
+            const o = ctx.createOscillator(), g = ctx.createGain();
+            o.type = type;
+            o.frequency.setValueAtTime(freq, t);
+            if (slide !== 1) o.frequency.exponentialRampToValueAtTime(freq * slide, end);
+            g.gain.setValueAtTime(gain, t);
+            g.gain.exponentialRampToValueAtTime(0.0001, end);
+            o.connect(g).connect(ctx.destination);
+            o.start(t);
+            o.stop(end + 0.02);
+        };
+        const SOUNDS = {
+            tick: () => tone(2200, 18, { type: 'square', gain: 0.012 }),
+            click: () => tone(880, 70, { type: 'triangle', gain: 0.05, slide: 1.6 }),
+            engage: () => { tone(420, 160, { slide: 2, gain: 0.05 }); tone(840, 120, { delay: 90, gain: 0.03 }); },
+            reply: () => { tone(660, 120, { gain: 0.04 }); tone(990, 180, { delay: 110, gain: 0.04 }); },
+            alert: () => { tone(320, 140, { type: 'sawtooth', gain: 0.03 }); tone(260, 160, { type: 'sawtooth', gain: 0.03, delay: 160 }); },
+        };
+        return {
+            enabled: true,
+            // Called from a user gesture (Enter VR) so the browser lets it play
+            resume() {
+                try {
+                    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+                    ctx.resume?.();
+                } catch (e) {
+                    ctx = null;
+                }
+            },
+            play(name) {
+                if (!this.enabled || !ctx || ctx.state !== 'running') return;
+                try { SOUNDS[name]?.(); } catch (e) { /* audio is best effort */ }
+            },
+            close() {
+                ctx?.close?.();
+                ctx = null;
+            },
+        };
+    }
+    const sfx = createSfx();
+    const sfxPlay = (s, name) => s.sfx?.play(name);
+
+    function setSound(s, on) {
+        s.sfx.enabled = on;
+        if (soundBox) soundBox.checked = on;
+        s.cockpit?.sound(on);
+        if (on) s.sfx.play('click');
+    }
+
+    // Comfort vignette: stronger as the ground streams past faster (speed over height above
+    // it, in radians per second) and while the view turns
+    function comfort(s, dt) {
+        if (!s.cockpit || !comfortBox?.checked || !dt) return;
+        const { rig, viewer } = s;
+        const prev = s.comfortPrev;
+        s.comfortPrev = { origin: Cesium.Cartesian3.clone(rig.origin), heading: rig.heading };
+        if (!prev) return;
+        const { carto, ground } = groundBelow(viewer.scene.globe, rig.origin);
+        const flow = Cesium.Cartesian3.distance(rig.origin, prev.origin) / dt / Math.max(carto.height - ground, 20);
+        const turn = Math.abs(Cesium.Math.negativePiToPi(rig.heading - prev.heading)) / dt;
+        const target = Math.min(0.85, Math.max(0, (flow - 0.08) / 0.6) + Math.max(0, (turn - 0.3) / 2));
+        s.vignette += (target - s.vignette) * Math.min(1, dt * (target > s.vignette ? 8 : 3));
+        s.cockpit.vignette(s.vignette);
+    }
+
     function act(s, action, source, head) {
         const hud = window.DeepGISActions, ck = s.cockpit;
         if (action === 'stop') {
@@ -434,6 +533,14 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             if (ck && !ck.toggleWing(head)) ck.status('No data layers on this body', 'step');
         } else if (action === 'centre') {
             ck?.centre(head);
+        } else if (action === 'robots') {
+            if (ck && !ck.toggleRobots(head)) ck.status('No robots report positions on this body', 'step');
+        } else if (action?.robot) {
+            ck?.selectRobot(action.robot);
+        } else if (action?.robotCmd) {
+            robotCommand(s, action);
+        } else if (action === 'sound') {
+            setSound(s, !s.sfx.enabled);
         } else if (action === 'pilot') {
             if (ck && !ck.toggleComms(head)) ck.status('The AI pilot is not on this page', 'step');
         } else if (action === 'type') {
@@ -450,6 +557,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         } else if (action?.locked) {
             ck?.status(`${action.title} is fetched through the server: sign in on the page first`, 'error');
         }
+        if (action !== 'sound' && !action?.robotCmd) sfxPlay(s, 'click');
         buzz(source);
     }
 
@@ -508,10 +616,14 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             if (flying && s.rig.auto) window.DeepGISActions?.stop();
             const t = advance(s.viewer, s.rig, time);
             if (dt) move(s.viewer, pose, s.rig, input, dt);
+            comfort(s, dt);
             const head = pose.transform.matrix;
             s.cockpit?.track(frame, head);
             s.aimed = aim(s, input);
-            if (s.cockpit?.hover(s.aimed.panel)) buzz(s.aimed.source, 0.15, 10);
+            if (s.cockpit?.hover(s.aimed.panel)) {
+                buzz(s.aimed.source, 0.15, 10);
+                sfxPlay(s, 'tick');
+            }
             if (input.pressed.has(`right${TRIGGER}`) || input.pressed.has(`left${TRIGGER}`)) {
                 const source = s.aimed.source;
                 if (s.aimed.panel) {
@@ -520,6 +632,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
                 } else if (s.aimed.ground) {
                     flyToGround(s, s.aimed.ground, input.held.has(`right${GRIP}`));
                     buzz(source, 0.6, 40);
+                    sfxPlay(s, 'engage');
                 }
             }
             if (input.pressed.has(`right${SECONDARY}`)) act(s, 'stop', s.aimed.source, head);
@@ -545,6 +658,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         xr = {
             session, viewer, gl, cache: {}, last: null, held: new Set(),
             rig: { origin: Cesium.Cartesian3.clone(camera.positionWC), heading: camera.heading, turnLatched: false, auto: false },
+            sfx, vignette: 0, comfortPrev: null,
             saved: {
                 frustum: camera.frustum.clone(), loop: viewer.useDefaultRenderLoop,
                 requestRenderMode: scene.requestRenderMode, inputs: scene.screenSpaceCameraController.enableInputs,
@@ -589,8 +703,13 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             }
             if (!xr.cockpit) await session.updateRenderState({ layers: [xr.projection] });
             const s = xr;
+            s.cockpit?.sound(sfx.enabled);
             if (s.cockpit && window.DeepGISPilot) {
-                s.unsubscribePilot = window.DeepGISPilot.on((e) => s.cockpit?.pilotEvent(e));
+                s.unsubscribePilot = window.DeepGISPilot.on((e) => {
+                    s.cockpit?.pilotEvent(e);
+                    if (e.kind === 'ai') sfxPlay(s, 'reply');
+                    else if (e.kind === 'error' || e.kind === 'robot') sfxPlay(s, 'alert');
+                });
                 // Focusing inside the select event counts as a user gesture for the keyboard
                 session.addEventListener('select', () => {
                     if (xr !== s || !s.aimed?.panel) return;
@@ -647,6 +766,8 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
             return;
         }
         let session;
+        sfx.enabled = soundBox ? soundBox.checked : true;
+        sfx.resume();
         try {
             // First, while the click still counts as a user gesture
             session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['layers'] });
@@ -663,6 +784,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         }
     }
 
+    soundBox?.addEventListener('change', () => { if (xr) setSound(xr, soundBox.checked); });
     checkBtn?.addEventListener('click', check);
     enterBtn.addEventListener('click', enter);
     exitBtn.addEventListener('click', () => xr?.session.end());

@@ -888,8 +888,17 @@ here, orbit this, climb 1 km) ask at a touch. TYPE opens the headset's system
 keyboard (its mic button dictates), and Enter or SEND asks. Questions about
 "the view" refer to where you are looking. A robot command the pilot proposes
 is announced but has to be sent from its card in the page chat. Look at your
-left controller for the **wrist menu**: COCKPIT, LAYERS, PILOT, TYPE, CENTRE
-(brings the panels in front of you) and STOP.
+left controller for the **wrist menu**: COCKPIT, LAYERS, ROBOTS, PILOT, TYPE,
+CENTRE (brings the panels in front of you), SOUND and STOP.
+
+On Earth, ROBOTS (on the console, the wrist or the wing's tab) swaps the wing
+for the **Robots panel**: the live fleet with status, speed and distance, and
+the selected robot's latest camera frame. FLY TO flies to it, RIDE looks through
+its camera, CHASE follows from behind and above, and RELEASE (or any thumbstick)
+lets go. While riding, head tracking still works, so you can look around from
+the robot. A **comfort vignette** darkens the edge of view as the ground streams
+past faster or the view turns, and short synthesized tones mark hovers, presses,
+fly-tos and the pilot's replies. Both can be switched off in the VR panel.
 
 | Control | Action |
 |---|---|
@@ -919,7 +928,7 @@ Where the browser supports WebXR Layers (Quest Browser does), the globe goes
 into a projection layer and the cockpit (`hud/xr-cockpit.js`) into its own
 compositor layers: the console is a cylinder layer, the compass a quad
 locked to the head, the layers wing and pilot comms quads on either side of the console and the
-wrist menu a quad in the left controller's grip space, both drawn on 2D canvases and redrawn only when a
+wrist menu a quad in the left controller's grip space, all drawn on 2D canvases and redrawn only when a
 reading changes. The compositor samples them at full lens resolution,
 so text stays sharp whatever the globe's resolution. The console stays
 where it was placed (in front of the craft) and turns only with snap turns
@@ -928,7 +937,9 @@ and the cockpit is off. The laser is a Cesium polyline in the scene. It picks
 console buttons by intersecting the ray with the cylinder, and the ground
 with `globe.pick`. Pilot actions (fly-to, orbit, drone animations) keep
 running in VR because the page's `requestAnimationFrame` callbacks are run
-from the XR frame loop, and the rig adopts whatever the camera does.
+from the XR frame loop, and the rig adopts whatever the camera does. Following a
+robot is stepped from the same loop (`DeepGISActions.followStep`), and the camera
+keeps the headset's own field of view instead of the robot camera's.
 
 ### Weather Stations
 Click **Weather** in the HUD toolbar, enable stations, and load all states or
@@ -1086,6 +1097,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   system keyboard and dictation (A shows it). `hud/pilot.js` now exposes
   `window.DeepGISPilot` (`ask`, `busy`, `recent`, `on`) so other panels can ask
   and mirror the chat.
+- **VR robots, sounds and comfort**: a Robots panel to fly to, ride or chase a
+  live robot from VR with its camera frame, cockpit sounds (WebAudio), a comfort
+  vignette driven by optic flow, and both as options in the VR panel.
 - **Pilot widgets** (`41c862a`): "Describe this view" in the AI panel and
   "Fly to place" (goto, orbit, typed `lat, lon`) in the View panel.
 - **Layers panel** (`f9a58e4`): the pilot's data layers as toolbar toggles,
