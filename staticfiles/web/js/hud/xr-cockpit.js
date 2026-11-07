@@ -16,7 +16,9 @@
 // an action for hud/xr.js to run. Side panels sit at SIDE_YAW, inside a seated head turn,
 // and above the console's band so the three do not overlap. No text is under 24 px (about
 // 1 degree at these distances, the floor for a Quest 2's pixel density). A panel is
-// redrawn whole but uploaded only where it changed (dirtyRect) unless everything did.
+// uploaded whole whenever it is redrawn: layer textures are cleared on the first
+// getSubImage of each frame (clearOnAccess) and rotate through a swapchain, so nothing
+// drawn in an earlier frame can be relied on.
 (function initCockpit() {
     const C = {
         glass: 'rgba(6, 14, 28, 0.78)', glassEdge: 'rgba(56, 189, 248, 0.55)', line: '#38bdf8',
@@ -26,12 +28,6 @@
     const CONSOLE = { radius: 1.2, angle: Cesium.Math.toRadians(64), width: 1600, drop: 0.42 };
     CONSOLE.height = Math.round(CONSOLE.width / 3.6);
     CONSOLE.metres = CONSOLE.radius * CONSOLE.angle / CONSOLE.width * CONSOLE.height;
-    // The parts of the console that change on their own (canvas pixels), uploaded alone
-    CONSOLE.regions = {
-        left: { x: 0, y: 0, w: 470, h: 300 }, tape: { x: 470, y: 0, w: 660, h: 136 },
-        lights: { x: 470, y: 140, w: 660, h: 66 }, status: { x: 340, y: 212, w: 920, h: 52 },
-        right: { x: 1130, y: 0, w: 470, h: 250 },
-    };
     const COMPASS = { width: 1024, height: 96, metres: [0.52, 0.0488], y: 0.21, z: -1.0 };
     // Side panels: 40 degrees off centre (inner edge about 21, within a seated head turn) and
     // raised so their bottom clears the console's top (11 degrees down). A negative drop lifts.
@@ -268,9 +264,8 @@
         const wristOffset = rigid(WRIST.at, { x: Math.sin(WRIST.tilt / 2), y: 0, z: 0, w: Math.cos(WRIST.tilt / 2) });
 
         const panels = {};
-        // dirty: a redraw is due; rects: the parts to upload, or null for the whole picture
         const addPanel = (id, layer, w, h, draw) => {
-            panels[id] = { id, layer, canvas: canvas(w, h), draw, dirty: true, rects: null, drawnAt: 0, buttons: [] };
+            panels[id] = { id, layer, canvas: canvas(w, h), draw, dirty: true, drawnAt: 0, buttons: [] };
             return panels[id];
         };
         addPanel('console', binding.createCylinderLayer({
@@ -319,27 +314,7 @@
             status: 'Cockpit online', statusKind: 'step', statusAt: performance.now(),
             data: null, compassHeading: null, busy: new Set(), shownKey: '', presented: '',
         };
-        // The whole panel changed
-        const dirty = (...ids) => ids.forEach((id) => {
-            if (!panels[id]) return;
-            panels[id].dirty = true;
-            panels[id].rects = null;
-        });
-        // Only this part of it changed (unless a whole redraw is already due)
-        const MAX_RECTS = 8;
-        function dirtyRect(id, r) {
-            const p = panels[id];
-            if (!p || !r || (p.dirty && !p.rects)) return;
-            if (!p.dirty) p.rects = [];
-            p.dirty = true;
-            const x = Math.max(0, Math.floor(r.x)), y = Math.max(0, Math.floor(r.y));
-            const w = Math.min(p.canvas.width, Math.ceil(r.x + r.w)) - x, h = Math.min(p.canvas.height, Math.ceil(r.y + r.h)) - y;
-            if (w <= 0 || h <= 0) return;
-            if (p.rects.length >= MAX_RECTS) p.rects = null;
-            else p.rects.push({ x, y, w, h });
-        }
-        const pad = (b, m) => ({ x: b.x - m, y: b.y - m, w: b.w + 2 * m, h: b.h + 2 * m });
-        const dotRect = (hit) => ({ x: hit.x - 14, y: hit.y - 14, w: 28, h: 28 });
+        const dirty = (...ids) => ids.forEach((id) => { if (panels[id]) panels[id].dirty = true; });
 
         function presentNow() {
             const layers = [];
@@ -496,20 +471,13 @@
 
         const buttonAt = (hit) => hit && panels[hit.panel]?.buttons.find(b => hit.x >= b.x && hit.x <= b.x + b.w && hit.y >= b.y && hit.y <= b.y + b.h);
 
-        // true when the laser has just moved onto a button. Only the cursor dot and the
-        // buttons whose hot state changed are uploaded.
+        // true when the laser has just moved onto a button
         function hover(hit) {
             const b = buttonAt(hit);
             const id = b ? `${hit.panel}:${b.id}` : null;
             const cursor = hit ? `${hit.panel}:${Math.round(hit.x / 4)},${Math.round(hit.y / 4)}` : null;
             const entered = !!id && id !== state.hover;
-            if (id !== state.hover || cursor !== state.cursor) {
-                const prev = state.hit, prevB = buttonAt(prev);
-                if (prev) dirtyRect(prev.panel, dotRect(prev));
-                if (prevB && id !== state.hover) dirtyRect(prev.panel, pad(prevB, 8));
-                if (hit) dirtyRect(hit.panel, dotRect(hit));
-                if (b && entered) dirtyRect(hit.panel, pad(b, 8));
-            }
+            if (id !== state.hover || cursor !== state.cursor) dirty(state.hit?.panel, hit?.panel);
             state.hover = id;
             state.cursor = cursor;
             state.hit = hit;
@@ -523,7 +491,7 @@
             state.status = String(text).replace(/\s+/g, ' ');
             state.statusKind = kind;
             state.statusAt = performance.now();
-            dirtyRect('console', CONSOLE.regions.status);
+            dirty('console');
         }
 
         function setBusy(kind, on) {
@@ -979,30 +947,13 @@
             cursorDot(ctx, 'comms');
         }
 
-        // The whole canvas, or only rects of it, into the layer's texture. The texture is
-        // flipped (canvas y down, GL y up), so a rect at canvas y lands at height - y - h.
-        const patch = canvas(1, 1);
-        function upload(layer, cnv, frame, rects) {
+        // The whole canvas every time (see the header: the texture keeps nothing between frames)
+        function upload(layer, cnv, frame) {
             const sub = binding.getSubImage(layer, frame);
             gl.bindTexture(gl.TEXTURE_2D, sub.colorTexture);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
             gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-            if (!rects) {
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, sub.viewport.x, sub.viewport.y, cnv.width, cnv.height, gl.RGBA, gl.UNSIGNED_BYTE, cnv);
-            } else {
-                const pc = patch.getContext('2d');
-                rects.forEach((r) => {
-                    if (patch.width !== r.w || patch.height !== r.h) {
-                        patch.width = r.w;
-                        patch.height = r.h;
-                    } else {
-                        pc.clearRect(0, 0, r.w, r.h);
-                    }
-                    pc.drawImage(cnv, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
-                    gl.texSubImage2D(gl.TEXTURE_2D, 0, sub.viewport.x + r.x, sub.viewport.y + cnv.height - r.y - r.h,
-                        r.w, r.h, gl.RGBA, gl.UNSIGNED_BYTE, patch);
-                });
-            }
+            gl.texSubImage2D(gl.TEXTURE_2D, 0, sub.viewport.x, sub.viewport.y, cnv.width, cnv.height, gl.RGBA, gl.UNSIGNED_BYTE, cnv);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
             gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
             gl.bindTexture(gl.TEXTURE_2D, null);
@@ -1015,16 +966,12 @@
         function update(frame, head, data) {
             const prev = state.data;
             state.data = data;
-            const R = CONSOLE.regions;
-            if (!prev) dirty('console');
-            else {
-                if (Math.round(prev.agl) !== Math.round(data.agl) || Math.round(prev.speed) !== Math.round(data.speed) ||
-                    prev.body !== data.body) dirtyRect('console', R.left);
-                if (Math.round(deg(prev.heading)) !== Math.round(deg(data.heading))) dirtyRect('console', R.tape);
-                if (prev.auto !== data.auto || prev.layers !== data.layers || (prev.target == null) !== (data.target == null) ||
-                    Math.round(prev.target / 10) !== Math.round(data.target / 10)) dirtyRect('console', R.lights);
-                if ((prev.lat == null) !== (data.lat == null) || Math.round(prev.lat * 1e4) !== Math.round(data.lat * 1e4) ||
-                    Math.round(prev.lon * 1e4) !== Math.round(data.lon * 1e4)) dirtyRect('console', R.right);
+            if (!prev || Math.round(prev.agl) !== Math.round(data.agl) || Math.round(deg(prev.heading)) !== Math.round(deg(data.heading)) ||
+                prev.auto !== data.auto || prev.layers !== data.layers || Math.round(prev.speed) !== Math.round(data.speed) ||
+                prev.body !== data.body || (prev.target == null) !== (data.target == null) ||
+                Math.round(prev.target / 10) !== Math.round(data.target / 10) ||
+                Math.round(prev.lat * 1e4) !== Math.round(data.lat * 1e4) || Math.round(prev.lon * 1e4) !== Math.round(data.lon * 1e4)) {
+                dirty('console');
             }
             const heading = Math.round(deg(data.heading) * 2) / 2;
             if (heading !== state.compassHeading) {
@@ -1057,9 +1004,8 @@
                 const lost = p.layer.needsRedraw;
                 if (!lost && (!p.dirty || now - p.drawnAt < REDRAW_MS)) return;
                 p.draw(p);
-                upload(p.layer, p.canvas, frame, lost ? null : p.rects);
+                upload(p.layer, p.canvas, frame);
                 p.dirty = false;
-                p.rects = null;
                 p.drawnAt = now;
             });
         }
