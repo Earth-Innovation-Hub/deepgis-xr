@@ -54,7 +54,7 @@ VEHICLE_SPOKEN = re.compile(r"[A-Za-z0-9_. '\u2019-]{1,60}")  # "Jane.Doe", "ali
 LAYER_KINDS = ("geology", "faults", "flood", "fires", "river", "landcover",
                "soils", "wildlife", "trails", "springs", "mines", "surface_temp", "ndvi",
                "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "slope", "contours",
-               "lidar_dem", "topo_datasets")
+               "lidar_dem", "topo_datasets", "site_imagery")
 # Colour maps a raster layer can be drawn in (COLORMAPS in hud/actions.js)
 COLORMAPS = ("jet", "turbo", "viridis", "inferno", "plasma", "coolwarm", "rdylgn")
 # The model now and then writes coordinates as a place: "lat 37.41, lon -118.52"
@@ -183,7 +183,7 @@ LAYER_GROUPS = (
     ("Ground", ("geology", "landcover", "soils")),
     ("Terrain", ("elevation", "slope", "contours", "lidar_dem", "topo_datasets")),
     ("Water", ("river", "sea_temp", "chlorophyll")),
-    ("Remote sensing", ("surface_temp", "ndvi")),
+    ("Remote sensing", ("surface_temp", "ndvi", "site_imagery")),
     ("Weather now", ("humidity", "air_temp")),
     ("Life and places", ("wildlife", "trails", "springs", "mines")),
 )
@@ -263,6 +263,7 @@ Actions (all heights are metres ABOVE GROUND):
   - contours: elevation contour lines, from Cesium World Terrain (worldwide).
   - lidar_dem: high-resolution lidar or drone terrain (down to 0.5 m) as shaded relief coloured by height, with height and slope figures, from OpenTopography surveys stored on DeepGIS (default 2 km; so far only around Bishop, California: the Volcanic Tablelands fault scarps, the White Mountains fault zone and the Bishop Tuff). Use it for "lidar", "high resolution terrain", "hillshade", "shaded relief", "bare earth", "DEM" or "fault scarp" requests; use elevation for terrain anywhere else.
   - topo_datasets: which lidar, drone and elevation datasets OpenTopography has around a place, with their footprints, dates and links (default 15 km; mostly the US). Also for "what lidar is there" or "OpenTopography data" requests.
+  - site_imagery: the lab's own drone orthophotos (down to 1.5 cm per pixel) draped on the globe, from the DeepGIS tile catalog (default 10 km; so far the Bishop, California rock surface site near the Volcanic Tablelands and a Phoenix wildfire site). Use it for "rock tiles", "rock imagery", "drone imagery", "orthophoto", "orthomosaic" or "survey imagery" requests.
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
@@ -299,6 +300,7 @@ Examples (actions only):
 - "elevation map of Mount Whitney" -> [{"type": "show_layer", "kind": "elevation", "place": "Mount Whitney, California"}]
 - "show the lidar hillshade of the fault scarps in the Volcanic Tablelands" -> [{"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California"}]
 - "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
+- "show the Bishop rock tiles" -> [{"type": "show_layer", "kind": "site_imagery", "place": "Volcanic Tablelands, Bishop, California"}]
 - "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
 - "remove all the layers" -> [{"type": "hide_layer"}]
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)

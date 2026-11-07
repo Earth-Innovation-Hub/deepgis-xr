@@ -7,9 +7,38 @@ import { addProgressiveZoomLayers, createLayeredChunkedProvider } from './chunke
 
 export const LayerUtils = {
   /**
-   * Calculate safe max zoom based on layer's maxzoom
+   * Usable [west, south, east, north] in degrees, or null for missing or
+   * whole-world bounds (those give no useful limit).
    */
-  calculateSafeMaxZoom: (maxzoom) => {
+  boundsOrNull: (bounds) => {
+    if (!Array.isArray(bounds) || bounds.length !== 4) return null;
+    const [w, s, e, n] = bounds.map(Number);
+    if (![w, s, e, n].every(Number.isFinite) || w >= e || s >= n) return null;
+    if (e - w >= 359 || n - s >= 170) return null;
+    return [w, s, e, n];
+  },
+
+  /**
+   * Number of XYZ tiles at zoom z that cover the bounds.
+   */
+  tilesInBounds: (bounds, z) => {
+    const n = Math.pow(2, z);
+    const clampLat = lat => Math.max(-85.0511, Math.min(85.0511, lat));
+    const tx = lon => Math.floor((lon + 180) / 360 * n);
+    const ty = lat => {
+      const r = clampLat(lat) * Math.PI / 180;
+      return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+    };
+    const [w, s, e, n2] = bounds;
+    return (tx(e) - tx(w) + 1) * (ty(s) - ty(n2) + 1);
+  },
+
+  /**
+   * Calculate safe max zoom based on layer's maxzoom. With bounds, a small
+   * site keeps every zoom level whose full tile count stays within
+   * CONFIG.MEMORY.SITE_TILE_BUDGET; Cesium only loads the visible ones.
+   */
+  calculateSafeMaxZoom: (maxzoom, bounds) => {
     const caps = CONFIG.MEMORY.MAX_ZOOM_CAPS;
     let maxZoomCap = caps.DEFAULT;
     
@@ -18,6 +47,13 @@ export const LayerUtils = {
       maxZoomCap = caps.VERY_HIGH;  // Now 13 instead of 16
     } else if (maxzoom >= 20) {
       maxZoomCap = caps.HIGH;  // Now 16 instead of 17
+    }
+
+    const site = LayerUtils.boundsOrNull(bounds);
+    if (site && maxzoom) {
+      let z = maxZoomCap;
+      while (z < maxzoom && LayerUtils.tilesInBounds(site, z + 1) <= CONFIG.MEMORY.SITE_TILE_BUDGET) z++;
+      maxZoomCap = z;
     }
     
     const safeMaxZoom = Math.min(maxzoom || 22, maxZoomCap);
@@ -113,8 +149,6 @@ export const LayerUtils = {
       return createLayeredChunkedProvider(tileUrl, layerInfo, safeMaxZoom, options);
     }
     
-    const tileTimeout = CONFIG.TIMEOUTS.TILE_REQUEST || 30000;
-    
     // Use minzoom/maxzoom from options if provided (from metadata), otherwise from layerInfo
     const minzoom = options.minzoom !== undefined ? options.minzoom : (layerInfo.minzoom || 0);
     const maxzoom = options.maxzoom !== undefined ? options.maxzoom : safeMaxZoom;
@@ -152,6 +186,11 @@ export const LayerUtils = {
     }
     
     console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`);
+
+    // Without a rectangle Cesium asks for minimumLevel tiles under the whole
+    // visible globe, and the tileserver answers 204 for all of them.
+    const site = LayerUtils.boundsOrNull(options.bounds || layerInfo.bounds);
+    const rectangle = site ? Cesium.Rectangle.fromDegrees(...site) : undefined;
     
     // Standard provider
     // IMPORTANT: TileServer GL serves tiles in XYZ format (origin top-left, Y increases down)
@@ -167,8 +206,9 @@ export const LayerUtils = {
       tileWidth: CONFIG.TILE_DIMENSIONS.width,
       tileHeight: CONFIG.TILE_DIMENSIONS.height,
       tilingScheme: new Cesium.WebMercatorTilingScheme(),  // Standard Web Mercator (compatible with XYZ)
-      // Remove minzoom/maxzoom from options to avoid conflicts
-      ...Object.fromEntries(Object.entries(options).filter(([key]) => key !== 'minzoom' && key !== 'maxzoom'))
+      rectangle,
+      // Remove minzoom/maxzoom/bounds from options to avoid conflicts
+      ...Object.fromEntries(Object.entries(options).filter(([key]) => !['minzoom', 'maxzoom', 'bounds', 'onError'].includes(key)))
     });
     
     // Store the original requestImage method (before any wrapping)
@@ -258,8 +298,15 @@ export const LayerUtils = {
         console.warn(`  ⚠️  ${tilesInFlight.size} tiles loading simultaneously! Network congestion.`);
       }
       
-      // Call original and track result
-      return originalRequestImage(x, y, level, request)
+      // undefined = Cesium throttled the request; it asks again on a later frame
+      const pending = originalRequestImage(x, y, level, request);
+      if (!pending) {
+        tilesInFlight.delete(tileKey);
+        tileStats.requested--;
+        tileStats.byZoom[level].requested--;
+        return undefined;
+      }
+      return pending
         .then(image => {
           const loadTime = performance.now() - requestStartTime;
           tileStats.succeeded++;
@@ -336,30 +383,9 @@ export const LayerUtils = {
       const key = `${level}/${x}/${y}`;
       const retryCount = retryCounts.get(key) || 0;
       
-      // Create request with timeout if not provided
-      if (!request) {
-        request = new Cesium.Request({
-          throttle: false,
-          throttleByServer: true,
-          type: Cesium.RequestType.IMAGERY
-        });
-      }
-      
-      // Set timeout on request (Cesium Request supports timeout property)
-      if (request && typeof request.timeout === 'undefined') {
-        // Use Resource's timeout mechanism
-        if (request.url && Cesium.Resource) {
-          // Wrap URL in Resource to set timeout
-          const resource = new Cesium.Resource({
-            url: request.url,
-            timeout: tileTimeout
-          });
-          request.url = resource.url;
-        }
-      }
-      
-      // Attempt to load tile with timeout
-      return debugWrappedRequestImage(x, y, level, request)
+      const pending = debugWrappedRequestImage(x, y, level, request);
+      if (!pending) return undefined;
+      return pending
         .then(image => {
           // Success - clear retry count
           retryCounts.delete(key);

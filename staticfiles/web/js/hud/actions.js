@@ -506,6 +506,8 @@
     const PILOT_OCEAN_URL = '/label/api/pilot/ocean/';
     // OpenTopography lidar stored on this server (pilot_topo), and OpenTopography's catalog
     const PILOT_TOPO_URL = '/label/api/pilot/topo/';
+    const TILE_CATALOG_URL = '/api/v1/tile-catalog/';
+    const TILES_URL = window.MBTILES_SERVER_OVERRIDE || 'https://mbtiles.deepgis.org';
     const OT_CATALOG_URL = 'https://portal.opentopography.org/API/otCatalog';
     const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
@@ -1790,6 +1792,53 @@
                     lines,
                     sources: ['OpenTopography catalog API (portal.opentopography.org), including the USGS 3DEP lidar it indexes'],
                     empty: `No OpenTopography lidar or local elevation datasets within ${fmtM(radius)} of ${p.label}`,
+                };
+            },
+        },
+
+        // Lab drone orthophotos from the tile catalog, served by mbtiles.deepgis.org
+        site_imagery: {
+            title: 'Survey imagery',
+            radius: (p) => clamp((p.sizeM || 0) / 2, 10000, 50000),
+            async load(p, radius) {
+                const cat = await fetchJson(new URL(TILE_CATALOG_URL, location.href).href, { credentials: 'same-origin' }, 15000);
+                const box = (b) => ({ geometry: { type: 'Polygon', coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]] } });
+                const orthos = (s) => (s.datasets || []).flatMap(d => {
+                    const steps = [...(d.timesteps || [])].sort((x, y) => String(y.sort_key).localeCompare(String(x.sort_key)));
+                    return [...(d.products || []), ...steps.flatMap(t => t.products.map(q => ({ ...q, when: t.label })))]
+                        .filter(q => q.kind === 'orthophoto');
+                });
+                const all = (cat.sites || []).filter(s => s.bounds?.length === 4 && orthos(s).length);
+                const near = all.map(s => ({ s, d: featureDistance(box(s.bounds), p.lon, p.lat) }))
+                    .filter(x => x.d <= radius).sort((x, y) => x.d - y.d);
+                if (!near.length) {
+                    return { lines: [], sources: [], empty: `No lab survey imagery within ${fmtM(radius)} of ${p.label}. ` +
+                        `DeepGIS has survey imagery at: ${all.map(s => s.name).join('; ') || 'no sites yet'}` };
+                }
+                const site = near[0].s, prod = orthos(site)[0];
+                const tj = await fetchJson(`${TILES_URL}/data/${encodeURIComponent(prod.layer_id)}.json`, {}, 15000);
+                const b = tj.bounds?.length === 4 ? tj.bounds : site.bounds;
+                const maxZ = Number.isFinite(tj.maxzoom) ? tj.maxzoom : 22;
+                const lat = (b[1] + b[3]) / 2;
+                const cm = 156543.03392 * Math.cos(rad(lat)) / Math.pow(2, maxZ) * 100;
+                const area = { lon: rad((b[0] + b[2]) / 2), lat: rad(lat),
+                               radius: Math.max(50, Math.hypot((b[2] - b[0]) * Math.cos(rad(lat)), b[3] - b[1]) * Math.PI / 180 * EARTH_R / 2) };
+                const lines = [['step', `${site.name}: ${prod.label}${prod.when ? ` (${prod.when})` : ''}, ` +
+                    `${cm < 10 ? cm.toFixed(1) : Math.round(cm)} cm per pixel at full zoom, ${fmtM(near[0].d)} from ${p.label}. ` +
+                    'Fly in close for full detail.']];
+                if (site.description) lines.push(['geo', site.description.split(/(?<=\.)\s/)[0]]);
+                if (near.length > 1) lines.push(['step', `Also nearby: ${near.slice(1).map(x => x.s.name).join('; ')}`]);
+                return {
+                    imagery: new Cesium.UrlTemplateImageryProvider({
+                        url: `${TILES_URL}/data/${encodeURIComponent(prod.layer_id)}/{z}/{x}/{y}.${tj.format || 'png'}`,
+                        minimumLevel: Number.isFinite(tj.minzoom) ? tj.minzoom : 0, maximumLevel: maxZ,
+                        rectangle: Cesium.Rectangle.fromDegrees(...b),
+                        credit: new Cesium.Credit(tj.attribution || 'DeepGIS'),
+                    }),
+                    imageryAlpha: prod.default_opacity ?? 1,
+                    area, ring: area, lines,
+                    sources: [`DeepGIS tile catalog: ${site.name}, layer ${prod.layer_id}`],
+                    empty: '',
                 };
             },
         },

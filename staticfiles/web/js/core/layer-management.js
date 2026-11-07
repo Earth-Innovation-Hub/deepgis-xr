@@ -80,7 +80,7 @@ async function positionCameraForLayer(viewer, layerInfo, metadata, options = {})
     
     // ENHANCED: Calculate safe max zoom using LayerUtils
     const safeMaxZoom = metadata.maxzoom !== undefined 
-      ? LayerUtils.calculateSafeMaxZoom(metadata.maxzoom)
+      ? LayerUtils.calculateSafeMaxZoom(metadata.maxzoom, metadata.bounds)
       : CONFIG.MEMORY.MAX_ZOOM_CAPS.DEFAULT;
     
     console.log(`Safe max zoom calculated: ${safeMaxZoom} (native: ${metadata.maxzoom || 'N/A'})`);
@@ -479,7 +479,8 @@ export async function initializeAvailableLayers() {
 
       AppState.availableLayers[layerId] = layerInfo;
       
-      if (key !== layerId) {
+      // tileserver-gl's data.json is a list; its keys are indexes, not aliases
+      if (key !== layerId && !Array.isArray(data)) {
         AppState.availableLayers[key] = layerInfo;
       }
 
@@ -795,7 +796,7 @@ export async function loadBaseRasterLayer(viewer, layerId) {
     console.log(`Creating base raster imagery provider with URL: ${tileUrl}`);
     
     // Determine safe max zoom for this layer
-    const safeMaxZoom = LayerUtils.calculateSafeMaxZoom(metadata.maxzoom || layerInfo.maxzoom || 22);
+    const safeMaxZoom = LayerUtils.calculateSafeMaxZoom(metadata.maxzoom || layerInfo.maxzoom || 22, metadata.bounds || layerInfo.bounds);
     
     // Create imagery provider for the base raster layer
     const imageryProvider = LayerUtils.createImageryProvider(tileUrl, layerInfo, safeMaxZoom, {
@@ -927,7 +928,7 @@ export async function toggleOverlayLayer(viewer, layerId, enabled) {
         console.log(`Creating overlay imagery provider with URL: ${tileUrl}`);
         
         // Determine safe max zoom for this overlay
-        const safeMaxZoom = LayerUtils.calculateSafeMaxZoom(metadata.maxzoom || layerInfo.maxzoom || 22);
+        const safeMaxZoom = LayerUtils.calculateSafeMaxZoom(metadata.maxzoom || layerInfo.maxzoom || 22, metadata.bounds || layerInfo.bounds);
         
         // Create imagery provider for the overlay
         const imageryProvider = LayerUtils.createImageryProvider(tileUrl, layerInfo, safeMaxZoom, {

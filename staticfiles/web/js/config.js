@@ -18,6 +18,9 @@ export const CONFIG = {
       HIGH: 16,      // For maxzoom >= 20 (reduced from 17)
       VERY_HIGH: 13  // For maxzoom >= 23 (reduced from 16 to 13 for aggressive memory safety)
     },
+    // A layer with bounds may zoom past MAX_ZOOM_CAPS while its whole footprint
+    // stays within this many tiles at that zoom (Bishop rock ortho: ~8k at z23).
+    SITE_TILE_BUDGET: 20000,
     // Chunked tile loading configuration
     CHUNKED_LOADING: {
       ENABLED: false,  // Disabled - was causing freezing
