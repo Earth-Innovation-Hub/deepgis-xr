@@ -327,6 +327,61 @@ vehicle's executor is the only writer of PX4 setpoints. deepgis-xr talks to the
 read-only MCP server for the AI pilot and to the command-enabled one only for
 superusers' confirmed robot commands.
 
+### VR pipeline
+
+In a headset, `hud/xr.js` takes over the frame loop from Cesium: each
+`XRSession.requestAnimationFrame` tick reads the controllers, advances the
+rig (flushing the page's captured `requestAnimationFrame` callbacks so drone
+flights keep running, then stepping any robot follow), applies thumbstick
+flight and the comfort vignette, aims the laser at the cockpit or the globe,
+and finally renders the Cesium scene once per eye with a symmetric frustum
+and crops each eye into the WebXR projection layer. `hud/xr-cockpit.js` draws
+the console, compass, layers wing, robots and comms panels, wrist menu and
+vignette on 2D canvases and uploads them into their own compositor layers,
+so text stays sharp at any globe resolution. The robot follow path feeds the
+same loop: publishers post poses to `/label/api/vehicles/pose/`, the page
+polls `/label/api/vehicles/live/`, eases toward each pose, and in XR the rig
+adopts the resulting camera move so the headset rides along.
+
+![VR pipeline: search page and desktop loop, robot follow path, xr.js frame loop, xr-cockpit.js compositor layers](docs/images/vr-pipeline/pipeline-diagram.png)
+
+![Search page HUD](docs/images/vr-pipeline/search-page-hud.png)
+
+*The Cesium search page in 3D over the Bishop twin site with the AI Pilot
+chat and the WebXR/VR panel open (local run, Esri base imagery added for
+the capture, ellipsoid terrain).*
+
+![Robot follow path](docs/images/vr-pipeline/robot-follow-path.png)
+
+*Desktop `follow_vehicle` chase view of a stubbed `kestrel` pose: fleet pins
+(kestrel highlighted, badger), PiP camera frame (placeholder JPEG), pilot
+log line.*
+
+![VR cockpit layers](docs/images/vr-pipeline/vr-cockpit-layers.png)
+
+*Montage of the seven cockpit layer canvases exactly as `xr-cockpit.js` drew
+them in a fake-XR session: console, compass, robots, comms, layers wing,
+wrist menu, vignette.*
+
+![VR headset view, illustrative composite](docs/images/vr-pipeline/vr-headset-view-composite.png)
+
+*Illustrative composite: the eye render read back from the Cesium canvas
+during the fake-XR session plus the live layer canvases placed roughly
+where the compositor puts them. Not a headset capture.*
+
+![VR session page](docs/images/vr-pipeline/vr-session-page.png)
+
+*The page itself while the fake session runs: the canvas holds the wide
+symmetric-frustum render (1178×1024 stretched to the viewport), status
+"in VR", PiP still updating.*
+
+The headset composite is illustrative, not a real headset capture, and the
+fleet shown in every screenshot is a stub (kestrel, badger and otter poses
+posted by a local script, with placeholder camera frames). The captures ran
+without a Cesium ion token, so terrain is the ellipsoid. The stage-by-stage
+trace, the issues found and a suggested order of work are in
+[docs/vr-pipeline-analysis.md](docs/vr-pipeline-analysis.md).
+
 ### Technology Stack
 
 **Backend**

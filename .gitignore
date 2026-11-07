@@ -230,6 +230,14 @@ VECTOR_LAYER_IMPLEMENTATION.md
 docs/
 **/docs/
 
+# Public VR pipeline docs linked from README.md; the rest of docs/ stays ignored
+!docs/
+docs/*
+!docs/vr-pipeline-analysis.md
+!docs/images/
+docs/images/*
+!docs/images/vr-pipeline/
+
 # Exclude commits.csv (may contain sensitive commit information)
 commits.csv
 **/commits.csv 
