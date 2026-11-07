@@ -133,6 +133,8 @@ coverage.xml
 *.ai
 *.eps
 *.svg
+# README figures are small hand-written SVGs
+!assets/*.svg
 *.raw
 *.cr2
 *.nef

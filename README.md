@@ -305,38 +305,21 @@ only internet-facing host; it reaches the lab servers over an outbound-dialled
 WireGuard overlay, so the lab side opens no inbound ports. Robot topics cross
 between the simulators and the GPU server as ROS 2 topics over Zenoh.
 
-```mermaid
-flowchart LR
-  U["Browser / phone / VR<br/>(DeepGIS + AI pilot)"] --> DNS["DNS"]
-  DNS --> EDGE["Public edge: AWS EC2 t3.small<br/>nginx TLS + WireGuard hub<br/>CPU: Intel Xeon Platinum 8259CL, 2.5 GHz<br/>2 vCPU (1 core, 2 threads)<br/>RAM: 2 GiB, no GPU"]
-  EDGE -- "/label/, /api/v1/" --> XR
-  EDGE -- "everything else" --> PORTAL
-  EDGE -- "LLM studio host" --> UNS
-  EDGE -- "/openuav/llm/ panel MCP" --> MCP
-  subgraph APP["Lab app server (apps + storage)"]
-    APPHW["CPU: 2x Intel Xeon E5-2683 v4<br/>2.1 GHz base, 3.0 GHz turbo<br/>32 cores, 64 threads<br/>RAM: 110 GiB<br/>GPU: 2x NVIDIA GeForce RTX 2080 Ti<br/>11 GB VRAM each, 22 GB total"]
-    XR["deepgis-xr<br/>Django 5.2, Cesium, AI pilot"]
-    PORTAL["dreams-lab-portal<br/>lab site, OpenUAV manager"]
-    TWIN["PX4 SITL + Gazebo twin<br/>kestrel (multirotor), badger (rover)"]
-    BOAT["Boat twin: otter"]
-  end
-  subgraph GPU["Lab GPU server"]
-    GPUHW["CPU: 2x Intel Xeon Gold 6230<br/>2.1 GHz base, 3.9 GHz turbo<br/>40 cores, 80 threads<br/>RAM: 167 GiB<br/>GPU: 2x NVIDIA TITAN RTX<br/>24 GB VRAM each, 48 GB total"]
-    OLL["Robot language model"]
-    UNS["Unsloth Studio"]
-    BR["llm_bridge + mission_supervisor<br/>per robot"]
-    MCP["dreams_mcp (commands)<br/>dreams_mcp_ro (read-only)"]
-    ZR["Zenoh router"]
-  end
-  XR -- "pilot chat" --> MCP
-  MCP --> BR --> OLL
-  TWIN -- "Zenoh sidecar, topics only" --> ZR --> BR
-  BOAT --> ZR
-  BR -- "typed commands" --> ZR
-  TWIN -- "pose + camera frames" --> XR
-  classDef hw fill:#f4f4f4,stroke:#999,stroke-dasharray:3 3,color:#222
-  class APPHW,GPUHW hw
-```
+![DeepGIS deployment: browser, phone and VR clients, the public edge, the lab's app and GPU servers over WireGuard, the simulated robots and the open data sources](assets/architecture-overview.svg)
+
+| Host | Hardware |
+|---|---|
+| Public edge (AWS EC2 `t3.small`) | Intel Xeon Platinum 8259CL 2.5 GHz, 2 vCPU (1 core, 2 threads), 2 GiB, no GPU |
+| Lab app server | 2x Intel Xeon E5-2683 v4 (2.1 GHz base, 3.0 GHz turbo), 32 cores / 64 threads, 110 GiB, 2x NVIDIA GeForce RTX 2080 Ti (11 GB each), 20 TB + 1.3 TB storage |
+| Lab GPU server | 2x Intel Xeon Gold 6230 (2.1 GHz base, 3.9 GHz turbo), 40 cores / 80 threads, 167 GiB, 2x NVIDIA TITAN RTX (24 GB each) |
+
+The edge routes `/label/` and `/api/v1/` to deepgis-xr and everything else to the lab
+portal; the LLM studio host and the sign-in-gated robot panel also pass through it. The
+app server runs deepgis-xr, the portal, the PX4 + Gazebo twins (kestrel and badger in the
+Bishop world, otter on Tempe Town Lake), the stored lidar and the ERDDAP relay. The GPU
+server runs the robot language model, the MCP servers, and a ROS 2 LLM bridge and mission
+supervisor per robot; robot topics cross to it over Zenoh. Browser, phone and a Meta Quest
+in VR all load the same page and the same AI pilot.
 
 The language model only proposes; the mission supervisor checks every command
 against its limits (geofence, altitude band, battery, telemetry age), and each

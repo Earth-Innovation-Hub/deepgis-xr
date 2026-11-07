@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a1428"/>
+      <stop offset="1" stop-color="#0f1f3d"/>
+    </linearGradient>
+    <marker id="aCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#45d0ff"/>
+    </marker>
+    <marker id="aOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ff9a3c"/>
+    </marker>
+    <marker id="aBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6fb6ff"/>
+    </marker>
+    <style>
+      .card { fill: #12233f; stroke: #2c4a7a; stroke-width: 1.5; }
+      .row { fill: #0d1b33; stroke: #24406b; stroke-width: 1; }
+      .h { fill: #6fb6ff; font-size: 20px; font-weight: 600; letter-spacing: 2px; }
+      .t { fill: #e8f0ff; font-size: 18px; }
+      .s { fill: #9fb4d8; font-size: 15px; }
+      .big { fill: #ffffff; font-size: 26px; font-weight: 700; }
+      .lbl { font-size: 15px; font-weight: 600; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="url(#bg)"/>
+  <text x="800" y="62" text-anchor="middle" fill="#ffffff" font-size="40" font-weight="700">DREAMS Lab / DeepGIS Architecture</text>
+
+  <!-- Column headers -->
+  <text x="170" y="122" text-anchor="middle" class="h">USERS</text>
+  <text x="490" y="122" text-anchor="middle" class="h">EDGE</text>
+  <text x="940" y="122" text-anchor="middle" class="h">LAB SERVERS</text>
+  <text x="1400" y="122" text-anchor="middle" class="h">OPEN DATA SOURCES</text>
+
+  <!-- Users -->
+  <rect x="40" y="140" width="260" height="610" rx="16" class="card"/>
+  <g transform="translate(80,175)">
+    <rect x="20" y="0" width="140" height="88" rx="6" fill="#1d3b66" stroke="#6fb6ff" stroke-width="2"/>
+    <circle cx="90" cy="44" r="28" fill="#2a6fb8" stroke="#9fd4ff" stroke-width="2"/>
+    <path d="M70,36 q20,-14 40,0 M66,50 q24,12 48,0" stroke="#bfe6ff" stroke-width="2" fill="none"/>
+    <rect x="0" y="92" width="180" height="10" rx="4" fill="#6fb6ff"/>
+  </g>
+  <text x="170" y="306" text-anchor="middle" class="t">Browser: DeepGIS</text>
+  <text x="170" y="330" text-anchor="middle" class="t">Earth, Moon &amp; Planets</text>
+  <text x="170" y="352" text-anchor="middle" class="s">HUD toolbar, layers, AI pilot</text>
+  <g transform="translate(140,370)">
+    <rect x="0" y="0" width="60" height="105" rx="10" fill="#1d3b66" stroke="#6fb6ff" stroke-width="2"/>
+    <path d="M30,30 a14,14 0 1 1 0.1,0 M30,58 l-10,-14 h20 z" fill="#45d0ff"/>
+  </g>
+  <text x="170" y="505" text-anchor="middle" class="t">Phone</text>
+  <g transform="translate(95,545)">
+    <rect x="0" y="0" width="150" height="70" rx="28" fill="#1d3b66" stroke="#6fb6ff" stroke-width="2"/>
+    <rect x="18" y="16" width="50" height="38" rx="14" fill="#0d1b33"/>
+    <rect x="82" y="16" width="50" height="38" rx="14" fill="#0d1b33"/>
+  </g>
+  <text x="170" y="648" text-anchor="middle" class="t">Meta Quest: VR cockpit</text>
+  <text x="170" y="672" text-anchor="middle" class="s">WebXR, headset browser</text>
+  <text x="170" y="694" text-anchor="middle" class="s">console, layers, pilot, robots</text>
+  <text x="170" y="728" text-anchor="middle" class="s">one page, one AI pilot, all three</text>
+
+  <!-- Edge -->
+  <rect x="340" y="140" width="300" height="150" rx="16" class="card"/>
+  <path d="M440,232 h100 a26,26 0 0 0 -6,-51 a36,36 0 0 0 -66,-8 a28,28 0 0 0 -28,59 z" fill="#3aa0ff"/>
+  <text x="490" y="270" text-anchor="middle" class="t">Cloudflare DNS</text>
+
+  <rect x="340" y="340" width="300" height="300" rx="16" class="card"/>
+  <rect x="362" y="362" width="34" height="40" rx="4" fill="none" stroke="#6fb6ff" stroke-width="2"/>
+  <path d="M368,374 h22 M368,384 h22 M368,394 h22" stroke="#6fb6ff" stroke-width="2"/>
+  <text x="410" y="392" class="big">AWS EC2 hub</text>
+  <rect x="360" y="425" width="260" height="46" rx="8" class="row"/>
+  <text x="378" y="455" class="t">nginx edge: deepgis.org</text>
+  <rect x="360" y="481" width="260" height="46" rx="8" class="row"/>
+  <text x="378" y="511" class="t">llm.deepgis.org</text>
+  <rect x="360" y="537" width="260" height="46" rx="8" class="row"/>
+  <text x="378" y="567" class="t">robot panel (sign-in gated)</text>
+  <text x="490" y="608" text-anchor="middle" class="s">the only public entry point</text>
+  <text x="490" y="628" text-anchor="middle" class="s" font-size="13">t3.small · 2 vCPU · 2 GiB · no GPU</text>
+
+  <!-- Lab app server -->
+  <rect x="690" y="140" width="500" height="345" rx="16" class="card" stroke="#4aa3ff"/>
+  <rect x="712" y="160" width="34" height="40" rx="4" fill="none" stroke="#4aa3ff" stroke-width="2"/>
+  <path d="M718,172 h22 M718,182 h22 M718,192 h22" stroke="#4aa3ff" stroke-width="2"/>
+  <text x="760" y="190" class="big">Lab app server</text>
+  <text x="1170" y="190" text-anchor="end" class="s">apps + storage</text>
+  <text x="712" y="208" class="s" font-size="12">2x Xeon E5-2683 v4 · 110 GiB · 2x RTX 2080 Ti 22 GB · 20 TB + 1.3 TB</text>
+  <rect x="710" y="216" width="460" height="40" rx="8" class="row"/>
+  <text x="728" y="243" class="t">deepgis-xr (Django + Cesium, HUD, AI pilot, VR)</text>
+  <rect x="710" y="260" width="460" height="40" rx="8" class="row"/>
+  <text x="728" y="287" class="t">dreams-lab-portal, OpenUAV manager</text>
+  <rect x="710" y="304" width="460" height="40" rx="8" class="row"/>
+  <text x="728" y="331" class="t">Locutus twin: kestrel (x500) + badger (rover)</text>
+  <rect x="710" y="348" width="460" height="40" rx="8" class="row"/>
+  <text x="728" y="375" class="t">Tempe Town Lake twin: otter (boat)</text>
+  <rect x="710" y="392" width="460" height="40" rx="8" class="row"/>
+  <text x="728" y="419" class="t">Bishop lidar COGs (OpenTopography)</text>
+  <rect x="710" y="436" width="460" height="40" rx="8" class="row"/>
+  <text x="728" y="463" class="t">NOAA ERDDAP relay</text>
+  <!-- twins -> deepgis-xr: pose + camera frames -->
+  <path d="M1140,348 V264" stroke="#45d0ff" stroke-width="2" stroke-dasharray="4,4" fill="none" marker-end="url(#aCyan)"/>
+  <text x="1150" y="311" class="s" font-size="13">pose +</text>
+  <text x="1150" y="327" class="s" font-size="13">frames</text>
+
+  <!-- Lab GPU server -->
+  <rect x="690" y="510" width="500" height="260" rx="16" class="card" stroke="#4cd07d"/>
+  <rect x="712" y="522" width="38" height="38" rx="6" fill="none" stroke="#4cd07d" stroke-width="2"/>
+  <rect x="722" y="532" width="18" height="18" rx="2" fill="#4cd07d"/>
+  <text x="764" y="552" class="big">Lab GPU server</text>
+  <text x="1170" y="552" text-anchor="end" class="s">GPU</text>
+  <text x="712" y="572" class="s" font-size="12">2x Xeon Gold 6230 · 80 threads · 167 GiB · 2x TITAN RTX 48 GB</text>
+  <rect x="710" y="580" width="460" height="34" rx="8" class="row"/>
+  <text x="728" y="604" class="t">Robot LLM (Ollama, GPU) + Unsloth Studio</text>
+  <rect x="710" y="618" width="460" height="34" rx="8" class="row"/>
+  <text x="728" y="642" class="t">dreams_mcp (commands) + read-only MCP</text>
+  <rect x="710" y="656" width="460" height="34" rx="8" class="row"/>
+  <text x="728" y="680" class="t">ROS 2 LLM bridge, per robot</text>
+  <rect x="710" y="694" width="460" height="34" rx="8" class="row"/>
+  <text x="728" y="718" class="t">Mission supervisor + executors, per robot</text>
+  <rect x="710" y="732" width="460" height="34" rx="8" class="row"/>
+  <text x="728" y="756" class="t">Zenoh router (ROS topics only)</text>
+
+  <!-- Data sources -->
+  <g class="t">
+    <rect x="1250" y="140" width="310" height="80" rx="12" class="card"/>
+    <text x="1272" y="174" class="t">Planetary Computer:</text>
+    <text x="1272" y="200" class="t">Landsat, Sentinel-2</text>
+    <rect x="1250" y="242" width="310" height="62" rx="12" class="card"/>
+    <text x="1272" y="280" class="t">Open-Meteo</text>
+    <rect x="1250" y="326" width="310" height="62" rx="12" class="card"/>
+    <text x="1272" y="364" class="t">NOAA ERDDAP</text>
+    <rect x="1250" y="410" width="310" height="62" rx="12" class="card"/>
+    <text x="1272" y="448" class="t">OpenTopography</text>
+    <rect x="1250" y="494" width="310" height="80" rx="12" class="card"/>
+    <text x="1272" y="528" class="t">USGS / FEMA /</text>
+    <text x="1272" y="554" class="t">iNaturalist / OSM</text>
+    <rect x="1250" y="596" width="310" height="62" rx="12" class="card"/>
+    <text x="1272" y="634" class="t">Cesium World Terrain</text>
+  </g>
+  <text x="1405" y="694" text-anchor="middle" class="s">most fetched by the browser;</text>
+  <text x="1405" y="716" text-anchor="middle" class="s">ERDDAP via the app server's relay</text>
+
+  <!-- Users -> Cloudflare -> hub -->
+  <path d="M300,215 H334" stroke="#6fb6ff" stroke-width="2.5" fill="none" marker-end="url(#aBlue)"/>
+  <path d="M490,290 V334" stroke="#6fb6ff" stroke-width="2.5" fill="none" marker-end="url(#aBlue)"/>
+
+  <!-- WireGuard overlay: hub -> both lab servers -->
+  <path d="M640,490 H656 M656,440 V722 M656,440 H684 M656,722 H684" stroke="#ff9a3c" stroke-width="2.5" stroke-dasharray="7,5" fill="none"/>
+  <path d="M656,440 H684" stroke="#ff9a3c" stroke-width="2.5" fill="none" marker-end="url(#aOrange)" stroke-dasharray="7,5"/>
+  <path d="M656,722 H684" stroke="#ff9a3c" stroke-width="2.5" fill="none" marker-end="url(#aOrange)" stroke-dasharray="7,5"/>
+  <text x="560" y="676" text-anchor="middle" class="lbl" fill="#ff9a3c">WireGuard overlay</text>
+
+  <!-- AI pilot chat: deepgis-xr -> Robot LLM / MCP -->
+  <path d="M710,236 H674 V635 H704" stroke="#45d0ff" stroke-width="2.5" stroke-dasharray="6,5" fill="none" marker-end="url(#aCyan)"/>
+  <text x="661" y="372" text-anchor="middle" class="lbl" fill="#45d0ff" transform="rotate(-90 661 372)">AI pilot chat · robot commands</text>
+
+  <!-- missions and telemetry: supervisor <-> twins over Zenoh -->
+  <path d="M1170,711 H1212 V346 H1176" stroke="#ff9a3c" stroke-width="3" fill="none" marker-end="url(#aOrange)" marker-start="url(#aOrange)"/>
+  <text x="1230" y="530" text-anchor="middle" class="lbl" fill="#ff9a3c" transform="rotate(-90 1230 530)">commands · telemetry (Zenoh)</text>
+
+  <!-- Data sources -> app server / browser -->
+  <path d="M1250,180 H1236 M1250,273 H1236 M1250,357 H1236 M1250,441 H1236 M1250,534 H1236 M1250,627 H1236 M1236,180 V627" stroke="#45d0ff" stroke-width="1.8" stroke-dasharray="4,4" fill="none"/>
+  <path d="M1236,180 H1196" stroke="#45d0ff" stroke-width="1.8" stroke-dasharray="4,4" fill="none" marker-end="url(#aCyan)"/>
+
+  <!-- Bottom strip -->
+  <rect x="40" y="782" width="1520" height="90" rx="16" class="card"/>
+  <path d="M90,805 l22,8 v18 c0,14 -10,22 -22,28 c-12,-6 -22,-14 -22,-28 v-18 z" fill="none" stroke="#6fb6ff" stroke-width="2.5"/>
+  <path d="M80,830 l8,8 l14,-16" stroke="#6fb6ff" stroke-width="2.5" fill="none"/>
+  <text x="130" y="836" class="t">Simulated robots only; commands confirmed first</text>
+  <line x1="545" y1="800" x2="545" y2="855" stroke="#2c4a7a" stroke-width="1.5"/>
+  <rect x="600" y="822" width="34" height="28" rx="4" fill="none" stroke="#6fb6ff" stroke-width="2.5"/>
+  <path d="M607,822 v-8 a10,10 0 0 1 20,0 v8" fill="none" stroke="#6fb6ff" stroke-width="2.5"/>
+  <text x="652" y="842" class="t">Login-gated APIs</text>
+  <line x1="1045" y1="800" x2="1045" y2="855" stroke="#2c4a7a" stroke-width="1.5"/>
+  <path d="M1090,852 l26,-38 l14,20 l10,-12 l22,30 z" fill="none" stroke="#6fb6ff" stroke-width="2.5"/>
+  <text x="1178" y="828" class="t">kestrel + badger over the Bishop fault scarp,</text>
+  <text x="1178" y="852" class="t">otter on Tempe Town Lake</text>
+</svg>
