@@ -15,7 +15,7 @@ class ImmersiveVRTests(TestCase):
         for url in ("/label/3d/search/", "/label/3d/moon/"):
             resp = self.client.get(url)
             self.assertEqual(resp.status_code, 200, url)
-            for needle in ('id="enterVR"', 'id="exitVR"', 'id="vrResolution"', 'id="vrStatus"'):
+            for needle in ('id="enterVR"', 'id="exitVR"', 'id="vrResolution"', 'id="vrSteer"', 'id="vrStatus"'):
                 self.assertContains(resp, needle, msg_prefix=url)
             self.assertRegex(resp.content.decode(), SCRIPT)
             self.assertRegex(resp.content.decode(), COCKPIT_THEN_XR)

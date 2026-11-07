@@ -3,17 +3,20 @@
 // - Instrument console: a curved (cylinder) layer below eye level, fixed in front of the
 //   craft and turning only with it; X re-centres it on where you face or hides it.
 // - Compass: a faint quad locked to the head, at the top of the view.
-// - Layers wing: the data layers as toggles, left of the console (Y shows or hides it).
-//   Kinds and groups come from views/pilot.py (layer_catalog, #hudLayerCatalog).
-// - Pilot comms: the AI pilot chat (hud/pilot.js, window.DeepGISPilot) right of the console,
-//   with quick prompts and a line typed on the headset's system keyboard (hud/xr.js).
+// - Layers wing: the data layers as toggles, up and left of the console (Y shows or hides
+//   it). Kinds and groups come from views/pilot.py (layer_catalog, #hudLayerCatalog).
+// - Pilot comms: the AI pilot chat (hud/pilot.js, window.DeepGISPilot) up and right of the
+//   console, with quick prompts and a line typed on the headset's system keyboard (hud/xr.js).
 // - Robots: the live fleet (hud/actions.js vehicles()) in the wing's place, with the selected
 //   robot's camera frame; fly to it, ride its camera or chase it.
 // - Comfort vignette: a head-locked layer that darkens the edges of view while the ground
 //   streams past (hud/xr.js sets its strength).
-// - Wrist menu: on the left controller, shown while you look at it.
+// - Wrist menu: on the left controller, shown while you look at it; also BACK and EXIT VR.
 // The laser (hud/xr.js) hovers and clicks buttons through pick/hover/click; click returns
-// an action for hud/xr.js to run.
+// an action for hud/xr.js to run. Side panels sit at SIDE_YAW, inside a seated head turn,
+// and above the console's band so the three do not overlap. No text is under 24 px (about
+// 1 degree at these distances, the floor for a Quest 2's pixel density). A panel is
+// redrawn whole but uploaded only where it changed (dirtyRect) unless everything did.
 (function initCockpit() {
     const C = {
         glass: 'rgba(6, 14, 28, 0.78)', glassEdge: 'rgba(56, 189, 248, 0.55)', line: '#38bdf8',
@@ -23,11 +26,20 @@
     const CONSOLE = { radius: 1.2, angle: Cesium.Math.toRadians(64), width: 1600, drop: 0.42 };
     CONSOLE.height = Math.round(CONSOLE.width / 3.6);
     CONSOLE.metres = CONSOLE.radius * CONSOLE.angle / CONSOLE.width * CONSOLE.height;
+    // The parts of the console that change on their own (canvas pixels), uploaded alone
+    CONSOLE.regions = {
+        left: { x: 0, y: 0, w: 470, h: 300 }, tape: { x: 470, y: 0, w: 660, h: 136 },
+        lights: { x: 470, y: 140, w: 660, h: 66 }, status: { x: 340, y: 212, w: 920, h: 52 },
+        right: { x: 1130, y: 0, w: 470, h: 250 },
+    };
     const COMPASS = { width: 1024, height: 96, metres: [0.52, 0.0488], y: 0.21, z: -1.0 };
+    // Side panels: 40 degrees off centre (inner edge about 21, within a seated head turn) and
+    // raised so their bottom clears the console's top (11 degrees down). A negative drop lifts.
+    const SIDE_YAW = Cesium.Math.toRadians(40), SIDE_DROP = -0.06;
     // Counter-clockwise from the console's centre, so to the left
-    const WING = { width: 1100, metres: 0.72, yaw: Cesium.Math.toRadians(57), dist: 1.05, drop: 0.06, line: 36, top: 112 };
+    const WING = { width: 1100, metres: 0.72, yaw: SIDE_YAW, dist: 1.05, drop: SIDE_DROP, line: 36, top: 112 };
     // Mirrors the wing on the right
-    const COMMS = { width: 1100, height: 780, metres: 0.72, yaw: Cesium.Math.toRadians(-57), dist: 1.05, drop: 0.06, line: 34 };
+    const COMMS = { width: 1100, height: 780, metres: 0.72, yaw: -SIDE_YAW, dist: 1.05, drop: SIDE_DROP, line: 34 };
     const QUICK_PROMPTS = [
         ['DESCRIBE', 'Describe what I am looking at'],
         ['WHAT IS HERE', 'What is the place in view, and what is it known for?'],
@@ -35,7 +47,7 @@
         ['CLIMB 1 KM', 'Climb 1 km higher where we are'],
     ];
     // Where the wing is, in its place
-    const ROBOTS = { ...WING, width: 1100, height: 700, rows: 6, row: 58 };
+    const ROBOTS = { ...WING, width: 1100, height: 700, rows: 6, row: 64, list: 540, frameX: 600 };
     // Head-locked, wider than the eyes' fields of view; drawn under the panels
     const VIGNETTE = { width: 256, height: 256, metres: [2.6, 2.2], z: -0.6 };
     // In the left grip space: above the controller towards the wrist, tilted up to the eyes
@@ -256,8 +268,9 @@
         const wristOffset = rigid(WRIST.at, { x: Math.sin(WRIST.tilt / 2), y: 0, z: 0, w: Math.cos(WRIST.tilt / 2) });
 
         const panels = {};
+        // dirty: a redraw is due; rects: the parts to upload, or null for the whole picture
         const addPanel = (id, layer, w, h, draw) => {
-            panels[id] = { id, layer, canvas: canvas(w, h), draw, dirty: true, drawnAt: 0, buttons: [] };
+            panels[id] = { id, layer, canvas: canvas(w, h), draw, dirty: true, rects: null, drawnAt: 0, buttons: [] };
             return panels[id];
         };
         addPanel('console', binding.createCylinderLayer({
@@ -306,7 +319,27 @@
             status: 'Cockpit online', statusKind: 'step', statusAt: performance.now(),
             data: null, compassHeading: null, busy: new Set(), shownKey: '', presented: '',
         };
-        const dirty = (...ids) => ids.forEach((id) => { if (panels[id]) panels[id].dirty = true; });
+        // The whole panel changed
+        const dirty = (...ids) => ids.forEach((id) => {
+            if (!panels[id]) return;
+            panels[id].dirty = true;
+            panels[id].rects = null;
+        });
+        // Only this part of it changed (unless a whole redraw is already due)
+        const MAX_RECTS = 8;
+        function dirtyRect(id, r) {
+            const p = panels[id];
+            if (!p || !r || (p.dirty && !p.rects)) return;
+            if (!p.dirty) p.rects = [];
+            p.dirty = true;
+            const x = Math.max(0, Math.floor(r.x)), y = Math.max(0, Math.floor(r.y));
+            const w = Math.min(p.canvas.width, Math.ceil(r.x + r.w)) - x, h = Math.min(p.canvas.height, Math.ceil(r.y + r.h)) - y;
+            if (w <= 0 || h <= 0) return;
+            if (p.rects.length >= MAX_RECTS) p.rects = null;
+            else p.rects.push({ x, y, w, h });
+        }
+        const pad = (b, m) => ({ x: b.x - m, y: b.y - m, w: b.w + 2 * m, h: b.h + 2 * m });
+        const dotRect = (hit) => ({ x: hit.x - 14, y: hit.y - 14, w: 28, h: 28 });
 
         function presentNow() {
             const layers = [];
@@ -463,13 +496,20 @@
 
         const buttonAt = (hit) => hit && panels[hit.panel]?.buttons.find(b => hit.x >= b.x && hit.x <= b.x + b.w && hit.y >= b.y && hit.y <= b.y + b.h);
 
-        // true when the laser has just moved onto a button
+        // true when the laser has just moved onto a button. Only the cursor dot and the
+        // buttons whose hot state changed are uploaded.
         function hover(hit) {
             const b = buttonAt(hit);
             const id = b ? `${hit.panel}:${b.id}` : null;
             const cursor = hit ? `${hit.panel}:${Math.round(hit.x / 4)},${Math.round(hit.y / 4)}` : null;
             const entered = !!id && id !== state.hover;
-            if (id !== state.hover || cursor !== state.cursor) dirty(state.hit?.panel, hit?.panel);
+            if (id !== state.hover || cursor !== state.cursor) {
+                const prev = state.hit, prevB = buttonAt(prev);
+                if (prev) dirtyRect(prev.panel, dotRect(prev));
+                if (prevB && id !== state.hover) dirtyRect(prev.panel, pad(prevB, 8));
+                if (hit) dirtyRect(hit.panel, dotRect(hit));
+                if (b && entered) dirtyRect(hit.panel, pad(b, 8));
+            }
             state.hover = id;
             state.cursor = cursor;
             state.hit = hit;
@@ -483,7 +523,7 @@
             state.status = String(text).replace(/\s+/g, ' ');
             state.statusKind = kind;
             state.statusAt = performance.now();
-            dirty('console');
+            dirtyRect('console', CONSOLE.regions.status);
         }
 
         function setBusy(kind, on) {
@@ -537,6 +577,11 @@
                 ctx.font = `700 52px ${MONO}`;
                 ctx.fillText(value, x, 30);
             };
+            // The body, in the gap under the readouts
+            ctx.fillStyle = C.dim;
+            ctx.font = `600 24px ${MONO}`;
+            ctx.textAlign = 'left';
+            ctx.fillText((d.body || 'earth').toUpperCase(), 70, 270);
             ctx.save();
             ctx.translate(0, 40);
             block(70, 'ALT AGL', fmtDistance(d.agl));
@@ -547,9 +592,9 @@
             const [lat, lon] = d.lat == null ? ['—', '—'] : fmtLatLon(d.lat, d.lon);
             ctx.save();
             ctx.translate(0, 40);
-            block(W - 70, (d.body || 'earth').toUpperCase(), lat, C.text, 'right');
+            block(W - 70, 'LAT', lat, C.text, 'right');
             ctx.translate(0, 110);
-            block(W - 70, 'POSITION', lon, C.text, 'right');
+            block(W - 70, 'LON', lon, C.text, 'right');
             ctx.restore();
 
             // Mode lights
@@ -589,27 +634,26 @@
             ctx.fillText(text, W / 2, 238);
             ctx.globalAlpha = 1;
 
-            const defs = [
-                { id: 'stop', label: 'STOP', color: C.red, action: 'stop' },
-                { id: 'hide', label: 'HIDE', color: C.line, action: 'hide' },
-            ];
+            // STOP first; HIDE last, away from it
+            const defs = [{ id: 'stop', label: 'STOP', color: C.red, action: 'stop' }];
             if (panels.wing) defs.push({ id: 'layers', label: 'LAYERS', color: C.green, action: 'layers', on: state.wing });
             if (panels.robots) defs.push({ id: 'robots', label: 'ROBOTS', color: C.amber, action: 'robots', on: state.robots });
             if (panels.comms) defs.push({ id: 'pilot', label: 'PILOT', color: C.amber, action: 'pilot', on: state.comms });
-            // Between the two hint blocks (each about 360 px from its edge)
+            defs.push({ id: 'hide', label: 'HIDE', color: C.line, action: 'hide' });
+            // Between the two hint blocks (each about 380 px from its edge)
             const bgap = 16, bw = Math.min(220, (W - 2 * 450 - (defs.length - 1) * bgap) / defs.length), bh = 66;
             const total = defs.length * bw + (defs.length - 1) * bgap;
             p.buttons = defs.map((b, i) => ({ ...b, x: W / 2 - total / 2 + i * (bw + bgap), y: H - bh - 30, w: bw, h: bh }));
-            p.buttons.forEach(b => button(ctx, b, isHot('console', b), Math.min(30, Math.floor(bw / 5))));
-            ctx.fillStyle = C.dim;
-            ctx.font = `500 20px ${MONO}`;
+            p.buttons.forEach(b => button(ctx, b, isHot('console', b), Math.min(30, Math.max(24, Math.floor(bw / 5)))));
+            ctx.fillStyle = C.soft;
+            ctx.font = `500 24px ${MONO}`;
             ctx.textBaseline = 'middle';
             ctx.textAlign = 'left';
-            ctx.fillText(`X cockpit${panels.wing ? ' · Y layers' : ''}`, 70, H - 78);
-            ctx.fillText(`B stop${panels.comms ? ' · A pilot' : ''}`, 70, H - 50);
+            ctx.fillText(`X cockpit${panels.wing ? ' · Y layers' : ''}`, 70, H - 80);
+            ctx.fillText(`B stop${panels.comms ? ' · A pilot' : ''}`, 70, H - 48);
             ctx.textAlign = 'right';
-            ctx.fillText('trigger: fly there', W - 70, H - 78);
-            ctx.fillText('grip+trigger: orbit', W - 70, H - 50);
+            ctx.fillText('trigger: fly there', W - 70, H - 80);
+            ctx.fillText('grip+trigger: orbit', W - 70, H - 48);
             cursorDot(ctx, 'console');
         }
 
@@ -639,8 +683,8 @@
             ctx.font = `700 32px ${MONO}`;
             ctx.fillText('DATA LAYERS', 40, 48);
             ctx.fillStyle = C.soft;
-            ctx.font = `500 20px ${MONO}`;
-            ctx.fillText('around the view · trigger toggles', 40, 82);
+            ctx.font = `500 24px ${MONO}`;
+            ctx.fillText('around the view · trigger toggles', 40, 84);
             const close = { id: 'close', label: 'CLOSE', color: C.line, action: 'layers', x: W - 196, y: 26, w: 156, h: 52 };
             const buttons = [close];
             if (panels.robots) buttons.push({ id: 'tab', label: 'ROBOTS', color: C.amber, action: 'robots', x: W - 372, y: 26, w: 156, h: 52 });
@@ -650,11 +694,12 @@
                 const x = 40 + ci * (colW + 30);
                 let y = WING.top;
                 col.forEach(([title, rows]) => {
-                    ctx.fillStyle = C.dim;
-                    ctx.font = `600 20px ${MONO}`;
+                    ctx.fillStyle = C.soft;
+                    ctx.font = `600 24px ${MONO}`;
                     ctx.textAlign = 'left';
                     const label = title.toUpperCase(), tw = ctx.measureText(label).width;
                     ctx.fillText(label, x, y + WING.line / 2 + 4);
+                    ctx.fillStyle = C.dim;
                     ctx.fillRect(x + tw + 12, y + WING.line / 2 + 4, colW - tw - 12, 1);
                     y += WING.line;
                     rows.forEach((r) => {
@@ -666,7 +711,7 @@
                             ctx.fillStyle = 'rgba(56, 189, 248, 0.18)';
                             ctx.fillRect(b.x - 6, b.y, b.w + 12, b.h);
                         }
-                        const box = 18, bx = x + 4, by = y + (WING.line - box) / 2;
+                        const box = 20, bx = x + 4, by = y + (WING.line - box) / 2;
                         ctx.lineWidth = 2;
                         ctx.strokeStyle = r.locked ? C.dim : on ? C.green : C.line;
                         ctx.strokeRect(bx, by, box, box);
@@ -681,7 +726,7 @@
                         const tag = busy ? ['LOADING', C.amber] : r.locked ? ['SIGN IN', C.dim] : on ? ['ON', C.green] : null;
                         if (tag) {
                             ctx.fillStyle = tag[1];
-                            ctx.font = `700 18px ${MONO}`;
+                            ctx.font = `700 24px ${MONO}`;
                             ctx.textAlign = 'right';
                             ctx.fillText(tag[0], x + colW, y + WING.line / 2 + 1);
                         }
@@ -723,8 +768,8 @@
             ctx.font = `700 32px ${MONO}`;
             ctx.fillText('ROBOTS', 40, 48);
             ctx.fillStyle = C.soft;
-            ctx.font = `500 20px ${MONO}`;
-            ctx.fillText('live fleet · trigger a robot, then fly, ride or chase', 40, 82);
+            ctx.font = `500 24px ${MONO}`;
+            ctx.fillText('trigger a robot, then fly, ride or chase', 40, 84);
             const buttons = [
                 { id: 'close', label: 'CLOSE', color: C.line, action: 'robots', x: W - 196, y: 26, w: 156, h: 52 },
             ];
@@ -733,7 +778,7 @@
             const { list, error } = hud.vehicles();
             const following = hud.following();
             const d = state.data || {};
-            const listW = 560, top = 112;
+            const listW = ROBOTS.list, top = 116;
             if (!list.length) {
                 ctx.fillStyle = error ? C.red : C.dim;
                 ctx.font = `500 24px ${MONO}`;
@@ -757,25 +802,25 @@
                 ctx.textAlign = 'left';
                 ctx.fillStyle = live ? C.text : C.dim;
                 ctx.font = `700 26px ${MONO}`;
-                ctx.fillText(v.name || v.id, 46, y + 18);
+                ctx.fillText(v.name || v.id, 46, y + 17);
                 ctx.fillStyle = C.soft;
-                ctx.font = `500 18px ${MONO}`;
+                ctx.font = `500 24px ${MONO}`;
                 const state2 = [v.platform, v.armed ? 'armed' : v.landed ? 'landed' : null,
                     Number.isFinite(v.speed_mps) ? fmtSpeed(v.speed_mps) : null].filter(Boolean).join(' · ');
-                ctx.fillText(state2, 46, y + 42);
+                ctx.fillText(state2, 46, y + 44);
                 ctx.textAlign = 'right';
                 ctx.fillStyle = following?.id === v.id ? C.line : live ? C.green : C.dim;
-                ctx.font = `700 18px ${MONO}`;
-                ctx.fillText(following?.id === v.id ? (following.view === 'chase' ? 'CHASING' : 'RIDING') : fmtAge(v.age_sec), listW + 30, y + 18);
+                ctx.font = `700 24px ${MONO}`;
+                ctx.fillText(following?.id === v.id ? (following.view === 'chase' ? 'CHASING' : 'RIDING') : fmtAge(v.age_sec), listW + 30, y + 17);
                 if (d.lat != null) {
                     ctx.fillStyle = C.soft;
-                    ctx.font = `500 18px ${MONO}`;
-                    ctx.fillText(fmtDistance(distanceM(d.lat, d.lon, v.lat, v.lon)), listW + 30, y + 42);
+                    ctx.font = `500 24px ${MONO}`;
+                    ctx.fillText(fmtDistance(distanceM(d.lat, d.lon, v.lat, v.lon)), listW + 30, y + 44);
                 }
             });
 
             // The selected robot's camera
-            const fx = 630, fw = W - fx - 40, fh = Math.round(fw * 9 / 16);
+            const fx = ROBOTS.frameX, fw = W - fx - 40, fh = Math.round(fw * 9 / 16);
             bracketBox(ctx, fx, top, fw, fh, 14);
             ctx.fillStyle = 'rgba(2, 6, 23, 0.9)';
             ctx.fill();
@@ -789,17 +834,17 @@
                 ctx.drawImage(img, fx + (fw - iw) / 2, top + (fh - ih) / 2, iw, ih);
             } else {
                 ctx.fillStyle = C.dim;
-                ctx.font = `500 20px ${MONO}`;
+                ctx.font = `500 24px ${MONO}`;
                 ctx.textAlign = 'center';
                 ctx.fillText(sel?.frame ? 'loading camera…' : 'no camera feed', fx + fw / 2, top + fh / 2);
             }
             if (sel) {
                 ctx.textAlign = 'left';
                 ctx.fillStyle = C.soft;
-                ctx.font = `500 18px ${MONO}`;
+                ctx.font = `500 24px ${MONO}`;
                 const [la, lo] = fmtLatLon(sel.lat, sel.lon);
-                ctx.fillText(`${(sel.name || sel.id).toUpperCase()} · ${la} ${lo}`, fx, top + fh + 24);
-                if (Number.isFinite(sel.up_m)) ctx.fillText(`${fmtDistance(sel.up_m)} above take-off · heading ${Math.round(((sel.heading_deg || 0) + 360) % 360)}°`, fx, top + fh + 50);
+                ctx.fillText(`${(sel.name || sel.id).toUpperCase()} · ${la} ${lo}`, fx, top + fh + 26);
+                if (Number.isFinite(sel.up_m)) ctx.fillText(`${fmtDistance(sel.up_m)} above take-off · heading ${Math.round(((sel.heading_deg || 0) + 360) % 360)}°`, fx, top + fh + 58);
             }
 
             // Commands for the selected robot
@@ -839,15 +884,17 @@
             const ctx = p.canvas.getContext('2d');
             const W = WRIST.width, H = WRIST.height;
             glassPanel(ctx, W, H, 24);
+            // Panels on the top row; the flight and session on the bottom (TYPE lives on the
+            // comms panel, the sound toggle on the page)
             const defs = [
                 { id: 'cockpit', label: 'COCKPIT', color: C.line, action: 'cockpit', on: state.console },
                 { id: 'layers', label: 'LAYERS', color: C.green, action: 'layers', on: state.wing, needs: 'wing' },
                 { id: 'robots', label: 'ROBOTS', color: C.amber, action: 'robots', on: state.robots, needs: 'robots' },
                 { id: 'pilot', label: 'PILOT', color: C.amber, action: 'pilot', on: state.comms, needs: 'comms' },
-                { id: 'type', label: 'TYPE', color: C.amber, action: 'type', on: state.keyboard, needs: 'comms' },
+                { id: 'back', label: 'BACK', color: C.line, action: 'back', on: false },
                 { id: 'centre', label: 'CENTRE', color: C.line, action: 'centre', on: false },
-                { id: 'sound', label: state.sound ? 'SOUND' : 'MUTED', color: C.line, action: 'sound', on: state.sound },
                 { id: 'stop', label: 'STOP', color: C.red, action: 'stop' },
+                { id: 'exit', label: 'EXIT VR', color: C.soft, action: 'exit', on: false },
             ].filter(b => !b.needs || panels[b.needs]);
             const cols = defs.length > 6 ? 4 : defs.length > 4 ? 3 : 2, rows = Math.ceil(defs.length / cols);
             const m = 30, gap = 20, bw = (W - 2 * m - (cols - 1) * gap) / cols, bh = (H - 2 * m - (rows - 1) * gap) / rows;
@@ -868,8 +915,8 @@
             ctx.font = `700 32px ${MONO}`;
             ctx.fillText('AI PILOT', 40, 48);
             ctx.fillStyle = C.soft;
-            ctx.font = `500 20px ${MONO}`;
-            ctx.fillText(state.asking ? 'thinking…' : 'TYPE opens the keyboard; its mic dictates', 40, 82);
+            ctx.font = `500 24px ${MONO}`;
+            ctx.fillText(state.asking ? 'thinking…' : 'TYPE opens the keyboard; its mic dictates', 40, 84);
             const close = { id: 'close', label: 'CLOSE', color: C.line, action: 'pilot', x: W - 196, y: 26, w: 156, h: 52 };
 
             // Log, newest at the bottom
@@ -926,18 +973,36 @@
             ], H - 166, 60, 28);
             const quick = row(QUICK_PROMPTS.map(([label, text], i) => ({
                 id: `q${i}`, label, color: C.line, action: { prompt: text }, on: !state.asking,
-            })), H - 90, 56, 22);
+            })), H - 90, 56, 24);
             button(ctx, close, isHot('comms', close), 24);
             p.buttons = [close, ...keys, ...quick];
             cursorDot(ctx, 'comms');
         }
 
-        function upload(layer, cnv, frame) {
+        // The whole canvas, or only rects of it, into the layer's texture. The texture is
+        // flipped (canvas y down, GL y up), so a rect at canvas y lands at height - y - h.
+        const patch = canvas(1, 1);
+        function upload(layer, cnv, frame, rects) {
             const sub = binding.getSubImage(layer, frame);
             gl.bindTexture(gl.TEXTURE_2D, sub.colorTexture);
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
             gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-            gl.texSubImage2D(gl.TEXTURE_2D, 0, sub.viewport.x, sub.viewport.y, cnv.width, cnv.height, gl.RGBA, gl.UNSIGNED_BYTE, cnv);
+            if (!rects) {
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, sub.viewport.x, sub.viewport.y, cnv.width, cnv.height, gl.RGBA, gl.UNSIGNED_BYTE, cnv);
+            } else {
+                const pc = patch.getContext('2d');
+                rects.forEach((r) => {
+                    if (patch.width !== r.w || patch.height !== r.h) {
+                        patch.width = r.w;
+                        patch.height = r.h;
+                    } else {
+                        pc.clearRect(0, 0, r.w, r.h);
+                    }
+                    pc.drawImage(cnv, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+                    gl.texSubImage2D(gl.TEXTURE_2D, 0, sub.viewport.x + r.x, sub.viewport.y + cnv.height - r.y - r.h,
+                        r.w, r.h, gl.RGBA, gl.UNSIGNED_BYTE, patch);
+                });
+            }
             gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
             gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
             gl.bindTexture(gl.TEXTURE_2D, null);
@@ -950,10 +1015,16 @@
         function update(frame, head, data) {
             const prev = state.data;
             state.data = data;
-            if (!prev || Math.round(prev.agl) !== Math.round(data.agl) || Math.round(deg(prev.heading)) !== Math.round(deg(data.heading)) ||
-                prev.auto !== data.auto || prev.layers !== data.layers || Math.round(prev.speed) !== Math.round(data.speed) ||
-                (prev.target == null) !== (data.target == null) || Math.round(prev.target / 10) !== Math.round(data.target / 10)) {
-                dirty('console');
+            const R = CONSOLE.regions;
+            if (!prev) dirty('console');
+            else {
+                if (Math.round(prev.agl) !== Math.round(data.agl) || Math.round(prev.speed) !== Math.round(data.speed) ||
+                    prev.body !== data.body) dirtyRect('console', R.left);
+                if (Math.round(deg(prev.heading)) !== Math.round(deg(data.heading))) dirtyRect('console', R.tape);
+                if (prev.auto !== data.auto || prev.layers !== data.layers || (prev.target == null) !== (data.target == null) ||
+                    Math.round(prev.target / 10) !== Math.round(data.target / 10)) dirtyRect('console', R.lights);
+                if ((prev.lat == null) !== (data.lat == null) || Math.round(prev.lat * 1e4) !== Math.round(data.lat * 1e4) ||
+                    Math.round(prev.lon * 1e4) !== Math.round(data.lon * 1e4)) dirtyRect('console', R.right);
             }
             const heading = Math.round(deg(data.heading) * 2) / 2;
             if (heading !== state.compassHeading) {
@@ -986,8 +1057,9 @@
                 const lost = p.layer.needsRedraw;
                 if (!lost && (!p.dirty || now - p.drawnAt < REDRAW_MS)) return;
                 p.draw(p);
-                upload(p.layer, p.canvas, frame);
+                upload(p.layer, p.canvas, frame, lost ? null : p.rects);
                 p.dirty = false;
+                p.rects = null;
                 p.drawnAt = now;
             });
         }
@@ -1016,12 +1088,12 @@
             toggleRobots: (head) => setSide('robots', !state.robots, head),
             selectRobot: (id) => { state.robot = id; dirty('robots'); },
             vignette: setVignette,
-            sound: (on) => { state.sound = on; dirty('wrist'); },
+            sound: (on) => { state.sound = on; },
             toggleComms: (head) => setComms(!state.comms, head),
             showComms: (head) => state.comms || setComms(true, head),
             pilotEvent,
             typed: (text) => { state.typed = text; dirty('comms'); },
-            keyboard: (on) => { state.keyboard = on; dirty('comms', 'wrist'); },
+            keyboard: (on) => { state.keyboard = on; dirty('comms'); },
             centre: (head) => { place(head); setConsole(true); },
             visible: (id = 'console') => visible(id),
             canvases: Object.fromEntries(Object.entries(panels).map(([id, p]) => [id, p.canvas])),

@@ -23,6 +23,13 @@
                 <option value="1">100% (sharpest)</option>
             </select>
         </div>
+        <div class="form-group mb-2">
+            <label class="form-label" for="vrSteer" style="color: #cbd5e1; font-size: 0.85rem;">Left stick flies along:</label>
+            <select class="form-select form-select-sm" id="vrSteer">
+                <option value="craft" selected>the cockpit's heading</option>
+                <option value="head">where I look</option>
+            </select>
+        </div>
         <div class="form-check mb-1">
             <input class="form-check-input" type="checkbox" id="vrComfort" checked>
             <label class="form-check-label" for="vrComfort" style="color: #cbd5e1; font-size: 0.85rem;">Comfort vignette while moving</label>
@@ -36,13 +43,14 @@
         </div>
         <small style="display: block; margin-top: 6px; color: #64748b; font-size: 0.72rem;">
             Open this page in the headset's browser (Meta Quest Browser) and press Enter VR.
-            The left stick flies along and across where you look (hold the left grip to boost);
-            the right stick turns in 30&deg; steps and climbs or descends. Point the right
-            controller's laser at the ground and pull the trigger to fly there (grip and trigger
-            to orbit). X shows the cockpit in front of you or hides it, Y the data layers,
-            A the AI pilot (TYPE opens the headset keyboard; its mic dictates), B stops;
-            look at your left hand for the wrist menu. ROBOTS flies to a live robot or
-            rides its camera (a thumbstick lets go). Exit VR or the
-            Meta button leaves.
+            The left stick flies along and across the cockpit's heading, or where you look
+            (option above), easing in and out (hold the left grip to boost); the right stick
+            turns in 30&deg; steps and climbs or descends. Point the right controller's laser
+            at the ground and pull the trigger to fly there (grip and trigger to orbit).
+            X shows the cockpit in front of you or hides it, Y the data layers, A the AI
+            pilot (TYPE opens the headset keyboard; its mic dictates), B stops; look at your
+            left hand for the wrist menu, whose BACK returns to where the last flight
+            started and EXIT VR leaves. ROBOTS flies to a live robot or rides its camera
+            (a thumbstick lets go). Exit VR or the Meta button also leaves.
         </small>
     </div>

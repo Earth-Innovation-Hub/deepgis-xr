@@ -13,17 +13,20 @@
 // - Flights, orbits and climbs (hud/actions.js, hud/drone.js) still move the camera: each
 //   frame starts from the rig's level pose, runs the page's animation frames and Cesium's
 //   tweens, and a camera they moved carries the rig along.
-// Controls: the left stick flies along and across where you look (left grip boosts); the
-// right stick snap-turns and climbs or descends. The right controller's laser clicks the
-// cockpit (hud/xr-cockpit.js) or, on the ground, flies there with the trigger (grip and
-// trigger orbits). B stops, X shows the cockpit in front of you or hides it, Y the layers
-// wing, A the AI pilot comms; the wrist menu on the left controller does all three and
-// re-centres them. Comms' TYPE focuses a hidden text field, which brings up the headset's
-// system keyboard (and its dictation mic); Enter or SEND asks the pilot (hud/pilot.js).
-// The Robots panel flies to a robot or rides on it (follow_vehicle, stepped from advance);
-// taking the sticks lets go. A comfort vignette darkens the edges of view while the ground
-// streams past, and short WebAudio tones mark hovers, presses and the pilot's replies
-// (both can be switched off in the VR panel).
+// Controls: the left stick flies along and across the cockpit's heading (or where you
+// look, #vrSteer), eased in and out over ACCEL_S (left grip boosts); the right stick
+// snap-turns and climbs or descends. The right controller's laser clicks the cockpit
+// (hud/xr-cockpit.js) or, on the ground, flies there with the trigger (grip and trigger
+// orbits). B stops, X shows the cockpit in front of you or hides it, Y the layers wing,
+// A the AI pilot comms; the wrist menu on the left controller does all three, re-centres
+// them, goes BACK to where the last flight started and leaves VR. Comms' TYPE focuses a
+// hidden text field, which brings up the headset's system keyboard (and its dictation
+// mic); Enter or SEND asks the pilot (hud/pilot.js). The Robots panel flies to a robot or
+// rides on it (follow_vehicle, stepped from advance); taking the sticks lets go. A comfort
+// vignette darkens the edges of view while the ground streams past (snap turns excepted),
+// and short WebAudio tones mark hovers, presses and the pilot's replies (both can be
+// switched off in the VR panel). The projection layer asks for fixed foveation and a
+// FRAME_RATE_HZ refresh where the headset offers them.
 
 // WebGL options for Cesium viewers; read by core/cesium-init.js and the planet viewer
 window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.userAgent)
@@ -37,6 +40,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
     const scaleSel = document.getElementById('vrResolution');
     const comfortBox = document.getElementById('vrComfort');
     const soundBox = document.getElementById('vrSounds');
+    const steerSel = document.getElementById('vrSteer');
     if (!statusEl || !enterBtn || !exitBtn) return;
 
     const DEADZONE = 0.15;
@@ -45,7 +49,16 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
     const VR_SSE = 4;
     const VR_NEAR_M = 0.05;
     const BOOST = 5;
+    // Seconds for the sticks' command to ease in or out (vection onset is what turns stomachs)
+    const ACCEL_S = 0.35;
     const LASER_REACH_M = 20;
+    // Fixed foveation of the projection layer (0 none .. 1 most): the cockpit text is in its
+    // own layers, so the globe's periphery can go soft
+    const FOVEATION = 1;
+    // Cesium draws the scene once per eye, so ask for the lowest common headset rate
+    const FRAME_RATE_HZ = 72;
+    // Poses BACK can return to (where flights started)
+    const HISTORY_MAX = 20;
     // xr-standard gamepad buttons
     const TRIGGER = 0, GRIP = 1, PRIMARY = 4, SECONDARY = 5;
 
@@ -293,26 +306,41 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         return { carto: c, ground: globe.getHeight(c) ?? 0 };
     }
 
+    // Snap turns and stick flight. The sticks set a command in the rig's frame (x right,
+    // y up, z back) that the velocity eases towards, so motion starts and stops softly.
     function move(viewer, pose, rig, input, dt) {
         if (Math.abs(input.rx) < 0.3) rig.turnLatched = false;
         else if (Math.abs(input.rx) > 0.7 && !rig.turnLatched) {
             rig.turnLatched = true;
             rig.heading += Math.sign(input.rx) * SNAP_TURN;
+            rig.snapped = true;
         }
-        const { lx, ly, ry } = input;
-        if (!lx && !ly && !ry) return false;
+        const boost = input.held.has(`left${GRIP}`) ? BOOST : 1;
+        const want = { x: input.lx * boost, y: -input.ry * boost, z: input.ly * boost };
+        const v = rig.vel, k = Math.min(1, dt / ACCEL_S);
+        v.x += (want.x - v.x) * k;
+        v.y += (want.y - v.y) * k;
+        v.z += (want.z - v.z) * k;
+        if (Math.hypot(v.x, v.y, v.z) < 0.01) {
+            v.x = v.y = v.z = 0;
+            return false;
+        }
         const globe = viewer.scene.globe;
         const { carto, ground } = groundBelow(globe, rig.origin);
-        const boost = input.held.has(`left${GRIP}`) ? BOOST : 1;
-        const speed = Cesium.Math.clamp((carto.height - ground) * 0.5, 5, 200000) * boost;
-        // Along and across the gaze, kept level
-        const m = pose.transform.matrix;
-        let fx = -m[8], fz = -m[10];
-        const len = Math.hypot(fx, fz) || 1;
-        fx /= len;
-        fz /= len;
+        const speed = Cesium.Math.clamp((carto.height - ground) * 0.5, 5, 200000);
+        // Forward is the craft's heading (the way the console faces) or, head-steered, the
+        // level gaze; looking at a side panel must not pull the craft towards it
+        let fx = 0, fz = -1;
+        if (steerSel?.value === 'head') {
+            const m = pose.transform.matrix;
+            fx = -m[8];
+            fz = -m[10];
+            const len = Math.hypot(fx, fz) || 1;
+            fx /= len;
+            fz /= len;
+        }
         const step = speed * dt;
-        const x = (fx * -ly + -fz * lx) * step, z = (fz * -ly + fx * lx) * step, y = -ry * step;
+        const x = (fx * -v.z + -fz * v.x) * step, z = (fz * -v.z + fx * v.x) * step, y = v.y * step;
         const moved = worldPoint(enuRotation(rig.origin, globe.ellipsoid), rig, x, y, z);
         const c = Cesium.Cartographic.fromCartesian(moved, globe.ellipsoid);
         const floor = (globe.getHeight(c) ?? 0) + MIN_CLEARANCE_M;
@@ -447,6 +475,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         const plan = robotCmd === 'fly'
             ? [{ type: 'goto', lat: v.lat, lon: v.lon, alt_m: 120, pitch_deg: -60 }]
             : [{ type: 'follow_vehicle', vehicle: v.id, view: robotCmd === 'chase' ? 'chase' : 'camera' }];
+        remember(s);
         hud.run(plan, sinkFor(s));
         sfxPlay(s, 'engage');
     }
@@ -505,7 +534,8 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
     }
 
     // Comfort vignette: stronger as the ground streams past faster (speed over height above
-    // it, in radians per second) and while the view turns
+    // it, in radians per second) and while the view turns smoothly. A snap turn is a cut,
+    // not a turn, so the frame it lands in is left out.
     function comfort(s, dt) {
         if (!s.cockpit || !comfortBox?.checked || !dt) return;
         const { rig, viewer } = s;
@@ -514,10 +544,30 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         if (!prev) return;
         const { carto, ground } = groundBelow(viewer.scene.globe, rig.origin);
         const flow = Cesium.Cartesian3.distance(rig.origin, prev.origin) / dt / Math.max(carto.height - ground, 20);
-        const turn = Math.abs(Cesium.Math.negativePiToPi(rig.heading - prev.heading)) / dt;
+        const turn = rig.snapped ? 0 : Math.abs(Cesium.Math.negativePiToPi(rig.heading - prev.heading)) / dt;
         const target = Math.min(0.85, Math.max(0, (flow - 0.08) / 0.6) + Math.max(0, (turn - 0.3) / 2));
         s.vignette += (target - s.vignette) * Math.min(1, dt * (target > s.vignette ? 8 : 3));
         s.cockpit.vignette(s.vignette);
+    }
+
+    // Where a flight starts, so BACK can return there (skipped when still at the last mark)
+    function remember(s) {
+        const last = s.history[s.history.length - 1];
+        if (last && Cesium.Cartesian3.distance(last.origin, s.rig.origin) < 5) return;
+        s.history.push({ origin: Cesium.Cartesian3.clone(s.rig.origin), heading: s.rig.heading });
+        if (s.history.length > HISTORY_MAX) s.history.shift();
+    }
+
+    // Back to where the last flight started; with nothing left, to where VR began
+    function back(s) {
+        const p = s.history.pop() || s.start;
+        window.DeepGISActions?.stop();
+        s.rig.origin = Cesium.Cartesian3.clone(p.origin);
+        s.rig.heading = p.heading;
+        s.rig.vel = { x: 0, y: 0, z: 0 };
+        s.rig.auto = false;
+        s.comfortPrev = null;
+        s.cockpit?.status(s.history.length ? 'Back' : 'Back to where VR began', 'step');
     }
 
     function act(s, action, source, head) {
@@ -525,6 +575,10 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         if (action === 'stop') {
             hud?.stop();
             ck?.status('Stopped', 'step');
+        } else if (action === 'back') {
+            back(s);
+        } else if (action === 'exit') {
+            s.session.end().catch(() => {});
         } else if (action === 'hide') {
             ck?.hide();
         } else if (action === 'cockpit') {
@@ -570,6 +624,7 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         const { carto, ground } = groundBelow(globe, s.rig.origin);
         const a = orbit ? { type: 'orbit', lat, lon }
             : { type: 'goto', lat, lon, alt_m: Cesium.Math.clamp(carto.height - ground, 100, 50000), pitch_deg: -60 };
+        remember(s);
         hud.run([a], sinkFor(s));
     }
 
@@ -611,12 +666,16 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         try {
             const input = readInput(s.session, frame, s.space, s.held);
             s.held = input.held;
-            // Taking the sticks stops an autopilot flight or orbit
+            // Taking the sticks stops an autopilot flight or orbit; where they are first
+            // touched is a place BACK can return to
             const flying = input.lx || input.ly || input.ry;
             if (flying && s.rig.auto) window.DeepGISActions?.stop();
+            if (flying && !s.wasFlying) remember(s);
+            s.wasFlying = !!flying;
             const t = advance(s.viewer, s.rig, time);
             if (dt) move(s.viewer, pose, s.rig, input, dt);
             comfort(s, dt);
+            s.rig.snapped = false;
             const head = pose.transform.matrix;
             s.cockpit?.track(frame, head);
             s.aimed = aim(s, input);
@@ -657,7 +716,10 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
         xr = {
             session, viewer, gl, cache: {}, last: null, held: new Set(),
-            rig: { origin: Cesium.Cartesian3.clone(camera.positionWC), heading: camera.heading, turnLatched: false, auto: false },
+            rig: { origin: Cesium.Cartesian3.clone(camera.positionWC), heading: camera.heading, turnLatched: false, auto: false,
+                vel: { x: 0, y: 0, z: 0 }, snapped: false },
+            start: { origin: Cesium.Cartesian3.clone(camera.positionWC), heading: camera.heading },
+            history: [], wasFlying: false,
             sfx, vignette: 0, comfortPrev: null,
             saved: {
                 frustum: camera.frustum.clone(), loop: viewer.useDefaultRenderLoop,
@@ -688,9 +750,16 @@ window.DeepGISXRContext = /OculusBrowser|PicoBrowser|Wolvic/.test(navigator.user
         await gl.makeXRCompatible();
         const scaleFactor = parseFloat(scaleSel?.value) || 0.7;
         xr.space = await session.requestReferenceSpace('local');
+        // A steady refresh the twice-rendered globe can hold, where the headset lets us choose
+        if (session.supportedFrameRates?.length && typeof session.updateTargetFrameRate === 'function') {
+            const rates = Array.from(session.supportedFrameRates);
+            const rate = rates.includes(FRAME_RATE_HZ) ? FRAME_RATE_HZ : Math.min(...rates);
+            session.updateTargetFrameRate(rate).catch(e => console.warn('VR frame rate not set', e));
+        }
         if (typeof XRWebGLBinding === 'function') {
             xr.binding = new XRWebGLBinding(session, gl);
             xr.projection = xr.binding.createProjectionLayer({ textureType: 'texture', colorFormat: gl.RGBA8, depthFormat: 0, scaleFactor });
+            if ('fixedFoveation' in xr.projection) xr.projection.fixedFoveation = FOVEATION;
             const viewerSpace = await session.requestReferenceSpace('viewer');
             try {
                 xr.cockpit = window.DeepGISCockpit?.create({
