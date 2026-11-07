@@ -13,12 +13,13 @@
 //   streams past (hud/xr.js sets its strength).
 // - Wrist menu: on the left controller, shown while you look at it; also BACK and EXIT VR.
 // The laser (hud/xr.js) hovers and clicks buttons through pick/hover/click; click returns
-// an action for hud/xr.js to run. Side panels sit at SIDE_YAW, inside a seated head turn,
-// and above the console's band so the three do not overlap. No text is under 24 px (about
-// 1 degree at these distances, the floor for a Quest 2's pixel density). A panel is
-// uploaded whole whenever it is redrawn: layer textures are cleared on the first
-// getSubImage of each frame (clearOnAccess) and rotate through a swapchain, so nothing
-// drawn in an earlier frame can be relied on.
+// an action for hud/xr.js to run. Side panels sit at SIDE_YAW / SIDE_DIST, out in the
+// view so pointing is an extended arm, and above the console's band so the three do not
+// overlap. Quest OpenXR treats a quad's width/height as half-extents (immersive-web/layers
+// #324): createQuadLayer gets metres/2, pickQuad uses the full size. No text is under 24 px
+// (about 1 degree at these distances). A panel is uploaded whole whenever it is redrawn:
+// layer textures are cleared on the first getSubImage of each frame (clearOnAccess) and
+// rotate through a swapchain, so nothing drawn in an earlier frame can be relied on.
 (function initCockpit() {
     const C = {
         glass: 'rgba(6, 14, 28, 0.78)', glassEdge: 'rgba(56, 189, 248, 0.55)', line: '#38bdf8',
@@ -29,13 +30,14 @@
     CONSOLE.height = Math.round(CONSOLE.width / 3.6);
     CONSOLE.metres = CONSOLE.radius * CONSOLE.angle / CONSOLE.width * CONSOLE.height;
     const COMPASS = { width: 1024, height: 96, metres: [0.52, 0.0488], y: 0.21, z: -1.0 };
-    // Side panels: 40 degrees off centre (inner edge about 21, within a seated head turn) and
-    // raised so their bottom clears the console's top (11 degrees down). A negative drop lifts.
-    const SIDE_YAW = Cesium.Math.toRadians(40), SIDE_DROP = -0.06;
+    // Side panels: 50 degrees off centre at 1.5 m (an extended arm; metres scaled from the
+    // old 0.72 m at 1.05 m so the angular size stays about 38 degrees). Raised so their
+    // bottom clears the console's top (11 degrees down). A negative drop lifts.
+    const SIDE_YAW = Cesium.Math.toRadians(50), SIDE_DIST = 1.5, SIDE_DROP = -0.06, SIDE_METRES = 1.03;
     // Counter-clockwise from the console's centre, so to the left
-    const WING = { width: 1100, metres: 0.72, yaw: SIDE_YAW, dist: 1.05, drop: SIDE_DROP, line: 36, top: 112 };
+    const WING = { width: 1100, metres: SIDE_METRES, yaw: SIDE_YAW, dist: SIDE_DIST, drop: SIDE_DROP, line: 36, top: 112 };
     // Mirrors the wing on the right
-    const COMMS = { width: 1100, height: 780, metres: 0.72, yaw: -SIDE_YAW, dist: 1.05, drop: SIDE_DROP, line: 34 };
+    const COMMS = { width: 1100, height: 780, metres: SIDE_METRES, yaw: -SIDE_YAW, dist: SIDE_DIST, drop: SIDE_DROP, line: 34 };
     const QUICK_PROMPTS = [
         ['DESCRIBE', 'Describe what I am looking at'],
         ['WHAT IS HERE', 'What is the place in view, and what is it known for?'],
@@ -196,7 +198,11 @@
     const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     const unit = (v) => { const n = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / n, v[1] / n, v[2] / n]; };
 
-    // Ray against a quad of size w x h metres with pose M, seen from its front (+z) side
+    // Quest OpenXR: quad width/height are half-extents (visual size is 2x the values we pass)
+    const quadLayerSize = (metres) => ({ width: metres[0] / 2, height: metres[1] / 2 });
+
+    // Ray against a quad of size w x h metres (full size, not the half-extents above) with
+    // pose M, seen from its front (+z) side
     function pickQuad(M, w, h, W, H, o, d) {
         const ax = [M[0], M[1], M[2]], ay = [M[4], M[5], M[6]], az = [M[8], M[9], M[10]];
         const v = [o[0] - M[12], o[1] - M[13], o[2] - M[14]];
@@ -274,31 +280,31 @@
         }), CONSOLE.width, CONSOLE.height, drawConsole);
         addPanel('compass', binding.createQuadLayer({
             space: viewerSpace, viewPixelWidth: COMPASS.width, viewPixelHeight: COMPASS.height, layout: 'mono',
-            width: COMPASS.metres[0], height: COMPASS.metres[1],
+            ...quadLayerSize(COMPASS.metres),
             transform: new XRRigidTransform({ x: 0, y: COMPASS.y, z: COMPASS.z }),
         }), COMPASS.width, COMPASS.height, drawCompass);
         if (groups.length) {
             addPanel('wing', binding.createQuadLayer({
                 space, viewPixelWidth: WING.width, viewPixelHeight: WING.height, layout: 'mono',
-                width: wingMetres[0], height: wingMetres[1],
+                ...quadLayerSize(wingMetres),
             }), WING.width, WING.height, drawWing);
         }
         const robotsMetres = [ROBOTS.metres, ROBOTS.metres * ROBOTS.height / ROBOTS.width];
         if (hud?.isEarth && hud.vehicles) {
             addPanel('robots', binding.createQuadLayer({
                 space, viewPixelWidth: ROBOTS.width, viewPixelHeight: ROBOTS.height, layout: 'mono',
-                width: robotsMetres[0], height: robotsMetres[1],
+                ...quadLayerSize(robotsMetres),
             }), ROBOTS.width, ROBOTS.height, drawRobots);
         }
         addPanel('vignette', binding.createQuadLayer({
             space: viewerSpace, viewPixelWidth: VIGNETTE.width, viewPixelHeight: VIGNETTE.height, layout: 'mono',
-            width: VIGNETTE.metres[0], height: VIGNETTE.metres[1],
+            ...quadLayerSize(VIGNETTE.metres),
             transform: new XRRigidTransform({ x: 0, y: 0, z: VIGNETTE.z }),
         }), VIGNETTE.width, VIGNETTE.height, drawVignette);
         if (pilot) {
             addPanel('comms', binding.createQuadLayer({
                 space, viewPixelWidth: COMMS.width, viewPixelHeight: COMMS.height, layout: 'mono',
-                width: commsMetres[0], height: commsMetres[1],
+                ...quadLayerSize(commsMetres),
             }), COMMS.width, COMMS.height, drawComms);
         }
         // Created once the left controller's grip space is known (wristFor)
@@ -396,7 +402,7 @@
             panels.wrist.layer?.destroy?.();
             panels.wrist.layer = binding.createQuadLayer({
                 space: src.gripSpace, viewPixelWidth: WRIST.width, viewPixelHeight: WRIST.height, layout: 'mono',
-                width: WRIST.metres[0], height: WRIST.metres[1],
+                ...quadLayerSize(WRIST.metres),
                 transform: new XRRigidTransform(WRIST.at, { x: Math.sin(WRIST.tilt / 2), y: 0, z: 0, w: Math.cos(WRIST.tilt / 2) }),
             });
             state.wristSpace = src.gripSpace;
