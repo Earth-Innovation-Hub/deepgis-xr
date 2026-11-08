@@ -11,7 +11,10 @@ Tokens are configured as VEHICLE_POSE_TOKENS = "vehicle_id:sha256hex,...": the s
 keeps only the hash, and a token may only post for its own vehicle id. Sims started by
 the OpenUAV launcher instead hold HMAC-SHA256(VEHICLE_FLEET_SECRET, vehicle id) for an id
 starting with VEHICLE_FLEET_PREFIX, so each sim can post only as itself and none needs
-configuring here.
+configuring here. Field robots enroll themselves the same way: a robot holding
+HMAC-SHA256(VEHICLE_ENROLL_SECRET, "field:" + its id) is registered as a field robot on its
+first pose (platform, name and site from that pose). That key cannot claim an id used by a
+sim, by a VEHICLE_POSE_TOKENS publisher or by the OpenUAV prefix.
 
 Camera frames work the same way: the vehicle POSTs a JPEG to vehicle_frame with the same
 token (metadata, including the pose at capture, in the X-Frame-Meta header), only the
@@ -102,6 +105,26 @@ def fleet_vehicle(token, vid):
     return vid if hmac.compare_digest(fleet_token(secret, vid), token) else None
 
 
+def enroll_token(secret, vid):
+    return hmac.new(secret.encode(), f"field:{vid}".encode(), hashlib.sha256).hexdigest()
+
+
+def field_vehicle(token, vid, tokens):
+    """vid if token is the enrollment key for this field robot's id, else None."""
+    secret, prefix = settings.VEHICLE_ENROLL_SECRET, settings.VEHICLE_FLEET_PREFIX
+    if not (secret and isinstance(vid, str) and VEHICLE_ID.fullmatch(vid)):
+        return None
+    if (prefix and vid.startswith(prefix)) or vid in tokens.values():
+        return None
+    if not hmac.compare_digest(enroll_token(secret, vid), token):
+        return None
+    return vid if robots.field_id_free(vid) else None
+
+
+def ingest_configured(tokens):
+    return bool(tokens or settings.VEHICLE_FLEET_SECRET or settings.VEHICLE_ENROLL_SECRET)
+
+
 def _finite(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
@@ -132,6 +155,11 @@ def clean_pose(data):
         pose["name"] = name.strip()[:80]
     if data.get("kind") in KINDS:
         pose["kind"] = data["kind"]
+    if data.get("platform") in robots.PLATFORMS:
+        pose["platform"] = data["platform"]
+    site = data.get("site")
+    if isinstance(site, str) and site.strip():
+        pose["site"] = site.strip()[:200]
     return pose
 
 
@@ -147,6 +175,10 @@ def _vehicle_for(token, tokens, data):
     """(vehicle id, None) or (None, error response) for a parsed request."""
     vid = token_vehicle(token, tokens) or fleet_vehicle(token, data.get("vehicle"))
     if vid is None:
+        vid = field_vehicle(token, data.get("vehicle"), tokens)
+        if vid is not None:
+            data["kind"] = "field"
+    if vid is None:
         return None, JsonResponse({"error": "A valid vehicle token is required"}, status=401)
     if data.get("vehicle", vid) != vid:
         return None, JsonResponse({"error": "This token is for another vehicle"}, status=403)
@@ -157,7 +189,7 @@ def _vehicle_for(token, tokens, data):
 @require_POST
 def vehicle_pose(request):
     tokens = pose_tokens()
-    if not (tokens or settings.VEHICLE_FLEET_SECRET):
+    if not ingest_configured(tokens):
         return JsonResponse({"error": "Vehicle poses are not configured"}, status=503)
     token = bearer(request)
     if token is None:
@@ -206,7 +238,7 @@ def vehicle_frame(request):
     """One camera frame (image/jpeg body) from a vehicle; the optional X-Frame-Meta header
     carries the JSON {vehicle, captured (unix s), pose fields at capture}."""
     tokens = pose_tokens()
-    if not (tokens or settings.VEHICLE_FLEET_SECRET):
+    if not ingest_configured(tokens):
         return JsonResponse({"error": "Vehicle frames are not configured"}, status=503)
     token = bearer(request)
     if token is None:

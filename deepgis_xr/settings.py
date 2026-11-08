@@ -237,6 +237,9 @@ VEHICLE_POSE_TOKENS = os.environ.get('VEHICLE_POSE_TOKENS', '')
 # for an id starting with the prefix, so new sims need no configuration here.
 VEHICLE_FLEET_SECRET = os.environ.get('VEHICLE_FLEET_SECRET', '')
 VEHICLE_FLEET_PREFIX = os.environ.get('VEHICLE_FLEET_PREFIX', 'openuav-')
+# Field robots enroll themselves: a robot holding HMAC-SHA256(secret, "field:" + its id)
+# (python manage.py vehicle_enroll_key <id>) is registered on its first pose.
+VEHICLE_ENROLL_SECRET = os.environ.get('VEHICLE_ENROLL_SECRET', '')
 # Services that may search robots (/label/api/vehicles/nearby/) without a session, as
 # "sha256hex,..." of their bearer tokens: the DREAMS Lab MCP's find_robots.
 ROBOT_READ_TOKENS = os.environ.get('ROBOT_READ_TOKENS', '')

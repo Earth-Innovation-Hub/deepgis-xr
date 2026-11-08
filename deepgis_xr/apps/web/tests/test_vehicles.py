@@ -42,6 +42,7 @@ TWIN_POSE = {
 @override_settings(
     VEHICLE_POSE_TOKENS=f"locutus:{digest(TOKEN)}, boat1:{digest(OTHER)}, bad entry",
     VEHICLE_FLEET_SECRET="",
+    VEHICLE_ENROLL_SECRET="",
     CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
             "live": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "vehicles-test"}},
 )
@@ -117,6 +118,39 @@ class VehiclePoseTests(TestCase):
         self.client.force_login(self.user)
         [pose] = self.client.get(LIVE_URL).json()["vehicles"]
         self.assertEqual((pose["id"], pose["up_m"]), ("openuav-alice", 12.0))
+
+    @override_settings(VEHICLE_ENROLL_SECRET="enroll-secret", VEHICLE_POSE_TOKENS="")
+    def test_field_robots_enroll_with_their_key(self):
+        from deepgis_xr.apps.core.models import Vehicle
+        from deepgis_xr.apps.web.views import robots
+        robots._registry["t"] = -1e9
+        rover = {"vehicle": "santacruz", "name": "Earth Rover", "platform": "rover", "site": "Tempe",
+                 "kind": "sim", "lat": 33.3735, "lon": -111.9355, "heading_deg": 90.0}
+        key = vehicles.enroll_token("enroll-secret", "santacruz")
+        self.assertEqual(self.post(rover, token=key).status_code, 200)
+        v = Vehicle.objects.get(vehicle_id="santacruz")
+        self.assertEqual((v.kind, v.platform, v.site, v.name), ("field", "rover", "Tempe", "Earth Rover"))
+        self.assertEqual(self.post(rover, token=key).status_code, 200)  # registered: keeps posting
+        self.assertEqual(self.post({**rover, "vehicle": "other-rover"}, token=key).status_code, 401)
+        self.assertEqual(self.post(rover, token=vehicles.fleet_token("enroll-secret", "santacruz")).status_code, 401)
+
+        sim_id = Vehicle.objects.filter(kind="sim").values_list("vehicle_id", flat=True).first()
+        self.assertIsNotNone(sim_id)
+        robots._registry["t"] = -1e9
+        self.assertEqual(self.post({**rover, "vehicle": sim_id},
+                                   token=vehicles.enroll_token("enroll-secret", sim_id)).status_code, 401)
+        Vehicle.objects.filter(vehicle_id=sim_id).update(aliases=["old-callsign"])
+        robots._registry["t"] = -1e9
+        self.assertEqual(self.post({**rover, "vehicle": "old-callsign"},
+                                   token=vehicles.enroll_token("enroll-secret", "old-callsign")).status_code, 401)
+        self.assertEqual(self.post({**rover, "vehicle": "openuav-x"},
+                                   token=vehicles.enroll_token("enroll-secret", "openuav-x")).status_code, 401)
+        with override_settings(VEHICLE_POSE_TOKENS=f"boat1:{digest(OTHER)}"):
+            self.assertEqual(self.post({**rover, "vehicle": "boat1"},
+                                       token=vehicles.enroll_token("enroll-secret", "boat1")).status_code, 401)
+        self.client.force_login(self.user)
+        [pose] = self.client.get(LIVE_URL).json()["vehicles"]
+        self.assertEqual((pose["id"], pose["kind"]), ("santacruz", "field"))
 
     def post_frame(self, jpeg, meta=None, token=TOKEN):
         headers = {"HTTP_AUTHORIZATION": f"Bearer {token}"} if token else {}

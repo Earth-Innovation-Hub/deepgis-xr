@@ -122,6 +122,15 @@ def _matches(info, key):
     return key in {canonical_id(a) for a in info.get("aliases", ())}
 
 
+def field_id_free(vid, refresh=False):
+    """True if a field robot may enroll as vid: no other robot answers to it by id, name or
+    alias (an enrolled field robot keeps its own id)."""
+    for info in registry(refresh).values():
+        if _matches(info, vid) and not (info["id"] == vid and info.get("kind") == "field"):
+            return False
+    return True
+
+
 def mentions_robot(text):
     """True when text names a known robot by id or alias ("chase kestrel"), as a whole word."""
     if not isinstance(text, str) or not text.strip():
@@ -210,7 +219,7 @@ def _vehicle_type(platform):
 
 def _new_vehicle(vid, pose):
     fleet = settings.VEHICLE_FLEET_PREFIX and vid.startswith(settings.VEHICLE_FLEET_PREFIX)
-    platform = "multirotor" if fleet else "other"
+    platform = pose.get("platform") or ("multirotor" if fleet else "other")
     owner = None
     if fleet:
         from django.contrib.auth import get_user_model
@@ -218,7 +227,7 @@ def _new_vehicle(vid, pose):
     return Vehicle.objects.create(
         vehicle_id=vid, name=pose.get("name") or vid, vehicle_type=_vehicle_type(platform),
         kind=pose.get("kind") or "sim", platform=platform, owner=owner,
-        site="OpenUAV" if fleet else "")
+        site="OpenUAV" if fleet else pose.get("site", ""))
 
 
 def record_pose(vid, pose):
