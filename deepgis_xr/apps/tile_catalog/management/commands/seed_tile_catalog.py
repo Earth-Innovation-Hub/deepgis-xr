@@ -235,6 +235,47 @@ SITES = [
             },
         ],
     },
+    {
+        # Agisoft project bishop2019/bishop-c730-3 (MicaSense 5-band, captured 2019-04-15/16);
+        # its mesh is the Locutus digital twin's terrain. Tiles built by build2019.py (infra scripts).
+        'slug': 'bishop_scarp_2019',
+        'name': 'Bishop scarp site (Locutus twin terrain)',
+        'description': (
+            'Low-altitude multispectral drone survey of a fault scarp near Bishop, California, '
+            'flown in April 2019; its 3D model is the terrain the Locutus digital twin flies over. '
+            'About 150 x 170 m, 0.7 cm per pixel at source.'
+        ),
+        'bounds': [-118.44525, 37.45905, -118.44355, 37.46061],
+        'default_zoom': 20,
+        'default_camera_pitch': None,
+        'ordering': 2,
+        'datasets': [
+            {
+                'slug': 'scarp_imagery',
+                'name': 'Scarp survey imagery',
+                'description': 'Orthomosaics from the April 2019 multispectral survey.',
+                'kind': Dataset.KIND_TIMESERIES,
+                'ordering': 0,
+                'timesteps': [
+                    {
+                        'label': '2019-04',
+                        'sort_key': '2019-04-15',
+                        'description': 'April 2019 survey (MicaSense RedEdge, 5 bands).',
+                        'products': [
+                            {
+                                # WebP z15-23, red/green/blue bands stretched 0.5-99.5 %
+                                'layer_id': 'bishop_scarp_2019_rgb',
+                                'kind': Product.KIND_ORTHOPHOTO,
+                                'label': 'Natural-colour orthophoto (Apr 2019)',
+                                'default_opacity': 1.0,
+                                'ordering': 0,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    },
 ]
 
 

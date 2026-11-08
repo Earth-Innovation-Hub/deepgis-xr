@@ -99,6 +99,12 @@ class CleanActionsTests(TestCase):
         self.assertEqual(out[2], {"type": "show_layer", "kind": "geology", "place": "Phoenix, Arizona"})
         self.assertEqual((out[3]["lat"], out[3]["lon"]), (33.7825, -111.2645))
         self.assertIsNone(pilot.catalog_site("Phoenix, Arizona"))
+        Site.objects.create(slug="bishop_ca", name="Bishop, CA — rock surface site",
+                            bounds=[-118.444, 37.450, -118.441, 37.455])
+        Site.objects.create(slug="bishop_scarp_2019", name="Bishop scarp site (Locutus twin terrain)",
+                            bounds=[-118.44525, 37.45905, -118.44355, 37.46061])
+        self.assertEqual(pilot.catalog_site("Bishop rock tiles")[2], "Bishop, CA — rock surface site")
+        self.assertEqual(pilot.catalog_site("the Bishop scarp site")[2], "Bishop scarp site (Locutus twin terrain)")
         self.assertNotIn("date", pilot.PLANET_LAYER_SCHEMAS["moon"]["properties"]["actions"]["items"]["properties"])
 
     def test_layers_go_before_an_orbit(self):
