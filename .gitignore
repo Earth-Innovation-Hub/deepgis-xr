@@ -237,6 +237,7 @@ docs/*
 !docs/images/
 docs/images/*
 !docs/images/vr-pipeline/
+!docs/images/hud/
 
 # Exclude commits.csv (may contain sensitive commit information)
 commits.csv

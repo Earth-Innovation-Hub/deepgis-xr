@@ -5,10 +5,37 @@
 <a href="https://www.youtube.com/watch?v=Plk7JyJsY7Y" target="_blank" rel="noopener noreferrer">
   <img src="https://img.youtube.com/vi/Plk7JyJsY7Y/0.jpg" alt="DeepGIS-XR Demo Video" style="width:560px;height:315px;">
 </a>
-<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/14498bc7-bed7-4662-a181-685945e1244e" />
-<img width="2558" height="1433" alt="image" src="https://github.com/user-attachments/assets/6ef67028-e9dd-4a6e-96f1-c0f74da05d37" />
-<img width="2556" height="1435" alt="image" src="https://github.com/user-attachments/assets/c06ab8f8-54c3-453f-b112-72a77e8453fa" />
-<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/f5826ed4-589b-4dc2-92bb-5ec85c66a179" />
+
+![DeepGIS-XR HUD: the Flight panel, virtual joysticks and a Landsat surface-temperature layer over Tempe](docs/images/hud/hud-flight-panel.jpg)
+
+*The Earth viewer on deepgis.org, November 2026: Landsat 9 surface temperature
+within 5 km of Tempe Town Lake, the **Flight** panel (speed, fly forward,
+takeoff and land, orbit, camera pitch and yaw, joystick toggle), the virtual
+joysticks, the camera pose and the shared toolbar. The blue pin is the otter
+digital twin's live position.*
+
+**Data layers at a glance.** Each view below was produced by one
+plain-language request to the AI Pilot on deepgis.org; the chat lists the
+readings, the legend and the sources. Click a picture for full size.
+
+<table>
+<tr>
+<td width="50%"><a href="docs/images/hud/layer-surface-temp-phoenix.jpg"><img src="docs/images/hud/layer-surface-temp-phoenix.jpg" alt="Landsat surface temperature over downtown Phoenix" width="100%"></a><br><b>Surface temperature · Phoenix</b><br><i>"show surface temperature within 6 km of downtown Phoenix"</i> — Landsat 9 Collection 2 land surface temperature (<code>surface_temp</code>, turbo), 37 to 45 °C across the middle 96% of the circle; roofs and pavement hot, parks and the river cool.</td>
+<td width="50%"><a href="docs/images/hud/layer-ndvi-yuma.jpg"><img src="docs/images/hud/layer-ndvi-yuma.jpg" alt="Sentinel-2 NDVI over the Yuma farmland" width="100%"></a><br><b>Vegetation (NDVI) · Yuma</b><br><i>"fly to Yuma at 8000 m and show NDVI"</i> — Sentinel-2 L2A red and near-infrared bands at 10 m (<code>ndvi</code>, red-yellow-green); irrigated fields along the Colorado River against bare desert, with the share of green, bare and water pixels.</td>
+</tr>
+<tr>
+<td><a href="docs/images/hud/layer-elevation-grand-canyon.jpg"><img src="docs/images/hud/layer-elevation-grand-canyon.jpg" alt="Elevation colour ramp over the Grand Canyon" width="100%"></a><br><b>Elevation · Grand Canyon</b><br><i>"fly to Grand Canyon Village at 15 km and show elevation"</i> — Cesium World Terrain sampled within 7.5 km and stretched from 705 m to 2.2 km (<code>elevation</code>, turbo); the ramp replaces the satellite imagery while shown.</td>
+<td><a href="docs/images/hud/layer-lidar-volcanic-tablelands.jpg"><img src="docs/images/hud/layer-lidar-volcanic-tablelands.jpg" alt="Lidar shaded relief of the Volcanic Tablelands fault scarps" width="100%"></a><br><b>Lidar terrain · Volcanic Tablelands</b><br><i>"show lidar terrain at the Volcanic Tablelands"</i> — a 2018 OpenTopography drone survey stored on the server (<code>lidar_dem</code>): multi-directional shaded relief coloured by height, with slope and relief statistics for the normal-fault scarps north of Bishop.</td>
+</tr>
+<tr>
+<td><a href="docs/images/hud/layer-faults-owens-valley.jpg"><img src="docs/images/hud/layer-faults-owens-valley.jpg" alt="USGS Quaternary faults around Bishop, California" width="100%"></a><br><b>Quaternary faults · Owens Valley</b><br><i>"fly to Bishop at 20 km and show the faults"</i> — USGS Quaternary Fault and Fold Database (<code>faults</code>) within 15 km: the Owens Valley, Fish Slough and White Mountains fault zones with age and slip rate; the badger twin marker sits in the valley.</td>
+<td><a href="docs/images/hud/layer-bishop-rock-survey.jpg"><img src="docs/images/hud/layer-bishop-rock-survey.jpg" alt="Drone orthophoto and segmented rock outlines at the Bishop rock site" width="100%"></a><br><b>Survey imagery and features · Bishop rock site</b><br><i>"show the survey imagery and the mapped survey features"</i> — the lab orthophoto at 1.5 cm per pixel (<code>site_imagery</code>) with 222,657 segmented rock outlines shaded by area (<code>site_features</code>), both from the DeepGIS tile catalog.</td>
+</tr>
+<tr>
+<td><a href="docs/images/hud/layer-geology-grand-canyon.jpg"><img src="docs/images/hud/layer-geology-grand-canyon.jpg" alt="Macrostrat geologic map draped over the Grand Canyon" width="100%"></a><br><b>Geology · Grand Canyon</b><br><i>"show the geology within 10 km"</i> — Macrostrat map units draped at 55% (<code>geology</code>), each listed with age, lithology and the source map citation (Billingsley 2000; SGMC).</td>
+<td><a href="docs/images/hud/layer-moon-tycho-elevation.jpg"><img src="docs/images/hud/layer-moon-tycho-elevation.jpg" alt="LOLA elevation of Tycho crater on the Moon viewer" width="100%"></a><br><b>Elevation · Tycho, the Moon</b><br><i>"fly to Tycho crater at 80 km and show elevation"</i> on <code>/label/3d/moon/</code> — LOLA DEM heights from −3.49 km to 1.46 km around the crater and its central peak (<code>elevation</code>); the same HUD, Flight panel and pilot as on Earth.</td>
+</tr>
+</table>
 
 **Geospatial visualization platform with AI-powered analysis and a language-driven camera drone**
 
@@ -221,8 +248,11 @@ roads into one labelled graph.
 ### 🗺️ Globe, drone and sharing
 - **3D globe** (CesiumJS) with 2D, 3D and Columbus views
 - **3D buildings** from OpenStreetMap (press `B`)
-- **Camera drone**: fly forward, takeoff and land along the local vertical,
-  and orbit with adjustable radius, speed, laps, direction, pitch and yaw
+- **Camera drone** (the **Flight** panel, `G`): shared horizontal and vertical
+  speeds, fly forward, takeoff and land to a target height along the local
+  vertical while the view is held, orbit the point in the middle of the view
+  (radius auto or set, laps, direction), camera pitch and yaw sliders, and
+  virtual joysticks (`J`)
 - **Measurement tools**, GLB/GLTF models, raster and vector layers
 - **Shareable URLs and QR codes** capturing camera and drone state (press `S`)
 - **Immersive VR** (WebXR) on headsets such as the Meta Quest, on Earth and
@@ -345,11 +375,11 @@ adopts the resulting camera move so the headset rides along.
 
 ![VR pipeline: search page and desktop loop, robot follow path, xr.js frame loop, xr-cockpit.js compositor layers](docs/images/vr-pipeline/pipeline-diagram.png)
 
-![Search page HUD](docs/images/vr-pipeline/search-page-hud.png)
+![Search page HUD](docs/images/vr-pipeline/search-page-hud.jpg)
 
-*The Cesium search page in 3D over the Bishop twin site with the AI Pilot
-chat and the WebXR/VR panel open (local run, Esri base imagery added for
-the capture, ellipsoid terrain).*
+*The Cesium search page on deepgis.org in 3D over the Bishop scarp twin
+site: the 2019 drone orthophoto from the tile catalog (`site_imagery`), the
+kestrel twin's marker and the WebXR/VR panel open.*
 
 ![Robot follow path](docs/images/vr-pipeline/robot-follow-path.png)
 
@@ -763,8 +793,8 @@ Design rules:
   view" runs `describe_view` with an optional question (signed-in users; the
   same `/label/api/pilot/describe/` endpoint and rate limit). The View panel's
   "Fly to place" runs `goto` or `orbit` with the pilot's place lookup, or with
-  typed `lat, lon`; an orbit fills in the drone orbit widget's radius, laps
-  and speed, and Stop halts it.
+  typed `lat, lon`; an orbit runs through the same `DeepGISDrone.orbitAround`
+  as the Flight panel's Orbit button, and Stop halts it.
   - `geology` lists curated sites in the circle, samples the Macrostrat map
     at 15 points (the most detailed map at each), lists up to 8 units with
     the source map citation, and drapes the map at 55% opacity.
@@ -895,7 +925,7 @@ the distribution from feedback, and query regions.
 ### Moon and Planet Viewers
 Open `/label/3d/moon/` for LROC imagery, LOLA terrain and the Apollo sites, or
 `/label/3d/planet/<body>/` (`mars`, `mercury`, `venus`, `io`, `europa`,
-`ganymede`, `callisto`, `titan`, `pluto`, `charon`). The HUD, drone widgets,
+`ganymede`, `callisto`, `titan`, `pluto`, `charon`). The HUD, Flight panel,
 keyboard shortcuts and AI pilot work as on Earth; ask the pilot to fly to an
 IAU-named feature ("fly to Olympus Mons").
 
@@ -1002,7 +1032,7 @@ Press `H` in the app for the full list.
 | Key | Action |
 |-----|--------|
 | `B` | Toggle 3D Buildings |
-| `V` | Toggle View Mode (2D/3D/Columbus) |
+| `V` | Toggle View Mode (2D/3D) |
 | `F` | Toggle Full Screen |
 | `H` | Show Keyboard Shortcuts Help |
 | `S` | Share Current View |
@@ -1013,10 +1043,11 @@ Press `H` in the app for the full list.
 | `U` | Takeoff (Up) |
 | `L` | Land |
 | `O` | Start Orbit |
-| `P` / Space | Pause/Stop Orbit (Space is ignored while typing) |
+| `Space` | Pause/Resume Orbit (ignored while typing) |
+| `G` | Flight Panel (speed, fly, takeoff/land, orbit, camera) |
 | `J` | Toggle Virtual Joysticks |
 | `↑` `↓` `←` `→` | Camera Perspectives (N/S/W/E) |
-| `ESC` | Stop Orbit / Close Panels |
+| `ESC` | Stop Orbit or Climb / Close Panels |
 
 ---
 
@@ -1121,6 +1152,18 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ## 📊 Recent Updates
 
 ### November 2026: pilot widgets and immersive VR
+- **One Flight panel** (`2ae3f71`): the Fly and Orbit widgets, the quick
+  2D/3D/Home buttons, the perspective widget and the joystick toolbar
+  button became a single **Flight** panel (`hud/flight_panel.html`,
+  `hud/drone.js`): shared horizontal and vertical speeds, fly forward,
+  takeoff and land to a target height while holding the view, orbit around
+  the point in the middle of the view (radius auto or set, laps, direction,
+  pause/stop, progress), camera pitch and yaw sliders, joystick toggle.
+  Joysticks move in the local east-north-up frame and climb along the
+  geodetic normal (left and right sticks were swapped before); drone
+  actions switch a 2D page to 3D first; the toolbar collapses to icons on
+  narrow screens; one FPS pill; Cesium's own scene-mode and home buttons
+  are hidden. README screenshots refreshed (`docs/images/hud/`).
 - **Immersive VR on the Meta Quest** (`5de41e7`): `hud/xr.js` replaces the
   old WebXR module, which never drew into the headset. Each eye is rendered
   at its own pose and cropped into the XR framebuffer; thumbsticks fly,

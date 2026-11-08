@@ -190,7 +190,7 @@ Sizes are as captured; the committed copies are downscaled to 1600 px wide
 
 | File | Size | Shows |
 |---|---|---|
-| `search-page-hud.png` | 1920×1080 | The Cesium search page in 3D over the Bishop twin site with the AI Pilot chat and the WebXR/VR panel open (local run, Esri base imagery added for the capture, ellipsoid terrain). |
+| `search-page-hud.jpg` | 1216×684 | The Cesium search page on deepgis.org in 3D over the Bishop scarp twin site: the 2019 drone orthophoto (`site_imagery`), the kestrel twin marker and the WebXR/VR panel open. Recaptured Nov 2026 after the Flight-panel consolidation. |
 | `robot-follow-path.png` | 1920×1080 | Desktop `follow_vehicle` chase view of a stubbed `kestrel` pose: fleet pins (kestrel highlighted, badger), PiP camera frame (placeholder JPEG), pilot log line. |
 | `vr-cockpit-layers.png` | 2000×3422 | Montage of the seven cockpit layer canvases exactly as `xr-cockpit.js` drew them in the fake-XR session: console, compass, robots, comms, layers wing, wrist menu, vignette. |
 | `vr-headset-view-composite.png` | 1920×1080 | Illustrative composite: the eye render read back from the Cesium canvas during the fake-XR session plus the live layer canvases placed roughly where the compositor puts them. Not a headset capture. |
