@@ -2131,6 +2131,55 @@
         return { color, pixelSize: following ? 16 : 10, outline: following ? 3 : 2 };
     }
 
+    // A pointer that sits just outside the pin and turns with the vehicle's heading. The
+    // billboard's up is aligned with local north, so rotation is the heading measured clockwise.
+    const HEADING_ICON_PX = 44;
+    let headingIcon = null;
+    function headingImage() {
+        if (headingIcon) return headingIcon;
+        const c = document.createElement('canvas');
+        c.width = c.height = HEADING_ICON_PX;
+        const g = c.getContext('2d');
+        const m = HEADING_ICON_PX / 2;
+        g.beginPath();
+        g.moveTo(m, 1);
+        g.lineTo(m + 7, 14);
+        g.lineTo(m, 11);
+        g.lineTo(m - 7, 14);
+        g.closePath();
+        g.fillStyle = '#fff';
+        g.strokeStyle = 'rgba(0,0,0,0.85)';
+        g.lineWidth = 1.5;
+        g.fill();
+        g.stroke();
+        headingIcon = c.toDataURL();
+        return headingIcon;
+    }
+
+    function northAt(pos) {
+        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(pos, ellipsoid());
+        const n = Cesium.Matrix4.getColumn(enu, 1, new Cesium.Cartesian4());
+        return Cesium.Cartesian3.normalize(new Cesium.Cartesian3(n.x, n.y, n.z), new Cesium.Cartesian3());
+    }
+
+    function headingBillboard(v, pos, style, billboard) {
+        const known = Number.isFinite(v.heading_deg);
+        const b = billboard || {
+            image: headingImage(), width: HEADING_ICON_PX, height: HEADING_ICON_PX,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        };
+        b.show = known;
+        b.color = style.color;
+        if (known) {
+            b.alignedAxis = northAt(pos);
+            b.rotation = -rad(v.heading_deg);
+        }
+        return b;
+    }
+
+    const headingText = (v) => Number.isFinite(v.heading_deg)
+        ? ` ${Math.round(((v.heading_deg % 360) + 360) % 360)}\u00b0` : '';
+
     async function syncFleet() {
         const viewer = getViewer();
         if (!viewer) return;
@@ -2156,7 +2205,9 @@
                     position: pos,
                     point: { pixelSize: style.pixelSize, color: style.color, outlineColor: Cesium.Color.WHITE,
                              outlineWidth: style.outline, disableDepthTestDistance: Number.POSITIVE_INFINITY },
-                    label: { text: vehicleName(v), font: '13px sans-serif', pixelOffset: new Cesium.Cartesian2(0, -18),
+                    billboard: headingBillboard(v, pos, style),
+                    label: { text: vehicleName(v) + headingText(v), font: '13px sans-serif',
+                             pixelOffset: new Cesium.Cartesian2(0, -26),
                              fillColor: Cesium.Color.WHITE, showBackground: true,
                              disableDepthTestDistance: Number.POSITIVE_INFINITY },
                 }) };
@@ -2166,7 +2217,8 @@
                 row.entity.point.pixelSize = style.pixelSize;
                 row.entity.point.color = style.color;
                 row.entity.point.outlineWidth = style.outline;
-                row.entity.label.text = vehicleName(v);
+                headingBillboard(v, pos, style, row.entity.billboard);
+                row.entity.label.text = vehicleName(v) + headingText(v);
             }
         }
         for (const [id, row] of fleet) {
