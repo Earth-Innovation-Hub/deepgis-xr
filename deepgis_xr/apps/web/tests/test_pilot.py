@@ -90,7 +90,9 @@ class CleanActionsTests(TestCase):
             {"type": "show_layer", "kind": "site_imagery", "place": "Phoenix wildfire site", "date": "November"},
             {"type": "show_layer", "kind": "geology", "place": "Phoenix, Arizona", "date": "2020"},
             {"type": "goto", "place": "wildfire site in Phoenix"},
+            {"type": "show_layer", "kind": "site_features", "place": "Phoenix wildfire site", "date": "2021"},
         ])
+        self.assertEqual(out[4]["date"], "2021")
         self.assertEqual(out[0], {"type": "show_layer", "kind": "site_imagery", "place": "Phoenix wildfire site",
                                   "date": "2020-11", "lat": 33.7825, "lon": -111.2645})
         self.assertNotIn("date", out[1])

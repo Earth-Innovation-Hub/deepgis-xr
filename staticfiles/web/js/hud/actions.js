@@ -421,6 +421,52 @@
         return `<table class="cesium-infoBox-defaultTable"><tbody>${body}</tbody></table>${anchors}`;
     }
 
+    // The tile-catalog product of one kind at the lab site nearest p: the newest survey,
+    // or the one asked for by month or year (else the nearest date), with its TileJSON
+    async function catalogProduct(p, radius, a, kind, noun) {
+        const cat = await fetchJson(new URL(TILE_CATALOG_URL, location.href).href, { credentials: 'same-origin' }, 15000);
+        const box = (b) => ({ geometry: { type: 'Polygon', coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]] } });
+        const products = (s) => (s.datasets || []).flatMap(d => {
+            const steps = [...(d.timesteps || [])].sort((x, y) => String(y.sort_key).localeCompare(String(x.sort_key)));
+            return [...(d.products || []), ...steps.flatMap(t => t.products.map(q => ({ ...q, when: t.label })))]
+                .filter(q => q.kind === kind);
+        });
+        const all = (cat.sites || []).filter(s => s.bounds?.length === 4 && products(s).length);
+        const near = all.map(s => ({ s, d: featureDistance(box(s.bounds), p.lon, p.lat) }))
+            .filter(x => x.d <= radius).sort((x, y) => x.d - y.d);
+        if (!near.length) {
+            return { empty: `No lab ${noun} within ${fmtM(radius)} of ${p.label}. ` +
+                `DeepGIS has ${noun} at: ${all.map(s => s.name).join('; ') || 'no sites yet'}` };
+        }
+        const site = near[0].s, list = products(site);
+        const dates = [...new Set(list.map(q => q.when).filter(Boolean))].sort();
+        const months = (s) => { const [y, m] = String(s).split('-').map(Number); return y * 12 + (m || 6) - 1; };
+        let prod = list[0], dateNote = '';
+        if (a.date && dates.length) {
+            prod = list.find(q => q.when?.startsWith(a.date)) ||
+                [...list].filter(q => q.when).sort((x, y) => Math.abs(months(x.when) - months(a.date)) - Math.abs(months(y.when) - months(a.date)))[0];
+            if (!prod.when.startsWith(a.date)) dateNote = `No survey in ${a.date}; showing the nearest, ${prod.when}. `;
+        }
+        const tj = await fetchJson(`${TILES_URL}/data/${encodeURIComponent(prod.layer_id)}.json`, {}, 15000);
+        const b = tj.bounds?.length === 4 ? tj.bounds : site.bounds;
+        const lat = (b[1] + b[3]) / 2;
+        const area = { lon: rad((b[0] + b[2]) / 2), lat: rad(lat),
+                       radius: Math.max(50, Math.hypot((b[2] - b[0]) * Math.cos(rad(lat)), b[3] - b[1]) * Math.PI / 180 * EARTH_R / 2) };
+        const lines = [];
+        if (site.description) lines.push(['geo', site.description.split(/(?<=\.)\s/)[0]]);
+        if (dates.length > 1) lines.push(['step', `Surveys of this site: ${dates.join(', ')}. Ask for one by month, e.g. "${dates[0]}".`]);
+        if (near.length > 1) lines.push(['step', `Also nearby: ${near.slice(1).map(x => x.s.name).join('; ')}`]);
+        return { site, dist: near[0].d, list, prod, dateNote, tj, b, area, lines };
+    }
+
+    function fmtArea(m2) {
+        return m2 < 0.1 ? `${Math.round(m2 * 1e4)} cm²` : m2 < 1e4 ? `${m2.toFixed(m2 < 10 ? 2 : 0)} m²` : `${(m2 / 1e4).toFixed(2)} ha`;
+    }
+
+    function fmtLen(m) {
+        return m < 1 ? `${Math.round(m * 100)} cm` : `${m.toFixed(m < 10 ? 2 : 1)} m`;
+    }
+
     function pinLabel(e, text) {
         e.label = new Cesium.LabelGraphics({
             text, font: '13px sans-serif',
@@ -508,6 +554,7 @@
     const PILOT_TOPO_URL = '/label/api/pilot/topo/';
     const TILE_CATALOG_URL = '/api/v1/tile-catalog/';
     const TILES_URL = window.MBTILES_SERVER_OVERRIDE || 'https://mbtiles.deepgis.org';
+    const PILOT_FEATURE_URL = '/label/api/pilot/feature/';
     const OT_CATALOG_URL = 'https://portal.opentopography.org/API/otCatalog';
     const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
@@ -1801,43 +1848,11 @@
             title: 'Survey imagery',
             radius: (p) => clamp((p.sizeM || 0) / 2, 10000, 50000),
             async load(p, radius, a) {
-                const cat = await fetchJson(new URL(TILE_CATALOG_URL, location.href).href, { credentials: 'same-origin' }, 15000);
-                const box = (b) => ({ geometry: { type: 'Polygon', coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]] } });
-                const orthos = (s) => (s.datasets || []).flatMap(d => {
-                    const steps = [...(d.timesteps || [])].sort((x, y) => String(y.sort_key).localeCompare(String(x.sort_key)));
-                    return [...(d.products || []), ...steps.flatMap(t => t.products.map(q => ({ ...q, when: t.label })))]
-                        .filter(q => q.kind === 'orthophoto');
-                });
-                const all = (cat.sites || []).filter(s => s.bounds?.length === 4 && orthos(s).length);
-                const near = all.map(s => ({ s, d: featureDistance(box(s.bounds), p.lon, p.lat) }))
-                    .filter(x => x.d <= radius).sort((x, y) => x.d - y.d);
-                if (!near.length) {
-                    return { lines: [], sources: [], empty: `No lab survey imagery within ${fmtM(radius)} of ${p.label}. ` +
-                        `DeepGIS has survey imagery at: ${all.map(s => s.name).join('; ') || 'no sites yet'}` };
-                }
-                const site = near[0].s, list = orthos(site);
-                const dates = [...new Set(list.map(q => q.when).filter(Boolean))].sort();
-                // Asked-for survey: same month or year, else the nearest date
-                const months = (s) => { const [y, m] = String(s).split('-').map(Number); return y * 12 + (m || 6) - 1; };
-                let prod = list[0], dateNote = '';
-                if (a.date && dates.length) {
-                    prod = list.find(q => q.when?.startsWith(a.date)) ||
-                        [...list].filter(q => q.when).sort((x, y) => Math.abs(months(x.when) - months(a.date)) - Math.abs(months(y.when) - months(a.date)))[0];
-                    if (!prod.when.startsWith(a.date)) dateNote = `No survey in ${a.date}; showing the nearest, ${prod.when}. `;
-                }
-                const tj = await fetchJson(`${TILES_URL}/data/${encodeURIComponent(prod.layer_id)}.json`, {}, 15000);
-                const b = tj.bounds?.length === 4 ? tj.bounds : site.bounds;
+                const c = await catalogProduct(p, radius, a, 'orthophoto', 'survey imagery');
+                if (c.empty) return { lines: [], sources: [], empty: c.empty };
+                const { site, prod, tj, b } = c;
                 const maxZ = Number.isFinite(tj.maxzoom) ? tj.maxzoom : 22;
-                const lat = (b[1] + b[3]) / 2;
-                const cm = 156543.03392 * Math.cos(rad(lat)) / Math.pow(2, maxZ) * 100;
-                const area = { lon: rad((b[0] + b[2]) / 2), lat: rad(lat),
-                               radius: Math.max(50, Math.hypot((b[2] - b[0]) * Math.cos(rad(lat)), b[3] - b[1]) * Math.PI / 180 * EARTH_R / 2) };
-                const lines = [['step', `${dateNote}${site.name}: ${prod.label}, ` +
-                    `${cm < 10 ? cm.toFixed(1) : Math.round(cm)} cm per pixel at full zoom, ${fmtM(near[0].d)} from ${p.label}. ` +
-                    'Fly in close for full detail.']];
-                if (site.description) lines.push(['geo', site.description.split(/(?<=\.)\s/)[0]]);
-                if (dates.length > 1) lines.push(['step', `Surveys of this site: ${dates.join(', ')}. Ask for one by month, e.g. "${dates[0]}".`]);
-                if (near.length > 1) lines.push(['step', `Also nearby: ${near.slice(1).map(x => x.s.name).join('; ')}`]);
+                const cm = 156543.03392 * Math.cos(rad((b[1] + b[3]) / 2)) / Math.pow(2, maxZ) * 100;
                 return {
                     imagery: new Cesium.UrlTemplateImageryProvider({
                         url: `${TILES_URL}/data/${encodeURIComponent(prod.layer_id)}/{z}/{x}/{y}.${tj.format || 'png'}`,
@@ -1846,8 +1861,67 @@
                         credit: new Cesium.Credit(tj.attribution || 'DeepGIS'),
                     }),
                     imageryAlpha: prod.default_opacity ?? 1,
-                    area, ring: area, lines,
+                    area: c.area, ring: c.area,
+                    lines: [['step', `${c.dateNote}${site.name}: ${prod.label}, ` +
+                        `${cm < 10 ? cm.toFixed(1) : Math.round(cm)} cm per pixel at full zoom, ${fmtM(c.dist)} from ${p.label}. ` +
+                        'Fly in close for full detail.'], ...c.lines],
                     sources: [`DeepGIS tile catalog: ${site.name}, layer ${prod.layer_id}`],
+                    empty: '',
+                };
+            },
+        },
+
+        // Lab vector layers (rock outlines, mapped survey features). tileserver-gl renders
+        // them through a style (<layer>_styled) into image tiles, which drape like any
+        // imagery and show in VR; a click asks PILOT_FEATURE_URL for the polygon there.
+        site_features: {
+            title: 'Survey features',
+            radius: (p) => clamp((p.sizeM || 0) / 2, 10000, 50000),
+            async load(p, radius, a) {
+                const c = await catalogProduct(p, radius, a, 'vector', 'mapped survey features');
+                if (c.empty) return { lines: [], sources: [], empty: c.empty };
+                const { site, prod, tj, b } = c;
+                const style = `${prod.layer_id}_styled`;
+                try {
+                    await fetchJson(`${TILES_URL}/styles/${encodeURIComponent(style)}.json`, {}, 15000);
+                } catch (e) {
+                    return { lines: [], sources: [], empty: `${site.name}: ${prod.label} has no rendered style on the tile server yet` };
+                }
+                const imagery = new Cesium.UrlTemplateImageryProvider({
+                    url: `${TILES_URL}/styles/${encodeURIComponent(style)}/{z}/{x}/{y}.png`,
+                    minimumLevel: Math.max(12, Number.isFinite(tj.minzoom) ? tj.minzoom : 0),
+                    // The style re-renders the polygons above the data's own maximum zoom
+                    maximumLevel: 22,
+                    rectangle: Cesium.Rectangle.fromDegrees(...b),
+                    credit: new Cesium.Credit(tj.attribution || 'DeepGIS'),
+                });
+                imagery.pickFeatures = async (x, y, level, lon, lat) => {
+                    const j = await serverJson(PILOT_FEATURE_URL, { layer: prod.layer_id, lat: deg(lat).toFixed(7), lon: deg(lon).toFixed(7) },
+                        'feature', 'The feature lookup');
+                    const f = j.feature;
+                    if (!f) return [];
+                    const info = new Cesium.ImageryLayerFeatureInfo();
+                    info.name = `${prod.label}${prod.when ? ` (${prod.when})` : ''}`;
+                    info.position = Cesium.Cartographic.fromRadians(lon, lat,
+                        getViewer().scene.globe.getHeight(new Cesium.Cartographic(lon, lat)) || 0);
+                    const num = (v) => typeof v === 'number' && !Number.isInteger(v) ? Number(v.toPrecision(4)) : v;
+                    info.description = tableHtml([
+                        ['Site', site.name], ['Area', fmtArea(f.area_m2)],
+                        ['Length', fmtLen(f.length_m)], ['Width', fmtLen(f.width_m)],
+                        ...Object.entries(f.attributes || {}).map(([k, v]) => [`${k} (source)`, num(v)]),
+                    ]);
+                    info.data = f;
+                    return [info];
+                };
+                const count = (tj.tilestats?.layers || []).reduce((n, l) => n + (l.count || 0), 0);
+                return {
+                    imagery, imageryAlpha: prod.default_opacity ?? 0.9,
+                    area: c.area, ring: c.area,
+                    lines: [['step', `${c.dateNote}${site.name}: ${prod.label}` +
+                        (count ? `, ${count.toLocaleString()} shapes` : '') + `, ${fmtM(c.dist)} from ${p.label}. ` +
+                        'Fly in close, then click a shape for its size and attributes.'],
+                        ...(prod.description ? [['geo', prod.description]] : []), ...c.lines],
+                    sources: [`DeepGIS tile catalog: ${site.name}, vector layer ${prod.layer_id} (rendered by style ${style})`],
                     empty: '',
                 };
             },

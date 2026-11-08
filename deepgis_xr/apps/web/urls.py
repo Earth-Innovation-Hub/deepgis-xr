@@ -67,6 +67,7 @@ urlpatterns = [
     path('label/api/pilot/describe/', views.pilot_describe, name='pilot_describe'),  # describe_view: one canvas frame to the lab's vision model
     path('label/api/pilot/ocean/', views.pilot_ocean, name='pilot_ocean'),  # NOAA ERDDAP relay for the sea layers
     path('label/api/pilot/topo/', views.pilot_topo, name='pilot_topo'),  # OpenTopography lidar stored in data/topo
+    path('label/api/pilot/feature/', views.pilot_feature, name='pilot_feature'),  # the polygon at a point in a vector MBTiles layer (views/features.py)
     # Live vehicle poses for follow_vehicle (views/vehicles.py): token-only ingest, signed-in reads
     path('label/api/vehicles/pose/', views.vehicle_pose, name='vehicle_pose'),
     path('label/api/vehicles/live/', views.vehicles_live, name='vehicles_live'),

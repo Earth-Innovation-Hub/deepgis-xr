@@ -68,6 +68,7 @@ from .rock_label import (
 )
 from .models_3d import get_3d_model, list_stl_models
 from .pilot import pilot_chat, pilot_describe, pilot_models, pilot_ocean, pilot_robot_command, pilot_topo
+from .features import pilot_feature
 from .vehicles import vehicle_frame, vehicle_frame_image, vehicle_pose, vehicles_live, vehicles_nearby
 from .twin_access import twin_access
 from .llm_access import llm_access, llm_exchange, llm_gate
@@ -112,6 +113,7 @@ __all__ = [
     "pilot_ocean",
     "pilot_robot_command",
     "pilot_topo",
+    "pilot_feature",
     "vehicle_pose",
     "vehicles_live",
     "vehicles_nearby",
