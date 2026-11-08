@@ -1973,13 +1973,6 @@
         });
     }
 
-    function setInput(elId, value) {
-        const el = document.getElementById(elId);
-        if (!el) return;
-        el.value = value;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-
     function haltMotion() {
         drone().stopOrbit?.();
         drone().stopVertical?.();
@@ -2283,8 +2276,8 @@
         const viewer = getViewer();
         const dz = height - viewer.camera.positionCartographic.height;
         if (Math.abs(dz) < 1) return;
-        setInput('droneVerticalSpeed', Math.round(speed || clamp(Math.abs(dz) / 15, 5, SCALE.climb)));
-        if (dz > 0) drone().climbTo(height); else drone().descendTo(height);
+        const mps = speed || clamp(Math.abs(dz) / 15, 5, SCALE.climb);
+        if (dz > 0) drone().climbTo(height, mps); else drone().descendTo(height, mps);
         await until(() => !drone().isVerticalActive(), id);
     }
 
@@ -2343,20 +2336,15 @@
             const toCentre = new Cesium.EllipsoidGeodesic(
                 new Cesium.Cartographic(startLon, startLat), new Cesium.Cartographic(p.lon, p.lat), ellipsoid()).startHeading;
 
-            setInput('droneOrbitRadius', Math.round(radius));
-            setInput('droneOrbitRevolutions', revs);
-            setInput('droneHorizontalSpeed', Math.round(speed));
             drone().stopOrbit?.();
-            setInput('droneOrbitPitch', Math.round(pitchDeg));
-            setInput('droneOrbitYaw', 0);
-
             out.msg('step', `Orbiting ${p.label}: radius ${fmtM(radius)}, ${fmtM(alt)} above ground, ` +
                 `${revs} lap${revs === 1 ? '' : 's'} ${a.clockwise ? 'clockwise' : 'counter-clockwise'} at ${Math.round(speed)} m/s`);
             await flight({
                 destination: Cesium.Cartesian3.fromRadians(startLon, startLat, ground + alt, ellipsoid()),
                 orientation: { heading: toCentre, pitch: Cesium.Math.toRadians(pitchDeg), roll: 0 },
             }, id);
-            drone().orbitAround(centre, { clockwise: !!a.clockwise });
+            // The panel's inputs are left alone; the orbit takes its parameters directly
+            drone().orbitAround(centre, { clockwise: !!a.clockwise, radius, speed, laps: revs, pitch: pitchDeg, yaw: 0 });
             await until(() => !drone().isOrbiting(), id);
         },
 
@@ -2379,7 +2367,6 @@
 
         async look(a, id, out) {
             const camera = getViewer().camera;
-            if (Number.isFinite(a.pitch_deg)) setInput('droneOrbitPitch', Math.round(a.pitch_deg));
             camera.setView({
                 destination: camera.position,
                 orientation: {

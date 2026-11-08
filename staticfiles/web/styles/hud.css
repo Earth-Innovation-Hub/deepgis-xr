@@ -15,7 +15,12 @@
     border-radius: 12px 12px 0 0;
     z-index: 2000;
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+    /* Never wider than the window: icons only on narrow screens, then scrollable */
+    max-width: calc(100vw - 16px);
+    overflow-x: auto;
+    scrollbar-width: none;
 }
+.hud-toolbar::-webkit-scrollbar { display: none; }
 
 .hud-btn {
     display: flex;
@@ -58,12 +63,26 @@
     letter-spacing: 0.5px;
 }
 
+/* Icons only on narrow screens (after the base rules so they win) */
+@media (max-width: 1000px) {
+    .hud-btn { min-width: 44px; padding: 8px 10px; }
+    .hud-btn span { display: none; }
+    .hud-btn i { margin-bottom: 0; }
+}
+
 /* Special colored buttons */
 .hud-btn.hud-ai { border-color: rgba(16, 185, 129, 0.5); }
 .hud-btn.hud-ai:hover, .hud-btn.hud-ai.active { 
     background: rgba(16, 185, 129, 0.3); 
     border-color: #10b981;
     color: #34d399;
+}
+
+.hud-btn.hud-flight { border-color: rgba(6, 182, 212, 0.5); }
+.hud-btn.hud-flight:hover, .hud-btn.hud-flight.active {
+    background: rgba(6, 182, 212, 0.25);
+    border-color: #06b6d4;
+    color: #67e8f9;
 }
 
 .hud-btn.hud-pilot { border-color: rgba(245, 158, 11, 0.5); }
@@ -248,6 +267,48 @@
     color: #f87171;
 }
 
+/* ========== FLIGHT PANEL (hud/flight_panel.html, hud/drone.js) ==========
+   Docked at the left so the view stays clear while flying; stays open on
+   globe clicks (data-sticky). */
+.hud-panel.flight-panel {
+    left: 10px;
+    right: auto;
+    bottom: 90px;
+    width: 236px;
+    max-height: calc(100vh - 290px); /* keeps the camera pose readout (top 80-190) clear */
+    padding: 12px;
+    border-color: rgba(6, 182, 212, 0.35);
+    transform: translateY(20px);
+}
+.hud-panel.flight-panel.visible { transform: none; }
+.flight-panel .hud-panel-header { margin-bottom: 8px; padding-bottom: 6px; }
+.fp-header-tools { display: flex; align-items: center; gap: 2px; }
+.fp-joy.active { color: #67e8f9; background: rgba(6, 182, 212, 0.2); }
+.fp-joy:hover { color: #67e8f9; background: rgba(6, 182, 212, 0.25); }
+.fp-section { margin-bottom: 8px; }
+.fp-section-last { margin-bottom: 0; }
+.fp-section .dl-heading { margin-bottom: 4px; font-size: 0.68rem; color: #94a3b8; }
+.fp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: end; margin-bottom: 6px; }
+.fp-row:last-child { margin-bottom: 0; }
+.fp-field { display: flex; flex-direction: column; gap: 2px; margin: 0; color: #cbd5e1; font-size: 0.7rem; line-height: 1.2; }
+.fp-field .dl-input { width: 100%; padding: 3px 6px; font-size: 0.8rem; }
+.fp-field .dl-input::placeholder { color: #64748b; font-style: italic; }
+.fp-btn { width: 100%; white-space: nowrap; font-size: 0.78rem; padding: 4px 6px; }
+.fp-btn.active { animation: pulse 1.5s ease-in-out infinite; }
+.fp-check { display: flex; align-items: center; gap: 5px; margin: 0; min-height: 29px; color: #cbd5e1; font-size: 0.72rem; }
+.fp-check input { margin: 0; }
+.fp-note { display: block; color: #64748b; font-size: 0.64rem; line-height: 1.25; }
+.fp-slider { display: flex; flex-direction: column; gap: 0; margin: 0 0 4px; color: #cbd5e1; font-size: 0.7rem; }
+.fp-slider span { display: flex; justify-content: space-between; }
+.fp-slider b { color: #e2e8f0; font-weight: 600; }
+.fp-slider input[type="range"] { width: 100%; height: 18px; margin: 0; accent-color: #06b6d4; }
+/* Left stick moves clear of the open panel (both are top-level siblings in hud.html) */
+#flightPanel.visible ~ #leftJoystick { left: 266px; }
+
+@media (max-width: 760px) {
+    .hud-panel.flight-panel { left: 8px; right: 8px; width: auto; bottom: 80px; max-height: 55vh; }
+}
+
 /* Custom scrollbar for panels */
 .hud-panel::-webkit-scrollbar {
     width: 6px;
@@ -371,8 +432,10 @@
     top: 80px !important;
     padding: 4px 6px !important;
     font-size: 9px !important;
-    background: transparent !important;
+    /* Faint backdrop so the pose stays legible over bright imagery */
+    background: rgba(15, 23, 42, 0.45) !important;
     border: none !important;
+    border-radius: 6px !important;
     box-shadow: none !important;
 }
 
@@ -399,80 +462,6 @@
     width: 200px !important;
 }
 
-.drone-fly-widget {
-    width: 150px !important;
-}
-
-.drone-orbit-widget {
-    width: 150px !important;
-}
-
-/* ========== ADJUST EXISTING HUD ELEMENTS ========== */
-.perspective-views-widget {
-    position: fixed !important;
-    bottom: 20px !important;  /* Moved to bottom-left corner */
-    left: 10px !important;  /* Left side instead of right */
-    width: 100px;  /* Reduced from 120px */
-    z-index: 1300;  /* Below navigation widget */
-    background: transparent;
-    border-radius: 0;
-    padding: 4px;
-    border: none;
-    box-shadow: none;
-    backdrop-filter: none;
-    display: none !important;  /* Hidden from viewport */
-}
-
-.perspective-views-widget .widget-title {
-    color: #f1f5f9;
-    font-size: 8px;
-    font-weight: 600;
-    text-align: left;
-    margin-bottom: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.2px;
-}
-
-.perspective-compass-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    grid-template-rows: repeat(3, 1fr);
-    gap: 3px;
-    width: 100%;
-    aspect-ratio: 1;
-}
-
-.perspective-btn-hud {
-    aspect-ratio: 1;
-    padding: 4px 2px;
-    font-size: 0.65rem;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: rgba(59, 130, 246, 0.1);
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    border-radius: 4px;
-    color: #60a5fa;
-    transition: all 0.2s ease;
-    cursor: pointer;
-}
-
-.perspective-btn-hud:hover {
-    background-color: rgba(59, 130, 246, 0.25);
-    border-color: #3b82f6;
-    color: #93c5fd;
-    transform: scale(1.05);
-}
-
-.perspective-btn-hud i { font-size: 0.9rem; margin-bottom: 2px; }
-.perspective-btn-hud small { font-size: 0.65rem; font-weight: 600; }
-
-.perspective-compass-grid #viewNorth { grid-column: 2; grid-row: 1; }
-.perspective-compass-grid #viewEast { grid-column: 3; grid-row: 2; }
-.perspective-compass-grid #viewSouth { grid-column: 2; grid-row: 3; }
-.perspective-compass-grid #viewWest { grid-column: 1; grid-row: 2; }
-
 /* ========== QUICK VIEW BUTTONS (Top Right) ========== */
 .hud-quick-views {
     position: fixed;
@@ -482,12 +471,15 @@
     flex-direction: column;
     gap: 3px;
     z-index: 1500;
+    padding: 3px;
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.45);
 }
 
-/* Navigation widget adjustment - positioned below quick view buttons */
+/* Navigation widget: below the quick actions (Share / QR / Label Rocks) */
 .navigation-widget-group {
     position: fixed !important;
-    top: 200px !important;  /* Moved up for compactness */
+    top: 170px !important;
     right: 10px !important;  /* Moved left slightly */
     width: 100px;  /* Reduced from 120px */
     max-height: 200px;  /* Reduced height */
@@ -604,273 +596,9 @@
     letter-spacing: 0.5px;
 }
 
-/* ========== DRONE FLY WIDGET ========== */
-.drone-fly-widget {
-    position: fixed;
-    top: 240px;
-    left: 10px;
-    width: 150px;
-    z-index: 1400;
-    background: transparent;
-    border-radius: 0;
-    padding: 4px;
-    border: none;
-    box-shadow: none;
-    backdrop-filter: none;
-}
-
-.drone-fly-widget .widget-title {
-    color: #10b981;
-    font-size: 8px;
-    font-weight: 600;
-    text-align: left;
-    margin-bottom: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.2px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-}
-
-.drone-fly-widget .widget-item {
-    margin-bottom: 3px;
-}
-
-.drone-fly-widget .widget-fields-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px;
-    margin-bottom: 3px;
-}
-
-.drone-fly-widget .widget-field {
-    display: flex;
-    flex-direction: column;
-}
-
-.drone-fly-widget label {
-    font-size: 9px;
-    color: #cbd5e1;
-    margin-bottom: 1px;
-    display: block;
-    line-height: 1.1;
-}
-
-.drone-fly-widget input[type="number"] {
-    width: 100%;
-    padding: 2px 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
-    color: #f1f5f9;
-    font-size: 10px;
-    height: 20px;
-}
-
-.drone-fly-widget input[type="number"]:focus {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(16, 185, 129, 0.5);
-    outline: none;
-}
-
-.drone-fly-widget small {
-    font-size: 7px;
-    color: #94a3b8;
-    display: block;
-    margin-top: 0px;
-    line-height: 1.1;
-}
-
-.drone-fly-widget button {
-    width: 100%;
-    padding: 3px 4px;
-    font-size: 9px;
-    background: rgba(16, 185, 129, 0.2);
-    border: 1px solid rgba(16, 185, 129, 0.4);
-    border-radius: 2px;
-    color: #10b981;
-    cursor: pointer;
-    transition: all 0.2s;
-    line-height: 1.2;
-}
-
-.drone-fly-widget button:hover {
-    background: rgba(16, 185, 129, 0.3);
-    border-color: #10b981;
-}
-
-.drone-fly-widget button.btn-primary {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: #60a5fa;
-}
-
-.drone-fly-widget button.btn-primary:hover {
-    background: rgba(59, 130, 246, 0.3);
-    border-color: #3b82f6;
-}
-
-.drone-fly-widget button.btn-warning {
-    background: rgba(245, 158, 11, 0.2);
-    border-color: rgba(245, 158, 11, 0.4);
-    color: #fbbf24;
-}
-
-.drone-fly-widget button.btn-warning:hover {
-    background: rgba(245, 158, 11, 0.3);
-    border-color: #f59e0b;
-}
-
-.drone-fly-widget button.active {
-    background: rgba(239, 68, 68, 0.3);
-    border-color: #ef4444;
-    color: #f87171;
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-.drone-fly-widget button:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-}
-
 @keyframes pulse {
     0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
     50% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
-}
-
-/* ========== DRONE ORBIT WIDGET ========== */
-.drone-orbit-widget {
-    position: fixed;
-    top: 420px;
-    left: 10px;
-    width: 150px;
-    max-height: 45vh;
-    overflow-y: auto;
-    z-index: 1400;
-    background: transparent;
-    border-radius: 0;
-    padding: 4px;
-    border: none;
-    box-shadow: none;
-    backdrop-filter: none;
-}
-
-.drone-orbit-widget .widget-title {
-    color: #3b82f6;
-    font-size: 8px;
-    font-weight: 600;
-    text-align: left;
-    margin-bottom: 2px;
-    text-transform: uppercase;
-    letter-spacing: 0.2px;
-    display: flex;
-    align-items: center;
-    gap: 2px;
-}
-
-.drone-orbit-widget .widget-item {
-    margin-bottom: 3px;
-}
-
-.drone-orbit-widget .widget-fields-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 4px;
-    margin-bottom: 3px;
-}
-
-.drone-orbit-widget .widget-field {
-    display: flex;
-    flex-direction: column;
-}
-
-.drone-orbit-widget label {
-    font-size: 9px;
-    color: #cbd5e1;
-    margin-bottom: 1px;
-    display: block;
-    line-height: 1.1;
-}
-
-.drone-orbit-widget input[type="number"],
-.drone-orbit-widget input[type="range"] {
-    width: 100%;
-    padding: 2px 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 2px;
-    color: #f1f5f9;
-    font-size: 10px;
-    height: 20px;
-}
-
-.drone-orbit-widget input[type="number"]:focus {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(59, 130, 246, 0.5);
-    outline: none;
-}
-
-.drone-orbit-widget input[type="range"] {
-    padding: 0;
-    height: 16px;
-    background: transparent;
-    border: none;
-}
-
-.drone-orbit-widget small {
-    font-size: 7px;
-    color: #94a3b8;
-    display: block;
-    margin-top: 0px;
-    line-height: 1.1;
-}
-
-.drone-orbit-widget button {
-    width: 100%;
-    padding: 3px 4px;
-    font-size: 9px;
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    border-radius: 2px;
-    background: rgba(59, 130, 246, 0.2);
-    color: #60a5fa;
-    cursor: pointer;
-    transition: all 0.2s;
-    line-height: 1.2;
-}
-
-.drone-orbit-widget button.btn-primary {
-    background: rgba(59, 130, 246, 0.2);
-    border-color: rgba(59, 130, 246, 0.4);
-    color: #60a5fa;
-}
-
-.drone-orbit-widget button.btn-primary:hover {
-    background: rgba(59, 130, 246, 0.3);
-    border-color: #3b82f6;
-}
-
-.drone-orbit-widget button.btn-danger {
-    background: rgba(239, 68, 68, 0.2);
-    border-color: rgba(239, 68, 68, 0.4);
-    color: #f87171;
-}
-
-.drone-orbit-widget button.btn-danger:hover {
-    background: rgba(239, 68, 68, 0.3);
-    border-color: #ef4444;
-}
-
-/* Custom scrollbar for orbit widget */
-.drone-orbit-widget::-webkit-scrollbar {
-    width: 6px;
-}
-.drone-orbit-widget::-webkit-scrollbar-track {
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 3px;
-}
-.drone-orbit-widget::-webkit-scrollbar-thumb {
-    background: rgba(59, 130, 246, 0.4);
-    border-radius: 3px;
 }
 
 /* Train button special styling */
@@ -1023,11 +751,11 @@
 }
 
 #leftJoystick {
-    right: 40px;
+    left: 40px;
 }
 
 #rightJoystick {
-    left: 40px;
+    right: 40px;
 }
 
 .joystick-base {

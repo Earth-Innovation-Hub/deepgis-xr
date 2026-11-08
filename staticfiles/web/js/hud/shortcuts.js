@@ -43,29 +43,21 @@
                 return;
             }
 
-            // Arrow keys: Perspective views
-            if (e.key === 'ArrowUp') {
+            // Arrow keys: look north / south / west / east from where the camera is
+            const perspective = { ArrowUp: 0, ArrowDown: 180, ArrowLeft: 270, ArrowRight: 90 };
+            if (e.key in perspective) {
                 e.preventDefault();
-                const btnNorth = document.getElementById('viewNorth');
-                if (btnNorth) btnNorth.click();
-                return;
-            }
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                const btnSouth = document.getElementById('viewSouth');
-                if (btnSouth) btnSouth.click();
-                return;
-            }
-            if (e.key === 'ArrowLeft') {
-                e.preventDefault();
-                const btnWest = document.getElementById('viewWest');
-                if (btnWest) btnWest.click();
-                return;
-            }
-            if (e.key === 'ArrowRight') {
-                e.preventDefault();
-                const btnEast = document.getElementById('viewEast');
-                if (btnEast) btnEast.click();
+                const viewer = window.AppState?.viewer || window.viewer;
+                if (viewer?.camera) {
+                    viewer.camera.setView({
+                        destination: viewer.camera.position,
+                        orientation: {
+                            heading: Cesium.Math.toRadians(perspective[e.key]),
+                            pitch: Cesium.Math.toRadians(-45),
+                            roll: 0,
+                        },
+                    });
+                }
                 return;
             }
 
@@ -171,26 +163,19 @@
             // T key: Hide/show all toolbars
             if (e.key === 't' || e.key === 'T') {
                 e.preventDefault();
-                const toolbar = document.getElementById('hudToolbar');
-                const quickViews = document.querySelector('.hud-quick-views');
-                const cameraInfo = document.getElementById('cameraInfo');
-                const droneFlyWidget = document.getElementById('droneFlyWidget');
-                const droneOrbitWidget = document.getElementById('droneOrbitWidget');
-                const navWidget = document.getElementById('navigationWidgetGroup');
-                const perspectiveWidget = document.getElementById('perspectiveViewsWidget');
-                const performanceIndicator = document.getElementById('performanceIndicator');
-                const leftJoystick = document.getElementById('leftJoystick');
-                const rightJoystick = document.getElementById('rightJoystick');
-                const mainHeading = document.querySelector('.main-heading');
-                const sidebarHeader = document.querySelector('.sidebar-header');
-                const statusIndicator = document.getElementById('statusIndicator');
-                // Note: QR code overlay NOT included - stays visible in distraction-free mode
-
-                // Toggle visibility of all toolbars/widgets (QR code stays visible)
+                // Everything but the QR code overlay, which stays visible
                 const elements = [
-                    toolbar, quickViews, cameraInfo, droneFlyWidget, droneOrbitWidget,
-                    navWidget, perspectiveWidget, performanceIndicator, leftJoystick,
-                    rightJoystick, mainHeading, sidebarHeader, statusIndicator
+                    document.getElementById('hudToolbar'),
+                    document.querySelector('.hud-quick-views'),
+                    document.getElementById('cameraInfo'),
+                    document.getElementById('flightPanel'),
+                    document.getElementById('navigationWidgetGroup'),
+                    document.getElementById('performanceIndicator'),
+                    document.getElementById('aircraftCountIndicator'),
+                    document.getElementById('leftJoystick'),
+                    document.getElementById('rightJoystick'),
+                    document.querySelector('.main-heading'),
+                    document.querySelector('.cesium-viewer-toolbar'),
                 ].filter(el => el);
                 const isHidden = elements[0] && elements[0].style.display === 'none';
 
@@ -244,42 +229,28 @@
                 return;
             }
 
-            // P key: Pause/Stop Orbit
-            if (e.key === 'p' || e.key === 'P') {
-                e.preventDefault();
-                const stopOrbitBtn = document.getElementById('stopOrbitBtn');
-                if (stopOrbitBtn && stopOrbitBtn.offsetParent !== null) {
-                    // Only if stop button is visible (orbit is active)
-                    stopOrbitBtn.click();
-                }
-                return;
-            }
-
-            // J key: Toggle Joysticks
+            // J key: Toggle Joysticks (Space pauses an orbit: hud/drone.js)
             if (e.key === 'j' || e.key === 'J') {
                 e.preventDefault();
-                console.log('[Keyboard] J key pressed - toggling joysticks');
-                const joystickBtn = document.getElementById('hudJoystickBtn');
-                if (joystickBtn) {
-                    console.log('[Keyboard] Joystick button found, clicking...');
-                    joystickBtn.click();
-                } else {
-                    console.error('[Keyboard] Joystick button not found!');
-                }
+                document.getElementById('hudJoystickBtn')?.click();
                 return;
             }
 
-            // Escape: Close active panel or keyboard shortcuts legend, or stop orbit
+            // G key: Flight panel
+            if (e.key === 'g' || e.key === 'G') {
+                e.preventDefault();
+                if (document.getElementById('flightPanel')) window.DeepGISHud?.toggleHudPanel('flightPanel');
+                return;
+            }
+
+            // Escape: stop orbit / climb (hud/drone.js listens too), then close panels / legend
             if (e.key === 'Escape') {
-                // First check if orbit is active and stop it
-                const stopOrbitBtn = document.getElementById('stopOrbitBtn');
-                const stopOrbitContainer = document.getElementById('stopOrbitContainer');
-                if (stopOrbitBtn && stopOrbitContainer && stopOrbitContainer.style.display !== 'none') {
-                    stopOrbitBtn.click();
+                if (window.DeepGISDrone?.isOrbiting?.() || window.DeepGISDrone?.isVerticalActive?.()) {
+                    window.DeepGISDrone.stopOrbit?.();
+                    window.DeepGISDrone.stopVertical?.();
                     return;
                 }
 
-                // Then close panels/legend
                 window.DeepGISHud?.closeActivePanel();
                 const legend = document.getElementById('keyboardShortcutsLegend');
                 if (legend && legend.classList.contains('visible')) {

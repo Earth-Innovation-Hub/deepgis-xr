@@ -11,6 +11,7 @@ parts that need Earth data or Earth-only scripts are switched on it.
     <!-- ========== HUD FLOATING PANELS ========== -->
 {% hud_has_layers hud_body as has_layers %}{% if has_layers %}{% include "web/hud/layers_panel.html" %}{% endif %}
 {% include "web/hud/view_panel.html" %}
+{% include "web/hud/flight_panel.html" %}
 {% include "web/hud/ai_panel.html" %}
 {% include "web/hud/tools_panel.html" %}
 {% include "web/hud/models_panel.html" %}
@@ -18,12 +19,10 @@ parts that need Earth data or Earth-only scripts are switched on it.
 {% include "web/hud/sampler_panel.html" %}
 {% if hud_body == "earth" %}{% include "web/hud/weather_panel.html" %}{% endif %}
 {% include "web/hud/vr_panel.html" %}
-{% include "web/hud/quick_views.html" %}
+{% if hud_body == "earth" %}{% include "web/hud/quick_views.html" %}{% endif %}
 {% include "web/hud/indicators.html" %}
 {% include "web/hud/camera_info.html" %}
-{% include "web/hud/drone_widgets.html" %}
 {% include "web/hud/navigation.html" %}
-{% include "web/hud/perspective.html" %}
 {% include "web/hud/joysticks.html" %}
 {% include "web/hud/loading.html" %}
 {% include "web/hud/shortcuts.html" %}

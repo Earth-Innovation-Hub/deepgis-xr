@@ -1,24 +1,67 @@
-// DeepGIS camera drone, shared by the Earth, Moon and planet viewers: takeoff and
-// land, live gimbal, QGC-style orbit and fly forward on the drone widgets, plus
-// window.DeepGISDrone for the AI pilot. All positions use the globe's ellipsoid.
-// ========== TAKEOFF AND LAND FUNCTIONALITY ==========
-(function initTakeoffLand() {
-    const takeoffBtn = document.getElementById('droneTakeoffBtn');
-    const landBtn = document.getElementById('droneLandBtn');
-    const verticalSpeedInput = document.getElementById('droneVerticalSpeed');
+// DeepGIS camera drone, shared by the Earth, Moon and planet viewers. Drives the
+// Flight panel (hud/flight_panel.html): takeoff and land to a target height, fly
+// forward, orbit around the point in the centre of the view, camera pitch and yaw,
+// plus window.DeepGISDrone for the AI pilot and the share links. All positions
+// use the globe's ellipsoid; speeds come from the panel's H / V inputs (m/s).
+(function initDrone() {
+    const $ = (id) => document.getElementById(id);
+    // The viewer, switched to 3D first: the page opens in 2D (core/cesium-init.js) and
+    // the drone's vertical and circle maths only mean something on the globe. The
+    // instant morph keeps the current view (see hud/panels.js).
+    const peekViewer = () => window.AppState?.viewer || window.viewer;
+    const getViewer = () => {
+        const viewer = peekViewer();
+        if (viewer?.scene && viewer.scene.mode !== Cesium.SceneMode.SCENE3D) viewer.scene.morphTo3D(0);
+        return viewer;
+    };
+    const num = (el, fallback) => {
+        const v = parseFloat(el?.value);
+        return Number.isFinite(v) ? v : fallback;
+    };
+    const notify = (text, kind) => window.worldSamplerUI?.showNotification?.(text, kind);
+    const fmtDeg = (v) => `${Math.round(v)}°`;
 
-    if (!takeoffBtn || !landBtn || !verticalSpeedInput) {
-        console.error('[Takeoff/Land] Missing required elements');
+    const els = {
+        hSpeed: $('droneHorizontalSpeed'),
+        vSpeed: $('droneVerticalSpeed'),
+        flyDistance: $('droneFlyDistance'),
+        flyBtn: $('droneFlyBtn'),
+        targetAgl: $('droneTargetAgl'),
+        takeoffBtn: $('droneTakeoffBtn'),
+        landBtn: $('droneLandBtn'),
+        radius: $('droneOrbitRadius'),
+        laps: $('droneOrbitRevolutions'),
+        clockwise: $('droneOrbitClockwise'),
+        orbitBtn: $('droneOrbitBtn'),
+        stopOrbitBtn: $('stopOrbitBtn'),
+        pauseOrbitBtn: $('pauseOrbitBtn'),
+        stopOrbitContainer: $('stopOrbitContainer'),
+        pauseOrbitContainer: $('pauseOrbitContainer'),
+        progressContainer: $('orbitProgressContainer'),
+        progressText: $('orbitProgressText'),
+        pitch: $('droneOrbitPitch'),
+        pitchValue: $('orbitPitchValue'),
+        yaw: $('droneOrbitYaw'),
+        yawValue: $('orbitYawValue'),
+    };
+    if (!els.takeoffBtn || !els.landBtn || !els.orbitBtn || !els.flyBtn || !els.stopOrbitBtn) {
+        console.error('[Drone] Flight panel missing');
         return;
     }
 
-    let isClimbing = false;
-    let isDescending = false;
-    let animationId = null;
-    let targetHeight = null; // ellipsoid height to stop at (AI pilot); null = until stopped
+    const hSpeed = () => Math.max(0.1, num(els.hSpeed, 30));
+    const vSpeed = () => Math.max(0.1, num(els.vSpeed, 5));
+    const pitchDeg = () => num(els.pitch, -45);
+    const yawDeg = () => num(els.yaw, 0);
+    const yawRateMax = Cesium.Math.toRadians(45); // joystick full deflection, rad/s
 
-    // Move along the local vertical; camera.moveUp follows the view's up
-    // vector, which is horizontal when the gimbal points straight down.
+    // Flight state. vertical: { dir: 1|-1, target: ellipsoid height|null, speed, heading,
+    // pitch, raf }. orbit: see startOrbit.
+    let vertical = null;
+    let orbit = null;
+
+    // Move along the local vertical; camera.moveUp follows the view's up vector,
+    // which is horizontal when the camera points straight down.
     function moveVertical(viewer, distance) {
         const up = viewer.scene.globe.ellipsoid.geodeticSurfaceNormal(viewer.camera.position, new Cesium.Cartesian3());
         viewer.camera.move(up, distance);
@@ -35,724 +78,276 @@
         };
     }
 
-    // Takeoff function
-    function startTakeoff(target) {
-        if (isClimbing) {
-            stopVerticalMovement();
-            return;
-        }
-        targetHeight = typeof target === 'number' ? target : null;
+    // Ground height under a cartographic position (undefined until terrain tiles load)
+    const groundAt = (viewer, carto) => viewer.scene.globe.getHeight(carto);
 
-        const viewer = window.AppState?.viewer || window.viewer;
-        if (!viewer || !viewer.camera) {
-            console.error('[Takeoff] Viewer not available');
-            return;
-        }
-
-        isClimbing = true;
-        isDescending = false;
-        takeoffBtn.classList.add('active');
-        takeoffBtn.innerHTML = '<i class="fas fa-stop"></i> Stop';
-        landBtn.disabled = true;
-
-        const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
-
-        // Store initial heading when starting takeoff
-        let currentHeading = viewer.camera.heading;
-        const maxYawRate = 45; // degrees per second (same as joystick)
-
-        console.log(`[Takeoff] Starting climb at ${verticalSpeed} m/s (gimbal + joystick yaw control enabled)`);
-
-        const tick = frameClock();
-        function climb() {
-            if (!isClimbing) return;
-
-            const camera = viewer.camera;
-            if (targetHeight !== null && camera.positionCartographic.height >= targetHeight) {
-                stopVerticalMovement();
-                return;
-            }
-            const dt = tick();
-            const moveDistance = verticalSpeed * dt;
-
-            // Get joystick state for yaw rate control
-            // Note: rightState = left physical stick (has yaw on X-axis)
-            const rightJoystickState = window.rightJoystickState || { x: 0, y: 0 };
-            const joystickYawRate = rightJoystickState.x * maxYawRate * (Math.PI / 180); // rad/s
-
-            // Apply joystick yaw rate to current heading
-            if (joystickYawRate !== 0) {
-                currentHeading = currentHeading + (joystickYawRate * dt);
-            }
-
-            // Apply gimbal control (pitch and yaw offset from sliders)
-            const pitchSlider = document.getElementById('droneOrbitPitch');
-            const yawSlider = document.getElementById('droneOrbitYaw');
-
-            if (pitchSlider && yawSlider) {
-                const pitchDegrees = parseFloat(pitchSlider.value) || -10;
-                const yawDegrees = parseFloat(yawSlider.value) || 0;
-
-                // Apply yaw offset to current heading
-                // Current heading includes joystick yaw adjustments
-                // Yaw slider adds gimbal offset
-                const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
-                const finalHeading = Cesium.Math.zeroToTwoPi(currentHeading + yawOffsetRadians);
-                const finalPitch = Cesium.Math.toRadians(pitchDegrees);
-
-                // Move up while maintaining orientation
-            moveVertical(viewer, moveDistance);
-
-                // Apply gimbal orientation (heading + yaw offset, pitch from slider)
-                camera.setView({
-                    destination: camera.position,
-                    orientation: {
-                        heading: finalHeading,
-                        pitch: finalPitch,
-                        roll: 0
-                    }
-                });
-            } else {
-                // Fallback: just move up without gimbal control
-                moveVertical(viewer, moveDistance);
-            }
-
-            animationId = requestAnimationFrame(climb);
-        }
-
-        climb();
+    function setButton(btn, active, idleHtml) {
+        btn.classList.toggle('active', active);
+        btn.innerHTML = active ? '<i class="fas fa-stop"></i> Stop' : idleHtml;
     }
 
-    // Land function
-    function startLanding(target) {
-        if (isDescending) {
-            stopVerticalMovement();
-            return;
-        }
-        targetHeight = typeof target === 'number' ? target : null;
+    // ========== TAKEOFF AND LAND ==========
+    // Climb or descend at V speed along the local vertical, holding heading and
+    // pitch (the left joystick and the yaw slider can still turn it). Takeoff ends
+    // at the panel's height above ground, or at the ellipsoid height the AI pilot
+    // asked for; Land ends 2 m above the ground.
+    function stopVertical() {
+        if (!vertical) return;
+        cancelAnimationFrame(vertical.raf);
+        vertical = null;
+        setButton(els.takeoffBtn, false, '<i class="fas fa-arrow-up"></i> Takeoff');
+        setButton(els.landBtn, false, '<i class="fas fa-arrow-down"></i> Land');
+        els.takeoffBtn.disabled = false;
+        els.landBtn.disabled = false;
+    }
 
-        const viewer = window.AppState?.viewer || window.viewer;
-        if (!viewer || !viewer.camera) {
-            console.error('[Land] Viewer not available');
-            return;
-        }
-
-        isDescending = true;
-        isClimbing = false;
-        landBtn.classList.add('active');
-        landBtn.innerHTML = '<i class="fas fa-stop"></i> Stop';
-        takeoffBtn.disabled = true;
-
-        const verticalSpeed = parseFloat(verticalSpeedInput.value) || 5;
-
-        // Store initial heading when starting landing
-        let currentHeading = viewer.camera.heading;
-        const maxYawRate = 45; // degrees per second (same as joystick)
-
-        console.log(`[Land] Starting descent at ${verticalSpeed} m/s (gimbal + joystick yaw control enabled)`);
+    function startVertical(dir, target = null, speed = vSpeed()) {
+        const viewer = getViewer();
+        if (!viewer?.camera) return;
+        stopVertical();
+        const camera = viewer.camera;
+        vertical = { dir, target, speed: Math.max(0.1, speed), heading: camera.heading, pitch: camera.pitch, raf: 0 };
+        setButton(dir > 0 ? els.takeoffBtn : els.landBtn, true);
+        (dir > 0 ? els.landBtn : els.takeoffBtn).disabled = true;
 
         const tick = frameClock();
-        function descend() {
-            if (!isDescending) return;
-
-            const camera = viewer.camera;
+        let first = true;
+        const step = () => {
+            if (!vertical) return;
             const here = camera.positionCartographic;
-            const ground = viewer.scene.globe.getHeight(here);
-            if ((targetHeight !== null && here.height <= targetHeight) ||
-                (ground !== undefined && here.height <= ground + 2)) {
-                stopVerticalMovement();
+            const ground = groundAt(viewer, here);
+            let goal = vertical.target;
+            if (goal === null && ground !== undefined) {
+                goal = dir > 0 ? ground + Math.max(1, num(els.targetAgl, 100)) : ground + 2;
+            }
+            const remaining = goal === null ? Infinity : dir * (goal - here.height);
+            if (remaining <= 0) {
+                if (first && target === null) {
+                    notify(dir > 0 ? `Already above ${Math.round(goal - ground)} m over the ground` : 'Already on the ground', 'info');
+                }
+                stopVertical();
                 return;
             }
+            first = false;
+
             const dt = tick();
-            const moveDistance = verticalSpeed * dt;
-
-            // Get joystick state for yaw rate control
-            // Note: rightState = left physical stick (has yaw on X-axis)
-            const rightJoystickState = window.rightJoystickState || { x: 0, y: 0 };
-            const joystickYawRate = rightJoystickState.x * maxYawRate * (Math.PI / 180); // rad/s
-
-            // Apply joystick yaw rate to current heading
-            if (joystickYawRate !== 0) {
-                currentHeading = currentHeading + (joystickYawRate * dt);
-            }
-
-            // Apply gimbal control (pitch and yaw offset from sliders)
-            const pitchSlider = document.getElementById('droneOrbitPitch');
-            const yawSlider = document.getElementById('droneOrbitYaw');
-
-            if (pitchSlider && yawSlider) {
-                const pitchDegrees = parseFloat(pitchSlider.value) || -10;
-                const yawDegrees = parseFloat(yawSlider.value) || 0;
-
-                // Apply yaw offset to current heading
-                // Current heading includes joystick yaw adjustments
-                // Yaw slider adds gimbal offset
-                const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
-                const finalHeading = Cesium.Math.zeroToTwoPi(currentHeading + yawOffsetRadians);
-                const finalPitch = Cesium.Math.toRadians(pitchDegrees);
-
-                // Move down while maintaining orientation
-            moveVertical(viewer, -moveDistance);
-
-                // Apply gimbal orientation (heading + yaw offset, pitch from slider)
-                camera.setView({
-                    destination: camera.position,
-                    orientation: {
-                        heading: finalHeading,
-                        pitch: finalPitch,
-                        roll: 0
-                    }
-                });
-            } else {
-                // Fallback: just move down without gimbal control
-                moveVertical(viewer, -moveDistance);
-            }
-
-            animationId = requestAnimationFrame(descend);
-        }
-
-        descend();
-    }
-
-    // Stop vertical movement
-    function stopVerticalMovement() {
-        if (animationId) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
-        }
-
-        isClimbing = false;
-        isDescending = false;
-        targetHeight = null;
-
-        takeoffBtn.classList.remove('active');
-        takeoffBtn.innerHTML = '<i class="fas fa-arrow-up"></i> Takeoff';
-        takeoffBtn.disabled = false;
-
-        landBtn.classList.remove('active');
-        landBtn.innerHTML = '<i class="fas fa-arrow-down"></i> Land';
-        landBtn.disabled = false;
-
-        console.log('[Vertical Movement] Stopped');
-    }
-
-    // Event listeners
-    takeoffBtn.addEventListener('click', () => startTakeoff());
-    landBtn.addEventListener('click', () => startLanding());
-
-    // Programmatic control (AI pilot): climb/descend to an ellipsoid height
-    window.DeepGISDrone = Object.assign(window.DeepGISDrone || {}, {
-        climbTo(height) { stopVerticalMovement(); startTakeoff(height); },
-        descendTo(height) { stopVerticalMovement(); startLanding(height); },
-        stopVertical: stopVerticalMovement,
-        isVerticalActive: () => isClimbing || isDescending,
-    });
-
-    // Stop on Escape key
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && (isClimbing || isDescending)) {
-            stopVerticalMovement();
-        }
-    });
-
-    console.log('[Takeoff/Land] Initialized');
-})();
-
-// ========== LIVE GIMBAL CONTROL (Pitch & Yaw) ==========
-(function initLiveGimbalControl() {
-    const pitchSlider = document.getElementById('droneOrbitPitch');
-    const pitchValue = document.getElementById('orbitPitchValue');
-    const yawSlider = document.getElementById('droneOrbitYaw');
-    const yawValue = document.getElementById('orbitYawValue');
-
-    if (!pitchSlider || !pitchValue || !yawSlider || !yawValue) {
-        console.error('[Gimbal Control] Missing required elements');
-        return;
-    }
-
-    // Check if orbit is active
-    function isOrbitActive() {
-        const orbitBtn = document.getElementById('droneOrbitBtn');
-        return orbitBtn && orbitBtn.classList.contains('active');
-    }
-
-    // Check if takeoff or landing is active
-    function isVerticalMovementActive() {
-        const takeoffBtn = document.getElementById('droneTakeoffBtn');
-        const landBtn = document.getElementById('droneLandBtn');
-        return (takeoffBtn && takeoffBtn.classList.contains('active')) ||
-               (landBtn && landBtn.classList.contains('active'));
-    }
-
-    // Update pitch display and camera (except during orbit/takeoff/landing - they handle it)
-    pitchSlider.addEventListener('input', (e) => {
-        const pitchDegrees = parseFloat(e.target.value);
-        pitchValue.textContent = `${pitchDegrees}°`;
-
-        // Only update camera if not orbiting, taking off, or landing
-        // (those animations handle pitch/yaw themselves)
-        if (!isOrbitActive() && !isVerticalMovementActive()) {
-            const viewer = window.AppState?.viewer || window.viewer;
-            if (!viewer || !viewer.camera) {
-                return;
-            }
-
-            const camera = viewer.camera;
-            const heading = camera.heading;
-            const roll = camera.roll;
-            const pitchRadians = Cesium.Math.toRadians(pitchDegrees);
-
+            const yawRate = (window.leftJoystickState?.x || 0) * yawRateMax;
+            vertical.heading = Cesium.Math.zeroToTwoPi(vertical.heading + yawRate * dt);
+            moveVertical(viewer, dir * Math.min(vertical.speed * dt, remaining));
             camera.setView({
                 destination: camera.position,
-                orientation: {
-                    heading: heading,
-                    pitch: pitchRadians,
-                    roll: roll
-                }
+                orientation: { heading: vertical.heading, pitch: vertical.pitch, roll: 0 },
             });
-        }
-    });
-
-    // Update yaw display and camera (except during orbit/takeoff/landing - they handle it)
-    yawSlider.addEventListener('input', (e) => {
-        const yawDegrees = parseFloat(e.target.value);
-        yawValue.textContent = `${yawDegrees}°`;
-
-        // Apply yaw rotation when not in special modes
-        if (!isOrbitActive() && !isVerticalMovementActive()) {
-            const viewer = window.AppState?.viewer || window.viewer;
-            if (!viewer || !viewer.camera) {
-                return;
-            }
-
-            const camera = viewer.camera;
-            const pitch = camera.pitch;
-            const roll = camera.roll;
-
-            // Convert yaw offset to absolute heading
-            const yawOffsetRadians = Cesium.Math.toRadians(yawDegrees);
-            const baseHeading = 0; // North
-            const newHeading = Cesium.Math.zeroToTwoPi(baseHeading + yawOffsetRadians);
-
-            camera.setView({
-                destination: camera.position,
-                orientation: {
-                    heading: newHeading,
-                    pitch: pitch,
-                    roll: roll
-                }
-            });
-        }
-        // During orbit/takeoff/landing, yaw is applied by those animations
-    });
-
-    console.log('[Gimbal Control] Live pitch and yaw control initialized (works with orbit, takeoff, and landing)');
-})();
-
-// ========== QGROUNDCONTROL-STYLE ORBIT IMPLEMENTATION (ENHANCED) ==========
-(function initDroneOrbit() {
-    const orbitBtn = document.getElementById('droneOrbitBtn');
-    const stopOrbitBtn = document.getElementById('stopOrbitBtn');
-    const pauseOrbitBtn = document.getElementById('pauseOrbitBtn');
-    const stopOrbitContainer = document.getElementById('stopOrbitContainer');
-    const pauseOrbitContainer = document.getElementById('pauseOrbitContainer');
-    const orbitProgressContainer = document.getElementById('orbitProgressContainer');
-    const orbitProgressText = document.getElementById('orbitProgressText');
-    const orbitRadiusInput = document.getElementById('droneOrbitRadius');
-    const orbitPitchInput = document.getElementById('droneOrbitPitch');
-    const horizontalSpeedInput = document.getElementById('droneHorizontalSpeed');
-    const revolutionsInput = document.getElementById('droneOrbitRevolutions');
-
-    if (!orbitBtn || !stopOrbitBtn) {
-        console.error('[Orbit] Missing required elements');
-        return;
+            vertical.raf = requestAnimationFrame(step);
+        };
+        step();
     }
 
-    let isOrbiting = false;
-    let isPaused = false;
-    let orbitAnimationId = null;
-    let orbitStartTime = null;
-    let orbitLastFrameTime = null;
-    let orbitPausedTime = 0; // Total time spent paused
-    let orbitCenterPoint = null;
-    let orbitInitialAngle = 0; // Starting angle in orbit (radians)
-    let orbitDirection = 1; // 1 = counter-clockwise seen from above, -1 = clockwise
-    let orbitStartAltitude = 0; // Altitude when orbit started (maintains current altitude)
-    let lastVerificationTime = 0; // For performance optimization
-    let lastProgressUpdateTime = 0; // For UI updates
+    els.takeoffBtn.addEventListener('click', () => (vertical?.dir > 0 ? stopVertical() : startVertical(1)));
+    els.landBtn.addEventListener('click', () => (vertical?.dir < 0 ? stopVertical() : startVertical(-1)));
 
-    // Start orbit (QGC-style: use current position as center by default)
-    function startOrbit() {
-        if (isOrbiting) {
-            stopOrbit();
-            return;
-        }
+    // ========== CAMERA PITCH AND YAW ==========
+    // Pitch is the camera's pitch and follows the camera. Yaw turns the camera by
+    // the slider's change while idle; while orbiting it is the look offset from
+    // the orbit centre (0 = look at the centre).
+    let yawBase = null;
+    let draggingPitch = false;
 
-        const viewer = window.AppState?.viewer || window.viewer;
-        if (!viewer || !viewer.camera) {
-            console.error('[Orbit] Viewer not available');
-            return;
-        }
-
-        orbitDirection = 1;
-
-        // QGC behavior: Use current camera position as orbit center
-        const camera = viewer.camera;
-        const currentPosition = camera.positionCartographic;
-
-        // Set center point at ground level (directly below current camera position)
-        orbitCenterPoint = Cesium.Cartesian3.fromRadians(
-            currentPosition.longitude,
-            currentPosition.latitude,
-            0, // Ground level
-            viewer.scene.globe.ellipsoid
-        );
-
-        // Log center point for debugging
-        const centerCart = Cesium.Cartographic.fromCartesian(orbitCenterPoint, viewer.scene.globe.ellipsoid);
-        console.log(`[Orbit] Center set at: ${Cesium.Math.toDegrees(centerCart.longitude).toFixed(6)}°, ${Cesium.Math.toDegrees(centerCart.latitude).toFixed(6)}°`);
-        console.log(`[Orbit] Current camera at: ${Cesium.Math.toDegrees(currentPosition.longitude).toFixed(6)}°, ${Cesium.Math.toDegrees(currentPosition.latitude).toFixed(6)}°, ${currentPosition.height.toFixed(1)}m`);
-
-        startOrbitWithCenter();
+    function setOrientation(heading, pitch) {
+        const camera = peekViewer()?.camera;
+        if (!camera) return;
+        camera.setView({ destination: camera.position, orientation: { heading, pitch, roll: 0 } });
     }
 
-    // Start orbit with established center point
-    function startOrbitWithCenter() {
-        const viewer = window.AppState?.viewer || window.viewer;
-        if (!viewer || !viewer.camera || !orbitCenterPoint) {
-            console.error('[Orbit] Cannot start orbit');
-            return;
-        }
+    if (els.pitch) {
+        els.pitch.addEventListener('pointerdown', () => { draggingPitch = true; });
+        document.addEventListener('pointerup', () => { draggingPitch = false; });
+        els.pitch.addEventListener('input', () => {
+            const rad = Cesium.Math.toRadians(pitchDeg());
+            els.pitchValue.textContent = fmtDeg(pitchDeg());
+            if (vertical) vertical.pitch = rad;
+            if (orbit) return; // the orbit loop reads the slider itself
+            const camera = peekViewer()?.camera;
+            if (camera) setOrientation(camera.heading, rad);
+        });
+    }
 
-        // Get parameters
-        const radius = parseFloat(orbitRadiusInput.value) || 5000;
-        const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
-        const maxRevolutions = parseFloat(revolutionsInput?.value) || 10;
+    if (els.yaw) {
+        const begin = () => {
+            const camera = peekViewer()?.camera;
+            yawBase = camera ? camera.heading - Cesium.Math.toRadians(yawDeg()) : null;
+        };
+        els.yaw.addEventListener('pointerdown', begin);
+        els.yaw.addEventListener('keydown', () => { if (yawBase === null) begin(); });
+        document.addEventListener('pointerup', () => { yawBase = null; });
+        els.yaw.addEventListener('input', () => {
+            els.yawValue.textContent = fmtDeg(yawDeg());
+            const camera = peekViewer()?.camera;
+            if (!camera || orbit) return;
+            if (yawBase === null) begin();
+            const heading = Cesium.Math.zeroToTwoPi(yawBase + Cesium.Math.toRadians(yawDeg()));
+            if (vertical) vertical.heading = heading;
+            setOrientation(heading, camera.pitch);
+        });
+    }
 
-        const camera = viewer.camera;
-        const currentPosition = camera.positionCartographic;
-
-        // Store current altitude - orbit will maintain this altitude
-        orbitStartAltitude = currentPosition.height;
-
-        // Initialize orbit state BEFORE calculating angle
-        console.log(`[Orbit] Starting enhanced orbit: ${radius}m radius, ${maxRevolutions} revolutions, altitude ${orbitStartAltitude.toFixed(1)}m`);
-        isOrbiting = true;
-        isPaused = false;
-        orbitStartTime = Date.now();
-        orbitLastFrameTime = Date.now();
-        orbitPausedTime = 0;
-        lastVerificationTime = 0;
-        lastProgressUpdateTime = 0;
-
-        // Update UI
-        orbitBtn.classList.add('active');
-        orbitBtn.innerHTML = '<i class="fas fa-stop"></i> Stop Orbit';
-        stopOrbitContainer.style.display = 'block';
-        if (pauseOrbitContainer) pauseOrbitContainer.style.display = 'block';
-        if (orbitProgressContainer) orbitProgressContainer.style.display = 'block';
-
-        // Calculate initial angle from current position
-        calculateInitialAngle(currentPosition);
-
-        function calculateInitialAngle(position) {
-            // Calculate initial angle based on position relative to center
-            const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint, viewer.scene.globe.ellipsoid);
-            // Scale longitude to ground distance so the angle matches the east/north
-            // offsets used by animateOrbit (otherwise the camera jumps at high latitude).
-            const deltaLon = (position.longitude - centerCartographic.longitude) * Math.cos(centerCartographic.latitude);
-            const deltaLat = position.latitude - centerCartographic.latitude;
-
-            // If camera is directly above center (or very close), start at angle 0 (north)
-            const distanceFromCenter = Math.sqrt(deltaLon * deltaLon + deltaLat * deltaLat);
-            if (distanceFromCenter < 0.00001) { // Less than ~1 meter
-                orbitInitialAngle = 0; // Start pointing north
-                console.log(`[Orbit] Camera at center, starting from north (0°)`);
-            } else {
-                orbitInitialAngle = Math.atan2(deltaLat, deltaLon);
-                console.log(`[Orbit] Initial angle: ${(orbitInitialAngle * 180 / Math.PI).toFixed(1)}°`);
+    // Mirror the camera's pitch on the slider when something else moves the camera
+    function watchCamera() {
+        const viewer = peekViewer();
+        if (!viewer?.scene) { setTimeout(watchCamera, 500); return; }
+        viewer.scene.postRender.addEventListener(() => {
+            if (!els.pitch || draggingPitch || orbit) return;
+            const deg = Math.round(Cesium.Math.toDegrees(viewer.camera.pitch));
+            if (deg <= 0 && deg >= -90 && deg !== Math.round(pitchDeg())) {
+                els.pitch.value = deg;
+                els.pitchValue.textContent = fmtDeg(deg);
             }
+        });
+    }
+    watchCamera();
 
-            // Start orbit animation with smooth transition
-            startOrbitAnimation();
+    // ========== ORBIT ==========
+    // Circles a ground point at the current height. From the panel the centre is the
+    // terrain under the middle of the screen and the radius defaults to the current
+    // distance to it, so the orbit starts where the camera already is. The camera
+    // looks at the centre (plus the yaw offset) with the slider's pitch.
+
+    // Terrain point in the middle of the view, else the ellipsoid, else under the camera
+    function viewCentre(viewer) {
+        const scene = viewer.scene, camera = viewer.camera;
+        const canvas = scene.canvas;
+        const mid = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+        let point = null;
+        if (scene.mode === Cesium.SceneMode.SCENE3D) {
+            const ray = camera.getPickRay(mid);
+            if (ray) point = scene.globe.pick(ray, scene);
+        }
+        if (!point) point = camera.pickEllipsoid(mid, scene.globe.ellipsoid);
+        if (!point) {
+            const here = camera.positionCartographic;
+            point = Cesium.Cartesian3.fromRadians(here.longitude, here.latitude, groundAt(viewer, here) || 0, scene.globe.ellipsoid);
+        }
+        return point;
+    }
+
+    // Horizontal distance and bearing of a position from the centre (local tangent plane)
+    function polar(viewer, centreCarto, posCarto) {
+        const R = viewer.scene.globe.ellipsoid.maximumRadius;
+        const east = (posCarto.longitude - centreCarto.longitude) * Math.cos(centreCarto.latitude) * R;
+        const north = (posCarto.latitude - centreCarto.latitude) * R;
+        return { distance: Math.hypot(east, north), angle: Math.atan2(north, east) };
+    }
+
+    function showOrbitUi(active) {
+        els.orbitBtn.classList.toggle('active', active);
+        els.orbitBtn.innerHTML = active ? '<i class="fas fa-stop"></i> Stop' : '<i class="fas fa-circle-notch"></i> Orbit';
+        els.stopOrbitContainer.style.display = active ? '' : 'none';
+        if (els.pauseOrbitContainer) els.pauseOrbitContainer.style.display = active ? '' : 'none';
+        if (els.progressContainer) els.progressContainer.style.display = active ? '' : 'none';
+        if (els.pauseOrbitBtn) {
+            els.pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+            els.pauseOrbitBtn.classList.remove('active');
         }
     }
 
-    // Start orbit animation (called after initial angle is calculated)
-    function startOrbitAnimation() {
-        if (!isOrbiting) return;
-
-        // Enhanced orbit animation with all improvements
-        function animateOrbit() {
-            if (!isOrbiting) return;
-
-            // Handle pause state
-            if (isPaused) {
-                orbitAnimationId = requestAnimationFrame(animateOrbit);
-                return;
-            }
-
-            const viewer = window.AppState?.viewer || window.viewer;
-            if (!viewer || !viewer.camera) {
-                stopOrbit();
-                return;
-            }
-
-            const camera = viewer.camera;
-            const pitchRaw = parseFloat(orbitPitchInput.value);
-            const pitchDegrees = Number.isFinite(pitchRaw) ? pitchRaw : -10;
-            const yawRaw = parseFloat(document.getElementById('droneOrbitYaw')?.value);
-            const yawOffsetDegrees = Number.isFinite(yawRaw) ? yawRaw : 50;
-            const radius = parseFloat(orbitRadiusInput.value) || 5000;
-            const horizontalSpeed = parseFloat(horizontalSpeedInput.value) || 50; // m/s
-            const maxRevolutions = parseFloat(revolutionsInput?.value) || 10;
-
-            // Validate radius
-            if (radius <= 0) {
-                console.error('[Orbit] Invalid radius, stopping');
-                stopOrbit();
-                return;
-            }
-
-            // Calculate angular velocity (radians per second)
-            const angularVelocity = horizontalSpeed / radius; // rad/s
-
-            // Calculate angle based on elapsed time (accounting for paused time)
-            const currentTime = Date.now();
-            const elapsed = (currentTime - orbitStartTime - orbitPausedTime) / 1000; // seconds
-            const deltaTime = (currentTime - orbitLastFrameTime) / 1000; // seconds since last frame
-            orbitLastFrameTime = currentTime;
-
-            // Calculate current angle from elapsed time
-            const currentRadiansFromStart = angularVelocity * elapsed;
-            const orbitAngle = orbitInitialAngle + orbitDirection * currentRadiansFromStart;
-
-            // ========== REVOLUTION COUNTING & AUTO-STOP ==========
-            const totalRadians = maxRevolutions * 2 * Math.PI;
-            const completedRevolutions = currentRadiansFromStart / (2 * Math.PI);
-
-            // Check if completed all revolutions
-            if (currentRadiansFromStart >= totalRadians) {
-                console.log(`[Orbit] Completed ${maxRevolutions} revolutions - auto-stopping`);
-                stopOrbit();
-                return;
-            }
-
-            // Update progress display (throttled to every 100ms)
-            if (orbitProgressText && currentTime - lastProgressUpdateTime > 100) {
-                orbitProgressText.textContent = `Revolution: ${completedRevolutions.toFixed(2)} / ${maxRevolutions.toFixed(2)}`;
-                lastProgressUpdateTime = currentTime;
-            }
-
-            // ========== PERFECT CIRCLE COORDINATE TRANSFORMATION ==========
-            const centerCartographic = Cesium.Cartographic.fromCartesian(orbitCenterPoint, viewer.scene.globe.ellipsoid);
-            const ellipsoid = viewer.scene.globe.ellipsoid;
-
-            // Use small-circle mathematics for perfect circular orbits
-            // This maintains constant distance from center (not great circle)
-            const bearing = orbitAngle;
-            const centerLon = centerCartographic.longitude;
-            const centerLat = centerCartographic.latitude;
-
-            // Calculate offset in local tangent plane (ENU coordinates)
-            // East component
-            const east = radius * Math.cos(bearing);
-            // North component
-            const north = radius * Math.sin(bearing);
-
-            // Convert ENU offset to lat/lon changes
-            // This creates a perfect circle in the local tangent plane
-            const earthRadius = ellipsoid.maximumRadius;
-
-            // Delta latitude (north-south is simple)
-            const deltaLat = north / earthRadius;
-
-            // Delta longitude (east-west requires latitude correction)
-            // At higher latitudes, longitude lines are closer together
-            const deltaLon = east / (earthRadius * Math.cos(centerLat));
-
-            // Calculate final position
-            const cameraLatitude = centerLat + deltaLat;
-            const cameraLongitude = centerLon + deltaLon;
-
-            // ========== CIRCLE ACCURACY VERIFICATION ==========
-            const VERIFICATION_INTERVAL = 5000; // 5 seconds
-            if (currentTime - lastVerificationTime > VERIFICATION_INTERVAL) {
-                const currentPos = Cesium.Cartesian3.fromRadians(cameraLongitude, cameraLatitude, orbitStartAltitude, ellipsoid);
-                const actualDistance = Cesium.Cartesian3.distance(currentPos, orbitCenterPoint);
-                const error = Math.abs(actualDistance - radius);
-                const errorPercent = (error / radius * 100).toFixed(3);
-                const bearing = Cesium.Math.toDegrees(orbitAngle % (2 * Math.PI));
-                console.log(`[Orbit] Circle Check: Distance=${actualDistance.toFixed(1)}m, Target=${radius}m, Error=${error.toFixed(1)}m (${errorPercent}%), Bearing=${bearing.toFixed(0)}°, Rev=${completedRevolutions.toFixed(2)}`);
-                lastVerificationTime = currentTime;
-            }
-
-            // QGC-style: Maintain current altitude (can be modified by takeoff/land)
-            let finalAltitude = orbitStartAltitude;
-
-            // Check if takeoff/land is active
-            const takeoffBtn = document.getElementById('droneTakeoffBtn');
-            const landBtn = document.getElementById('droneLandBtn');
-            const isTakeoffActive = takeoffBtn && takeoffBtn.classList.contains('active');
-            const isLandActive = landBtn && landBtn.classList.contains('active');
-
-            // If takeoff/land is active, integrate their altitude changes
-            if (isTakeoffActive || isLandActive) {
-                const currentAlt = camera.positionCartographic.height;
-                const verticalSpeed = parseFloat(document.getElementById('droneVerticalSpeed')?.value) || 5;
-                const altitudeChange = (isTakeoffActive ? verticalSpeed : -verticalSpeed) * deltaTime;
-                finalAltitude = currentAlt + altitudeChange;
-                orbitStartAltitude = finalAltitude; // Update reference altitude
-            }
-
-            // ========== IMPROVED HEADING CALCULATION ==========
-            // Calculate accurate geodesic bearing from camera to center
-            const cameraCart = new Cesium.Cartographic(cameraLongitude, cameraLatitude, 0);
-            const geodesic = new Cesium.EllipsoidGeodesic(cameraCart, centerCartographic, ellipsoid);
-
-            // Get the initial bearing (heading) from camera towards center
-            let headingToCenter = geodesic.startHeading;
-
-            // Apply yaw offset for gimbal control
-            const yawOffsetRadians = Cesium.Math.toRadians(yawOffsetDegrees);
-            const finalHeading = Cesium.Math.zeroToTwoPi(headingToCenter + yawOffsetRadians);
-
-            // Set camera position and orientation
-            // This emulates a drone with gimbal: drone orbits, gimbal points at center + offset
-            camera.setView({
-                destination: Cesium.Cartesian3.fromRadians(
-                    cameraLongitude,
-                    cameraLatitude,
-                    finalAltitude,
-                    ellipsoid
-                ),
-                orientation: {
-                    heading: finalHeading,
-                    pitch: Cesium.Math.toRadians(pitchDegrees),
-                    roll: 0.0
-                }
-            });
-
-            orbitAnimationId = requestAnimationFrame(animateOrbit);
-        }
-
-        animateOrbit();
-    }
-
-    // Pause/Resume orbit
-    function togglePause() {
-        if (!isOrbiting) return;
-
-        const pauseStartTime = Date.now();
-        isPaused = !isPaused;
-
-        if (isPaused) {
-            // Store when we paused
-            window.orbitPauseStartTime = pauseStartTime;
-            if (pauseOrbitBtn) {
-                pauseOrbitBtn.innerHTML = '<i class="fas fa-play"></i> Resume (Space)';
-                pauseOrbitBtn.classList.add('active');
-            }
-            console.log('[Orbit] Paused');
-        } else {
-            // Calculate how long we were paused and add to total
-            const pauseDuration = pauseStartTime - (window.orbitPauseStartTime || pauseStartTime);
-            orbitPausedTime += pauseDuration;
-            orbitLastFrameTime = Date.now(); // Reset frame time to avoid jump
-
-            if (pauseOrbitBtn) {
-                pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause (Space)';
-                pauseOrbitBtn.classList.remove('active');
-            }
-            console.log('[Orbit] Resumed (paused for ' + (pauseDuration/1000).toFixed(1) + 's)');
-        }
-    }
-
-    // Stop orbit
     function stopOrbit() {
-        if (orbitAnimationId) {
-            cancelAnimationFrame(orbitAnimationId);
-            orbitAnimationId = null;
-        }
-
-        isOrbiting = false;
-        isPaused = false;
-        orbitStartTime = null;
-        orbitLastFrameTime = null;
-        orbitPausedTime = 0;
-        orbitCenterPoint = null;
-        orbitInitialAngle = 0;
-        orbitDirection = 1;
-        orbitStartAltitude = 0;
-        lastVerificationTime = 0;
-        lastProgressUpdateTime = 0;
-
-        // Update UI
-        orbitBtn.classList.remove('active');
-        orbitBtn.innerHTML = '<i class="fas fa-circle-notch"></i> Orbit';
-        stopOrbitContainer.style.display = 'none';
-        if (pauseOrbitContainer) pauseOrbitContainer.style.display = 'none';
-        if (orbitProgressContainer) orbitProgressContainer.style.display = 'none';
-        if (pauseOrbitBtn) {
-            pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause (Space)';
-            pauseOrbitBtn.classList.remove('active');
-        }
-
-        console.log('[Orbit] Stopped');
+        if (!orbit) return;
+        cancelAnimationFrame(orbit.raf);
+        orbit = null;
+        showOrbitUi(false);
+        if (els.radius?.dataset.auto === '1') { els.radius.value = ''; delete els.radius.dataset.auto; }
     }
 
-    // Event listeners
-    orbitBtn.addEventListener('click', startOrbit);
-    stopOrbitBtn.addEventListener('click', stopOrbit);
-    if (pauseOrbitBtn) {
-        pauseOrbitBtn.addEventListener('click', togglePause);
-    }
+    // opts: radius (m), speed (m/s), laps, clockwise, pitch (deg), yaw (deg)
+    function startOrbit(centre, opts = {}) {
+        const viewer = getViewer();
+        if (!viewer?.camera) return;
+        stopOrbit();
+        const camera = viewer.camera;
+        const ellipsoid = viewer.scene.globe.ellipsoid;
+        const centreCarto = Cesium.Cartographic.fromCartesian(centre, ellipsoid);
+        const here = camera.positionCartographic;
+        const { distance, angle } = polar(viewer, centreCarto, here);
 
-    // Programmatic control (AI pilot): orbit a given ground point from the
-    // camera's current position, at the current height and widget settings
-    window.DeepGISDrone = Object.assign(window.DeepGISDrone || {}, {
-        orbitAround(center, { clockwise = false } = {}) {
-            if (isOrbiting) stopOrbit();
-            orbitCenterPoint = center;
-            orbitDirection = clockwise ? -1 : 1;
-            startOrbitWithCenter();
-        },
-        stopOrbit() { if (isOrbiting) stopOrbit(); },
-        isOrbiting: () => isOrbiting,
-    });
-
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && isOrbiting) {
-            stopOrbit();
-        } else if (e.key === ' ' && isOrbiting && !['INPUT', 'TEXTAREA'].includes(e.target.tagName)) {
-            e.preventDefault(); // Prevent page scroll
-            togglePause();
+        let radius = Number.isFinite(opts.radius) ? opts.radius : num(els.radius, NaN);
+        if (!Number.isFinite(radius) || radius <= 0) {
+            radius = Math.max(5, distance);
+            if (els.radius) { els.radius.value = Math.round(radius); els.radius.dataset.auto = '1'; }
         }
-    });
+        const speed = Math.max(0.1, Number.isFinite(opts.speed) ? opts.speed : hSpeed());
+        const laps = Math.max(0.05, Number.isFinite(opts.laps) ? opts.laps : num(els.laps, 1));
+        const clockwise = opts.clockwise ?? !!els.clockwise?.checked;
+        const alt = here.height;
+        // Look at the centre unless a pitch was given: tilt down by the height over it
+        const pitch = Number.isFinite(opts.pitch) ? opts.pitch
+            : -Cesium.Math.toDegrees(Math.atan2(Math.max(0, alt - centreCarto.height), radius));
+        if (els.pitch) { els.pitch.value = Math.round(pitch); els.pitchValue.textContent = fmtDeg(pitch); }
+        if (els.yaw && Number.isFinite(opts.yaw)) { els.yaw.value = opts.yaw; els.yawValue.textContent = fmtDeg(opts.yaw); }
 
-    console.log('[Orbit] Enhanced orbit system initialized with all improvements');
-})();
+        orbit = {
+            centreCarto, radius, speed, laps, dir: clockwise ? -1 : 1, alt,
+            angle0: distance < 1 ? Math.PI / 2 : angle,
+            t0: performance.now(), pausedMs: 0, pauseAt: null, lastProgress: 0, raf: 0,
+        };
+        showOrbitUi(true);
 
-// ========== FLY FORWARD ==========
-// Along the current heading at the current height, pitch and roll. Speed is
-// clamped to the input's own range, which each body's widgets set.
-(function initFlyForward() {
-    const flyBtn = document.getElementById('droneFlyBtn');
-    const distanceInput = document.getElementById('droneFlyDistance');
-    const speedInput = document.getElementById('droneFlySpeed');
-    if (!flyBtn || !distanceInput || !speedInput) {
-        console.error('[Fly Forward] Missing required elements');
-        return;
+        const R = ellipsoid.maximumRadius;
+        const step = () => {
+            if (!orbit) return;
+            orbit.raf = requestAnimationFrame(step);
+            if (orbit.pauseAt !== null) return;
+            const now = performance.now();
+            const swept = orbit.speed / orbit.radius * (now - orbit.t0 - orbit.pausedMs) / 1000; // radians
+            if (swept >= orbit.laps * 2 * Math.PI) { stopOrbit(); notify('Orbit complete', 'success'); return; }
+            if (els.progressText && now - orbit.lastProgress > 200) {
+                els.progressText.textContent = `Lap ${(swept / (2 * Math.PI)).toFixed(2)} / ${orbit.laps}`;
+                orbit.lastProgress = now;
+            }
+
+            const a = orbit.angle0 + orbit.dir * swept;
+            const lat = orbit.centreCarto.latitude + orbit.radius * Math.sin(a) / R;
+            const lon = orbit.centreCarto.longitude + orbit.radius * Math.cos(a) / (R * Math.cos(orbit.centreCarto.latitude));
+            if (vertical) orbit.alt = camera.positionCartographic.height; // takeoff / land alongside
+
+            const toCentre = new Cesium.EllipsoidGeodesic(
+                new Cesium.Cartographic(lon, lat), orbit.centreCarto, ellipsoid).startHeading;
+            camera.setView({
+                destination: Cesium.Cartesian3.fromRadians(lon, lat, orbit.alt, ellipsoid),
+                orientation: {
+                    heading: Cesium.Math.zeroToTwoPi(toCentre + Cesium.Math.toRadians(yawDeg())),
+                    pitch: Cesium.Math.toRadians(pitchDeg()),
+                    roll: 0,
+                },
+            });
+        };
+        step();
     }
 
-    const notify = (text, kind) => window.worldSamplerUI?.showNotification?.(text, kind);
-    const bounded = (input, value) => {
-        const lo = parseFloat(input.min), hi = parseFloat(input.max);
-        return Math.min(Number.isFinite(hi) ? hi : Infinity, Math.max(Number.isFinite(lo) ? lo : 0, value));
+    function togglePause() {
+        if (!orbit || !els.pauseOrbitBtn) return;
+        if (orbit.pauseAt === null) {
+            orbit.pauseAt = performance.now();
+            els.pauseOrbitBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
+            els.pauseOrbitBtn.classList.add('active');
+        } else {
+            orbit.pausedMs += performance.now() - orbit.pauseAt;
+            orbit.pauseAt = null;
+            els.pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+            els.pauseOrbitBtn.classList.remove('active');
+        }
+    }
+
+    const orbitView = (opts = {}) => {
+        const viewer = getViewer();
+        if (viewer?.camera) startOrbit(viewCentre(viewer), opts);
     };
+    els.orbitBtn.addEventListener('click', () => (orbit ? stopOrbit() : orbitView()));
+    els.stopOrbitBtn.addEventListener('click', stopOrbit);
+    els.pauseOrbitBtn?.addEventListener('click', togglePause);
+    els.radius?.addEventListener('input', () => { delete els.radius.dataset.auto; });
 
-    // Great-circle destination at the radius of curvature under the camera
+    // ========== FLY FORWARD ==========
+    // Along the current heading at the current height, pitch and roll, at H speed.
     function destinationPoint(ellipsoid, lon, lat, height, bearing, distance) {
         const a = ellipsoid.maximumRadius, b = ellipsoid.minimumRadius;
         const e2 = 1 - (b * b) / (a * a);
@@ -764,36 +359,50 @@
         return Cesium.Cartesian3.fromRadians(destLon, destLat, height, ellipsoid);
     }
 
-    function flyForward(distance = parseFloat(distanceInput.value) || 100,
-                        speedKmh = parseFloat(speedInput.value) || 100) {
-        const viewer = window.AppState?.viewer || window.viewer;
-        if (!viewer || !viewer.camera) {
-            console.error('[Fly Forward] Viewer not available');
-            return;
-        }
-        const speed = bounded(speedInput, speedKmh);
-        if (speed !== speedKmh) speedInput.value = speed;
+    function flyForward(distance = num(els.flyDistance, 100), speedMps = hSpeed()) {
+        const viewer = getViewer();
+        if (!viewer?.camera) return;
         const camera = viewer.camera;
         const here = camera.positionCartographic;
-        const heading = camera.heading, pitch = camera.pitch, roll = camera.roll;
-        const duration = Math.max(0.5, distance / (speed / 3.6));
-        const headingDeg = Cesium.Math.toDegrees(heading).toFixed(1);
+        const { heading, pitch, roll } = camera;
+        const speed = Math.max(0.1, speedMps);
+        const headingDeg = Cesium.Math.toDegrees(heading).toFixed(0);
+        els.flyBtn.classList.add('active');
         camera.flyTo({
             destination: destinationPoint(viewer.scene.globe.ellipsoid, here.longitude, here.latitude,
                                           here.height, heading, distance),
-            duration,
+            duration: Math.max(0.5, distance / speed),
             orientation: { heading, pitch, roll },
-            complete: () => notify(`Flew ${distance}m forward at ${speed} km/h (heading: ${headingDeg}°)`, 'success'),
+            easingFunction: Cesium.EasingFunction.LINEAR_NONE,
+            complete: () => {
+                els.flyBtn.classList.remove('active');
+                notify(`Flew ${distance} m on heading ${headingDeg}°`, 'success');
+            },
+            cancel: () => els.flyBtn.classList.remove('active'),
         });
-        notify(`Flying ${distance}m forward at ${speed} km/h along heading ${headingDeg}°...`, 'info');
+        notify(`Flying ${distance} m forward at ${speed} m/s, heading ${headingDeg}°`, 'info');
     }
+    els.flyBtn.addEventListener('click', () => flyForward());
 
-    const updateLabel = () => {
-        flyBtn.innerHTML = `<i class="fas fa-paper-plane"></i> Fly Forward ${distanceInput.value || 100}m @ ${speedInput.value || 100} km/h`;
-    };
-    flyBtn.addEventListener('click', () => flyForward());
-    distanceInput.addEventListener('input', updateLabel);
-    speedInput.addEventListener('input', updateLabel);
+    // ========== KEYS AND API ==========
+    document.addEventListener('keydown', (e) => {
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+        if (e.key === 'Escape') { stopOrbit(); stopVertical(); }
+        else if (e.key === ' ' && orbit) { e.preventDefault(); togglePause(); }
+    });
 
-    window.DeepGISDrone = Object.assign(window.DeepGISDrone || {}, { flyForward });
+    // Programmatic control (AI pilot, share links). Heights are ellipsoid heights.
+    window.DeepGISDrone = Object.assign(window.DeepGISDrone || {}, {
+        climbTo(height, speed) { startVertical(1, height, speed); },
+        descendTo(height, speed) { startVertical(-1, height, speed); },
+        stopVertical,
+        isVerticalActive: () => !!vertical,
+        orbitAround: startOrbit,
+        orbitView,
+        stopOrbit,
+        isOrbiting: () => !!orbit,
+        flyForward,
+    });
+
+    console.log('[Drone] Flight panel ready');
 })();

@@ -1,0 +1,103 @@
+    {% comment %}
+    Flight panel: the camera drone's controls in one docked panel (hud/drone.js,
+    hud/joysticks.js). Replaces the Fly / Orbit side widgets and the Joystick
+    toolbar button. Input ids are shared with share.js, qr.js and the AI pilot.
+    {% endcomment %}
+    <div class="hud-panel flight-panel" id="flightPanel" data-sticky="1">
+        <div class="hud-panel-header">
+            <div class="hud-panel-title"><i class="fas fa-helicopter"></i> Flight</div>
+            <div class="fp-header-tools">
+                <button class="hud-panel-close fp-joy" id="hudJoystickBtn" type="button" title="On-screen sticks: left climbs and yaws, right moves (J)"><i class="fas fa-gamepad"></i></button>
+                <button class="hud-panel-close" onclick="closeHudPanel('flightPanel')" title="Close"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+
+        <div class="fp-section">
+            <div class="dl-heading">Speed</div>
+            <div class="fp-row">
+                <label class="fp-field">Horizontal (m/s)
+                    <input type="number" class="dl-input" id="droneHorizontalSpeed"
+                           {% if hud_body == "earth" %}value="30" min="1" max="250" step="1"{% else %}value="800" min="10" max="2000" step="10"{% endif %}>
+                </label>
+                <label class="fp-field">Vertical (m/s)
+                    <input type="number" class="dl-input" id="droneVerticalSpeed"
+                           {% if hud_body == "earth" %}value="5" min="1" max="50" step="1"{% else %}value="100" min="1" max="1000" step="1"{% endif %}>
+                </label>
+            </div>
+        </div>
+
+        <div class="fp-section">
+            <div class="dl-heading">Fly forward</div>
+            <div class="fp-row">
+                <label class="fp-field">Distance (m)
+                    <input type="number" class="dl-input" id="droneFlyDistance"
+                           {% if hud_body == "earth" %}value="100" min="10" max="5000" step="10"{% else %}value="20000" min="100" max="500000" step="100"{% endif %}>
+                </label>
+                <button class="btn btn-outline-success btn-sm fp-btn" id="droneFlyBtn" type="button" title="Along the current heading at the current height (D)">
+                    <i class="fas fa-paper-plane"></i> Fly
+                </button>
+            </div>
+        </div>
+
+        <div class="fp-section">
+            <div class="dl-heading">Altitude</div>
+            <div class="fp-row">
+                <label class="fp-field">Climb to (m above ground)
+                    <input type="number" class="dl-input" id="droneTargetAgl"
+                           {% if hud_body == "earth" %}value="100" min="2" max="20000" step="10"{% else %}value="5000" min="10" max="500000" step="100"{% endif %}>
+                </label>
+            </div>
+            <div class="fp-row">
+                <button class="btn btn-outline-primary btn-sm fp-btn" id="droneTakeoffBtn" type="button" title="Climb to the target height, holding heading and pitch (U)">
+                    <i class="fas fa-arrow-up"></i> Takeoff
+                </button>
+                <button class="btn btn-outline-warning btn-sm fp-btn" id="droneLandBtn" type="button" title="Descend to the ground, holding heading and pitch (L)">
+                    <i class="fas fa-arrow-down"></i> Land
+                </button>
+            </div>
+        </div>
+
+        <div class="fp-section">
+            <div class="dl-heading">Orbit</div>
+            <div class="fp-row">
+                <label class="fp-field">Radius (m)
+                    <input type="number" class="dl-input" id="droneOrbitRadius" placeholder="auto"
+                           {% if hud_body == "earth" %}min="5" max="50000" step="5"{% else %}min="50" max="500000" step="50"{% endif %}>
+                </label>
+                <label class="fp-field">Laps
+                    <input type="number" class="dl-input" id="droneOrbitRevolutions" value="1" min="0.25" max="20" step="0.25">
+                </label>
+            </div>
+            <div class="fp-row">
+                <label class="fp-check" title="Blank radius keeps the current distance to the centre"><input type="checkbox" id="droneOrbitClockwise"> Clockwise</label>
+                <button class="btn btn-outline-primary btn-sm fp-btn" id="droneOrbitBtn" type="button" title="Orbit the point in the centre of the view (O)">
+                    <i class="fas fa-circle-notch"></i> Orbit
+                </button>
+            </div>
+            <div class="fp-row" id="stopOrbitContainer" style="display: none;">
+                <span id="pauseOrbitContainer">
+                    <button class="btn btn-outline-warning btn-sm fp-btn" id="pauseOrbitBtn" type="button" title="Space">
+                        <i class="fas fa-pause"></i> Pause
+                    </button>
+                </span>
+                <button class="btn btn-outline-danger btn-sm fp-btn" id="stopOrbitBtn" type="button" title="Esc">
+                    <i class="fas fa-stop"></i> Stop
+                </button>
+            </div>
+            <small class="fp-note" id="orbitProgressContainer" style="display: none;"><span id="orbitProgressText">Lap 0.00 / 1</span></small>
+            <small class="fp-note">Circles the point in the middle of the view at the current height.</small>
+        </div>
+
+        <div class="fp-section fp-section-last">
+            <div class="dl-heading">Camera</div>
+            <label class="fp-slider">
+                <span>Pitch <b id="orbitPitchValue">{% if hud_body == "earth" %}-45°{% else %}-35°{% endif %}</b></span>
+                <input type="range" id="droneOrbitPitch" min="-90" max="0" step="1"
+                       {% if hud_body == "earth" %}value="-45"{% else %}value="-35"{% endif %}>
+            </label>
+            <label class="fp-slider" title="Turns the camera; while orbiting, looks this far off the orbit centre">
+                <span>Yaw <b id="orbitYawValue">0°</b></span>
+                <input type="range" id="droneOrbitYaw" min="-180" max="180" step="1" value="0">
+            </label>
+        </div>
+    </div>

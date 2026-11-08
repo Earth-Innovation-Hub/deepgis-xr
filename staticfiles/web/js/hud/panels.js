@@ -1,6 +1,7 @@
 // DeepGIS HUD panels and layout, shared by the Earth, Moon and planet viewers:
-// toolbar panels, quick views, view-mode and perspective buttons, widget
-// placement and #lat/lng/alt deep links. Positions use the globe's ellipsoid.
+// toolbar panels, view-mode buttons, the buildings toggle and #lat/lng/alt deep
+// links. Panels with data-sticky (the Flight panel) stay open while the user
+// works the globe. Positions use the globe's ellipsoid.
 (function() {
     let activePanel = null;
 
@@ -49,23 +50,12 @@
             });
         });
 
-        // Quick view buttons
-        document.getElementById('quickView2D')?.addEventListener('click', () => {
-            document.getElementById('view2D')?.click();
-        });
-        document.getElementById('quickView3D')?.addEventListener('click', () => {
-            document.getElementById('view3D')?.click();
-        });
-        document.getElementById('quickHome')?.addEventListener('click', () => {
-            document.getElementById('homeView')?.click();
-        });
-
-        // Close panel when clicking outside
+        // Close panel when clicking outside (sticky panels stay open)
         document.addEventListener('click', (e) => {
             if (activePanel) {
                 const panel = document.getElementById(activePanel);
                 const toolbar = document.getElementById('hudToolbar');
-                if (panel && !panel.contains(e.target) && !toolbar.contains(e.target)) {
+                if (panel && !panel.dataset.sticky && !panel.contains(e.target) && !toolbar.contains(e.target)) {
                     closeHudPanel(activePanel);
                 }
             }
@@ -120,116 +110,6 @@
             }
         }
 
-        // Setup perspective view buttons if they don't have handlers
-        function setupPerspectiveViews() {
-            const viewer = window.AppState?.viewer || window.viewer;
-            if (!viewer) {
-                // Retry after viewer is initialized
-                setTimeout(setupPerspectiveViews, 500);
-                return;
-            }
-
-            // North view
-            const btnNorth = document.getElementById('viewNorth');
-            if (btnNorth && !btnNorth.dataset.handlerAttached) {
-                btnNorth.addEventListener('click', () => {
-                    if (viewer && viewer.camera) {
-                        const position = viewer.camera.positionCartographic;
-                        const currentHeight = position.height;
-                        viewer.camera.setView({
-                            destination: Cesium.Cartesian3.fromDegrees(
-                                Cesium.Math.toDegrees(position.longitude),
-                                Cesium.Math.toDegrees(position.latitude),
-                                currentHeight,
-                                viewer.scene.globe.ellipsoid
-                            ),
-                            orientation: {
-                                heading: Cesium.Math.toRadians(0), // North
-                                pitch: Cesium.Math.toRadians(-45),
-                                roll: 0.0
-                            }
-                        });
-                    }
-                });
-                btnNorth.dataset.handlerAttached = 'true';
-            }
-
-            // South view
-            const btnSouth = document.getElementById('viewSouth');
-            if (btnSouth && !btnSouth.dataset.handlerAttached) {
-                btnSouth.addEventListener('click', () => {
-                    if (viewer && viewer.camera) {
-                        const position = viewer.camera.positionCartographic;
-                        const currentHeight = position.height;
-                        viewer.camera.setView({
-                            destination: Cesium.Cartesian3.fromDegrees(
-                                Cesium.Math.toDegrees(position.longitude),
-                                Cesium.Math.toDegrees(position.latitude),
-                                currentHeight,
-                                viewer.scene.globe.ellipsoid
-                            ),
-                            orientation: {
-                                heading: Cesium.Math.toRadians(180), // South
-                                pitch: Cesium.Math.toRadians(-45),
-                                roll: 0.0
-                            }
-                        });
-                    }
-                });
-                btnSouth.dataset.handlerAttached = 'true';
-            }
-
-            // West view
-            const btnWest = document.getElementById('viewWest');
-            if (btnWest && !btnWest.dataset.handlerAttached) {
-                btnWest.addEventListener('click', () => {
-                    if (viewer && viewer.camera) {
-                        const position = viewer.camera.positionCartographic;
-                        const currentHeight = position.height;
-                        viewer.camera.setView({
-                            destination: Cesium.Cartesian3.fromDegrees(
-                                Cesium.Math.toDegrees(position.longitude),
-                                Cesium.Math.toDegrees(position.latitude),
-                                currentHeight,
-                                viewer.scene.globe.ellipsoid
-                            ),
-                            orientation: {
-                                heading: Cesium.Math.toRadians(90), // West
-                                pitch: Cesium.Math.toRadians(-45),
-                                roll: 0.0
-                            }
-                        });
-                    }
-                });
-                btnWest.dataset.handlerAttached = 'true';
-            }
-
-            // East view
-            const btnEast = document.getElementById('viewEast');
-            if (btnEast && !btnEast.dataset.handlerAttached) {
-                btnEast.addEventListener('click', () => {
-                    if (viewer && viewer.camera) {
-                        const position = viewer.camera.positionCartographic;
-                        const currentHeight = position.height;
-                        viewer.camera.setView({
-                            destination: Cesium.Cartesian3.fromDegrees(
-                                Cesium.Math.toDegrees(position.longitude),
-                                Cesium.Math.toDegrees(position.latitude),
-                                currentHeight,
-                                viewer.scene.globe.ellipsoid
-                            ),
-                            orientation: {
-                                heading: Cesium.Math.toRadians(270), // East
-                                pitch: Cesium.Math.toRadians(-45),
-                                roll: 0.0
-                            }
-                        });
-                    }
-                });
-                btnEast.dataset.handlerAttached = 'true';
-            }
-        }
-
         // Setup OSM Buildings toggle.
         // Delegates to window.toggleOSMBuildings (exposed from main.js),
         // which wraps the canonical toggleOSMBuildings() in cesium-init.js.
@@ -266,10 +146,6 @@
         // Setup view mode buttons after a delay to ensure viewer is ready
         setTimeout(setupViewModeButtons, 1000);
         setTimeout(setupViewModeButtons, 3000);
-
-        // Setup perspective views after a delay to ensure viewer is ready
-        setTimeout(setupPerspectiveViews, 1000);
-        setTimeout(setupPerspectiveViews, 3000);
 
         // Setup buildings toggle after viewer is ready
         setTimeout(setupBuildingsToggle, 1000);
@@ -434,43 +310,4 @@
     setTimeout(styleWorldSamplerInHUD, 1000);
     setTimeout(styleWorldSamplerInHUD, 2000);
     setTimeout(styleWorldSamplerInHUD, 4000);
-
-    // Ensure navigation widget and perspective views widget are positioned correctly
-    function positionNavigationWidgets() {
-        const quickViews = document.querySelector('.hud-quick-views');
-        const navWidget = document.getElementById('navigationWidgetGroup');
-        const perspectiveWidget = document.getElementById('perspectiveViewsWidget');
-
-        if (quickViews && navWidget) {
-            const quickViewsRect = quickViews.getBoundingClientRect();
-            const quickViewsBottom = quickViewsRect.bottom;
-
-            // Position navigation widget below quick view buttons with some spacing
-            navWidget.style.position = 'fixed';
-            navWidget.style.top = (quickViewsBottom + 20) + 'px';
-            navWidget.style.right = '20px';
-
-            // Position perspective views widget below navigation widget with more spacing
-            if (perspectiveWidget) {
-                const navWidgetRect = navWidget.getBoundingClientRect();
-                const navWidgetBottom = navWidgetRect.bottom;
-                perspectiveWidget.style.position = 'fixed';
-                perspectiveWidget.style.top = (navWidgetBottom + 40) + 'px';  // Increased spacing from 20px to 40px
-                perspectiveWidget.style.right = '20px';
-            }
-        }
-    }
-
-    // Position on load and resize
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            setTimeout(positionNavigationWidgets, 100);
-            setTimeout(positionNavigationWidgets, 500);  // Second check after widgets render
-        });
-    } else {
-        setTimeout(positionNavigationWidgets, 100);
-        setTimeout(positionNavigationWidgets, 500);
-    }
-
-    window.addEventListener('resize', positionNavigationWidgets);
 })();

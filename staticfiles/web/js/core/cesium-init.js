@@ -83,9 +83,10 @@ export async function initializeCesium(updateLoadingStatus) {
       imageryProvider: defaultImageryProvider || undefined,
       fullscreenButton: true,
       geocoder: true,
-      homeButton: true,
+      // Home and 2D / 3D / Columbus live in the HUD's View panel (hud/panels.js)
+      homeButton: false,
       infoBox: true,
-      sceneModePicker: true,
+      sceneModePicker: false,
       selectionIndicator: true,
       timeline: false,
       navigationHelpButton: true,
@@ -130,9 +131,9 @@ export async function initializeCesium(updateLoadingStatus) {
       viewer.sceneModePicker.viewModel.duration = 0;
     }
 
-    // Visible FPS / MS overlay (top-left of canvas). Cheap to render.
-    // Toggle off via ?fps=0.
-    if (new URLSearchParams(window.location.search).get("fps") !== "0") {
+    // Cesium's FPS / MS debug overlay, opt-in via ?fps=1; the HUD's own FPS pill
+    // (#performanceIndicator, main.js) is the everyday readout.
+    if (new URLSearchParams(window.location.search).get("fps") === "1") {
       viewer.scene.debugShowFramesPerSecond = true;
     }
 
