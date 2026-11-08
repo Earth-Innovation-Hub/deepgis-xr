@@ -217,21 +217,23 @@
             console.log('[Experience] Current scene mode:', viewer.scene.mode);
             console.log('[Experience] Cesium.SceneMode.SCENE3D:', Cesium.SceneMode.SCENE3D);
 
-            // Restore view mode first (check current mode to avoid unnecessary morphs)
+            // Restore view mode first (check current mode to avoid unnecessary morphs).
+            // Instant morphs: Cesium's animated 2D -> 3D morph ends at a fixed whole-globe
+            // camera and would discard the view being restored.
             const currentMode = viewer.scene.mode;
             let needsMorph = false;
 
             if (viewMode === '2d' && currentMode !== Cesium.SceneMode.SCENE2D) {
                 console.log('[Experience] Morphing to 2D view...');
-                viewer.scene.morphTo2D(2.0);
+                viewer.scene.morphTo2D(0);
                 needsMorph = true;
             } else if (viewMode === 'columbus' && currentMode !== Cesium.SceneMode.COLUMBUS_VIEW) {
                 console.log('[Experience] Morphing to Columbus view...');
-                viewer.scene.morphToColumbusView(2.0);
+                viewer.scene.morphToColumbusView(0);
                 needsMorph = true;
             } else if (viewMode === '3d' && currentMode !== Cesium.SceneMode.SCENE3D) {
                 console.log('[Experience] Morphing to 3D view from mode', currentMode, 'to', Cesium.SceneMode.SCENE3D);
-                viewer.scene.morphTo3D(2.0);
+                viewer.scene.morphTo3D(0);
                 needsMorph = true;
             } else {
                 console.log('[Experience] Scene already in requested mode:', viewMode, 'currentMode:', currentMode);
@@ -434,8 +436,8 @@
                         if (btn3D) {
                             btn3D.click();
                         } else {
-                            // Fallback: direct morph
-                            viewer.scene.morphTo3D(1.0);
+                            // Fallback: direct instant morph (keeps the camera)
+                            viewer.scene.morphTo3D(0);
                         }
                     }
                 }, 3000); // After all other restoration completes

@@ -123,6 +123,13 @@ export async function initializeCesium(updateLoadingStatus) {
 
     AppState.viewer = viewer;
 
+    // Instant scene-mode switches from Cesium's own picker too: the animated 2D -> 3D
+    // morph ends at a fixed whole-globe camera (lon 0, lat 0, 5 Earth radii) and loses
+    // the view; the instant morph converts the current camera instead.
+    if (viewer.sceneModePicker) {
+      viewer.sceneModePicker.viewModel.duration = 0;
+    }
+
     // Visible FPS / MS overlay (top-left of canvas). Cheap to render.
     // Toggle off via ?fps=0.
     if (new URLSearchParams(window.location.search).get("fps") !== "0") {

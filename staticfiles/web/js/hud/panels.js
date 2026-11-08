@@ -93,12 +93,16 @@
                 return;
             }
 
+            // Duration 0 on purpose: Cesium's animated 2D -> 3D morph ends at a fixed
+            // whole-globe camera (lon 0, lat 0, 5 Earth radii) and loses the view; only
+            // the instant morph converts the current camera. main.js also handles these
+            // buttons (scene.mode = ...), which is the same instant morph.
             // 2D view button
             const btn2D = document.getElementById('view2D');
             if (btn2D && !btn2D.dataset.handlerAttached) {
                 btn2D.addEventListener('click', () => {
                     if (viewer && viewer.scene) {
-                        viewer.scene.morphTo2D(1.0);
+                        viewer.scene.morphTo2D(0);
                     }
                 });
                 btn2D.dataset.handlerAttached = 'true';
@@ -109,7 +113,7 @@
             if (btn3D && !btn3D.dataset.handlerAttached) {
                 btn3D.addEventListener('click', () => {
                     if (viewer && viewer.scene) {
-                        viewer.scene.morphTo3D(1.0);
+                        viewer.scene.morphTo3D(0);
                     }
                 });
                 btn3D.dataset.handlerAttached = 'true';

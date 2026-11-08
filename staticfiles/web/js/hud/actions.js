@@ -2570,7 +2570,9 @@
         },
     };
 
-    // Heading and tilt only exist in 3D; the page opens in 2D
+    // Heading and tilt only exist in 3D; the page opens in 2D. The switch is instant:
+    // Cesium's animated 2D -> 3D morph ends at a fixed whole-globe camera, the instant
+    // one keeps the place in view.
     async function ensure3D(id, out) {
         const scene = getViewer().scene;
         if (scene.mode === Cesium.SceneMode.SCENE3D) return;
@@ -2580,7 +2582,7 @@
             setTimeout(r, 4000);
         });
         const btn3D = document.getElementById('view3D');
-        if (btn3D) btn3D.click(); else scene.morphTo3D(1.0);
+        if (btn3D) btn3D.click(); else scene.morphTo3D(0);
         await morphed;
         check(id);
     }
