@@ -111,6 +111,7 @@ PILOT_SCHEMA = {
                     "kind": {"enum": list(LAYER_KINDS)},
                     "place": {"type": "string"},
                     "colormap": {"enum": list(COLORMAPS)},
+                    "date": {"type": "string"},
                     "lat": {"type": "number"},
                     "lon": {"type": "number"},
                     "radius_m": {"type": "number"},
@@ -134,7 +135,9 @@ PILOT_SCHEMA = {
 # Actions go back to the model as history, so they keep the schema's key order: an
 # example with place before kind leads the model to skip kind, which drops the layer
 FIELD_ORDER = tuple(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
-LAYER_FIELDS = ("type", "kind", "place", "colormap", "lat", "lon", "radius_m", "distance_km")
+LAYER_FIELDS = ("type", "kind", "place", "colormap", "date", "lat", "lon", "radius_m", "distance_km")
+# Survey date for site_imagery: a year or a year and month
+SURVEY_DATE = re.compile(r"\d{4}(?:-\d{2})?")
 FOLLOW_FIELDS = ("type", "vehicle", "view")
 
 # Superusers' robot commands: dreams_mcp tools on the command-enabled server
@@ -213,7 +216,7 @@ def layer_catalog(body):
 def _planet_schema(kinds):
     item = dict(PILOT_SCHEMA["properties"]["actions"]["items"])
     props = {k: v for k, v in item["properties"].items()
-             if k not in ("distance_km", "colormap", "vehicle", "view")}
+             if k not in ("distance_km", "colormap", "date", "vehicle", "view")}
     if kinds:
         props["type"] = {"enum": list(PLANET_LAYER_ACTION_TYPES)}
         props["kind"] = {"enum": list(kinds)}
@@ -263,7 +266,7 @@ Actions (all heights are metres ABOVE GROUND):
   - contours: elevation contour lines, from Cesium World Terrain (worldwide).
   - lidar_dem: high-resolution lidar or drone terrain (down to 0.5 m) as shaded relief coloured by height, with height and slope figures, from OpenTopography surveys stored on DeepGIS (default 2 km; so far only around Bishop, California: the Volcanic Tablelands fault scarps, the White Mountains fault zone and the Bishop Tuff). Use it for "lidar", "high resolution terrain", "hillshade", "shaded relief", "bare earth", "DEM" or "fault scarp" requests; use elevation for terrain anywhere else.
   - topo_datasets: which lidar, drone and elevation datasets OpenTopography has around a place, with their footprints, dates and links (default 15 km; mostly the US). Also for "what lidar is there" or "OpenTopography data" requests.
-  - site_imagery: the lab's own drone orthophotos (down to 1.5 cm per pixel) draped on the globe, from the DeepGIS tile catalog (default 10 km; so far the Bishop, California rock surface site near the Volcanic Tablelands and a Phoenix wildfire site). Use it for "rock tiles", "rock imagery", "drone imagery", "orthophoto", "orthomosaic" or "survey imagery" requests.
+  - site_imagery: the lab's own drone orthophotos (down to 1.5 cm per pixel) draped on the globe, from the DeepGIS tile catalog (default 10 km; so far the "Bishop rock surface site" near the Volcanic Tablelands, California, and the "Phoenix wildfire site", surveyed 2020-08, 2020-10, 2020-11, 2020-12 and 2021-02). Use it for "rock tiles", "rock imagery", "drone imagery", "orthophoto", "orthomosaic", "survey imagery" or "before/after the fire" requests; use the site's name as the place. Set date (YYYY-MM, or YYYY) only when the user names a survey month or year; without it the newest survey is shown.
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
@@ -300,7 +303,8 @@ Examples (actions only):
 - "elevation map of Mount Whitney" -> [{"type": "show_layer", "kind": "elevation", "place": "Mount Whitney, California"}]
 - "show the lidar hillshade of the fault scarps in the Volcanic Tablelands" -> [{"type": "show_layer", "kind": "lidar_dem", "place": "Volcanic Tablelands, Bishop, California"}]
 - "what lidar does OpenTopography have near Bishop?" -> [{"type": "show_layer", "kind": "topo_datasets", "place": "Bishop, California"}]
-- "show the Bishop rock tiles" -> [{"type": "show_layer", "kind": "site_imagery", "place": "Volcanic Tablelands, Bishop, California"}]
+- "show the Bishop rock tiles" -> [{"type": "show_layer", "kind": "site_imagery", "place": "Bishop rock surface site"}]
+- "fly to the wildfire site and show the November 2020 survey" -> [{"type": "goto", "place": "Phoenix wildfire site"}, {"type": "show_layer", "kind": "site_imagery", "place": "Phoenix wildfire site", "date": "2020-11"}]
 - "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
 - "remove all the layers" -> [{"type": "hide_layer"}]
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
@@ -427,6 +431,32 @@ def clean_robot_command(a, control):
     return act
 
 
+SITE_STOPWORDS = {"the", "and", "site", "sites", "near", "tiles", "tile", "survey", "surveys", "imagery",
+                  "area", "study", "show", "map", "data"}
+
+
+def catalog_site(place):
+    """(lat, lon, name) of the tile-catalog site a place names, e.g. "the Phoenix wildfire
+    site" or "Bishop rock tiles": at least two of its words in the site's name or slug."""
+    from deepgis_xr.apps.tile_catalog.models import Site
+
+    words = set(re.findall(r"[a-z]{3,}", place.lower())) - SITE_STOPWORDS
+    if len(words) < 2:
+        return None
+    best = None
+    try:
+        for s in Site.objects.filter(is_active=True).only("name", "slug", "bounds"):
+            hits = len(words & set(re.findall(r"[a-z]{3,}", f"{s.name} {s.slug}".lower())))
+            if hits >= 2 and (best is None or hits > best[0]) and isinstance(s.bounds, list) and len(s.bounds) == 4:
+                best = (hits, s)
+    except Exception:
+        return None
+    if not best:
+        return None
+    w, so, e, n = best[1].bounds
+    return round((so + n) / 2, 6), round((w + e) / 2, 6), best[1].name[:120]
+
+
 def clean_actions(raw, body="earth", control=None):
     """Keep known action types and fields, clamp numbers, drop bad coordinates.
     control: {callsign: robot} that this user may command (superusers); robot_command
@@ -459,6 +489,10 @@ def clean_actions(raw, body="earth", control=None):
                 and -90 <= lat <= 90 and -180 <= lon <= 180):
             act["lat"], act["lon"] = float(lat), float(lon)
         if body == "earth" and "place" in act and "lat" not in act:
+            site = catalog_site(act["place"])
+            if site:
+                act["lat"], act["lon"], act["place"] = site
+        if body == "earth" and "place" in act and "lat" not in act:
             try:
                 spot = robots.locate(act["place"])
             except Exception:
@@ -488,6 +522,9 @@ def clean_actions(raw, body="earth", control=None):
                 continue
             if act["type"] == "show_layer" and body == "earth" and a.get("colormap") in COLORMAPS:
                 act["colormap"] = a["colormap"]
+            if (act.get("kind") == "site_imagery" and isinstance(a.get("date"), str)
+                    and SURVEY_DATE.fullmatch(a["date"].strip())):
+                act["date"] = a["date"].strip()
             if kind != "river" and "distance_km" in act:
                 km = act.pop("distance_km")
                 act.setdefault("radius_m", _num(km * 1000, "radius_m", lim))

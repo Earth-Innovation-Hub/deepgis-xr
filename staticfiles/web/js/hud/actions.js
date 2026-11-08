@@ -1800,7 +1800,7 @@
         site_imagery: {
             title: 'Survey imagery',
             radius: (p) => clamp((p.sizeM || 0) / 2, 10000, 50000),
-            async load(p, radius) {
+            async load(p, radius, a) {
                 const cat = await fetchJson(new URL(TILE_CATALOG_URL, location.href).href, { credentials: 'same-origin' }, 15000);
                 const box = (b) => ({ geometry: { type: 'Polygon', coordinates: [[[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]], [b[0], b[1]]]] } });
                 const orthos = (s) => (s.datasets || []).flatMap(d => {
@@ -1815,7 +1815,16 @@
                     return { lines: [], sources: [], empty: `No lab survey imagery within ${fmtM(radius)} of ${p.label}. ` +
                         `DeepGIS has survey imagery at: ${all.map(s => s.name).join('; ') || 'no sites yet'}` };
                 }
-                const site = near[0].s, prod = orthos(site)[0];
+                const site = near[0].s, list = orthos(site);
+                const dates = [...new Set(list.map(q => q.when).filter(Boolean))].sort();
+                // Asked-for survey: same month or year, else the nearest date
+                const months = (s) => { const [y, m] = String(s).split('-').map(Number); return y * 12 + (m || 6) - 1; };
+                let prod = list[0], dateNote = '';
+                if (a.date && dates.length) {
+                    prod = list.find(q => q.when?.startsWith(a.date)) ||
+                        [...list].filter(q => q.when).sort((x, y) => Math.abs(months(x.when) - months(a.date)) - Math.abs(months(y.when) - months(a.date)))[0];
+                    if (!prod.when.startsWith(a.date)) dateNote = `No survey in ${a.date}; showing the nearest, ${prod.when}. `;
+                }
                 const tj = await fetchJson(`${TILES_URL}/data/${encodeURIComponent(prod.layer_id)}.json`, {}, 15000);
                 const b = tj.bounds?.length === 4 ? tj.bounds : site.bounds;
                 const maxZ = Number.isFinite(tj.maxzoom) ? tj.maxzoom : 22;
@@ -1823,10 +1832,11 @@
                 const cm = 156543.03392 * Math.cos(rad(lat)) / Math.pow(2, maxZ) * 100;
                 const area = { lon: rad((b[0] + b[2]) / 2), lat: rad(lat),
                                radius: Math.max(50, Math.hypot((b[2] - b[0]) * Math.cos(rad(lat)), b[3] - b[1]) * Math.PI / 180 * EARTH_R / 2) };
-                const lines = [['step', `${site.name}: ${prod.label}${prod.when ? ` (${prod.when})` : ''}, ` +
+                const lines = [['step', `${dateNote}${site.name}: ${prod.label}, ` +
                     `${cm < 10 ? cm.toFixed(1) : Math.round(cm)} cm per pixel at full zoom, ${fmtM(near[0].d)} from ${p.label}. ` +
                     'Fly in close for full detail.']];
                 if (site.description) lines.push(['geo', site.description.split(/(?<=\.)\s/)[0]]);
+                if (dates.length > 1) lines.push(['step', `Surveys of this site: ${dates.join(', ')}. Ask for one by month, e.g. "${dates[0]}".`]);
                 if (near.length > 1) lines.push(['step', `Also nearby: ${near.slice(1).map(x => x.s.name).join('; ')}`]);
                 return {
                     imagery: new Cesium.UrlTemplateImageryProvider({

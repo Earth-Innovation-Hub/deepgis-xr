@@ -81,6 +81,24 @@ class CleanActionsTests(TestCase):
         ])
         self.assertIn("lidar_dem", pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"]["kind"]["enum"])
 
+    def test_site_imagery_place_and_date(self):
+        from deepgis_xr.apps.tile_catalog.models import Site
+        Site.objects.create(slug="phx_wildfire", name="Phoenix wildfire site",
+                            bounds=[-111.267, 33.781, -111.262, 33.784])
+        out = pilot.clean_actions([
+            {"type": "show_layer", "kind": "site_imagery", "place": "the Phoenix wildfire site", "date": "2020-11"},
+            {"type": "show_layer", "kind": "site_imagery", "place": "Phoenix wildfire site", "date": "November"},
+            {"type": "show_layer", "kind": "geology", "place": "Phoenix, Arizona", "date": "2020"},
+            {"type": "goto", "place": "wildfire site in Phoenix"},
+        ])
+        self.assertEqual(out[0], {"type": "show_layer", "kind": "site_imagery", "place": "Phoenix wildfire site",
+                                  "date": "2020-11", "lat": 33.7825, "lon": -111.2645})
+        self.assertNotIn("date", out[1])
+        self.assertEqual(out[2], {"type": "show_layer", "kind": "geology", "place": "Phoenix, Arizona"})
+        self.assertEqual((out[3]["lat"], out[3]["lon"]), (33.7825, -111.2645))
+        self.assertIsNone(pilot.catalog_site("Phoenix, Arizona"))
+        self.assertNotIn("date", pilot.PLANET_LAYER_SCHEMAS["moon"]["properties"]["actions"]["items"]["properties"])
+
     def test_layers_go_before_an_orbit(self):
         out = pilot.clean_actions([{"type": "goto", "place": "Tempe"},
                                    {"type": "orbit", "place": "Hayden Butte"},

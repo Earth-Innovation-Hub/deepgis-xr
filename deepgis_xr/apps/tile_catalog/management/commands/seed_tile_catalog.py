@@ -50,7 +50,7 @@ SITES = [
             {
                 'slug': 'wildfire_orthos',
                 'name': 'Wildfire orthophotos & features',
-                'description': 'Orthophoto rasters, vector features, and 3D mesh per timestep.',
+                'description': 'Orthophoto rasters and vector features per timestep.',
                 'kind': Dataset.KIND_TIMESERIES,
                 'ordering': 0,
                 'timesteps': [
@@ -99,13 +99,14 @@ SITES = [
                     {
                         'label': '2020-11',
                         'sort_key': '2020-11-13',
-                        'description': 'November 2020 survey (vector only).',
+                        'description': 'November 2020 survey (orthophoto only).',
                         'products': [
                             {
+                                # PNG raster despite the name (tileserver format png)
                                 'layer_id': 'bf_nov_2020',
-                                'kind': Product.KIND_VECTOR,
-                                'label': 'Vector features (Nov 2020)',
-                                'default_opacity': 0.8,
+                                'kind': Product.KIND_ORTHOPHOTO,
+                                'label': 'Orthophoto (Nov 2020)',
+                                'default_opacity': 0.7,
                                 'ordering': 0,
                             },
                         ],
@@ -113,13 +114,14 @@ SITES = [
                     {
                         'label': '2020-12',
                         'sort_key': '2020-12-20',
-                        'description': 'December 2020 survey. Three vector snapshots exist; the canonical one is bf_dec_2020.',
+                        'description': 'December 2020 survey: two orthophoto snapshots and vector features.',
                         'products': [
                             {
+                                # PNG raster despite the name (tileserver format png)
                                 'layer_id': 'bf_dec_2020',
-                                'kind': Product.KIND_VECTOR,
-                                'label': 'Vector features (Dec 2020)',
-                                'default_opacity': 0.8,
+                                'kind': Product.KIND_ORTHOPHOTO,
+                                'label': 'Orthophoto (Dec 2020)',
+                                'default_opacity': 0.7,
                                 'ordering': 0,
                             },
                             {
@@ -127,16 +129,16 @@ SITES = [
                                 # BF_12-20-2020.mbtiles. The data/config.json alias
                                 # 'bf_dec_2020_alt' is not honored, so we use the served id.
                                 'layer_id': 'BF_12-20-2020',
-                                'kind': Product.KIND_VECTOR,
-                                'label': 'Vector features (Dec 2020, alt snapshot)',
+                                'kind': Product.KIND_ORTHOPHOTO,
+                                'label': 'Orthophoto (Dec 2020, alt snapshot)',
                                 'default_opacity': 0.6,
                                 'ordering': 1,
                             },
                             {
                                 'layer_id': 'bf_dec_2020_vector',
                                 'kind': Product.KIND_VECTOR,
-                                'label': 'Vector features (Dec 2020, third snapshot)',
-                                'default_opacity': 0.6,
+                                'label': 'Vector features (Dec 2020)',
+                                'default_opacity': 0.8,
                                 'ordering': 2,
                             },
                         ],
@@ -144,20 +146,22 @@ SITES = [
                     {
                         'label': '2021-02',
                         'sort_key': '2021-02-15',
-                        'description': 'February 2021 — 3D mesh / DSM only.',
+                        'description': 'February 2021 survey: orthophoto from the 3D reconstruction and vector features.',
                         'products': [
                             {
-                                'layer_id': 'bf_feb_2021_3d',
-                                'kind': Product.KIND_MESH_3D,
-                                'label': '3D mesh (Feb 2021)',
-                                'default_opacity': 1.0,
+                                # PNG raster (tileserver format png)
+                                'layer_id': 'bf_feb_2021_3d_43',
+                                'kind': Product.KIND_ORTHOPHOTO,
+                                'label': 'Orthophoto (Feb 2021, from 3D model)',
+                                'default_opacity': 0.7,
                                 'ordering': 0,
                             },
                             {
-                                'layer_id': 'bf_feb_2021_3d_43',
-                                'kind': Product.KIND_MESH_3D,
-                                'label': '3D mesh (Feb 2021, 4:3 variant)',
-                                'default_opacity': 1.0,
+                                # pbf vector tiles, source layer "output"
+                                'layer_id': 'bf_feb_2021_3d',
+                                'kind': Product.KIND_VECTOR,
+                                'label': 'Vector features (Feb 2021)',
+                                'default_opacity': 0.8,
                                 'ordering': 1,
                             },
                         ],
