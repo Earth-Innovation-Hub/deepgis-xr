@@ -21,6 +21,12 @@ token (metadata, including the pose at capture, in the X-Frame-Meta header), onl
 latest is kept, vehicles_live says which vehicles have one, and signed-in viewers fetch
 it from vehicle_frame_image.
 
+Instrument products are small JSON readings a vehicle posts beside its frames, again with
+the same token (vehicle_product): only the latest of each kind is kept, vehicles_live says
+which vehicles have one, and signed-in viewers fetch it from vehicle_product_json. The one
+kind so far is "spectrum": a point-spectrometer reading reduced on the vehicle, with the
+laser range to its target and the patch it averaged over.
+
 Robot identity (one hyphenated id per robot, its name, platform, aliases), last-known
 positions and a downsampled track live in the database through views/robots.py;
 vehicles_nearby searches them for the AI pilot and, with a ROBOT_READ_TOKENS token, for
@@ -278,6 +284,126 @@ def vehicle_frame_image(request, vid):
     if jpeg is None:
         return JsonResponse({"error": "No recent frame from this vehicle"}, status=404)
     resp = HttpResponse(jpeg, content_type="image/jpeg")
+    resp["Cache-Control"] = "private, no-store"
+    return resp
+
+
+PRODUCT_MAX_BYTES = 16 * 1024
+PRODUCT_TTL_SEC = 120
+SPECTRUM_MAX_BINS = 2048
+SPECTRUM_MAX_NOTES = 6
+# (min, max) per field; as with poses, an out-of-range optional number is dropped
+SPECTRUM_LIMITS = {
+    "baseline": (-1e7, 1e7),
+    "integration_ms": (0.0, 600000.0),
+    "clipped_pct": (0.0, 100.0),
+    "peak_frac": (0.0, 1.0),
+}
+SPECTRUM_INDEX_LIMITS = {k: (-1000.0, 1000.0) for k in robots.SPECTRUM_INDICES}
+LASER_LIMITS = {"valid": (0.0, 1.0), "range_m": (0.0, 5000.0), "min_m": (0.0, 5000.0), "max_m": (0.0, 5000.0)}
+FOOTPRINT_LIMITS = {"u": (0.0, 1.0), "v": (0.0, 1.0), "fov_deg": (0.01, 180.0), "frac_w": (0.0, 20.0),
+                    "diameter_m": (0.0, 5000.0)}
+
+
+def _numbers(src, limits):
+    """{field: float} for the fields of src that are finite and within their limits."""
+    if not isinstance(src, dict):
+        return {}
+    return {k: float(src[k]) for k, (lo, hi) in limits.items() if _finite(src.get(k)) and lo <= src[k] <= hi}
+
+
+def _pair(v, lo, hi):
+    """[a, b] if v is two finite numbers within [lo, hi] with a <= b, else None."""
+    if not (isinstance(v, list) and len(v) == 2 and all(_finite(x) and lo <= x <= hi for x in v) and v[0] <= v[1]):
+        return None
+    return [float(v[0]), float(v[1])]
+
+
+def clean_spectrum(d):
+    """The stored spectrum product, or None if the spectrum itself is missing or invalid.
+
+    counts[i] is the reading (counts above the instrument's baseline) for the band starting
+    at wl0 + i * dwl nm; full_scale is the count at which the detector clips. The rest is
+    optional and dropped if malformed: clipped ([lo, hi] nm spans), indices (band ratios),
+    laser (range to the target during the reading), footprint (where the instrument points
+    in the vehicle's camera frame, u and v from the left and top, and how wide it sees),
+    t_rel (when it was integrated, seconds relative to the frame) and the instrument's own
+    notes on what the numbers mean."""
+    if not isinstance(d, dict):
+        return None
+    counts = d.get("counts")
+    grid = _numbers(d, {"wl0": (100.0, 30000.0), "dwl": (0.01, 100.0), "full_scale": (1.0, 1e7)})
+    if len(grid) < 3 or not isinstance(counts, list) or not 16 <= len(counts) <= SPECTRUM_MAX_BINS:
+        return None
+    if not all(_finite(c) and abs(c) <= 1e7 for c in counts):
+        return None
+    out = {**grid, "counts": [round(c) for c in counts], **_numbers(d, SPECTRUM_LIMITS)}
+    spans = d.get("clipped")
+    out["clipped"] = [s for s in (_pair(x, 0.0, 30000.0) for x in (spans if isinstance(spans, list) else [])[:64]) if s]
+    out["indices"] = _numbers(d.get("indices"), SPECTRUM_INDEX_LIMITS)
+    laser = _numbers(d.get("laser"), LASER_LIMITS)
+    if laser:
+        out["laser"] = laser
+    footprint = _numbers(d.get("footprint"), FOOTPRINT_LIMITS)
+    if footprint:
+        out["footprint"] = footprint
+    t_rel = _pair(d.get("t_rel"), -60.0, 60.0)
+    if t_rel:
+        out["t_rel"] = t_rel
+    notes = d.get("notes")
+    out["notes"] = [" ".join(n.split())[:300] for n in (notes if isinstance(notes, list) else [])
+                    if isinstance(n, str) and n.strip()][:SPECTRUM_MAX_NOTES]
+    return out
+
+
+PRODUCT_CLEANERS = {"spectrum": clean_spectrum}  # one per kind in robots.PRODUCT_KINDS
+
+
+@csrf_exempt
+@require_POST
+def vehicle_product(request):
+    """One instrument product from a vehicle: the JSON {vehicle, product, captured (unix s), data},
+    where product names its kind ("spectrum")."""
+    tokens = pose_tokens()
+    if not ingest_configured(tokens):
+        return JsonResponse({"error": "Vehicle products are not configured"}, status=503)
+    token = bearer(request)
+    if token is None:
+        return JsonResponse({"error": "A valid vehicle token is required"}, status=401)
+    if len(request.body) > PRODUCT_MAX_BYTES:
+        return JsonResponse({"error": "Product too large"}, status=413)
+    body = _json_object(request.body)
+    if body is None:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    vid, error = _vehicle_for(token, tokens, body)
+    if error:
+        return error
+    kind = body.get("product")
+    clean = PRODUCT_CLEANERS.get(kind) if isinstance(kind, str) else None
+    if clean is None:
+        return JsonResponse({"error": f"product must be one of: {', '.join(PRODUCT_CLEANERS)}"}, status=400)
+    data = clean(body.get("data"))
+    if data is None:
+        return JsonResponse({"error": f"Invalid {kind} product"}, status=400)
+    t = now()
+    live = caches["live"]
+    key = robots.product_key(vid, kind)
+    product = {"product": kind, "data": data, "received": t, "seq": (live.get(key) or {}).get("seq", 0) + 1}
+    captured = body.get("captured")
+    if _finite(captured) and abs(captured - t) <= CAPTURE_SKEW_SEC:
+        product["captured"] = float(captured)
+    live.set(key, product, PRODUCT_TTL_SEC)
+    return JsonResponse({"ok": True, "seq": product["seq"]})
+
+
+@require_GET
+def vehicle_product_json(request, vid, kind):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "Sign in to see vehicle instruments"}, status=401)
+    product = robots.live_product(vid, kind, now()) if VEHICLE_ID.fullmatch(vid) else None
+    if product is None:
+        return JsonResponse({"error": "No recent reading of this kind from this vehicle"}, status=404)
+    resp = JsonResponse(product)
     resp["Cache-Control"] = "private, no-store"
     return resp
 

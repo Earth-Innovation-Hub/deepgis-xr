@@ -2034,19 +2034,240 @@
     const vehicleName = (v) => v.name || v.id;
 
     // Picture-in-picture of the followed vehicle's latest camera frame, for vehicles
-    // that post frames (/label/api/vehicles/frame/); the pose list carries the frame's seq
+    // that post frames (/label/api/vehicles/frame/); the pose list carries the frame's seq.
+    // The twins send about a frame a second; a field robot sends keyframes, one every 30 s
+    // while it is parked.
     const FRAME_STALE_SEC = 10;
+    const KEYFRAME_STALE_SEC = 45;
+    const frameStaleSec = (kind) => (kind === 'field' ? KEYFRAME_STALE_SEC : FRAME_STALE_SEC);
+    const PIP_WIDTH = 'min(40vw,440px)';
+    const PIP_WIDTH_WITH_PLOT = 'min(84vw,880px)';
+
+    // Rough display colour of light at a wavelength; ultraviolet and near infrared, which
+    // have none, are drawn violet-grey and dark red
+    function wavelengthColor(nm) {
+        if (nm < 380) return 'rgb(120,90,160)';
+        if (nm > 750) return 'rgb(130,40,40)';
+        let r = 0, g = 0, b = 0;
+        if (nm < 440) { r = (440 - nm) / 60; b = 1; }
+        else if (nm < 490) { g = (nm - 440) / 50; b = 1; }
+        else if (nm < 510) { g = 1; b = (510 - nm) / 20; }
+        else if (nm < 580) { r = (nm - 510) / 70; g = 1; }
+        else if (nm < 645) { r = 1; g = (645 - nm) / 65; }
+        else r = 1;
+        const dim = nm > 700 ? 0.45 + 0.55 * (750 - nm) / 50 : nm < 420 ? 0.45 + 0.55 * (nm - 380) / 40 : 1;
+        const c = (v) => Math.round(255 * Math.pow(v * dim, 0.8));
+        return `rgb(${c(r)},${c(g)},${c(b)})`;
+    }
+
+    function wrapText(g, text, maxWidth) {
+        const lines = [];
+        let line = '';
+        for (const word of text.split(' ')) {
+            const next = line ? `${line} ${word}` : word;
+            if (line && g.measureText(next).width > maxWidth) { lines.push(line); line = word; }
+            else line = next;
+        }
+        if (line) lines.push(line);
+        return lines;
+    }
+
+    // Absorption lines of sunlight and air that show in any daylight spectrum, and the
+    // bands the vehicle's ratios are taken from
+    const SPECTRUM_LINES = [[656.3, 'H\u03b1'], [687, 'O\u2082'], [720, 'H\u2082O'], [761, 'O\u2082']];
+    const SPECTRUM_BANDS = [[450, 480, 'blue'], [650, 680, 'red'], [780, 800, 'NIR']];
+    const SPECTRUM_INDICES = [['nir_red', 'NIR/red ', true], ['red_edge', 'red edge \u00d7'], ['blue_red', 'blue/red '],
+        ['o2a', 'O\u2082 band ']];
+
+    // The vehicle's "spectrum" product (/label/api/vehicles/product/) as an annotated plot:
+    // counts against wavelength up to the detector's full scale, clipped spans in red, the
+    // band ratios and the instrument's own notes underneath
+    function drawSpectrum(canvas, product, w, h) {
+        const d = product.data;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(w * dpr);
+        canvas.height = Math.round(h * dpr);
+        const g = canvas.getContext('2d');
+        g.setTransform(dpr, 0, 0, dpr, 0, 0);
+        g.fillStyle = '#0b0e14';
+        g.fillRect(0, 0, w, h);
+        g.textBaseline = 'top';
+        const n = d.counts.length, wlEnd = d.wl0 + d.dwl * n;
+
+        g.font = '600 11px sans-serif';
+        g.fillStyle = '#fff';
+        g.fillText('Spectrometer', 8, 6);
+        const titleEnd = 8 + g.measureText('Spectrometer').width;
+        const about = [`${Math.round(d.wl0)}\u2013${Math.round(wlEnd)} nm`];
+        if (Number.isFinite(d.integration_ms)) about.push(`${+d.integration_ms.toFixed(1)} ms`);
+        about.push('raw counts');
+        g.font = '10px sans-serif';
+        g.fillStyle = '#9aa4b2';
+        g.fillText(about.join(' \u00b7 '), titleEnd + 8, 7);
+
+        // The text under the plot is laid out first: the plot takes what is left
+        const lineH = 13, textW = w - 16;
+        const ratios = SPECTRUM_INDICES.filter(([k]) => Number.isFinite((d.indices || {})[k])).map(([k, label, signed]) => {
+            const v = Math.round(d.indices[k] * 100) / 100 + 0;  // + 0: a tiny negative is not "-0.00"
+            return label + (signed && v >= 0 ? '+' : '') + v.toFixed(2);
+        });
+        const maxLines = Math.max(2, Math.floor((h * 0.5 - 20) / lineH));
+        let notes = [];
+        for (const note of d.notes || []) {
+            const wrapped = wrapText(g, note, textW - 9);
+            wrapped.forEach((text, i) => notes.push({ text, first: i === 0 }));
+        }
+        if (notes.length > maxLines) {
+            notes = notes.slice(0, maxLines);
+            notes[maxLines - 1].text = notes[maxLines - 1].text.replace(/.{2}$/, '\u2026');
+        }
+        const textTop = h - 6 - notes.length * lineH - (ratios.length ? lineH + 3 : 0);
+        const x0 = 30, x1 = w - 8, y0 = 44, y1 = Math.max(y0 + 40, textTop - 18);
+        const X = (nm) => x0 + (nm - d.wl0) / (wlEnd - d.wl0) * (x1 - x0);
+        const Y = (c) => y1 - Math.min(1, Math.max(0, c / d.full_scale)) * (y1 - y0);
+
+        g.fillStyle = 'rgba(255,255,255,.07)';
+        for (const [lo, hi] of SPECTRUM_BANDS) g.fillRect(X(lo), y0, X(hi) - X(lo), y1 - y0);
+        const binW = (x1 - x0) / n;
+        d.counts.forEach((c, i) => {
+            g.fillStyle = wavelengthColor(d.wl0 + (i + 0.5) * d.dwl);
+            g.fillRect(x0 + i * binW, Y(c), binW + 0.5, y1 - Y(c));
+        });
+        g.beginPath();
+        d.counts.forEach((c, i) => (i ? g.lineTo(x0 + (i + 0.5) * binW, Y(c)) : g.moveTo(x0 + 0.5 * binW, Y(c))));
+        g.strokeStyle = 'rgba(255,255,255,.85)';
+        g.lineWidth = 1;
+        g.stroke();
+        for (const [lo, hi] of d.clipped || []) {
+            g.fillStyle = 'rgba(255,60,60,.22)';
+            g.fillRect(X(lo), y0, X(hi) - X(lo), y1 - y0);
+            g.fillStyle = '#ff4d4d';
+            g.fillRect(X(lo), y0, Math.max(1, X(hi) - X(lo)), 3);
+        }
+
+        g.font = '9px sans-serif';
+        g.textAlign = 'center';
+        g.setLineDash([2, 3]);
+        g.strokeStyle = 'rgba(255,255,255,.5)';
+        SPECTRUM_LINES.filter(([nm]) => nm > d.wl0 && nm < wlEnd).forEach(([nm, name], i) => {
+            const top = y0 - (i % 2 ? 12 : 22);  // neighbours are close: names alternate between two rows
+            g.beginPath();
+            g.moveTo(X(nm), top + 10);
+            g.lineTo(X(nm), y1);
+            g.stroke();
+            g.fillStyle = '#cfd6e0';
+            g.fillText(name, X(nm), top);
+        });
+        g.setLineDash([]);
+        g.fillStyle = 'rgba(255,255,255,.75)';
+        g.textBaseline = 'bottom';
+        for (const [lo, hi, name] of SPECTRUM_BANDS) if (lo > d.wl0 && hi < wlEnd) g.fillText(name, X((lo + hi) / 2), y1 - 2);
+        const widest = (d.clipped || []).reduce((a, s) => (!a || s[1] - s[0] > a[1] - a[0] ? s : a), null);
+        if (widest && X(widest[1]) - X(widest[0]) > 44) {
+            g.fillStyle = '#ff8080';
+            g.textBaseline = 'top';
+            g.fillText('clipped', X((widest[0] + widest[1]) / 2), y0 + 8);
+        }
+
+        g.fillStyle = '#9aa4b2';
+        g.textBaseline = 'top';
+        for (let nm = Math.ceil(d.wl0 / 100) * 100; nm <= wlEnd; nm += 100) g.fillText(String(nm), X(nm), y1 + 3);
+        g.textAlign = 'right';
+        g.textBaseline = 'middle';
+        g.fillText('full', x0 - 4, y0);
+        g.fillText('0', x0 - 4, y1);
+        g.strokeStyle = 'rgba(255,255,255,.35)';
+        g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+
+        g.textAlign = 'left';
+        g.textBaseline = 'top';
+        let y = textTop;
+        if (ratios.length) {
+            g.font = '600 10.5px sans-serif';
+            g.fillStyle = '#ffd166';
+            g.fillText(ratios.join('  \u00b7  '), 8, y, textW);
+            y += lineH + 3;
+        }
+        g.font = '10.5px sans-serif';
+        for (const { text, first } of notes) {
+            g.fillStyle = '#e6e9ee';
+            if (first) g.fillText('\u2022', 8, y);
+            g.fillText(text, 17, y, textW - 9);
+            y += lineH;
+        }
+    }
+
+    // The ring on the camera frame where the spectrometer and laser point. It is the size
+    // of the patch only when the vehicle knows its camera's field of view (frac_w).
+    function placeMark(mark, fp) {
+        const ok = fp && Number.isFinite(fp.u) && Number.isFinite(fp.v);
+        mark.style.display = ok ? 'block' : 'none';
+        if (!ok) return;
+        mark.style.left = `${fp.u * 100}%`;
+        mark.style.top = `${fp.v * 100}%`;
+        mark.style.width = Number.isFinite(fp.frac_w) ? `${Math.min(fp.frac_w, 1) * 100}%` : '18px';
+    }
+
+    function showSpectrum(f, p) {
+        const pip = f.pip;
+        const latest = p.products && p.products.spectrum;
+        if (!latest) {
+            if (pip.spectrumSeq !== null) {
+                pip.spectrum = pip.spectrumSeq = null;
+                pip.card.style.display = pip.mark.style.display = 'none';
+                pip.box.style.width = PIP_WIDTH;
+            }
+            return;
+        }
+        if (latest.seq !== pip.spectrumSeq) {
+            pip.spectrumSeq = latest.seq;
+            fetch(`/label/api/vehicles/${encodeURIComponent(p.id)}/product/spectrum.json?seq=${latest.seq}`,
+                { credentials: 'same-origin' })
+                .then(resp => (resp.ok ? resp.json() : null))
+                .then(product => {
+                    if (!product || f.pip !== pip) return;
+                    pip.spectrum = product;
+                    pip.drawn = '';
+                    pip.card.style.display = 'block';
+                    pip.box.style.width = PIP_WIDTH_WITH_PLOT;
+                    placeMark(pip.mark, product.data.footprint);
+                })
+                .catch(() => {});
+        }
+        if (!pip.spectrum) return;
+        const w = pip.card.clientWidth, h = pip.card.clientHeight;
+        const key = `${pip.spectrum.seq}:${w}x${h}`;
+        if (w && h && key !== pip.drawn) {
+            pip.drawn = key;
+            drawSpectrum(pip.plot, pip.spectrum, w, h);
+        }
+    }
 
     function showFrame(f, p) {
         if (f.pipClosed || !p.frame) return;
         if (!f.pip) {
             const box = document.createElement('div');
-            box.style.cssText = 'position:fixed;left:16px;bottom:70px;z-index:1000;width:min(40vw,440px);' +
+            box.style.cssText = `position:fixed;left:16px;bottom:70px;z-index:1000;width:${PIP_WIDTH};` +
                 'background:rgba(0,0,0,.8);border:1px solid rgba(255,255,255,.3);border-radius:6px;' +
                 'overflow:hidden;color:#fff;font:12px sans-serif;box-shadow:0 2px 12px rgba(0,0,0,.5)';
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:stretch';
+            const view = document.createElement('div');
+            view.style.cssText = 'position:relative;flex:1 1 0;min-width:0;overflow:hidden';
             const img = document.createElement('img');
             img.alt = `${vehicleName(p)} camera`;
             img.style.cssText = 'display:block;width:100%;height:auto;background:#111';
+            const mark = document.createElement('div');
+            mark.style.cssText = 'display:none;position:absolute;aspect-ratio:1;transform:translate(-50%,-50%);' +
+                'border:1.5px dashed #ffd166;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.55);pointer-events:none';
+            view.append(img, mark);
+            const card = document.createElement('div');
+            card.style.cssText = 'display:none;position:relative;flex:1 1 0;min-width:0;min-height:220px;' +
+                'border-left:1px solid rgba(255,255,255,.2)';
+            const plot = document.createElement('canvas');
+            plot.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%';
+            card.appendChild(plot);
+            row.append(view, card);
             const bar = document.createElement('div');
             bar.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 4px 3px 8px';
             const label = document.createElement('span');
@@ -2057,17 +2278,18 @@
             close.style.cssText = 'background:none;border:0;color:#fff;font-size:16px;line-height:1;cursor:pointer;padding:0 4px';
             close.addEventListener('click', () => { hideFrame(f); f.pipClosed = true; });
             bar.append(label, close);
-            box.append(img, bar);
+            box.append(row, bar);
             document.body.appendChild(box);
-            f.pip = { box, img, label, seq: null };
+            f.pip = { box, img, label, mark, card, plot, seq: null, spectrum: null, spectrumSeq: null, drawn: '' };
         }
         const { img, label } = f.pip;
         if (p.frame.seq !== f.pip.seq) {
             f.pip.seq = p.frame.seq;
             img.src = `/label/api/vehicles/${encodeURIComponent(p.id)}/frame.jpg?seq=${p.frame.seq}`;
         }
+        showSpectrum(f, p);
         const age = p.frame.age_sec;
-        const stale = age > FRAME_STALE_SEC;
+        const stale = age > frameStaleSec(p.kind);
         img.style.opacity = stale ? '0.45' : '1';
         label.textContent = `${vehicleName(p)} camera · ${stale ? `last frame ${Math.round(age)} s ago` : `${age.toFixed(1)} s old`}`;
     }
@@ -2075,7 +2297,7 @@
     // While riding a vehicle's camera, its own latest frame is the view to describe
     async function followedFrame() {
         const f = follow;
-        if (!f || f.view === 'chase' || !f.frame || f.frame.age_sec > FRAME_STALE_SEC) return null;
+        if (!f || f.view === 'chase' || !f.frame || f.frame.age_sec > frameStaleSec(f.kind)) return null;
         const resp = await fetch(`/label/api/vehicles/${encodeURIComponent(f.id)}/frame.jpg?seq=${f.frame.seq}`,
             { credentials: 'same-origin' });
         if (!resp.ok) return null;
@@ -2251,6 +2473,8 @@
                     if (view === 'camera' && Number.isFinite(p.hfov_deg) && f.fov != null) viewer.camera.frustum.fov = rad(p.hfov_deg);
                     showFrame(f, p);
                     f.frame = p.frame || null;
+                    f.kind = p.kind;
+                    f.name = vehicleName(p);
                     if (f.lost) out.msg('step', `${vehicleName(p)} is reporting again`);
                     f.lost = false;
                     viewer.scene.requestRender();
@@ -2589,11 +2813,13 @@
                 const onboard = await followedFrame().catch(() => null);
                 const image = onboard || await captureView();
                 const source = onboard ? 'vehicle_camera' : 'globe';
+                // the server adds what it holds for that vehicle: a field robot's instrument readings
+                const vehicle = onboard && follow ? follow.id : undefined;
                 const resp = await fetch(PILOT_DESCRIBE_URL, {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
-                    body: JSON.stringify({ image, body, source, view: await currentView(), question: a.question || '' }),
+                    body: JSON.stringify({ image, body, source, vehicle, view: await currentView(), question: a.question || '' }),
                 });
                 data = await resp.json().catch(() => ({}));
                 if (!resp.ok) throw new Error(data.error || `View analysis failed (HTTP ${resp.status})`);
@@ -2602,6 +2828,11 @@
             }
             check(id);
             const observations = data.observations || [];
+            const read = data.instruments || [];
+            if (read.length) {
+                const list = read.length > 1 ? `${read.slice(0, -1).join(', ')} and ${read[read.length - 1]}` : read[0];
+                out.msg('step', `Read from ${(follow && follow.name) || 'the robot'}: ${list}`);
+            }
             if (data.summary) out.msg('ai', data.summary);
             observations.forEach(o => out.msg('step', `• ${o}`));
             if (!data.summary && !observations.length) out.msg('step', 'Nothing to report in this view');

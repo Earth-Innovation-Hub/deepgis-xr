@@ -2,15 +2,16 @@ import json
 import os
 import shutil
 import tempfile
+import time
 from unittest import mock
 
 import numpy as np
 from django.contrib.auth import get_user_model
-from django.core.cache import cache
+from django.core.cache import cache, caches
 from django.test import Client, TestCase, override_settings
 from osgeo import gdal, osr
 
-from deepgis_xr.apps.web.views import pilot
+from deepgis_xr.apps.web.views import pilot, robots, vehicles
 
 URL = "/label/api/pilot/"
 MODELS_URL = "/label/api/pilot/models/"
@@ -716,6 +717,95 @@ class PilotDescribeTests(TestCase):
         with mock.patch.object(pilot.requests, "post", return_value=mcp_response(seen)):
             codes = [self.post({"image": PNG_URL}).status_code for _ in range(pilot.DESCRIBE_RATE_PER_MIN + 1)]
         self.assertEqual(codes[-2:], [200, 429])
+
+
+SPECTRUM = {
+    "wl0": 300.0, "dwl": 1.0, "counts": [100] * 574, "full_scale": 62434, "integration_ms": 500.0,
+    "clipped": [[526.0, 564.0]], "clipped_pct": 3.5, "indices": {"nir_red": 0.055, "red_edge": 1.944, "o2a": 0.478},
+    "laser": {"valid": 1.0, "range_m": 3.83, "min_m": 3.8, "max_m": 3.9},
+    "footprint": {"u": 0.5, "v": 0.4, "fov_deg": 25.0, "diameter_m": 1.7},
+    "notes": ["NIR/red index +0.06, a strong red-edge step: green vegetation fills much of the patch."],
+}
+
+
+@override_settings(
+    DEEPGIS_PILOT_MCP_TOKEN="test-token",
+    CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+            "live": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "describe-test"}},
+)
+class PilotDescribeRobotTests(TestCase):
+    """describe_view on a followed robot's own camera frame."""
+
+    def setUp(self):
+        cache.clear()
+        live = caches["live"]
+        live.clear()
+        t = time.time()
+        for vid, kind, name in (("santacruz", "field", "Santa Cruz"), ("badger", "sim", "Badger")):
+            live.set(f"vehicle:{vid}", {"id": vid, "lat": 33.42, "lon": -111.93, "kind": kind, "platform": "rover",
+                                        "name": name, "received": t}, 60)
+            live.set(f"frame_info:{vid}", {"seq": 3, "w": 640, "h": 480, "bytes": 1, "received": t - 12}, 60)
+        live.set(robots.IDS_KEY, ["badger", "santacruz"], None)
+        self.client = Client()
+        self.client.force_login(get_user_model().objects.create_user(username="pilot", password="pw"))
+
+    def describe(self, vehicle):
+        seen = {"summary": "A yard.", "observations": ["Grass in the centre."]}
+        with mock.patch.object(pilot.requests, "post", return_value=mcp_response(seen)) as post:
+            resp = self.client.post(DESCRIBE_URL, json.dumps({"image": PNG_URL, "source": "vehicle_camera",
+                                                              "vehicle": vehicle}), content_type="application/json")
+        self.assertEqual(resp.status_code, 200)
+        return resp.json(), post.call_args.kwargs["json"]["params"]["arguments"]
+
+    def test_a_field_robots_frame_is_read_with_its_instruments(self):
+        caches["live"].set("product:santacruz:spectrum", {
+            "product": "spectrum", "seq": 3, "received": time.time() - 12, "data": vehicles.clean_spectrum(SPECTRUM)}, 120)
+        out, args = self.describe("santacruz")
+        self.assertEqual(out["instruments"], ["camera", "spectrometer", "laser range"])
+        self.assertIn("real photograph from a camera on a field robot", args["system_prompt"])
+        self.assertNotIn("Gazebo", args["prompt"])
+        for text in ("real photograph from the onboard camera of Santa Cruz, a field ground rover",
+                     "300-874 nm",
+                     "50% from the left and 40% from the top",
+                     "a cone about 25 degrees wide: a patch about 1.7 m across at the laser's range",
+                     "Laser range to the surface at that point: 3.8 m.",
+                     "NIR/red index (780-800 against 650-680 nm, -1 to +1) = +0.06",
+                     "oxygen band at 761 nm relative to its shoulders (about 0.4 to 0.5 in daylight) = 0.48",
+                     "The instrument's own notes on this reading: NIR/red index +0.06, a strong red-edge step"):
+            self.assertIn(text, args["prompt"])
+        self.assertRegex(args["prompt"], r"it was taken about 1[2-5] s ago")  # the frame was set 12 s back in setUp
+        self.assertLess(args["prompt"].index("own notes"), args["prompt"].index("Its band ratios"))
+        self.assertEqual(pilot._ratio("nir_red", -0.004), pilot.SPECTRUM_INDEX_NAMES["nir_red"] + " = +0.00")
+
+    def test_a_field_robot_without_readings_is_still_a_photograph(self):
+        out, args = self.describe("santacruz")
+        self.assertEqual(out["instruments"], ["camera"])
+        self.assertIn("real photograph from the onboard camera of Santa Cruz", args["prompt"])
+        self.assertNotIn("spectrometer", args["prompt"])
+
+    def test_no_laser_return_and_clipped_bands_are_said(self):
+        data = vehicles.clean_spectrum({**SPECTRUM, "indices": {}, "laser": {"valid": 0.0}, "notes": []})
+        caches["live"].set("product:santacruz:spectrum", {"product": "spectrum", "seq": 1, "received": time.time(),
+                                                           "data": data}, 120)
+        out, args = self.describe("santacruz")
+        self.assertEqual(out["instruments"], ["camera", "spectrometer"])
+        self.assertIn("The laser ranger got no return", args["prompt"])
+        self.assertIn("No band ratios: the detector clipped", args["prompt"])
+        self.assertNotIn("a patch about", args["prompt"])
+
+    def test_sims_and_unknown_vehicles_keep_the_twin_prompt(self):
+        for vehicle in ("badger", "nobody", None, ["santacruz"]):
+            out, args = self.describe(vehicle)
+            self.assertEqual(out["instruments"], [])
+            self.assertIn("Gazebo digital twin", args["prompt"])
+            self.assertIn("3D globe of", args["system_prompt"])
+
+    def test_the_robots_line_says_which_robots_have_readings(self):
+        caches["live"].set("product:santacruz:spectrum", {
+            "product": "spectrum", "seq": 1, "received": time.time(), "data": vehicles.clean_spectrum(SPECTRUM)}, 120)
+        phrases = {r["id"]: pilot._robot_phrase(r) for r in robots.nearby()}
+        self.assertIn("camera feed, spectrometer and laser range readings", phrases["santacruz"])
+        self.assertNotIn("spectrometer", phrases["badger"])
 
 
 OCEAN_URL = "/label/api/pilot/ocean/"

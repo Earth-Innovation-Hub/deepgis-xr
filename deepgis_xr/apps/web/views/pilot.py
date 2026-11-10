@@ -270,7 +270,7 @@ Actions (all heights are metres ABOVE GROUND):
   - site_features: shapes mapped from those same lab surveys, drawn over the ground, with each shape's size and attributes shown when clicked (Bishop rock surface site: 222,657 rock outlines shaded by size; Phoenix wildfire site: features traced from the 2020-08, 2020-10, 2020-12 and 2021-02 surveys). Use it for "rock outlines", "rock polygons", "rock sizes", "segmented rocks", "vector features", "mapped features" or "vector layer" requests at those sites; use the site's name as the place, and set date as for site_imagery.
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
-- describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
+- describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view. While a robot is followed through its camera, it analyses that robot's own camera frame together with its instrument readings (spectrometer, laser range) when the Robots line says it has them, so it is also the action for "analyse the scene", "what is the spectrometer seeing" or "what is the rover looking at".
 - follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
@@ -319,6 +319,7 @@ Examples (actions only):
 - "what robots are nearby?" -> [] (reply names the robots in the Robots line, nearest first, with distance, direction and whether each is live)
 - "show me the boat" -> [{"type": "follow_vehicle", "vehicle": "otter", "view": "chase"}]
 - "follow the rover and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "badger", "view": "camera"}, {"type": "describe_view"}]
+- "analyse the scene around santacruz with its camera and spectrometer" -> [{"type": "follow_vehicle", "vehicle": "santacruz", "view": "camera"}, {"type": "describe_view"}]
 - "which robots are in the Locutus world?" -> [] (reply lists the Robots line entries whose site is that world)
 - "orbit the Locutus world" -> [{"type": "orbit", "place": "Locutus world"}] (a world or a robot as a place: write its name as place; DeepGIS puts it at its robots)
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
@@ -775,6 +776,8 @@ def _robot_phrase(r):
             state.append("stationary")
         if r.get("frame"):
             state.append("camera feed")
+        if (r.get("products") or {}).get("spectrum"):
+            state.append("spectrometer and laser range readings")
     else:
         state = [f"offline, last seen {_ago(r['last_seen_sec'])}" if "last_seen_sec" in r else "offline, never reported"]
     if "distance_m" in r:
@@ -1104,6 +1107,89 @@ def vision_prompt(body):
         earth_things=", and also water, vegetation, fields, roads, buildings and clouds" if earth else "")
 
 
+# A field robot's frame is a photograph, and it may come with instrument readings taken at
+# the same moment (views/vehicles.py products). The model gets them as text beside the image.
+ROBOT_VISION_PROMPT = """You are the eyes of the AI pilot in the DeepGIS viewer. The image is a real photograph from a camera on a field robot, taken moments ago. Describe only what is actually visible in it and what the instrument readings in the request support.
+- observations: 4 to 10 short sentences, each about one thing and where it is in the frame (left, centre, upper right, foreground, background). Cover the ground surface and whether a rover could drive over it, obstacles, vegetation, structures, people, vehicles, sky and lighting, and image problems such as glare, blur or overexposure.
+- If the request lists instrument readings, use one or two observations to relate them to the picture: say what lies in the patch the spectrometer looks at and at the laser's range, and whether the instrument's notes agree with what that part of the image shows (for example green plants in the patch and a red-edge step). If they disagree, say so. The band ratios are of raw counts, so their scale is that instrument's own: never judge them by NDVI or other reflectance thresholds (a ratio near zero does not mean bare ground); take what they mean from the instrument's notes. The spectrometer averages everything in a wide patch, so never attribute its reading to one small object, and never state a number the request does not give.
+- Say how sure you are when unsure. Do not invent names, sizes, species, materials or other facts you cannot see; name a place only if the location context lists it and it fits what you see.
+- summary: one or two sentences on the scene as a whole, answering the user's question if there is one."""
+SPECTRUM_INDEX_NAMES = {
+    "nir_red": "NIR/red index (780-800 against 650-680 nm, -1 to +1)",
+    "red_edge": "red-edge ratio (740-750 over 670-685 nm)",
+    "blue_red": "blue/red ratio (450-480 over 650-680 nm)",
+    "green_red": "green/red ratio (540-570 over 650-680 nm)",
+    "o2a": "oxygen band at 761 nm relative to its shoulders (about 0.4 to 0.5 in daylight)",
+}
+
+
+def _ratio(key, v):
+    v = round(v, 2) + 0.0  # so that a tiny negative is not printed as "-0.00"
+    return f"{SPECTRUM_INDEX_NAMES[key]} = {v:+.2f}" if key == "nir_red" else f"{SPECTRUM_INDEX_NAMES[key]} = {v:.2f}"
+
+
+def spectrum_lines(product):
+    """Prompt lines for a vehicle's spectrum product (robots.live_product), newest facts only."""
+    d = product["data"]
+    fp, laser, lines = d.get("footprint") or {}, d.get("laser") or {}, []
+    where = "the centre of the image"
+    if "u" in fp and "v" in fp:
+        where = f"a point {fp['u'] * 100:.0f}% from the left and {fp['v'] * 100:.0f}% from the top of the image"
+    text = (f"Instrument readings taken with this frame ({product['age_sec']:.0f} s ago). A point spectrometer "
+            f"({d['wl0']:.0f}-{d['wl0'] + d['dwl'] * len(d['counts']):.0f} nm, raw counts, not calibrated to "
+            f"reflectance) looks along the camera axis at about {where}. It has no fore-optic")
+    if "fov_deg" in fp:
+        text += f", so it averages everything within a cone about {fp['fov_deg']:.0f} degrees wide"
+    if "diameter_m" in fp and "range_m" in laser:
+        text += f": a patch about {fp['diameter_m']:.1f} m across at the laser's range"
+    if "frac_w" in fp:
+        text += f", about {min(fp['frac_w'], 1.0) * 100:.0f}% of the image width"
+    lines.append(text + ". The boresight is approximate.")
+    if "range_m" in laser:
+        text = f"Laser range to the surface at that point: {laser['range_m']:.1f} m"
+        if "min_m" in laser and "max_m" in laser and laser["max_m"] - laser["min_m"] > 0.1 * laser["range_m"]:
+            text += f" (between {laser['min_m']:.1f} and {laser['max_m']:.1f} m during the reading)"
+        lines.append(text + ".")
+    elif laser:
+        lines.append("The laser ranger got no return from that point (beyond its range, or open sky).")
+    if d["notes"]:
+        lines.append("The instrument's own notes on this reading: " + " ".join(d["notes"]))
+    ratios = [_ratio(k, d["indices"][k]) for k in robots.SPECTRUM_INDICES if k in d["indices"]]
+    if ratios:
+        lines.append("Its band ratios, of raw counts (the scale is this instrument's own, not that of NDVI or "
+                     "other reflectance indices; the notes say what they mean): " + "; ".join(ratios) + ".")
+    elif d.get("clipped_pct", 0) > 0:
+        lines.append("No band ratios: the detector clipped in the bands they need.")
+    return lines
+
+
+def field_robot_context(vid):
+    """(prompt lines, instruments read) for the camera frame of a live field robot;
+    ([], []) for anything else, including the simulated twins."""
+    if not isinstance(vid, str):
+        return [], []
+    try:
+        pose = next((p for p in robots.live_poses() if p["id"] == vid), None)
+        robot = robots.enrich(pose) if pose else None
+    except Exception:
+        return [], []
+    if not robot or robot.get("kind") != "field":
+        return [], []
+    what = PLATFORM_NAMES.get(robots.PLATFORM_ALIASES.get(robot.get("platform"), robot.get("platform")), "robot")
+    text = (f"This image is a real photograph from the onboard camera of {robot['name']}, a field {what}"
+            + (f" at {robot['site']}" if robot.get("site") else "") + ", not the globe and not a simulation")
+    if robot.get("frame"):
+        text += f"; it was taken about {robot['frame']['age_sec']:.0f} s ago"
+    lines, used = [text + ". Describe it as that camera's view."], ["camera"]
+    product = robots.live_product(vid, "spectrum")
+    if product:
+        lines += spectrum_lines(product)
+        used.append("spectrometer")
+        if "range_m" in (product["data"].get("laser") or {}):
+            used.append("laser range")
+    return lines, used
+
+
 def _image_b64(image):
     """Plain base64 of a JPEG or PNG data URL from the page; None if it is not one."""
     if not isinstance(image, str) or len(image) > MAX_IMAGE_CHARS:
@@ -1141,9 +1227,15 @@ def pilot_describe(request):
         return JsonResponse({"error": "Too many view analyses; wait a minute."}, status=429)
 
     lines = [_describe_view(data.get("view"))]
+    system, instruments = vision_prompt(body), []
     if data.get("source") == "vehicle_camera":
-        lines.append("This image is the followed vehicle's own onboard camera, a simulated camera in "
-                     "its Gazebo digital twin, not the globe: describe it as that camera's view.")
+        robot_lines, instruments = field_robot_context(data.get("vehicle"))
+        if robot_lines:
+            system = ROBOT_VISION_PROMPT
+            lines += robot_lines
+        else:
+            lines.append("This image is the followed vehicle's own onboard camera, a simulated camera in "
+                         "its Gazebo digital twin, not the globe: describe it as that camera's view.")
     if body == "earth" and lines[0]:
         lines.append(nearby_places(data.get("view")))
     question = data.get("question")
@@ -1154,7 +1246,7 @@ def pilot_describe(request):
     args = {
         "image": image,
         "prompt": "\n".join(ln for ln in lines if ln),
-        "system_prompt": vision_prompt(body),
+        "system_prompt": system,
         "json_schema": DESCRIBE_SCHEMA,
         "temperature": 0.2,
         "max_tokens": 900,
@@ -1174,6 +1266,7 @@ def pilot_describe(request):
     return JsonResponse({
         "summary": summary.strip()[:600],
         "observations": observations,
+        "instruments": instruments,
         "model": out.get("model", ""),
         "duration_sec": out.get("duration_sec"),
     })

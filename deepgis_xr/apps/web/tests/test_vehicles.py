@@ -13,6 +13,7 @@ from deepgis_xr.apps.web.views import vehicles
 POSE_URL = "/label/api/vehicles/pose/"
 LIVE_URL = "/label/api/vehicles/live/"
 FRAME_URL = "/label/api/vehicles/frame/"
+PRODUCT_URL = "/label/api/vehicles/product/"
 TOKEN = "twin-secret-token"
 OTHER = "boat-secret-token"
 
@@ -36,6 +37,16 @@ TWIN_POSE = {
     "ref": {"lat": 37.45934746, "lon": -118.44445906, "alt_amsl": 1401.72},
     "heading_deg": 154.6, "gimbal_pitch_deg": -90.0, "hfov_deg": 114.6, "speed_mps": 0.1,
     "armed": True, "landed": False,
+}
+
+SPECTRUM = {
+    "wl0": 300.0, "dwl": 1.0, "counts": [100 + i for i in range(40)], "full_scale": 62434, "baseline": 2066,
+    "integration_ms": 500.0, "clipped": [[526.0, 564.0]], "clipped_pct": 3.5, "peak_frac": 1.0,
+    "indices": {"nir_red": 0.055, "red_edge": 1.944},
+    "laser": {"n": 5, "valid": 1.0, "range_m": 3.83, "min_m": 3.8, "max_m": 3.9},
+    "footprint": {"u": 0.5, "v": 0.5, "fov_deg": 25.0, "diameter_m": 1.7},
+    "t_rel": [-0.2, 0.3],
+    "notes": ["NIR/red index +0.06, a strong red-edge step."],
 }
 
 
@@ -203,3 +214,69 @@ class VehiclePoseTests(TestCase):
         info = caches["live"].get("frame_info:locutus")
         self.assertNotIn("captured", info)
         self.assertNotIn("pose", info)
+
+    def post_product(self, payload, token=TOKEN):
+        headers = {"HTTP_AUTHORIZATION": f"Bearer {token}"} if token else {}
+        body = payload if isinstance(payload, (str, bytes)) else json.dumps(payload)
+        return self.client.post(PRODUCT_URL, body, content_type="application/json", **headers)
+
+    def test_products_need_the_vehicles_token_and_a_valid_reading(self):
+        good = {"vehicle": "locutus", "product": "spectrum", "data": SPECTRUM}
+        self.assertEqual(self.post_product(good, token=None).status_code, 401)
+        self.assertEqual(self.post_product(good, token="wrong").status_code, 401)
+        self.assertEqual(self.post_product(good, token=OTHER).status_code, 403)
+        bad = ["[1]", "{bad", {**good, "product": "lidar"}, {**good, "product": ["spectrum"]}, {**good, "data": [1, 2]},
+               {"vehicle": "locutus", "product": "spectrum"}]
+        bad += [{**good, "data": {**SPECTRUM, **change}} for change in (
+            {"counts": [1, 2]}, {"counts": [1] * (vehicles.SPECTRUM_MAX_BINS + 1)}, {"counts": ["1"] * 40},
+            {"counts": [float("nan")] * 40}, {"counts": [1e9] * 40}, {"full_scale": 0}, {"dwl": "1"}, {"wl0": None})]
+        for payload in bad:
+            self.assertEqual(self.post_product(payload).status_code, 400, payload)
+        big = {**good, "data": {**SPECTRUM, "notes": ["x" * vehicles.PRODUCT_MAX_BYTES]}}
+        self.assertEqual(self.post_product(big).status_code, 413)
+        with override_settings(VEHICLE_POSE_TOKENS=""):
+            self.assertEqual(self.post_product(good).status_code, 503)
+        self.assertEqual(self.client.get(PRODUCT_URL).status_code, 405)
+        self.assertEqual(self.post_product(good).json(), {"ok": True, "seq": 1})
+
+    @override_settings(VEHICLE_ENROLL_SECRET="enroll-secret", VEHICLE_POSE_TOKENS="")
+    def test_enrolled_field_robots_post_products(self):
+        key = vehicles.enroll_token("enroll-secret", "santacruz")
+        reading = {"vehicle": "santacruz", "product": "spectrum", "data": SPECTRUM}
+        self.assertEqual(self.post_product(reading, token=key).json(), {"ok": True, "seq": 1})
+        self.assertEqual(self.post_product({**reading, "vehicle": "boat9"}, token=key).status_code, 401)
+
+    def test_signed_in_viewers_get_the_latest_product(self):
+        self.assertEqual(self.post(TWIN_POSE).status_code, 200)
+        url = "/label/api/vehicles/locutus/product/spectrum.json"
+        self.assertEqual(self.client.get(url).status_code, 401)
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get(url).status_code, 404)
+        self.assertNotIn("products", self.client.get(LIVE_URL).json()["vehicles"][0])
+        self.assertEqual(self.post_product({"product": "spectrum", "data": SPECTRUM}).json(), {"ok": True, "seq": 1})
+        messy = {**SPECTRUM, "counts": [1.4, 2.6] * 20, "clipped": [[500, 510], [520, 505], [1], "x"],
+                 "clipped_pct": 140, "indices": {"nir_red": -0.4, "made_up": 1.0, "o2a": "deep"},
+                 "laser": {"range_m": -1, "valid": 0.0}, "footprint": {"u": 2, "v": 0.4, "fov_deg": 25},
+                 "t_rel": [1, 0], "notes": ["  two\n lines ", 7, "", "y" * 400] + ["more"] * 9, "extra": {"a": 1}}
+        with mock.patch.object(vehicles, "now", return_value=5000.0):
+            sent = self.post_product({"vehicle": "locutus", "product": "spectrum", "captured": 4999.5, "data": messy})
+            self.assertEqual(sent.json(), {"ok": True, "seq": 2})
+            got = self.client.get(url)
+        self.assertEqual(got.status_code, 200)
+        self.assertIn("no-store", got["Cache-Control"])
+        product = got.json()
+        self.assertEqual({k: product[k] for k in ("product", "seq", "age_sec", "captured")},
+                         {"product": "spectrum", "seq": 2, "age_sec": 0.0, "captured": 4999.5})
+        data = product["data"]
+        self.assertEqual(data["counts"], [1, 3] * 20)
+        self.assertEqual(data["clipped"], [[500.0, 510.0]])
+        self.assertEqual(data["indices"], {"nir_red": -0.4})
+        self.assertEqual(data["laser"], {"valid": 0.0})
+        self.assertEqual(data["footprint"], {"v": 0.4, "fov_deg": 25.0})
+        self.assertEqual(data["notes"], ["two lines", "y" * 300] + ["more"] * 4)
+        for dropped in ("clipped_pct", "t_rel", "extra"):
+            self.assertNotIn(dropped, data)
+        [pose] = self.client.get(LIVE_URL).json()["vehicles"]
+        self.assertEqual(pose["products"]["spectrum"]["seq"], 2)
+        self.assertEqual(self.client.get("/label/api/vehicles/locutus/product/lidar.json").status_code, 404)
+        self.assertEqual(self.client.get("/label/api/vehicles/BAD!/product/spectrum.json").status_code, 404)

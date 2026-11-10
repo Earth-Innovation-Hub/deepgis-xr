@@ -269,9 +269,28 @@ def mark_offline(ids):
         Vehicle.objects.filter(vehicle_id__in=list(ids), status="ACTIVE").update(status="INACTIVE")
 
 
+PRODUCT_KINDS = ("spectrum",)  # instrument products a vehicle may post (views/vehicles.py)
+SPECTRUM_INDICES = ("nir_red", "red_edge", "blue_red", "green_red", "o2a")
+
+
+def product_key(vid, kind):
+    return f"product:{vid}:{kind}"
+
+
+def live_product(vid, kind, t=None):
+    """A vehicle's latest product of this kind ({product, data, seq, age_sec, captured?}), or None."""
+    product = caches["live"].get(product_key(vid, kind)) if kind in PRODUCT_KINDS else None
+    if product is None:
+        return None
+    out = {k: v for k, v in product.items() if k != "received"}
+    out["age_sec"] = round(max(0.0, (time.time() if t is None else t) - product["received"]), 2)
+    return out
+
+
 def live_poses(t=None):
-    """Latest pose of every robot reporting now, with age_sec and its frame, freshest first.
-    t is the clock the poses' received times came from (default time.time())."""
+    """Latest pose of every robot reporting now, with age_sec, its frame and its instrument
+    products, freshest first. t is the clock the poses' received times came from (default
+    time.time())."""
     live = caches["live"]
     ids = live.get(IDS_KEY) or []
     found = live.get_many([f"vehicle:{vid}" for vid in ids])
@@ -283,6 +302,7 @@ def live_poses(t=None):
         except Exception:
             log.exception("could not mark robots offline")
     frames = live.get_many([f"frame_info:{p['id']}" for p in poses])
+    products = live.get_many([product_key(p["id"], k) for p in poses for k in PRODUCT_KINDS])
     t = time.time() if t is None else t
     out = []
     for pose in poses:
@@ -292,6 +312,10 @@ def live_poses(t=None):
         if info:
             pose["frame"] = {"seq": info["seq"], "w": info["w"], "h": info["h"],
                              "age_sec": round(max(0.0, t - info["received"]), 2)}
+        has = {k: products.get(product_key(pose["id"], k)) for k in PRODUCT_KINDS}
+        has = {k: {"seq": v["seq"], "age_sec": round(max(0.0, t - v["received"]), 2)} for k, v in has.items() if v}
+        if has:
+            pose["products"] = has
         out.append(pose)
     out.sort(key=lambda p: p["age_sec"])
     return out

@@ -74,6 +74,8 @@ urlpatterns = [
     path('label/api/vehicles/nearby/', views.vehicles_nearby, name='vehicles_nearby'),
     path('label/api/vehicles/frame/', views.vehicle_frame, name='vehicle_frame'),
     path('label/api/vehicles/<str:vid>/frame.jpg', views.vehicle_frame_image, name='vehicle_frame_image'),
+    path('label/api/vehicles/product/', views.vehicle_product, name='vehicle_product'),  # instrument readings posted beside the frames
+    path('label/api/vehicles/<str:vid>/product/<str:kind>.json', views.vehicle_product_json, name='vehicle_product_json'),
     # nginx auth_request target for the OpenUAV twin panel (views/twin_access.py)
     path('label/api/twin-access/', views.twin_access, name='twin_access'),
     # Unsloth Studio at llm.deepgis.org: superusers only (views/llm_access.py)
