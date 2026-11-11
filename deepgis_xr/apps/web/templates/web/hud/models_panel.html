@@ -7,7 +7,7 @@
         <div class="form-group mb-3">
             <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Model URL or Ion Asset ID:</label>
             <input type="text" class="form-control form-control-sm" id="modelUrl" 
-                   {% if hud_body == "earth" %}value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"{% endif %}
+                   {% if hud_body == "earth" %}value="https://deepgis.org/static/deepgis/models/gltf/navagunjara-reborn-digital-twin-propane-and-solar-v4.glb"{% elif hud_body == "moon" %}value="https://deepgis.org/static/deepgis/models/gltf/lunar_base.glb"{% endif %}
                    placeholder="Enter glTF/GLB URL or Cesium Ion Asset ID"
                    style="background: #374151; border: 1px solid #64748b; color: #f1f5f9; font-size: 0.8rem;">
             <small class="text-muted d-block mt-1 mb-2" style="font-size: 0.75rem;">
@@ -29,7 +29,16 @@
                         title="Classic glTF duck model">
                     Duck
                 </button>
+                <button type="button" class="btn btn-outline-secondary preset-model-btn flex-fill" 
+                        data-url="https://deepgis.org/static/deepgis/models/gltf/lunar_base.glb"
+                        title="9.6MB lunar base: domes, modules, tanks and a rover">
+                    Lunar base
+                </button>
             </div>
+            {# Credits the model licences ask for; hud/models.js shows the same text with the model #}
+            <small class="d-block mb-3" style="color: #94a3b8; font-size: 0.7rem;">
+                <span data-model-credit="lunar_base.glb">Lunar base: <a href="https://sketchfab.com/3d-models/lunar-base-a488c1c17eb149f5bae3121f16e24358" target="_blank" rel="noopener">"lunar base"</a> by <a href="https://sketchfab.com/popo57" target="_blank" rel="noopener">popo57</a>, <a href="http://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a></span>
+            </small>
         </div>
         <div class="form-group mb-3">
             <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Model Location:</label>
@@ -44,6 +53,11 @@
                 <option value="apollo15" data-lon="3.62981" data-lat="26.13224">Apollo 15 Landing Site</option>
                 <option value="apollo16" data-lon="15.50019" data-lat="-8.97301">Apollo 16 Landing Site</option>
                 <option value="apollo17" data-lon="30.77168" data-lat="20.19080">Apollo 17 Landing Site</option>
+                {# A site (hud/models.js): the model loads with the page on this spot, a flat shelf on the sunlit crest of Shackleton's rim #}
+                <option value="shackleton_base" data-lon="-156.2076" data-lat="-89.77438"
+                        data-site="shackleton-base" data-site-name="Shackleton base"
+                        data-model="https://deepgis.org/static/deepgis/models/gltf/lunar_base.glb"
+                        data-heading="0" data-view-heading="156">Shackleton Base (crater rim)</option>
                 {% endif %}
                 <option value="custom">Custom Coordinates</option>
             </select>

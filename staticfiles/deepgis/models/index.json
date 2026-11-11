@@ -10,6 +10,19 @@
                 "navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD1.glb",
                 "navagunjara-reborn-digital-twin-propane-and-solar-v4_LOD2.glb"
             ]
+        },
+        "lunar_base": {
+            "name": "Lunar base",
+            "description": "Domes, modules, tanks and a rover; stands on the rim of Shackleton crater in the Moon viewer",
+            "file": "lunar_base.glb",
+            "size": "9.6MB",
+            "format": "GLB",
+            "units": "metres",
+            "triangles": 322060,
+            "license": "CC-BY-4.0",
+            "license_file": "lunar_base.LICENSE.txt",
+            "attribution": "\"lunar base\" by popo57 (https://sketchfab.com/popo57), CC BY 4.0",
+            "source": "https://sketchfab.com/3d-models/lunar-base-a488c1c17eb149f5bae3121f16e24358"
         }
     },
     "endpoints": {
