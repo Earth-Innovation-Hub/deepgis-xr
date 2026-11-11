@@ -124,6 +124,8 @@
         lat: parseFloat(o.dataset.lat),
         heading: parseFloat(o.dataset.heading || '0'),
         viewHeading: parseFloat(o.dataset.viewHeading || '0'),
+        aliases: (o.dataset.aliases || '').split(',').map((s) => s.trim()).filter(Boolean),
+        radius_m: parseFloat(o.dataset.radiusM || '') || undefined,
     }));
     const siteLoads = new Map(); // site id -> promise of its loadedModels entry
 

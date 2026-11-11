@@ -286,6 +286,7 @@ Rules:
 - A question about what is visible or what the scene looks like is a describe_view request. Never describe the view yourself in reply; say you will take a look.
 - A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a robot is a follow_vehicle request; its reply only says which robot you will follow.
 - The Robots line lists the robots DeepGIS knows: id, name, platform, airframe and site, whether it is live, and its distance and direction from the point in view. Answer which robots exist, are live or are nearby, where one is, how far it is or what kind it is in reply from that line, nearest first, with no actions unless the user also asks to follow one. Use the robots' names in reply. Never invent a robot, a position or a distance that is not listed; if none is listed, say no robot is reporting.
+- The Models line, when present, lists the 3D models placed on the globe with their distance and direction from the point in view. Answer whether one is nearby, where it is or what it is called from that line with no actions unless the user also asks to fly there or orbit it; use the listed name as place. Never invent a model that is not listed.
 - If the request is any other question or not a flight request, answer it in reply and return no actions.
 - Never say in reply that you will show, fly, orbit, look at or move anything unless actions does it; a request repeated from earlier in the conversation gets its actions again.
 
@@ -357,13 +358,13 @@ Actions (all heights are metres ABOVE GROUND):
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
 {layer_actions}
 Rules:
-- place is the feature's official IAU name as in the Gazetteer of Planetary Nomenclature, without the body or feature type unless it is part of the name: "Tycho", "Mare Imbrium", "Olympus Mons", "Valles Marineris". On the Moon the Apollo landing sites are "Apollo 11" to "Apollo 17", and the lunar base (the moonbase) on the rim of Shackleton crater is "Shackleton base". Use lat/lon (planetocentric, east-positive degrees) only when the user gives coordinates.
+- place is the feature's official IAU name as in the Gazetteer of Planetary Nomenclature, without the body or feature type unless it is part of the name: "Tycho", "Mare Imbrium", "Olympus Mons", "Valles Marineris". On the Moon the Apollo landing sites are "Apollo 11" to "Apollo 17". A 3D model listed in the Models line is also a place: use its listed name (on the Moon the lunar base / moonbase is "Shackleton base"). Use lat/lon (planetocentric, east-positive degrees) only when the user gives coordinates.
 - This is orbital scale: features are kilometres to hundreds of kilometres across, so think in km (alt_m 50000 is 50 km). Omit alt_m and radius_m unless the user gives them; the viewer sizes them to the feature.
 - Only fill fields the user asked for or that clearly follow from the request; the viewer picks sensible defaults for the rest.
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the camera is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 {layer_rules}
-- The request starts with the camera's telemetry ("Current view"); answer where-are-we, how-high and which-way questions from it in reply with no actions.
+- The request starts with the camera's telemetry ("Current view") and, when the page has placed 3D models, a Models line naming each one with its distance and direction from the point in view. Answer whether a model (moonbase, lunar base, sculpture, ...) is nearby, where it is or what it is called from that line in reply with no actions, unless the user also asks to fly there or orbit it. Use the listed name as place for goto and orbit. Never invent a model that is not listed; if none is listed, say no 3D model is placed on this globe.
 - A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
 - If the request is any other question or not a flight request, answer it briefly in reply and return no actions; never invent feature facts you are unsure of.
 
@@ -373,6 +374,9 @@ Examples (actions only):
 - "go to 18.4 N 77.7 E and look at the horizon" -> [{{"type": "goto", "lat": 18.4, "lon": 77.7, "pitch_deg": 0}}]
 - "do a visual analysis of the viewport camera scene and list what you observe" -> [{{"type": "describe_view"}}]
 - "fly to Olympus Mons and describe what you see" -> [{{"type": "goto", "place": "Olympus Mons"}}, {{"type": "describe_view"}}]
+- "is there a moonbase nearby?" -> [] (reply names the listed model nearest the point in view, with distance and direction)
+- "orbit the moonbase" -> [{{"type": "orbit", "place": "Shackleton base"}}]
+- "fly to the lunar base" -> [{{"type": "goto", "place": "Shackleton base"}}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real spacecraft."""
 
 PLANET_LAYER_RULES = """- Use show_layer for any request to show, colour or map elevation, height, topography{slope_words}; "heat map" or "colormap" means elevation unless another kind is named. Set place as for goto, or omit place and lat/lon for "here" or "in view"; set radius_m only when the user gives a distance.
@@ -785,6 +789,70 @@ def _robot_phrase(r):
     return f"{text}: {', '.join(state)}"
 
 
+MAX_MODELS_IN_PROMPT = 12
+# Mean radii (m) for great-circle distances on each body; Earth matches robots._distance_m
+BODY_RADIUS_M = {
+    "earth": 6371008.8, "moon": 1737400.0, "mars": 3389500.0, "mercury": 2439700.0,
+    "venus": 6051800.0, "io": 1821600.0, "europa": 1560800.0, "ganymede": 2634100.0,
+    "callisto": 2410300.0, "titan": 2574700.0, "pluto": 1188300.0, "charon": 606000.0,
+}
+
+
+def _view_latlon(view):
+    """(lat, lon) of the point in view, or (None, None)."""
+    if not isinstance(view, dict):
+        return None, None
+    tgt = view.get("target") if isinstance(view.get("target"), dict) else {}
+    lat, lon = _view_num(tgt, "lat"), _view_num(tgt, "lon")
+    if lat is None or lon is None:
+        lat, lon = _view_num(view, "lat"), _view_num(view, "lon")
+    return lat, lon
+
+
+def models_context(view, models, body="earth"):
+    """One line listing the page's placed 3D models, nearest the point in view first.
+
+    models is what the page sends from DeepGISModels.sites: [{id, name, lat, lon, aliases?}].
+    Empty string when there are none. Distances use this body's mean radius."""
+    if not isinstance(models, list) or not models:
+        return ""
+    lat, lon = _view_latlon(view)
+    scale = BODY_RADIUS_M.get(body, BODY_RADIUS_M["earth"]) / BODY_RADIUS_M["earth"]
+    rows = []
+    for raw in models[:MAX_MODELS_IN_PROMPT * 2]:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name")
+        mlat, mlon = raw.get("lat"), raw.get("lon")
+        if not (isinstance(name, str) and name.strip() and isinstance(mlat, (int, float))
+                and isinstance(mlon, (int, float)) and math.isfinite(mlat) and math.isfinite(mlon)):
+            continue
+        if not (-90 <= mlat <= 90 and -180 <= mlon <= 180):
+            continue
+        aliases = [a.strip() for a in (raw.get("aliases") or []) if isinstance(a, str) and a.strip()][:8]
+        row = {"name": name.strip()[:80], "aliases": aliases}
+        if lat is not None and lon is not None:
+            d = robots._distance_m(lat, lon, float(mlat), float(mlon)) * scale
+            b = robots._bearing_deg(lat, lon, float(mlat), float(mlon))
+            row.update(distance_m=d, direction=COMPASS[round(b / 45) % 8])
+        rows.append(row)
+        if len(rows) >= MAX_MODELS_IN_PROMPT:
+            break
+    if not rows:
+        return ""
+    rows.sort(key=lambda r: r.get("distance_m", float("inf")))
+
+    def phrase(r):
+        also = f' (also called {", ".join(r["aliases"])})' if r["aliases"] else ""
+        where = (f', {_distance(r["distance_m"])} {r["direction"]} of the point in view'
+                 if "distance_m" in r else "")
+        return f'"{r["name"]}"{also}{where}'
+
+    return ("3D models on this globe: " + "; ".join(phrase(r) for r in rows)
+            + ". Answer whether one is nearby, where it is or what it is called from this list; "
+              "use the listed name as place for goto and orbit.")
+
+
 def robots_context(view):
     """One line listing the robots DeepGIS knows, nearest to the point in view first."""
     lat = lon = None
@@ -955,6 +1023,9 @@ def pilot_chat(request):
         context.append(nearby_places(data.get("view")))
     if body == "earth" and (ROBOT_RE.search(message) or robots.mentions_robot(message)):
         context.append(robots_context(data.get("view")))
+    models_line = models_context(data.get("view"), data.get("models"), body)
+    if models_line:
+        context.append(models_line)
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     control = control_robots(request.user) if body == "earth" else {}

@@ -73,4 +73,37 @@ class LunarBaseTests(TestCase):
         self.assertIn("popo57", entry["attribution"])
 
     def test_the_pilot_can_name_the_base(self):
-        self.assertIn('"Shackleton base"', pilot.planet_prompt("moon"))
+        prompt = pilot.planet_prompt("moon")
+        self.assertIn('"Shackleton base"', prompt)
+
+    def test_moonbase_aliases_are_on_the_site(self):
+        html = self.page("/label/3d/moon/")
+        site = site_option(html)
+        aliases = {a.strip() for a in site["aliases"].split(",")}
+        for a in ("moonbase", "moon base", "lunar base", "the moonbase"):
+            self.assertIn(a, aliases)
+        self.assertEqual(site["radius-m"], "100")
+
+    def test_the_pilot_treats_models_as_queryable_places(self):
+        prompt = pilot.planet_prompt("moon")
+        self.assertIn("Models line", prompt)
+        self.assertIn('"orbit the moonbase"', prompt)
+        self.assertIn('"is there a moonbase nearby?"', prompt)
+        self.assertIn('{"type": "orbit", "place": "Shackleton base"}', prompt)
+
+    def test_models_context_names_the_nearest_base(self):
+        models = [{"id": "shackleton-base", "name": "Shackleton base",
+                   "lat": -89.77438, "lon": -156.2076,
+                   "aliases": ["moonbase", "lunar base"]}]
+        # Standing on the rim next to the base
+        line = pilot.models_context({"lat": -89.7744, "lon": -156.21}, models, "moon")
+        self.assertIn('"Shackleton base"', line)
+        self.assertIn("also called moonbase, lunar base", line)
+        self.assertRegex(line, r"\d+ m [A-Z]+ of the point in view")  # metres, not Earth-scaled thousands of km
+        self.assertTrue(line.startswith("3D models on this globe:"))
+        # From the equator the base is ~ halfway to the pole on the Moon (~2700 km), not Earth-scaled
+        far = pilot.models_context({"lat": 0, "lon": -156.21}, models, "moon")
+        self.assertRegex(far, r"2\.\d+ km S")
+        self.assertEqual(pilot.models_context({"lat": 0, "lon": 0}, [], "moon"), "")
+        self.assertEqual(pilot.models_context({"lat": 0, "lon": 0}, None, "moon"), "")
+

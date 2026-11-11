@@ -163,23 +163,38 @@
     // Off Earth, places come from the IAU gazetteer ([name, lat, lon, diameter_km,
     // type] rows, largest first) plus the page's preset sites (#modelLocation)
     let gazetteer = null;
+    // "moon base" and "moonbase" are the same word; drop filler so "the lunar base" matches
     const normName = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+        .replace(/\bmoon\s*base\b/g, 'moonbase')
         .replace(/\b(the|crater|landing site|site)\b/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
 
     async function loadGazetteer() {
         if (gazetteer) return gazetteer;
         const rows = [];
-        document.querySelectorAll('#modelLocation option[data-lat]').forEach(o => {
-            rows.push([o.textContent.trim(), +o.dataset.lat, +o.dataset.lon, 0, 'Preset site']);
+        // One row per name that should resolve to a place; label is always the canonical name
+        const add = (matchName, label, lat, lon, km, type) => {
+            const key = normName(matchName);
+            if (key) rows.push({ key, f: [label, lat, lon, km, type] });
+        };
+        // 3D model sites first so their aliases win over a coincidental IAU name
+        document.querySelectorAll('#modelLocation option[data-model][data-lat]').forEach((o) => {
+            const label = (o.dataset.siteName || o.textContent).trim();
+            const km = o.dataset.radiusM ? +o.dataset.radiusM / 1000 : 0;
+            add(label, label, +o.dataset.lat, +o.dataset.lon, km, '3D model');
+            (o.dataset.aliases || '').split(',').forEach((a) => add(a.trim(), label, +o.dataset.lat, +o.dataset.lon, km, '3D model'));
+        });
+        document.querySelectorAll('#modelLocation option[data-lat]:not([data-model])').forEach((o) => {
+            const label = o.textContent.trim();
+            add(label, label, +o.dataset.lat, +o.dataset.lon, 0, 'Preset site');
         });
         const url = config.gazetteerUrl;
         if (url) {
             try {
                 const r = await fetch(url);
-                if (r.ok) rows.push(...(await r.json()).features);
+                if (r.ok) (await r.json()).features.forEach((f) => add(f[0], f[0], f[1], f[2], f[3], f[4]));
             } catch (e) { console.warn('Gazetteer unavailable:', e); }
         }
-        gazetteer = rows.map(f => ({ key: normName(f[0]), f }));
+        gazetteer = rows;
         return gazetteer;
     }
 
@@ -204,7 +219,7 @@
         }
         if (a.place && !isEarth) {
             const hit = await gazetteerPlace(a.place);
-            if (!hit) throw new Error(`No IAU-named feature "${a.place}" on ${body}`);
+            if (!hit) throw new Error(`No named feature or 3D model "${a.place}" on ${body}`);
             return hit;
         }
         if (a.place) {
@@ -2079,8 +2094,6 @@
     const SPECTRUM_INDICES = [['nir_red', 'NIR/red ', true], ['red_edge', 'red edge \u00d7'], ['blue_red', 'blue/red '],
         ['o2a', 'O\u2082 band ']];
 
-    // The vehicle's "spectrum" product (/label/api/vehicles/product/) as an annotated plot:
-    // counts against wavelength up to the detector's full scale, clipped spans in red, the
     // band ratios and the instrument's own notes underneath
     function drawSpectrum(canvas, product, w, h) {
         const d = product.data;

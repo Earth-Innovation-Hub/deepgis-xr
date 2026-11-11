@@ -219,6 +219,11 @@
                 body: JSON.stringify({
                     message, history, body, view: await hud.currentView(),
                     model: modelSelect?.value || '',
+                    // Placed 3D models on this page (DeepGISModels.sites); the server turns them into a Models line
+                    models: (window.DeepGISModels?.sites || []).map((s) => ({
+                        id: s.id, name: s.name, lat: s.lat, lon: s.lon,
+                        aliases: s.aliases || [], radius_m: s.radius_m,
+                    })),
                 }),
             });
             const data = await resp.json().catch(() => ({}));
