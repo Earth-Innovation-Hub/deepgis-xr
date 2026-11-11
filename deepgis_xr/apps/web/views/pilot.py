@@ -44,7 +44,7 @@ from django.views.decorators.http import require_GET, require_POST
 from . import robots
 
 ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
-                "show_layer", "hide_layer", "describe_view", "follow_vehicle")
+                "show_layer", "hide_layer", "place_model", "describe_view", "follow_vehicle")
 # Vehicles report positions on Earth only
 EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
 FOLLOW_VIEWS = ("camera", "chase")
@@ -108,6 +108,7 @@ PILOT_SCHEMA = {
                 # the model reliably fills in the place for a layer
                 "properties": {
                     "type": {"enum": list(ACTION_TYPES)},
+                    "model": {"type": "string"},
                     "kind": {"enum": list(LAYER_KINDS)},
                     "place": {"type": "string"},
                     "colormap": {"enum": list(COLORMAPS)},
@@ -270,6 +271,7 @@ Actions (all heights are metres ABOVE GROUND):
   - site_features: shapes mapped from those same lab surveys, drawn over the ground, with each shape's size and attributes shown when clicked (Bishop rock surface site: 222,657 rock outlines shaded by size; Phoenix wildfire site: features traced from the 2020-08, 2020-10, 2020-12 and 2021-02 surveys). Use it for "rock outlines", "rock polygons", "rock sizes", "segmented rocks", "vector features", "mapped features" or "vector layer" requests at those sites; use the site's name as the place, and set date as for site_imagery.
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
+- place_model: stand a 3D model from the catalog on the globe. Fields: model (a name from the "3D models you can place" line, e.g. "Lunar base" or "moonbase"); place or lat+lon for where it should stand. Put place_model before a goto or orbit of the same place. Do not invent a model that is not listed.
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view. While a robot is followed through its camera, it analyses that robot's own camera frame together with its instrument readings (spectrometer, laser range) when the Robots line says it has them, so it is also the action for "analyse the scene", "what is the spectrometer seeing" or "what is the rover looking at".
 - follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
@@ -280,6 +282,7 @@ Rules:
 - To climb or descend where the drone is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 - Use one show_layer per kind asked for ("trails, springs and mines" is three). Convert distances to radius_m in metres ("within 20 km" is 20000); distance_km is only for river.
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
+- Put place_model before a goto or orbit of the same place. model must be a name from the "3D models you can place" line.
 - While the drone is orbiting or following (Current view says so), a request only to show or hide layers or to look at the view returns only show_layer, hide_layer or describe_view, with no orbit, goto or stop: the drone keeps flying. Leave place out when the user means the area being orbited.
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - The request starts with the drone's telemetry ("Current view") and, for questions about the surroundings, the places OpenStreetMap names around the point in view. Answer where-and-which questions from them in reply with no actions ("what dam are we looking at?", "where are we?", "what lake is that?", "how high are we?", "which way are we facing?"): name the best match nearest the point in view, say it is from the map and the drone's position, and give height, heading or distance from the telemetry when asked. Never name a place that is not listed; if none fits, say so and use describe_view.
@@ -313,6 +316,7 @@ Examples (actions only):
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
 - "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
 - "fly to Hayden Butte and tell me what you see" -> [{"type": "goto", "place": "Hayden Butte, Tempe, Arizona"}, {"type": "describe_view"}]
+- "go to Meteor Crater and load the moonbase 3D model there" -> [{"type": "place_model", "model": "Lunar base", "place": "Meteor Crater, Arizona"}, {"type": "goto", "place": "Meteor Crater, Arizona"}]
 - "sync the view with the OpenUAV sim camera" -> [{"type": "follow_vehicle", "view": "camera"}]
 - "chase kestrel" -> [{"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}]
 - "follow the multirotor and tell me what its camera sees" -> [{"type": "follow_vehicle", "vehicle": "kestrel", "view": "camera"}, {"type": "describe_view"}]
@@ -355,6 +359,7 @@ Actions (all heights are metres ABOVE GROUND):
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
 - stop: stop all motion immediately.
 - wait: hover for seconds.
+- place_model: stand a 3D model from the catalog on the globe. Fields: model (a name from the "3D models you can place" line, e.g. "Lunar base" or "moonbase"); place or lat+lon for where it should stand. Put place_model before a goto or orbit of the same place. Do not invent a model that is not listed.
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
 {layer_actions}
 Rules:
@@ -364,7 +369,7 @@ Rules:
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the camera is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
 {layer_rules}
-- The request starts with the camera's telemetry ("Current view") and, when the page has placed 3D models, a Models line naming each one with its distance and direction from the point in view. Answer whether a model (moonbase, lunar base, sculpture, ...) is nearby, where it is or what it is called from that line in reply with no actions, unless the user also asks to fly there or orbit it. Use the listed name as place for goto and orbit. Never invent a model that is not listed; if none is listed, say no 3D model is placed on this globe.
+- The request starts with the camera's telemetry ("Current view") and, when the page has placed 3D models, a Models line naming each one with its distance and direction from the point in view. Answer whether a model (moonbase, lunar base, sculpture, ...) is nearby, where it is or what it is called from that line in reply with no actions, unless the user also asks to fly there or orbit it. Use the listed name as place for goto and orbit. A separate "3D models you can place" line lists the catalog; use place_model to stand one at a named feature (e.g. load the moonbase at Tycho). Never invent a model that is not in that catalog; if none is placed yet, say so.
 - A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
 - If the request is any other question or not a flight request, answer it briefly in reply and return no actions; never invent feature facts you are unsure of.
 
@@ -377,6 +382,7 @@ Examples (actions only):
 - "is there a moonbase nearby?" -> [] (reply names the listed model nearest the point in view, with distance and direction)
 - "orbit the moonbase" -> [{{"type": "orbit", "place": "Shackleton base"}}]
 - "fly to the lunar base" -> [{{"type": "goto", "place": "Shackleton base"}}]
+- "go to Tycho and load the moonbase 3D model there" -> [{{"type": "place_model", "model": "Lunar base", "place": "Tycho"}}, {{"type": "goto", "place": "Tycho"}}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real spacecraft."""
 
 PLANET_LAYER_RULES = """- Use show_layer for any request to show, colour or map elevation, height, topography{slope_words}; "heat map" or "colormap" means elevation unless another kind is named. Set place as for goto, or omit place and lat/lon for "here" or "in view"; set radius_m only when the user gives a distance.
@@ -537,14 +543,26 @@ def clean_actions(raw, body="earth", control=None):
                 act.setdefault("radius_m", _num(km * 1000, "radius_m", lim))
         else:
             act.pop("distance_km", None)
+        if act["type"] == "place_model":
+            hit = resolve_model(a.get("model"))
+            if not hit or ("place" not in act and "lat" not in act):
+                continue
+            act["model"] = hit["name"]  # canonical catalog name for the client
         fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
                   else ("type",) if act["type"] == "describe_view" else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
+                  else ("type", "model", "place", "lat", "lon", "heading_deg") if act["type"] == "place_model"
                   else FIELD_ORDER)
         act = {k: act[k] for k in FIELD_ORDER if k in act and k in fields}
         if act["type"] == "show_layer":
             # An orbit runs until its laps end; draw the layer before it, not after
             i = len(out)
             while i and out[i - 1]["type"] == "orbit":
+                i -= 1
+            out.insert(i, act)
+        elif act["type"] == "place_model":
+            # Load the model before flying there so it is standing when the camera arrives
+            i = len(out)
+            while i and out[i - 1]["type"] in ("orbit", "goto"):
                 i -= 1
             out.insert(i, act)
         else:
@@ -809,6 +827,58 @@ def _view_latlon(view):
     return lat, lon
 
 
+
+# 3D models the page can place anywhere (hud/models.js CATALOG). id is what clean_actions keeps.
+MODEL_CATALOG = (
+    {
+        "id": "lunar_base",
+        "name": "Lunar base",
+        "aliases": ("moonbase", "moon base", "lunar base", "the moonbase", "the lunar base",
+                    "lunar_base", "moonbase 3d model", "lunar base 3d model"),
+    },
+    {
+        "id": "navagunjara",
+        "name": "Navagunjara",
+        "aliases": ("navagunjara", "sculpture", "navagunjara sculpture"),
+    },
+)
+
+
+def _norm_model(s):
+    s = re.sub(r"\bmoon\s*base\b", "moonbase", s.lower())
+    s = re.sub(r"\b(the|a|an|3d|model|glb|gltf)\b", " ", s)
+    return re.sub(r"[^a-z0-9]+", " ", s).strip()
+
+
+def resolve_model(query):
+    """Match a user's model name to MODEL_CATALOG, or None."""
+    if not isinstance(query, str) or not query.strip():
+        return None
+    q = _norm_model(query)
+    if not q:
+        return None
+    for m in MODEL_CATALOG:
+        names = (m["id"], m["name"], *m["aliases"])
+        if any(_norm_model(n) == q for n in names):
+            return m
+    for m in MODEL_CATALOG:
+        names = (m["id"], m["name"], *m["aliases"])
+        if any(q in _norm_model(n) or _norm_model(n) in q for n in names if _norm_model(n)):
+            return m
+    return None
+
+
+def available_models_line():
+    """One line listing catalog models the pilot may place with place_model."""
+    bits = []
+    for m in MODEL_CATALOG:
+        also = f' (also called {", ".join(m["aliases"][:4])})' if m["aliases"] else ""
+        bits.append(f'"{m["name"]}"{also}')
+    return ("3D models you can place on this globe: " + "; ".join(bits)
+            + '. To put one somewhere, use place_model with model set to its name (e.g. "Lunar base" or '
+              '"moonbase") and place or lat/lon for where it should stand.')
+
+
 def models_context(view, models, body="earth"):
     """One line listing the page's placed 3D models, nearest the point in view first.
 
@@ -1026,6 +1096,7 @@ def pilot_chat(request):
     models_line = models_context(data.get("view"), data.get("models"), body)
     if models_line:
         context.append(models_line)
+    context.append(available_models_line())
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     control = control_robots(request.user) if body == "earth" else {}

@@ -107,3 +107,34 @@ class LunarBaseTests(TestCase):
         self.assertEqual(pilot.models_context({"lat": 0, "lon": 0}, [], "moon"), "")
         self.assertEqual(pilot.models_context({"lat": 0, "lon": 0}, None, "moon"), "")
 
+
+    def test_place_model_is_in_the_planet_schema(self):
+        schema = pilot.PLANET_LAYER_SCHEMAS["moon"]
+        types = schema["properties"]["actions"]["items"]["properties"]["type"]["enum"]
+        self.assertIn("place_model", types)
+        self.assertIn("model", schema["properties"]["actions"]["items"]["properties"])
+
+    def test_available_models_line_names_the_lunar_base(self):
+        line = pilot.available_models_line()
+        self.assertIn('"Lunar base"', line)
+        self.assertIn("moonbase", line)
+        self.assertIn("place_model", line)
+
+    def test_clean_actions_keeps_place_model(self):
+        out = pilot.clean_actions([
+            {"type": "goto", "place": "Tycho"},
+            {"type": "place_model", "model": "moonbase", "place": "Tycho"},
+        ], body="moon")
+        self.assertEqual([a["type"] for a in out], ["place_model", "goto"])
+        self.assertEqual(out[0]["model"], "Lunar base")
+        self.assertEqual(out[0]["place"], "Tycho")
+
+    def test_resolve_model_aliases(self):
+        self.assertEqual(pilot.resolve_model("the moonbase")["id"], "lunar_base")
+        self.assertEqual(pilot.resolve_model("Lunar base 3D model")["id"], "lunar_base")
+        self.assertIsNone(pilot.resolve_model("death star"))
+
+    def test_the_pilot_prompt_teaches_placing_a_model(self):
+        prompt = pilot.planet_prompt("moon")
+        self.assertIn("place_model", prompt)
+        self.assertIn("go to Tycho and load the moonbase 3D model there", prompt)

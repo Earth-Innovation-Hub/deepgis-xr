@@ -163,6 +163,7 @@
     // Off Earth, places come from the IAU gazetteer ([name, lat, lon, diameter_km,
     // type] rows, largest first) plus the page's preset sites (#modelLocation)
     let gazetteer = null;
+    function invalidateGazetteer() { gazetteer = null; }
     // "moon base" and "moonbase" are the same word; drop filler so "the lunar base" matches
     const normName = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
         .replace(/\bmoon\s*base\b/g, 'moonbase')
@@ -177,12 +178,24 @@
             if (key) rows.push({ key, f: [label, lat, lon, km, type] });
         };
         // 3D model sites first so their aliases win over a coincidental IAU name
-        document.querySelectorAll('#modelLocation option[data-model][data-lat]').forEach((o) => {
-            const label = (o.dataset.siteName || o.textContent).trim();
-            const km = o.dataset.radiusM ? +o.dataset.radiusM / 1000 : 0;
-            add(label, label, +o.dataset.lat, +o.dataset.lon, km, '3D model');
-            (o.dataset.aliases || '').split(',').forEach((a) => add(a.trim(), label, +o.dataset.lat, +o.dataset.lon, km, '3D model'));
-        });
+        // Prefer DeepGISModels.sites (includes models the pilot placed this session)
+        const modelSites = (window.DeepGISModels && window.DeepGISModels.sites) || [];
+        if (modelSites.length) {
+            modelSites.forEach((s) => {
+                if (!Number.isFinite(s.lat) || !Number.isFinite(s.lon)) return;
+                const label = s.name || s.id;
+                const km = s.radius_m ? s.radius_m / 1000 : 0;
+                add(label, label, s.lat, s.lon, km, '3D model');
+                (s.aliases || []).forEach((a) => add(a, label, s.lat, s.lon, km, '3D model'));
+            });
+        } else {
+            document.querySelectorAll('#modelLocation option[data-model][data-lat]').forEach((o) => {
+                const label = (o.dataset.siteName || o.textContent).trim();
+                const km = o.dataset.radiusM ? +o.dataset.radiusM / 1000 : 0;
+                add(label, label, +o.dataset.lat, +o.dataset.lon, km, '3D model');
+                (o.dataset.aliases || '').split(',').forEach((a) => add(a.trim(), label, +o.dataset.lat, +o.dataset.lon, km, '3D model'));
+            });
+        }
         document.querySelectorAll('#modelLocation option[data-lat]:not([data-model])').forEach((o) => {
             const label = o.textContent.trim();
             add(label, label, +o.dataset.lat, +o.dataset.lon, 0, 'Preset site');
@@ -212,10 +225,36 @@
     }
 
     // -> {lon, lat (radians), sizeM (place extent or null), label}
+    function modelSitePlace(name) {
+        const q = normName(name);
+        if (!q) return null;
+        const list = (window.DeepGISModels && window.DeepGISModels.sites) || [];
+        for (const s of list) {
+            if (!Number.isFinite(s.lat) || !Number.isFinite(s.lon)) continue;
+            const names = [s.name, s.id, ...(s.aliases || [])];
+            const hit = names.find((n) => {
+                const k = normName(n);
+                return k && (k === q || k.startsWith(q + ' ') || q.startsWith(k + ' ') || k.includes(q));
+            });
+            if (hit) {
+                return {
+                    lon: Cesium.Math.toRadians(s.lon), lat: Cesium.Math.toRadians(s.lat),
+                    sizeM: s.radius_m || null,
+                    label: `${s.name || hit} (3D model)`,
+                };
+            }
+        }
+        return null;
+    }
+
     async function resolvePoint(a) {
         if (Number.isFinite(a.lat) && Number.isFinite(a.lon)) {
             return { lon: Cesium.Math.toRadians(a.lon), lat: Cesium.Math.toRadians(a.lat), sizeM: null,
                      label: `${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}` };
+        }
+        if (a.place) {
+            const modelHit = modelSitePlace(a.place);
+            if (modelHit) return modelHit;
         }
         if (a.place && !isEarth) {
             const hit = await gazetteerPlace(a.place);
@@ -2711,6 +2750,27 @@
             await until(() => Date.now() >= end, id);
         },
 
+        async place_model(a, id, out) {
+            const api = window.DeepGISModels;
+            if (!api || typeof api.placeAt !== 'function') {
+                throw new Error('3D models are not available on this page');
+            }
+            const cat = api.resolveCatalog(a.model);
+            if (!cat) throw new Error(`No 3D model named "${a.model}" in the catalog`);
+            const p = await resolvePoint(a);
+            check(id);
+            const lon = Cesium.Math.toDegrees(p.lon), lat = Cesium.Math.toDegrees(p.lat);
+            out.msg('step', `Loading ${cat.name} at ${p.label}`);
+            const result = await api.placeAt(a.model, lon, lat, {
+                heading: Number.isFinite(a.heading_deg) ? a.heading_deg : 0,
+                name: cat.name,
+                frame: !!a.frame,
+            });
+            invalidateGazetteer();
+            check(id);
+            out.msg('step', `Placed ${result.catalog.name} at ${p.label}`);
+        },
+
         async show_layer(a, id, out) {
             const spec = layerSpecs()[a.kind];
             if (!spec) throw new Error(`No "${a.kind}" layer on ${body}`);
@@ -2884,7 +2944,7 @@
         // An orbit flies to its own start point; a goto to the same place first is a detour
         actions = actions.filter((a, i) => {
             if (a.type !== 'goto') return true;
-            const next = actions.slice(i + 1).find(b => b.type !== 'show_layer');
+            const next = actions.slice(i + 1).find(b => b.type !== 'show_layer' && b.type !== 'place_model');
             return !(next && next.type === 'orbit' && samePlace(a, next));
         });
         const passive = actions.every(a => PASSIVE_TYPES.has(a.type));
@@ -2901,9 +2961,13 @@
                 check(id);
                 // Frame the area unless a later step moves the camera anyway or the drone is
                 // busy flying; off Earth a layer for the area in view (sized from the camera) stays put
+                const laterFlight = actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit');
                 if (a.type === 'show_layer') {
-                    a.frame = a.frame !== false && !keepMoving && !actions.slice(i + 1).some(b => b.type === 'goto' || b.type === 'orbit') &&
+                    a.frame = a.frame !== false && !keepMoving && !laterFlight &&
                         (isEarth || !!a.place || Number.isFinite(a.lat));
+                }
+                if (a.type === 'place_model') {
+                    a.frame = a.frame !== false && !keepMoving && !laterFlight;
                 }
                 await runners[a.type](a, id, out);
             }

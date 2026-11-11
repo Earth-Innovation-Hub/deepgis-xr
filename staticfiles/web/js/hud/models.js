@@ -193,7 +193,97 @@
         });
     }
 
-    window.DeepGISModels = { sites, loadSite, flyToSite };
+    // Catalog of glTF/GLB models the AI pilot (and the Models panel) can place anywhere
+    const MODEL_BASE = 'https://deepgis.org/static/deepgis/models/gltf/';
+    const CATALOG = [
+        {
+            id: 'lunar_base', name: 'Lunar base',
+            url: MODEL_BASE + 'lunar_base.glb',
+            aliases: ['moonbase', 'moon base', 'lunar base', 'the moonbase', 'the lunar base',
+                      'lunar_base', 'moonbase 3d model', 'lunar base 3d model'],
+        },
+        {
+            id: 'navagunjara', name: 'Navagunjara',
+            url: MODEL_BASE + 'navagunjara-reborn-digital-twin-propane-and-solar-v4.glb',
+            aliases: ['navagunjara', 'sculpture', 'navagunjara sculpture'],
+        },
+    ];
+    const placedSites = []; // models the pilot (or user) dropped at a spot this session
+    let placedSeq = 0;
+
+    function normModel(s) {
+        return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+            .replace(/\bmoon\s*base\b/g, 'moonbase')
+            .replace(/\b(the|a|an|3d|model|glb|gltf)\b/g, ' ')
+            .replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    function resolveCatalog(query) {
+        const q = normModel(query);
+        if (!q) return null;
+        const hit = CATALOG.find((c) => normModel(c.id) === q || normModel(c.name) === q
+            || (c.aliases || []).some((a) => normModel(a) === q))
+            || CATALOG.find((c) => normModel(c.name).includes(q) || q.includes(normModel(c.id))
+                || (c.aliases || []).some((a) => normModel(a).includes(q) || q.includes(normModel(a))));
+        return hit || null;
+    }
+
+    // Place a catalog model at lon/lat (degrees). Registers it in sites so the pilot can
+    // answer "nearby" / "orbit the moonbase" for the new spot.
+    async function placeAt(query, lon, lat, { heading = 0, scale = 1, name = '', frame = false } = {}) {
+        const viewer = getViewer();
+        if (!viewer) throw new Error('Viewer not ready');
+        const cat = resolveCatalog(query);
+        if (!cat) throw new Error(`No 3D model named "${query}" in the catalog`);
+        const known = knownModel(cat.url);
+        const label = name || cat.name;
+        let entry;
+        if (known) {
+            entry = await addKnownModel(viewer, known, cat.url, lon, lat,
+                { heading, scale, name: label });
+        } else {
+            const ground = await groundHeight(viewer, lon, lat);
+            const position = Cesium.Cartesian3.fromDegrees(lon, lat, ground, viewer.scene.globe.ellipsoid);
+            const entity = viewer.entities.add({
+                name: label,
+                position,
+                model: {
+                    uri: cat.url, scale, minimumPixelSize: 64, maximumScale: 10000,
+                    runAnimations: true, heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                    show: true,
+                },
+            });
+            await entity.model.readyPromise;
+            entry = { type: 'gltf', url: cat.url, lon, lat, alt: ground, scale, entity,
+                      origin: position, radius: 50 * scale };
+            window.loadedModels.push(entry);
+        }
+        placedSeq += 1;
+        const site = {
+            id: `placed-${cat.id}-${placedSeq}`,
+            name: label,
+            url: cat.url,
+            lon, lat,
+            heading,
+            aliases: cat.aliases || [],
+            radius_m: (entry.radius && Number.isFinite(entry.radius)) ? entry.radius
+                : (known && known.radius) || 50,
+            catalogId: cat.id,
+        };
+        placedSites.push(site);
+        entry.site = site.id;
+        if (frame) frameModel(viewer, entry, { heading: heading || 0, fly: true });
+        return { entry, site, catalog: cat };
+    }
+
+    window.DeepGISModels = {
+        get sites() { return sites.concat(placedSites); },
+        catalog: CATALOG,
+        resolveCatalog,
+        placeAt,
+        loadSite,
+        flyToSite,
+    };
 
     // Setup event listeners for preset buttons
     const presetBtns = document.querySelectorAll('.preset-model-btn');
