@@ -43,8 +43,10 @@ from django.views.decorators.http import require_GET, require_POST
 
 from . import robots
 
-ACTION_TYPES = ("goto", "orbit", "takeoff", "land", "look", "stop", "wait",
-                "show_layer", "hide_layer", "place_model", "describe_view", "follow_vehicle")
+ACTION_TYPES = ("goto", "orbit", "adjust", "takeoff", "land", "look", "stop", "wait",
+                "show_layer", "hide_layer", "place_model", "describe_view", "check_view", "follow_vehicle")
+# The two models the lab's GPU server keeps loaded, one per GPU (Gemma 4 is the bridges' default)
+PILOT_MODELS = ("unsloth/gemma-4-26B-A4B-it-GGUF", "qwen3.8:27b")
 # Vehicles report positions on Earth only
 EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
 FOLLOW_VIEWS = ("camera", "chase")
@@ -88,7 +90,10 @@ LIMITS = {
     "heading_deg": (-360.0, 360.0),
     "seconds": (0.0, 120.0),
     "distance_km": (1.0, 500.0),
+    "alt_factor": (0.2, 5.0),
+    "radius_factor": (0.2, 5.0),
 }
+MAX_GOAL_CHARS = 160
 # Weather and sea layers cover bays and regions, wider than any orbit
 LAYER_LIMITS = {**LIMITS, "radius_m": (20.0, 200000.0)}
 # Off Earth the camera flies at orbiter scale
@@ -116,14 +121,18 @@ PILOT_SCHEMA = {
                     "lat": {"type": "number"},
                     "lon": {"type": "number"},
                     "radius_m": {"type": "number"},
+                    "radius_factor": {"type": "number"},
                     "distance_km": {"type": "number"},
                     "alt_m": {"type": "number"},
+                    "alt_factor": {"type": "number"},
                     "revolutions": {"type": "number"},
+                    "continuous": {"type": "boolean"},
                     "speed_mps": {"type": "number"},
                     "clockwise": {"type": "boolean"},
                     "pitch_deg": {"type": "number"},
                     "heading_deg": {"type": "number"},
                     "seconds": {"type": "number"},
+                    "goal": {"type": "string"},
                     "vehicle": {"type": "string"},
                     "view": {"enum": list(FOLLOW_VIEWS)},
                 },
@@ -140,6 +149,12 @@ LAYER_FIELDS = ("type", "kind", "place", "colormap", "date", "lat", "lon", "radi
 # Survey date for site_imagery and site_features: a year or a year and month
 SURVEY_DATE = re.compile(r"\d{4}(?:-\d{2})?")
 FOLLOW_FIELDS = ("type", "vehicle", "view")
+# adjust changes the running orbit (or the hover) in absolute or relative terms
+ADJUST_FIELDS = ("type", "radius_m", "radius_factor", "alt_m", "alt_factor", "revolutions", "continuous",
+                 "speed_mps", "pitch_deg")
+# Fields only adjust, orbit (continuous) and check_view (goal) carry
+TASK_FIELDS = ("radius_factor", "alt_factor", "continuous", "goal")
+MOTION_FIELDS = tuple(k for k in FIELD_ORDER if k not in TASK_FIELDS)
 
 # Superusers' robot commands: dreams_mcp tools on the command-enabled server
 ROBOT_COMMANDS = ("instruct", "return_home", "land")
@@ -238,7 +253,8 @@ SYSTEM_PROMPT = """You are the AI pilot of a virtual camera drone flying over a 
 
 Actions (all heights are metres ABOVE GROUND):
 - goto: fly to a place and hover. Fields: place (a geocodable name) or lat+lon; alt_m (default: frame the place); pitch_deg (camera tilt, -90 straight down, 0 horizon; default -45); heading_deg (0 = north).
-- orbit: circle a point with the camera aimed at it. Fields: place or lat+lon (omit both to orbit what the user is looking at now); radius_m (omit to fit the place's size); revolutions (default 1); alt_m; speed_mps (ground speed); clockwise (default false); pitch_deg (omit to aim at the centre).
+- orbit: circle a point with the camera aimed at it. Fields: place or lat+lon (omit both to orbit what the user is looking at now); radius_m (omit to fit the place's size); revolutions (default 1); continuous (true: keep circling until told to stop, for "keep orbiting", "circle until I say stop"); alt_m; speed_mps (ground speed); clockwise (default false); pitch_deg (omit to aim at the centre).
+- adjust: change what the drone is doing without starting over: the running orbit carries on with the change (hovering, it climbs or tilts in place). Fields: alt_m (new height above the orbit centre) or alt_factor (relative: 1.5 for "a notch higher" or "a bit higher", 2 for "much higher", 0.7 for "a bit lower"); radius_m or radius_factor (1.5 wider, 0.7 closer); pitch_deg (only when the user names a tilt; left out, the camera keeps aiming at the centre, looking down more steeply as it climbs); speed_mps; revolutions (laps from now); continuous (true: keep orbiting until told to stop).
 - takeoff: climb straight up to alt_m above ground (default 100 above the current height).
 - land: descend straight down to the ground.
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
@@ -272,6 +288,7 @@ Actions (all heights are metres ABOVE GROUND):
   For surface_temp, ndvi, humidity, air_temp, sea_temp, chlorophyll, elevation and lidar_dem, set colormap only if the user names a colour map: jet, turbo, viridis, inferno, plasma, coolwarm or rdylgn ("rainbow" means jet, "red-yellow-green" means rdylgn). These kinds default to the whole place; set radius_m only when the user gives a distance.
 - hide_layer: remove a layer. Fields: kind (omit to remove every layer).
 - place_model: stand a 3D model from the catalog on the globe. Fields: model (a name from the "3D models you can place" line, e.g. "Lunar base" or "moonbase"); place or lat+lon for where it should stand. Put place_model before a goto or orbit of the same place. Do not invent a model that is not listed.
+- check_view: check the camera image against a goal for the view. Fields: goal (what should be visible, in a few words, e.g. "the crater floor is visible"). Put it last. If the goal is not met, the viewer sends a "Goal check" message with what it saw.
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view. While a robot is followed through its camera, it analyses that robot's own camera frame together with its instrument readings (spectrometer, laser range) when the Robots line says it has them, so it is also the action for "analyse the scene", "what is the spectrometer seeing" or "what is the rover looking at".
 - follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
@@ -284,6 +301,10 @@ Rules:
 - Put show_layer before any orbit or goto of the same place; leave the orbit's radius_m out so the viewer sizes it to the area.
 - Put place_model before a goto or orbit of the same place. model must be a name from the "3D models you can place" line.
 - While the drone is orbiting or following (Current view says so), a request only to show or hide layers or to look at the view returns only show_layer, hide_layer or describe_view, with no orbit, goto or stop: the drone keeps flying. Leave place out when the user means the area being orbited.
+- While the drone is orbiting, a request to go higher or lower, wider or closer, faster or slower, to tilt the camera, or to keep orbiting is adjust, never orbit, takeoff, look or stop, so the orbit carries on with the change. "Keep orbiting" alone is adjust with continuous true.
+- "Reload" or "refresh" a layer is show_layer of that kind again, with place left out while orbiting.
+- When the user wants the view to show something ("so that the crater floor is visible", "make sure the whole lake is in frame", "until you can see the summit"), end the actions with check_view with that goal.
+- A message starting "Goal check" comes from the viewer, not the user: that goal is not met yet. Return the adjust (while orbiting), look, takeoff or goto that should bring the view closer to it, from what the camera shows, the suggested change and the telemetry, then check_view with the same goal. While orbiting, change alt_factor and radius_factor and leave pitch_deg out so the camera stays aimed at the centre. To see into a crater, valley, pit or canyon, climb (alt_factor 1.5 to 2) and, if the camera is close to or inside it (the view shows only nearby ground or walls), widen the orbit too (radius_factor 1.5 to 2); never tilt up to see something below. Change more than last time if the same change did not work. If the goal cannot be met from here, say why in reply and return no actions.
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - The request starts with the drone's telemetry ("Current view") and, for questions about the surroundings, the places OpenStreetMap names around the point in view. Answer where-and-which questions from them in reply with no actions ("what dam are we looking at?", "where are we?", "what lake is that?", "how high are we?", "which way are we facing?"): name the best match nearest the point in view, say it is from the map and the drone's position, and give height, heading or distance from the telemetry when asked. Never name a place that is not listed; if none fits, say so and use describe_view.
 - A question about what is visible or what the scene looks like is a describe_view request. Never describe the view yourself in reply; say you will take a look.
@@ -327,6 +348,10 @@ Examples (actions only):
 - "analyse the scene around santacruz with its camera and spectrometer" -> [{"type": "follow_vehicle", "vehicle": "santacruz", "view": "camera"}, {"type": "describe_view"}]
 - "which robots are in the Locutus world?" -> [] (reply lists the Robots line entries whose site is that world)
 - "orbit the Locutus world" -> [{"type": "orbit", "place": "Locutus world"}] (a world or a robot as a place: write its name as place; DeepGIS puts it at its robots)
+- "orbit Meteor Crater until I say stop" -> [{"type": "orbit", "place": "Meteor Crater, Arizona", "continuous": true}]
+- (orbiting) "go higher up a notch so the inside of the crater is visible, keep orbiting, and reload vegetation" -> [{"type": "adjust", "alt_factor": 1.5, "continuous": true}, {"type": "show_layer", "kind": "ndvi"}, {"type": "check_view", "goal": "the inside of the crater is visible"}]
+- (orbiting) "widen the orbit a bit and tilt the camera to 30 degrees" -> [{"type": "adjust", "radius_factor": 1.3, "pitch_deg": -30}]
+- 'Goal check 1 of 3: "the inside of the crater is visible" is not met yet. The camera shows: a close-up of rocky slopes and ridges, no crater shape. Suggested change: move farther out and higher' -> [{"type": "adjust", "alt_factor": 1.8, "radius_factor": 1.8}, {"type": "check_view", "goal": "the inside of the crater is visible"}]
 - reply is one or two short sentences describing what you are about to do. Never claim to control a real aircraft."""
 
 CONTROL_PROMPT = """
@@ -353,7 +378,8 @@ PLANET_PROMPT = """You are the AI pilot of a virtual camera spacecraft flying ov
 
 Actions (all heights are metres ABOVE GROUND):
 - goto: fly to a place and hover. Fields: place (a feature name) or lat+lon; alt_m (default: frame the place); pitch_deg (camera tilt, -90 straight down, 0 horizon; default -45); heading_deg (0 = north).
-- orbit: circle a point with the camera aimed at it. Fields: place or lat+lon (omit both to orbit what the user is looking at now); radius_m (omit to fit the feature's size); revolutions (default 1); alt_m; speed_mps (ground speed); clockwise (default false); pitch_deg (omit to aim at the centre).
+- orbit: circle a point with the camera aimed at it. Fields: place or lat+lon (omit both to orbit what the user is looking at now); radius_m (omit to fit the feature's size); revolutions (default 1); continuous (true: keep circling until told to stop); alt_m; speed_mps (ground speed); clockwise (default false); pitch_deg (omit to aim at the centre).
+- adjust: change the running orbit without starting over (hovering, climb or tilt in place). Fields: alt_m or alt_factor (relative: 1.5 for "a notch higher", 2 for "much higher", 0.7 for "a bit lower"); radius_m or radius_factor (1.5 wider, 0.7 closer); pitch_deg (omit to keep aiming at the centre); speed_mps; revolutions (laps from now); continuous (true: keep orbiting until told to stop).
 - takeoff: climb straight up to alt_m above ground (default 5 km above the current height).
 - land: descend straight down to the surface.
 - look: point the camera. Fields: pitch_deg and/or heading_deg.
@@ -361,6 +387,7 @@ Actions (all heights are metres ABOVE GROUND):
 - wait: hover for seconds.
 - place_model: stand a 3D model from the catalog on the globe. Fields: model (a name from the "3D models you can place" line, e.g. "Lunar base" or "moonbase"); place or lat+lon for where it should stand. Put place_model before a goto or orbit of the same place. Do not invent a model that is not listed.
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
+- check_view: check the camera image against a goal for the view. Fields: goal (what should be visible, in a few words). Put it last. If the goal is not met, the viewer sends a "Goal check" message with what it saw.
 {layer_actions}
 Rules:
 - place is the feature's official IAU name as in the Gazetteer of Planetary Nomenclature, without the body or feature type unless it is part of the name: "Tycho", "Mare Imbrium", "Olympus Mons", "Valles Marineris". On the Moon the Apollo landing sites are "Apollo 11" to "Apollo 17". A 3D model listed in the Models line is also a place: use its listed name (on the Moon the lunar base / moonbase is "Shackleton base"). Use lat/lon (planetocentric, east-positive degrees) only when the user gives coordinates.
@@ -368,6 +395,8 @@ Rules:
 - Only fill fields the user asked for or that clearly follow from the request; the viewer picks sensible defaults for the rest.
 - An orbit flies to its own start point, so do not add a goto before it unless the user asks to go somewhere first.
 - To climb or descend where the camera is, use takeoff (alt_m) or land, not goto; to only turn or tilt the camera, use look.
+- While the camera is orbiting, a request to go higher or lower, wider or closer, faster or slower, to tilt, or to keep orbiting is adjust, never orbit, takeoff, look or stop. "Keep orbiting" alone is adjust with continuous true.
+- When the user wants the view to show something ("so the crater floor is visible"), end the actions with check_view with that goal. A message starting "Goal check" comes from the viewer: that goal is not met yet; return the adjust, look, takeoff or goto that should get closer to it, then check_view with the same goal, or say why it cannot be met and return no actions. While orbiting, change alt_factor and radius_factor and leave pitch_deg out so the camera stays aimed at the centre; to see into a crater or valley, climb and widen the orbit, never tilt up.
 {layer_rules}
 - The request starts with the camera's telemetry ("Current view") and, when the page has placed 3D models, a Models line naming each one with its distance and direction from the point in view. Answer whether a model (moonbase, lunar base, sculpture, ...) is nearby, where it is or what it is called from that line in reply with no actions, unless the user also asks to fly there or orbit it. Use the listed name as place for goto and orbit. A separate "3D models you can place" line lists the catalog; use place_model to stand one at a named feature (e.g. load the moonbase at Tycho). Never invent a model that is not in that catalog; if none is placed yet, say so.
 - A question about what is visible is a describe_view request. Never describe the view yourself in reply; say you will take a look.
@@ -375,6 +404,7 @@ Rules:
 
 Examples (actions only):
 - "orbit Tycho twice" -> [{{"type": "orbit", "place": "Tycho", "revolutions": 2}}]
+- (orbiting) "a notch higher so the central peak is visible, and keep going" -> [{{"type": "adjust", "alt_factor": 1.5, "continuous": true}}, {{"type": "check_view", "goal": "the central peak is visible"}}]
 - "fly to the Apollo 15 site at 5 km" -> [{{"type": "goto", "place": "Apollo 15", "alt_m": 5000}}]
 - "go to 18.4 N 77.7 E and look at the horizon" -> [{{"type": "goto", "lat": 18.4, "lon": 77.7, "pitch_deg": 0}}]
 - "do a visual analysis of the viewport camera scene and list what you observe" -> [{{"type": "describe_view"}}]
@@ -387,7 +417,7 @@ Examples (actions only):
 
 PLANET_LAYER_RULES = """- Use show_layer for any request to show, colour or map elevation, height, topography{slope_words}; "heat map" or "colormap" means elevation unless another kind is named. Set place as for goto, or omit place and lat/lon for "here" or "in view"; set radius_m only when the user gives a distance.
 - Put show_layer before an orbit or goto of the same place.
-- While the camera is orbiting (Current view says so), a request only to show or hide layers returns only show_layer or hide_layer, with no orbit, goto or stop: the camera keeps flying.
+- While the camera is orbiting (Current view says so), a request only to show or hide layers returns only show_layer or hide_layer, with no orbit, goto or stop: the camera keeps flying. "Reload" or "refresh" a layer is show_layer of that kind again.
 - Never state heights, ranges or slopes in reply; the viewer measures them and lists them with their source.
 - Example: "orbit Tycho and show elevation as a colormap" -> [{{"type": "show_layer", "kind": "elevation", "place": "Tycho"}}, {{"type": "orbit", "place": "Tycho"}}]"""
 
@@ -519,6 +549,14 @@ def clean_actions(raw, body="earth", control=None):
                 act[field] = v
         if isinstance(a.get("clockwise"), bool):
             act["clockwise"] = a["clockwise"]
+        if a.get("continuous") is True:
+            act["continuous"] = True
+        if act["type"] == "check_view":
+            goal = a.get("goal")
+            goal = " ".join(goal.split())[:MAX_GOAL_CHARS] if isinstance(goal, str) else ""
+            if not goal:
+                continue
+            act["goal"] = goal
         if act["type"] == "follow_vehicle":
             vehicle = a.get("vehicle")
             if isinstance(vehicle, str) and vehicle.strip():
@@ -551,8 +589,12 @@ def clean_actions(raw, body="earth", control=None):
         fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
                   else ("type",) if act["type"] == "describe_view" else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
                   else ("type", "model", "place", "lat", "lon", "heading_deg") if act["type"] == "place_model"
-                  else FIELD_ORDER)
+                  else ADJUST_FIELDS if act["type"] == "adjust" else ("type", "goal") if act["type"] == "check_view"
+                  else (*MOTION_FIELDS, "continuous") if act["type"] == "orbit"
+                  else MOTION_FIELDS)
         act = {k: act[k] for k in FIELD_ORDER if k in act and k in fields}
+        if act["type"] == "adjust" and len(act) == 1:
+            continue
         if act["type"] == "show_layer":
             # An orbit runs until its laps end; draw the layer before it, not after
             i = len(out)
@@ -569,6 +611,32 @@ def clean_actions(raw, body="earth", control=None):
             out.append(act)
         if len(out) == MAX_ACTIONS:
             break
+    return out
+
+
+GOAL_CHECK_PREFIX = "Goal check "  # turns hud/pilot.js sends itself when check_view fails
+# A plan with any of these replaces the running orbit
+ORBIT_ENDING_TYPES = ("stop", "goto", "orbit", "land", "wait", "follow_vehicle")
+
+
+def while_orbiting(actions, goal_check=False):
+    """While the drone orbits, a plan that starts no new flight retunes the orbit instead
+    of ending it: takeoff becomes adjust alt_m, look becomes adjust pitch_deg. On a goal
+    check the tilt is left to the orbit, which keeps aiming at the centre as it climbs."""
+    if any(a["type"] in ORBIT_ENDING_TYPES for a in actions):
+        return actions
+    out = []
+    for a in actions:
+        if a["type"] == "takeoff":
+            a = {"type": "adjust", **({"alt_m": a["alt_m"]} if "alt_m" in a else {"alt_factor": 1.5})}
+        elif a["type"] == "look":
+            a = {"type": "adjust", **({"pitch_deg": a["pitch_deg"]} if "pitch_deg" in a else {})}
+        if a["type"] == "adjust":
+            if goal_check:
+                a = {k: v for k, v in a.items() if k != "pitch_deg"}
+            if len(a) == 1:
+                continue
+        out.append(a)
     return out
 
 
@@ -652,6 +720,19 @@ def _describe_view(view):
     activity = view.get("activity")
     if isinstance(activity, str) and ACTIVITY_RE.fullmatch(activity):
         line += f"; the drone is {activity}"
+        orbit = view.get("orbit")
+        if activity == "orbiting" and isinstance(orbit, dict):
+            bits = []
+            if (r := f("radius_m", orbit)) is not None and r > 0:
+                bits.append(f"radius {_distance(r)}")
+            if (h := f("height_m", orbit)) is not None:
+                bits.append(f"{_distance(h)} above the centre")
+            if orbit.get("continuous") is True:
+                bits.append("until stopped")
+            elif (left := f("laps_left", orbit)) is not None:
+                bits.append(f"{left:.1f} laps to go")
+            if bits:
+                line += f" ({', '.join(bits)})"
     return line + "."
 
 
@@ -1027,17 +1108,13 @@ def _record_use(request, kind, model, duration, ok):
 
 
 def _model_catalog(refresh=False):
-    """Only expose active Gemma/Qwen choices; backend URLs never reach the browser."""
+    """The PILOT_MODELS the lab's server offers, Gemma first; backend URLs never reach the browser."""
     if not refresh and (cached := cache.get(MODEL_CACHE_KEY)):
         return cached
     raw = call_mcp_tool("list_models", {}, 10)
-    names = [str(name) for name in raw.get("models", [])
-             if isinstance(name, str)
-             and ("gemma" in name.lower() or name.lower().startswith("qwen"))]
     default = str(raw.get("default_model") or "")
-    if default and "gemma" in default.lower() and default not in names:
-        names.insert(0, default)
-    names = list(dict.fromkeys(names))
+    offered = {str(name) for name in raw.get("models", []) if isinstance(name, str)} | {default}
+    names = [name for name in PILOT_MODELS if name in offered]
     if default not in names:
         default = next((name for name in names if "gemma" in name.lower()), names[0] if names else "")
     out = {"default_model": default, "models": names}
@@ -1133,6 +1210,9 @@ def pilot_chat(request):
     for a in actions:
         if cmap and a["type"] == "show_layer" and a.get("kind") in RASTER_KINDS:
             a["colormap"] = cmap
+    view = data.get("view")
+    if isinstance(view, dict) and view.get("activity") == "orbiting":
+        actions = while_orbiting(actions, goal_check=message.startswith(GOAL_CHECK_PREFIX))
     actions = [{k: a[k] for k in (ROBOT_FIELDS if a["type"] == "robot_command" else FIELD_ORDER) if k in a}
                for a in actions]
     _record_use(request, "chat", out.get("model", ""), out.get("duration_sec"), True)
@@ -1240,6 +1320,22 @@ VISION_PROMPT = """You are the eyes of the AI pilot in the DeepGIS viewer. The i
 - Say how sure you are when unsure ("possibly a small crater"). Do not invent names, sizes, ages or other facts you cannot see; name a feature only if a label in the image shows it or it fits a place listed in the location context (then say so, e.g. "an earthen dam, likely Pleasant Valley Dam per the map").
 - If blurry, low-resolution or missing imagery tiles dominate the frame, say so once.
 - summary: one or two sentences on the scene as a whole; if the location context names the main feature and it fits what you see, name it here and answer the user's question."""
+
+
+GOAL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "met": {"type": "boolean"},
+        "seen": {"type": "string"},
+        "suggestion": {"type": "string"},
+    },
+    "required": ["met", "seen", "suggestion"],
+}
+GOAL_PROMPT = """You check one camera frame for the AI pilot in the DeepGIS viewer: {what}. The request gives the camera's telemetry and the goal the user set for the view.
+- met: true only if the goal clearly holds in this frame; when unsure, false.
+- seen: one sentence on what the frame shows that bears on the goal: what of it is in view, where in the frame and how much, or what hides it.
+- suggestion: if not met, one short change of the camera most likely to meet it, in words of height, distance, tilt or direction ("climb higher and look down more", "move closer", "widen the orbit", "turn left"); empty if met.
+Judge only what is visible. Missing or blurry imagery tiles do not meet a goal."""
 
 
 def vision_prompt(body):
@@ -1378,20 +1474,29 @@ def pilot_describe(request):
         else:
             lines.append("This image is the followed vehicle's own onboard camera, a simulated camera in "
                          "its Gazebo digital twin, not the globe: describe it as that camera's view.")
-    if body == "earth" and lines[0]:
-        lines.append(nearby_places(data.get("view")))
-    question = data.get("question")
-    if isinstance(question, str) and question.strip():
-        lines.append("The user asked: " + question.strip()[:MAX_MESSAGE_CHARS])
-    lines.append("List what you observe in this image.")
+    goal = data.get("goal")
+    goal = " ".join(goal.split())[:MAX_GOAL_CHARS] if isinstance(goal, str) else ""
+    if goal:
+        # check_view: does the frame meet the goal? (the robot instruments are not needed)
+        what = ("a real photograph from the camera on a field robot" if system == ROBOT_VISION_PROMPT
+                else f"a virtual camera flying over a 3D globe of {BODIES[body]}, rendered by Cesium")
+        system = GOAL_PROMPT.format(what=what)
+        lines = [lines[0], f"Goal for the view: {goal}", "Does this frame meet the goal?"]
+    else:
+        if body == "earth" and lines[0]:
+            lines.append(nearby_places(data.get("view")))
+        question = data.get("question")
+        if isinstance(question, str) and question.strip():
+            lines.append("The user asked: " + question.strip()[:MAX_MESSAGE_CHARS])
+        lines.append("List what you observe in this image.")
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     args = {
         "image": image,
         "prompt": "\n".join(ln for ln in lines if ln),
         "system_prompt": system,
-        "json_schema": DESCRIBE_SCHEMA,
-        "temperature": 0.2,
-        "max_tokens": 900,
+        "json_schema": GOAL_SCHEMA if goal else DESCRIBE_SCHEMA,
+        "temperature": 0.1 if goal else 0.2,
+        "max_tokens": 300 if goal else 900,
         "timeout_sec": timeout,
     }
     try:
@@ -1401,6 +1506,16 @@ def pilot_describe(request):
     seen = out.get("json") if isinstance(out, dict) else None
     if not isinstance(seen, dict):
         return JsonResponse({"error": "The AI pilot could not read the view; try again."}, status=502)
+    if goal:
+        _record_use(request, "check", out.get("model", ""), out.get("duration_sec"), True)
+        text = lambda k, n: seen[k].strip()[:n] if isinstance(seen.get(k), str) else ""  # noqa: E731
+        return JsonResponse({
+            "met": seen.get("met") is True,
+            "seen": text("seen", 300),
+            "suggestion": text("suggestion", 200),
+            "model": out.get("model", ""),
+            "duration_sec": out.get("duration_sec"),
+        })
     summary = seen.get("summary") if isinstance(seen.get("summary"), str) else ""
     observations = [o.strip()[:300] for o in seen.get("observations") or []
                     if isinstance(o, str) and o.strip()][:MAX_OBSERVATIONS]

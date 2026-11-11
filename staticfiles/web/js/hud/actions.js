@@ -135,6 +135,13 @@
         }
         const activity = droneActivity();
         if (activity) view.activity = activity;
+        const orbit = !follow && drone().orbitInfo?.();
+        if (orbit) {
+            view.orbit = {
+                radius_m: orbit.radius, height_m: orbit.alt - orbit.centre.height,
+                continuous: orbit.continuous, laps_left: orbit.continuous ? null : orbit.lapsLeft,
+            };
+        }
         return view;
     }
 
@@ -2003,26 +2010,33 @@
     const CAPTURE_MAX_PX = 1280;
 
     // One frame of the globe as a JPEG data URL. It is read in postRender, while the
-    // WebGL drawing buffer still holds the frame (the viewer does not preserve it).
+    // WebGL drawing buffer still holds the frame (the viewer does not preserve it). When
+    // the browser holds back animation frames (a tab out of view), a frame is rendered
+    // here and read in the same task, before the buffer is cleared.
     function captureView() {
-        const scene = getViewer().scene;
+        const viewer = getViewer(), scene = viewer.scene;
+        const read = () => {
+            const src = scene.canvas;
+            const k = Math.min(1, CAPTURE_MAX_PX / Math.max(src.width, src.height));
+            const c = document.createElement('canvas');
+            c.width = Math.round(src.width * k);
+            c.height = Math.round(src.height * k);
+            c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+            return c.toDataURL('image/jpeg', 0.85);
+        };
         return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => { off(); reject(new Error('the view did not render')); }, 5000);
-            const off = scene.postRender.addEventListener(() => {
+            const done = (fn) => {
                 off();
                 clearTimeout(timer);
                 try {
-                    const src = scene.canvas;
-                    const k = Math.min(1, CAPTURE_MAX_PX / Math.max(src.width, src.height));
-                    const c = document.createElement('canvas');
-                    c.width = Math.round(src.width * k);
-                    c.height = Math.round(src.height * k);
-                    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
-                    resolve(c.toDataURL('image/jpeg', 0.85));
+                    fn();
+                    resolve(read());
                 } catch (e) {
                     reject(new Error(`could not read the view (${e.message || e})`));
                 }
-            });
+            };
+            const timer = setTimeout(() => done(() => viewer.render()), 2500);
+            const off = scene.postRender.addEventListener(() => done(() => {}));
             scene.requestRender();
         });
     }
@@ -2652,6 +2666,7 @@
             const speed = a.speed_mps || clamp(2 * Math.PI * radius / 75, 5, SCALE.speed);
             const pitchDeg = Number.isFinite(a.pitch_deg) ? a.pitch_deg
                 : -Cesium.Math.toDegrees(Math.atan2(alt, radius));
+            const laps = a.continuous ? 'until stopped' : `${revs} lap${revs === 1 ? '' : 's'}`;
 
             // Start on the circle at the bearing of the current camera (shortest hop)
             const R = ellipsoid().maximumRadius;
@@ -2660,20 +2675,80 @@
             const theta = (Math.abs(east) + Math.abs(north) > 1e-9) ? Math.atan2(north, east) : -Math.PI / 2;
             const startLat = p.lat + radius * Math.sin(theta) / R;
             const startLon = p.lon + radius * Math.cos(theta) / (R * Math.cos(p.lat));
-            const centre = Cesium.Cartesian3.fromRadians(p.lon, p.lat, 0, ellipsoid());
+            // On the ground, so the orbit can keep aiming at it as its height and radius change
+            const centre = Cesium.Cartesian3.fromRadians(p.lon, p.lat, ground, ellipsoid());
             const toCentre = new Cesium.EllipsoidGeodesic(
                 new Cesium.Cartographic(startLon, startLat), new Cesium.Cartographic(p.lon, p.lat), ellipsoid()).startHeading;
 
             drone().stopOrbit?.();
             out.msg('step', `Orbiting ${p.label}: radius ${fmtM(radius)}, ${fmtM(alt)} above ground, ` +
-                `${revs} lap${revs === 1 ? '' : 's'} ${a.clockwise ? 'clockwise' : 'counter-clockwise'} at ${Math.round(speed)} m/s`);
+                `${laps} ${a.clockwise ? 'clockwise' : 'counter-clockwise'} at ${Math.round(speed)} m/s`);
             await flight({
                 destination: Cesium.Cartesian3.fromRadians(startLon, startLat, ground + alt, ellipsoid()),
                 orientation: { heading: toCentre, pitch: Cesium.Math.toRadians(pitchDeg), roll: 0 },
             }, id);
             // The panel's inputs are left alone; the orbit takes its parameters directly
-            drone().orbitAround(centre, { clockwise: !!a.clockwise, radius, speed, laps: revs, pitch: pitchDeg, yaw: 0 });
-            await until(() => !drone().isOrbiting(), id);
+            drone().orbitAround(centre, {
+                clockwise: !!a.clockwise, radius, speed, laps: a.continuous ? Infinity : revs, yaw: 0,
+                pitch: Number.isFinite(a.pitch_deg) ? a.pitch_deg : undefined,
+            });
+            // An endless orbit is a behaviour, not a step: the plan goes on (adjust, check_view)
+            if (!a.continuous) await until(() => !drone().isOrbiting(), id);
+        },
+
+        // Changes what the drone is doing instead of replacing it: the running orbit eases to
+        // its new height, radius, tilt, speed or laps; hovering, it climbs or tilts in place
+        async adjust(a, id, out) {
+            const info = drone().orbitInfo?.();
+            const scale = (abs, factor, now) => Number.isFinite(abs) ? abs : Number.isFinite(factor) ? now * factor : null;
+            if (info && !follow) {
+                const over = info.alt - info.centre.height;
+                const opts = {}, parts = [];
+                const height = scale(a.alt_m, a.alt_factor, over);
+                if (height !== null) {
+                    const h = clamp(height, 5, SCALE.alt);
+                    opts.alt = info.centre.height + h;
+                    parts.push(`${h >= over ? 'climbing' : 'descending'} to ${fmtM(h)} above the centre`);
+                }
+                const radius = scale(a.radius_m, a.radius_factor, info.radius);
+                if (radius !== null) {
+                    opts.radius = clamp(radius, 20, SCALE.radius);
+                    parts.push(`radius ${fmtM(opts.radius)}`);
+                }
+                if (Number.isFinite(a.pitch_deg)) {
+                    opts.pitch = a.pitch_deg;
+                    parts.push(`camera ${Math.round(Math.abs(a.pitch_deg))}° down`);
+                } else if (height !== null || radius !== null) {
+                    opts.aim = true;
+                }
+                if (Number.isFinite(a.speed_mps)) {
+                    opts.speed = clamp(a.speed_mps, 1, SCALE.speed);
+                    parts.push(`${Math.round(opts.speed)} m/s`);
+                }
+                if (a.continuous) {
+                    opts.laps = Infinity;
+                    parts.push('until stopped');
+                } else if (Number.isFinite(a.revolutions)) {
+                    opts.laps = a.revolutions;
+                    parts.push(`${a.revolutions} more lap${a.revolutions === 1 ? '' : 's'}`);
+                }
+                drone().retuneOrbit(opts);
+                out.msg('step', `Still orbiting${parts.length ? `: ${parts.join(', ')}` : ''}`);
+                const settle = Date.now() + 15000;
+                await until(() => !drone().isOrbiting() || drone().orbitInfo().settled || Date.now() > settle, id);
+                return;
+            }
+            if (follow) {
+                out.msg('step', `The camera is riding on ${follow.name || follow.id}; say stop to fly it yourself`);
+                return;
+            }
+            const cam = getViewer().camera.positionCartographic;
+            const ground = await groundHeight(cam.longitude, cam.latitude);
+            check(id);
+            const height = scale(a.alt_m, a.alt_factor, cam.height - ground);
+            if (height !== null) await runners.takeoff({ alt_m: clamp(height, 5, SCALE.alt), speed_mps: a.speed_mps }, id, out);
+            if (Number.isFinite(a.pitch_deg)) await runners.look({ pitch_deg: a.pitch_deg }, id, out);
+            if (height === null && !Number.isFinite(a.pitch_deg)) out.msg('step', 'Not orbiting, so there is nothing to change');
         },
 
         async takeoff(a, id, out) {
@@ -2774,10 +2849,12 @@
         async show_layer(a, id, out) {
             const spec = layerSpecs()[a.kind];
             if (!spec) throw new Error(`No "${a.kind}" layer on ${body}`);
-            const p = await resolvePoint(a);
+            // Showing a layer again with no place reloads it over the same area
+            const prev = !a.place && !Number.isFinite(a.lat) ? shownLayers.get(a.kind) : null;
+            const p = prev?.p || await resolvePoint(a);
             check(id);
             const viewer = getViewer();
-            const radius = a.radius_m || (typeof spec.radius === 'function' ? spec.radius(p) : spec.radius);
+            const radius = a.radius_m || prev?.radius || (typeof spec.radius === 'function' ? spec.radius(p) : spec.radius);
             const loading = out.msg('step', `Loading ${spec.title.toLowerCase()} for ${p.label}...` +
                 (spec.slow ? ' (OpenStreetMap can take up to a minute)' : ''));
             let res;
@@ -2832,7 +2909,7 @@
                 globeLayers.set(a.kind, res.globe);
                 applyGlobeMaterial();
             }
-            shownLayers.set(a.kind, { ds, imagery });
+            shownLayers.set(a.kind, { ds, imagery, p, radius });
             layersChanged();
             layerArea = res.area || { lon: p.lon, lat: p.lat, radius: radius || 5000 };
 
@@ -2877,28 +2954,7 @@
         },
 
         async describe_view(a, id, out) {
-            const scene = getViewer().scene;
-            const settle = Date.now() + 8000;
-            await until(() => scene.globe.tilesLoaded || Date.now() > settle, id);
-            const working = out.msg('step', 'Looking at the view...');
-            let data;
-            try {
-                const onboard = await followedFrame().catch(() => null);
-                const image = onboard || await captureView();
-                const source = onboard ? 'vehicle_camera' : 'globe';
-                // the server adds what it holds for that vehicle: a field robot's instrument readings
-                const vehicle = onboard && follow ? follow.id : undefined;
-                const resp = await fetch(PILOT_DESCRIBE_URL, {
-                    method: 'POST',
-                    credentials: 'same-origin',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
-                    body: JSON.stringify({ image, body, source, vehicle, view: await currentView(), question: a.question || '' }),
-                });
-                data = await resp.json().catch(() => ({}));
-                if (!resp.ok) throw new Error(data.error || `View analysis failed (HTTP ${resp.status})`);
-            } finally {
-                working.remove();
-            }
+            const data = await lookAtView(id, out, 'Looking at the view...', { question: a.question || '' });
             check(id);
             const observations = data.observations || [];
             const read = data.instruments || [];
@@ -2911,7 +2967,45 @@
             if (!data.summary && !observations.length) out.msg('step', 'Nothing to report in this view');
             out.described?.(data);
         },
+
+        // The vision model judges whether the view meets the user's goal; the chat
+        // (hud/pilot.js out.goal) asks the planner for the next correction when it does not
+        async check_view(a, id, out) {
+            const data = await lookAtView(id, out, `Checking the view: ${a.goal}...`, { goal: a.goal });
+            check(id);
+            const seen = String(data.seen || '').trim();
+            if (data.met) out.msg('ai', `Goal met: ${seen || a.goal}`);
+            else out.msg('step', `Not yet: ${seen || 'the goal is not visible'}`);
+            out.goal?.({ goal: a.goal, met: !!data.met, seen, suggestion: String(data.suggestion || '').trim() });
+        },
     };
+
+    // One frame (the followed vehicle's own camera, else the globe) sent to the vision model
+    // once the tiles have loaded; extra is { question } or { goal }
+    async function lookAtView(id, out, label, extra) {
+        const scene = getViewer().scene;
+        const settle = Date.now() + 8000;
+        await until(() => scene.globe.tilesLoaded || Date.now() > settle, id);
+        const working = out.msg('step', label);
+        try {
+            const onboard = await followedFrame().catch(() => null);
+            const image = onboard || await captureView();
+            const source = onboard ? 'vehicle_camera' : 'globe';
+            // the server adds what it holds for that vehicle: a field robot's instrument readings
+            const vehicle = onboard && follow ? follow.id : undefined;
+            const resp = await fetch(PILOT_DESCRIBE_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                body: JSON.stringify({ image, body, source, vehicle, view: await currentView(), ...extra }),
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (!resp.ok) throw new Error(data.error || `View analysis failed (HTTP ${resp.status})`);
+            return data;
+        } finally {
+            working.remove();
+        }
+    }
 
     // Heading and tilt only exist in 3D; the page opens in 2D. The switch is instant:
     // Cesium's animated 2D -> 3D morph ends at a fixed whole-globe camera, the instant
@@ -2933,9 +3027,9 @@
     const samePlace = (x, y) => (x.place && x.place === y.place) ||
         (Number.isFinite(x.lat) && x.lat === y.lat && x.lon === y.lon);
 
-    // Plans of only these leave the camera alone, so they run alongside an orbit,
-    // a flight or a follow instead of replacing it
-    const PASSIVE_TYPES = new Set(['show_layer', 'hide_layer', 'describe_view']);
+    // Plans of only these leave the camera alone or retune what it is doing (adjust), so
+    // they run alongside an orbit, a flight or a follow instead of replacing it
+    const PASSIVE_TYPES = new Set(['show_layer', 'hide_layer', 'describe_view', 'adjust', 'check_view']);
     let plansRunning = 0;
     const droneMoving = () => plansRunning > 0 || !!follow ||
         !!drone().isOrbiting?.() || !!drone().isVerticalActive?.();
@@ -2971,7 +3065,7 @@
                 }
                 await runners[a.type](a, id, out);
             }
-            if (actions.some(a => a.type !== 'stop') && !follow && !keepMoving) out.msg('step', 'Done');
+            if (actions.some(a => a.type !== 'stop') && !follow && !keepMoving && !drone().isOrbiting?.()) out.msg('step', 'Done');
         } catch (e) {
             if (e instanceof Cancelled) return;
             out.msg('error', e.message || String(e));

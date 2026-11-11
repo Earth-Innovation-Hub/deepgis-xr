@@ -166,7 +166,11 @@
             const rad = Cesium.Math.toRadians(pitchDeg());
             els.pitchValue.textContent = fmtDeg(pitchDeg());
             if (vertical) vertical.pitch = rad;
-            if (orbit) return; // the orbit loop reads the slider itself
+            if (orbit) { // the orbit takes the slider's tilt from now on
+                orbit.aim = false;
+                orbit.pitch = orbit.pitchTarget = pitchDeg();
+                return;
+            }
             const camera = peekViewer()?.camera;
             if (camera) setOrientation(camera.heading, rad);
         });
@@ -258,7 +262,16 @@
         if (els.radius?.dataset.auto === '1') { els.radius.value = ''; delete els.radius.dataset.auto; }
     }
 
-    // opts: radius (m), speed (m/s), laps, clockwise, pitch (deg), yaw (deg)
+    const ORBIT_EASE_SEC = 1.5; // time constant for retuned radius, height, tilt and speed
+
+    function showPitch(deg) {
+        if (!els.pitch || draggingPitch || Math.round(deg) === Math.round(pitchDeg())) return;
+        els.pitch.value = Math.round(deg);
+        els.pitchValue.textContent = fmtDeg(deg);
+    }
+
+    // opts: radius (m), speed (m/s), laps (Infinity = until stopped), clockwise, pitch (deg;
+    // omit to keep aiming at the centre as the height and radius change), yaw (deg)
     function startOrbit(centre, opts = {}) {
         const viewer = getViewer();
         if (!viewer?.camera) return;
@@ -275,19 +288,22 @@
             if (els.radius) { els.radius.value = Math.round(radius); els.radius.dataset.auto = '1'; }
         }
         const speed = Math.max(0.1, Number.isFinite(opts.speed) ? opts.speed : hSpeed());
-        const laps = Math.max(0.05, Number.isFinite(opts.laps) ? opts.laps : num(els.laps, 1));
+        const laps = opts.laps === Infinity ? Infinity
+            : Math.max(0.05, Number.isFinite(opts.laps) ? opts.laps : num(els.laps, 1));
         const clockwise = opts.clockwise ?? !!els.clockwise?.checked;
         const alt = here.height;
-        // Look at the centre unless a pitch was given: tilt down by the height over it
-        const pitch = Number.isFinite(opts.pitch) ? opts.pitch
-            : -Cesium.Math.toDegrees(Math.atan2(Math.max(0, alt - centreCarto.height), radius));
+        const aim = !Number.isFinite(opts.pitch);
+        const pitch = aim ? aimPitch(alt, centreCarto.height, radius) : opts.pitch;
         if (els.pitch) { els.pitch.value = Math.round(pitch); els.pitchValue.textContent = fmtDeg(pitch); }
         if (els.yaw && Number.isFinite(opts.yaw)) { els.yaw.value = opts.yaw; els.yawValue.textContent = fmtDeg(opts.yaw); }
 
+        // radius, alt, pitch and speed ease toward their *Target (retuneOrbit); swept is the
+        // angle flown so far, so a change of radius or speed carries on from where the camera is
         orbit = {
-            centreCarto, radius, speed, laps, dir: clockwise ? -1 : 1, alt,
-            angle0: distance < 1 ? Math.PI / 2 : angle,
-            t0: performance.now(), pausedMs: 0, pauseAt: null, lastProgress: 0, raf: 0,
+            centreCarto, radius, speed, laps, dir: clockwise ? -1 : 1, alt, pitch, aim,
+            radiusTarget: radius, altTarget: alt, pitchTarget: pitch, speedTarget: speed,
+            angle0: distance < 1 ? Math.PI / 2 : angle, swept: 0,
+            last: performance.now(), pauseAt: null, lastProgress: 0, raf: 0,
         };
         showOrbitUi(true);
 
@@ -295,19 +311,30 @@
         const step = () => {
             if (!orbit) return;
             orbit.raf = requestAnimationFrame(step);
-            if (orbit.pauseAt !== null) return;
             const now = performance.now();
-            const swept = orbit.speed / orbit.radius * (now - orbit.t0 - orbit.pausedMs) / 1000; // radians
-            if (swept >= orbit.laps * 2 * Math.PI) { stopOrbit(); notify('Orbit complete', 'success'); return; }
+            const dt = Math.min(0.1, (now - orbit.last) / 1000);
+            orbit.last = now;
+            if (orbit.pauseAt !== null) return;
+            const k = 1 - Math.exp(-dt / ORBIT_EASE_SEC);
+            orbit.radius += (orbit.radiusTarget - orbit.radius) * k;
+            orbit.speed += (orbit.speedTarget - orbit.speed) * k;
+            if (vertical) orbit.alt = orbit.altTarget = camera.positionCartographic.height; // takeoff / land alongside
+            else orbit.alt += (orbit.altTarget - orbit.alt) * k;
+            if (orbit.aim) orbit.pitchTarget = aimPitch(orbit.alt, orbit.centreCarto.height, orbit.radius);
+            orbit.pitch += (orbit.pitchTarget - orbit.pitch) * k;
+            showPitch(orbit.pitch);
+
+            orbit.swept += orbit.speed / orbit.radius * dt;
+            if (orbit.swept >= orbit.laps * 2 * Math.PI) { stopOrbit(); notify('Orbit complete', 'success'); return; }
             if (els.progressText && now - orbit.lastProgress > 200) {
-                els.progressText.textContent = `Lap ${(swept / (2 * Math.PI)).toFixed(2)} / ${orbit.laps}`;
+                const lap = (orbit.swept / (2 * Math.PI)).toFixed(2);
+                els.progressText.textContent = orbit.laps === Infinity ? `Lap ${lap} (until stopped)` : `Lap ${lap} / ${+orbit.laps.toFixed(2)}`;
                 orbit.lastProgress = now;
             }
 
-            const a = orbit.angle0 + orbit.dir * swept;
+            const a = orbit.angle0 + orbit.dir * orbit.swept;
             const lat = orbit.centreCarto.latitude + orbit.radius * Math.sin(a) / R;
             const lon = orbit.centreCarto.longitude + orbit.radius * Math.cos(a) / (R * Math.cos(orbit.centreCarto.latitude));
-            if (vertical) orbit.alt = camera.positionCartographic.height; // takeoff / land alongside
 
             const toCentre = new Cesium.EllipsoidGeodesic(
                 new Cesium.Cartographic(lon, lat), orbit.centreCarto, ellipsoid).startHeading;
@@ -315,12 +342,51 @@
                 destination: Cesium.Cartesian3.fromRadians(lon, lat, orbit.alt, ellipsoid),
                 orientation: {
                     heading: Cesium.Math.zeroToTwoPi(toCentre + Cesium.Math.toRadians(yawDeg())),
-                    pitch: Cesium.Math.toRadians(pitchDeg()),
+                    pitch: Cesium.Math.toRadians(orbit.pitch),
                     roll: 0,
                 },
             });
         };
         step();
+    }
+
+    // Tilt that looks at the centre: down by the height over it
+    function aimPitch(alt, centreHeight, radius) {
+        return -Cesium.Math.toDegrees(Math.atan2(Math.max(0, alt - centreHeight), radius));
+    }
+
+    // Changes the running orbit without restarting it. opts: radius (m), alt (ellipsoid
+    // height, m), pitch (deg; aim: true to look at the centre again), speed (m/s), laps
+    // (more laps from here; Infinity = until stopped). false when nothing is orbiting.
+    function retuneOrbit(opts = {}) {
+        if (!orbit) return false;
+        if (Number.isFinite(opts.radius) && opts.radius > 0) orbit.radiusTarget = Math.max(5, opts.radius);
+        if (Number.isFinite(opts.alt)) orbit.altTarget = Math.max(orbit.centreCarto.height + 2, opts.alt);
+        if (Number.isFinite(opts.speed) && opts.speed > 0) orbit.speedTarget = opts.speed;
+        if (Number.isFinite(opts.pitch)) {
+            orbit.aim = false;
+            orbit.pitchTarget = Math.max(-90, Math.min(0, opts.pitch));
+        } else if (opts.aim) {
+            orbit.aim = true;
+        }
+        if (opts.laps === Infinity) orbit.laps = Infinity;
+        else if (Number.isFinite(opts.laps) && opts.laps > 0) orbit.laps = orbit.swept / (2 * Math.PI) + opts.laps;
+        return true;
+    }
+
+    // Where the orbit is and is heading; null when not orbiting. Heights are ellipsoid heights.
+    function orbitInfo() {
+        if (!orbit) return null;
+        const o = orbit;
+        const settled = Math.abs(o.radius - o.radiusTarget) < Math.max(1, o.radiusTarget * 0.02)
+            && Math.abs(o.alt - o.altTarget) < Math.max(1, Math.abs(o.altTarget - o.centreCarto.height) * 0.02)
+            && Math.abs(o.pitch - o.pitchTarget) < 0.5 && Math.abs(o.speed - o.speedTarget) < Math.max(0.5, o.speedTarget * 0.02);
+        return {
+            centre: o.centreCarto, radius: o.radiusTarget, alt: o.altTarget, pitch: o.pitchTarget,
+            speed: o.speedTarget, aim: o.aim, continuous: o.laps === Infinity,
+            lapsLeft: o.laps === Infinity ? Infinity : Math.max(0, o.laps - o.swept / (2 * Math.PI)),
+            settled,
+        };
     }
 
     function togglePause() {
@@ -330,7 +396,6 @@
             els.pauseOrbitBtn.innerHTML = '<i class="fas fa-play"></i> Resume';
             els.pauseOrbitBtn.classList.add('active');
         } else {
-            orbit.pausedMs += performance.now() - orbit.pauseAt;
             orbit.pauseAt = null;
             els.pauseOrbitBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
             els.pauseOrbitBtn.classList.remove('active');
@@ -400,6 +465,8 @@
         orbitAround: startOrbit,
         orbitView,
         stopOrbit,
+        retuneOrbit,
+        orbitInfo,
         isOrbiting: () => !!orbit,
         flyForward,
     });

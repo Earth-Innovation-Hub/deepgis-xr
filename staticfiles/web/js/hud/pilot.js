@@ -1,7 +1,10 @@
 // DeepGIS AI pilot chat, shared by the Earth, Moon and planet viewers.
-// POST /label/api/pilot/ turns a request into actions (goto, orbit, takeoff, land,
-// look, stop, wait, show_layer, hide_layer, describe_view, follow_vehicle); they run
-// in order through window.DeepGISActions (hud/actions.js), which reports into this chat.
+// POST /label/api/pilot/ turns a request into actions (goto, orbit, adjust, takeoff, land,
+// look, stop, wait, show_layer, hide_layer, describe_view, check_view, follow_vehicle); they
+// run in order through window.DeepGISActions (hud/actions.js), which reports into this chat.
+// A plan that ends in check_view is a task with a goal for the view: when the vision model
+// says it is not met yet, the chat asks the planner again with what it saw ("Goal check"),
+// up to GOAL_ROUNDS times, until it is met, the user says something else or presses Stop.
 // For superusers the server may also return robot_command, a command for one of the lab's
 // robots: it does not run with the plan but becomes a card in the chat, and is posted to
 // /label/api/pilot/robot-command/ only when the user presses Send (Preview plans it only).
@@ -28,6 +31,7 @@
 
     function modelLabel(name) {
         const id = name.toLowerCase();
+        if (id.includes('gemma-4')) return 'Gemma 4';
         if (id.includes('gemma')) return 'Gemma';
         if (id.includes('robot')) return 'Qwen robot';
         const size = id.match(/(\d+(?:\.\d+)?)b/);
@@ -106,7 +110,28 @@
                            content: `What I saw in the view: ${[data.summary, ...(data.observations || [])].join(' ')}`.slice(0, 2000) });
             history.splice(0, Math.max(0, history.length - 8));
         },
+        goal: onGoalChecked,
     };
+
+    // The task the planner is working on: { goal, rounds } while check_view keeps failing
+    const GOAL_ROUNDS = 3;
+    let task = null;
+
+    function onGoalChecked(r) {
+        if (r.met) { task = null; return; }
+        if (!task || task.goal !== r.goal) task = { goal: r.goal, rounds: 0 };
+        if (task.rounds >= GOAL_ROUNDS) {
+            addMsg('step', `Stopped trying after ${GOAL_ROUNDS} corrections; tell me how to change the view`);
+            task = null;
+            return;
+        }
+        task.rounds += 1;
+        const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+        const message = `Goal check ${task.rounds} of ${GOAL_ROUNDS}: "${clip(r.goal, 120)}" is not met yet. ` +
+            `The camera shows: ${clip(r.seen || 'nothing relevant', 220)}` +
+            `${r.suggestion ? ` Suggested change: ${clip(r.suggestion, 120)}` : ''}`;
+        ask(message, { auto: `Correcting the view (${task.rounds} of ${GOAL_ROUNDS})` });
+    }
     const addMsg = out.msg;
 
     const ROBOT_COMMAND_URL = '/label/api/pilot/robot-command/';
@@ -199,16 +224,18 @@
         if (!d.dry_run && d.result === 'in_progress') addMsg('step', `${d.vehicle} is on its way; chase it to watch`);
     }
 
-    stopBtn.addEventListener('click', () => { hud.stop(); addMsg('step', 'Stopped'); });
+    stopBtn.addEventListener('click', () => { task = null; hud.stop(); addMsg('step', 'Stopped'); });
 
     let asking = false;
 
-    // false when there is nothing to send or a request is already out
-    async function ask(text) {
+    // false when there is nothing to send or a request is already out. opts.auto: the
+    // chat line for a turn the page sends itself (a goal check) instead of the message
+    async function ask(text, opts = {}) {
         const message = String(text || '').trim();
         if (!message || asking || !getViewer()) return false;
+        if (!opts.auto) task = null;
         asking = true;
-        addMsg('user', message);
+        addMsg(opts.auto ? 'step' : 'user', opts.auto || message);
         const thinking = addMsg('step', 'Thinking...');
         sendBtn.disabled = true;
         try {
