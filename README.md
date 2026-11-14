@@ -195,13 +195,19 @@ roads into one labelled graph.
   this path sends anything to a vehicle, and a pose expires after 60 s.
 - **Robots are named by callsign.** A robot's id is a callsign, independent
   of the simulation (*world*) or container it runs in: the DREAMS Lab twins
-  are `kestrel` (multirotor) and `badger` (rover) in the Locutus world, and
-  `otter` (boat) in the Tempe Town Lake world. A `Vehicle` row holds each
-  robot's identity (name, platform, airframe, world as `site`, aliases), its
+  are `kestrel` (multirotor) and `badger` (rover) in the Locutus world,
+  `otter` (boat) in the Tempe Town Lake world, and the **CoRAL** pair
+  `otter_k` (Heron ASV) + `xudrone` (8″ AUV) in the Kiwanis Lake aquatic
+  sandbox (`digital-twin-aquatic`). A `Vehicle` row holds each robot's
+  identity (name, platform, airframe, world as `site`, aliases), its
   last-known position and a downsampled track (at most every 10 s, kept 14
   days); the live pose stays in the cache. Aliases resolve to the callsign
-  ("the rover" → badger, "heron" → otter), and "drone" or "robot" means
-  every platform.
+  ("the rover" → badger, "heron" → otter / otter_k, "auv" → xudrone), and
+  "drone" or "robot" means every platform. CoRAL commands go through
+  `coral_bridge` (dock, survey/coverage, `approach_tag`); see
+  [Earth-Innovation-Hub/CoRAL](https://github.com/Earth-Innovation-Hub/CoRAL)
+  and the twin pack
+  [`digital-twins/udrone`](https://github.com/Earth-Innovation-Hub/digital-twins/tree/main/udrone).
 - The pilot knows the robots: *"what robots are nearby?"*, *"how far is
   otter from the other robots?"*, *"which robots are in the Locutus world?"*
   are answered from the registry, nearest first. A world or a robot named as
