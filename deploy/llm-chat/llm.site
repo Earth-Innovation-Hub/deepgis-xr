@@ -1,0 +1,84 @@
+# llm.deepgis.org serves the lab chat. nginx checks the superuser cookie,
+# then the page and /api/chat call the same read-only model path as the AI pilot.
+# Studio is not proxied from this hostname.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name llm.deepgis.org;
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name llm.deepgis.org;
+
+    ssl_certificate     /etc/letsencrypt/live/llm.deepgis.org/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/llm.deepgis.org/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    access_log /var/log/nginx/llm.access.log;
+    error_log  /var/log/nginx/llm.error.log;
+
+    client_max_body_size 8m;
+
+    location = /_llm_access {
+        internal;
+        proxy_pass http://deepgis_xr/label/api/llm-access/;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length    "";
+        proxy_set_header Host              deepgis.org;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Cookie            $http_cookie;
+    }
+
+    location = /_auth {
+        access_log off;
+        proxy_pass http://deepgis_xr/label/api/llm-exchange/;
+        proxy_set_header Host              llm.deepgis.org;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Cookie            "";
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length    "";
+    }
+
+    location = /api/models {
+        auth_request /_llm_access;
+        auth_request_set $llm_ok $upstream_http_x_llm_ok;
+        error_page 401 = @llm_401;
+        proxy_pass http://deepgis_xr/label/api/llm-chat/models/;
+        proxy_set_header Host              deepgis.org;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Cookie            $http_cookie;
+        proxy_read_timeout 30s;
+    }
+
+    location = /api/chat {
+        auth_request /_llm_access;
+        auth_request_set $llm_ok $upstream_http_x_llm_ok;
+        error_page 401 = @llm_401;
+        proxy_pass http://deepgis_xr/label/api/llm-chat/;
+        proxy_set_header Host              deepgis.org;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Cookie            $http_cookie;
+        proxy_read_timeout 180s;
+    }
+
+    location / {
+        auth_request /_llm_access;
+        auth_request_set $llm_ok $upstream_http_x_llm_ok;
+        error_page 401 = @llm_401;
+        root /var/www/llm-chat;
+        try_files /index.html =404;
+    }
+
+    location @llm_401 {
+        if ($llm_ok = 1) {
+            return 401;
+        }
+        return 302 https://deepgis.org/label/llm-gate/?next=$uri;
+    }
+}

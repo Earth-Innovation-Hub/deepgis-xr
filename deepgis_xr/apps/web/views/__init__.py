@@ -68,9 +68,12 @@ from .rock_label import (
 )
 from .models_3d import get_3d_model, list_stl_models
 from .pilot import pilot_chat, pilot_describe, pilot_models, pilot_ocean, pilot_robot_command, pilot_topo
+from .create_twin import pilot_create_twin, pilot_create_twin_status
 from .vehicles import vehicle_frame, vehicle_frame_image, vehicle_pose, vehicles_live, vehicles_nearby
 from .twin_access import twin_access
+from .sims import sims_list
 from .llm_access import llm_access, llm_exchange, llm_gate
+from .llm_chat import llm_chat, llm_chat_models
 from .planet import label_planet_viewer
 from .pages import (
     BaseView,
@@ -111,6 +114,8 @@ __all__ = [
     "pilot_describe",
     "pilot_ocean",
     "pilot_robot_command",
+    "pilot_create_twin",
+    "pilot_create_twin_status",
     "pilot_topo",
     "vehicle_pose",
     "vehicles_live",
@@ -118,8 +123,11 @@ __all__ = [
     "vehicle_frame",
     "vehicle_frame_image",
     "twin_access",
+    "sims_list",
     "llm_access",
     "llm_exchange",
     "llm_gate",
+    "llm_chat",
+    "llm_chat_models",
     "label_planet_viewer",
 ]

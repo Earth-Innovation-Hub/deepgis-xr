@@ -229,6 +229,12 @@ DEEPGIS_PILOT_RATE_PER_MIN = int(os.environ.get('DEEPGIS_PILOT_RATE_PER_MIN', '1
 # Unset, the pilot offers no robot commands.
 DEEPGIS_PILOT_CONTROL_MCP_URL = os.environ.get('DEEPGIS_PILOT_CONTROL_MCP_URL', '')
 DEEPGIS_PILOT_CONTROL_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_CONTROL_MCP_TOKEN', '')
+# Superuser create_twin: authenticated twin-builder worker on dreamslab. Unset, the
+# pilot job API runs a local stub (no Docker) so confirm cards and tests still work.
+DEEPGIS_TWIN_BUILDER_URL = os.environ.get('DEEPGIS_TWIN_BUILDER_URL', '')
+DEEPGIS_TWIN_BUILDER_TOKEN = os.environ.get('DEEPGIS_TWIN_BUILDER_TOKEN', '')
+DEEPGIS_TWIN_JOBS_DIR = os.environ.get('DEEPGIS_TWIN_JOBS_DIR', '')
+DEEPGIS_TWIN_BUILDER_STUB_FAIL = os.environ.get('DEEPGIS_TWIN_BUILDER_STUB_FAIL', '') == '1'
 
 # Live vehicle poses for the pilot's follow_vehicle (views/vehicles.py).
 # "vehicle_id:sha256hex,..."; each publisher holds its own token, the server only the hash.

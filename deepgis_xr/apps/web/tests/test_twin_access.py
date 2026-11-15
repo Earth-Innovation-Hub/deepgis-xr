@@ -17,9 +17,11 @@ class TwinAccessTests(TestCase):
     def test_signed_out_is_401(self):
         self.assertEqual(self.client.get(URL).status_code, 401)
 
-    def test_signed_in_outside_group_is_403(self):
-        self.client.force_login(self.other)
-        self.assertEqual(self.client.get(URL).status_code, 403)
+    def test_signed_in_user_is_204_for_any_method(self):
+        client = Client(enforce_csrf_checks=True)
+        client.force_login(self.other)
+        self.assertEqual(client.get(URL).status_code, 204)
+        self.assertEqual(client.post(URL).status_code, 204)
 
     def test_member_is_204_for_any_method(self):
         client = Client(enforce_csrf_checks=True)

@@ -5,6 +5,8 @@
 // For superusers the server may also return robot_command, a command for one of the lab's
 // robots: it does not run with the plan but becomes a card in the chat, and is posted to
 // /label/api/pilot/robot-command/ only when the user presses Send (Preview plans it only).
+// create_twin is the same confirm pattern: the page attaches the Cesium look-at and bbox,
+// posts to /label/api/pilot/create-twin/, polls until ready, then follow_vehicle chase.
 // window.DeepGISPilot lets other panels (the VR comms panel, hud/xr-cockpit.js) ask through
 // the same path and mirror the chat: on(fn) gets {type: 'add', id, kind, text} for each line
 // and {type: 'remove', id} when a passing line ("Thinking...") goes. Robot commands are
@@ -110,7 +112,156 @@
     const addMsg = out.msg;
 
     const ROBOT_COMMAND_URL = '/label/api/pilot/robot-command/';
+    const CREATE_TWIN_URL = '/label/api/pilot/create-twin/';
     const ROBOT_COMMAND_NAMES = { instruct: 'instruction', return_home: 'return home and land', land: 'land now' };
+    const CREATE_TWIN_FIELDS = { vehicle_class: 'kestrel', count: 1, width_m: 150, length_m: 150 };
+
+    function patchMetres(value, fallback) {
+        const n = Number(value);
+        const side = Number.isFinite(n) ? n : fallback;
+        return Math.min(400, Math.max(20, side));
+    }
+
+    function lookAtAndBbox(widthM, lengthM) {
+        const width = patchMetres(widthM, CREATE_TWIN_FIELDS.width_m);
+        const length = patchMetres(lengthM, CREATE_TWIN_FIELDS.length_m);
+        return hud.currentView().then((view) => {
+            const t = view && view.target;
+            if (!t || !Number.isFinite(t.lat) || !Number.isFinite(t.lon)) {
+                throw new Error('No terrain under the crosshair; tilt the camera toward the ground.');
+            }
+            const dlat = (length / 2) / 111320;
+            const cos = Math.max(0.05, Math.abs(Math.cos(t.lat * Math.PI / 180)));
+            const dlon = (width / 2) / (111320 * cos);
+            return {
+                look_at: { lat: t.lat, lon: t.lon, elev_m: Number.isFinite(t.elev_m) ? t.elev_m : 0 },
+                bbox: { west: t.lon - dlon, south: t.lat - dlat, east: t.lon + dlon, north: t.lat + dlat },
+                width_m: width,
+                length_m: length,
+            };
+        });
+    }
+
+    function viewportJpeg() {
+        if (!hud.captureView) return Promise.resolve('');
+        return hud.captureView().catch(() => '');
+    }
+
+    function createTwinCard(a) {
+        const card = base.msg('robot', '');
+        const title = document.createElement('div');
+        title.className = 'pilot-robot-title';
+        const width = patchMetres(a.width_m, CREATE_TWIN_FIELDS.width_m);
+        const length = patchMetres(a.length_m, CREATE_TWIN_FIELDS.length_m);
+        const klass = a.vehicle_class || CREATE_TWIN_FIELDS.vehicle_class;
+        title.textContent = `Create Gazebo twin (${klass}, ${Math.round(width)}×${Math.round(length)} m) at the center of the view`;
+        announce('robot', `${title.textContent}. Confirm it from the chat on the page.`);
+        card.appendChild(title);
+        const text = document.createElement('div');
+        text.className = 'pilot-robot-text';
+        text.textContent = 'Bakes DEM and nadir imagery into a world, spawns an x500, enrolls pose, then chase.';
+        card.appendChild(text);
+        const row = document.createElement('div');
+        row.className = 'pilot-robot-buttons';
+        const button = (label, cls) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = cls;
+            b.textContent = label;
+            row.appendChild(b);
+            return b;
+        };
+        const send = button('Create twin', 'send');
+        const cancel = button('Cancel', 'cancel');
+        card.appendChild(row);
+        const busy = on => [send, cancel].forEach(b => { b.disabled = on; });
+        cancel.addEventListener('click', () => { row.remove(); addMsg('step', 'Twin not created'); });
+        send.addEventListener('click', async () => {
+            busy(true);
+            const working = addMsg('step', 'Reading the center of the view and starting the twin...');
+            try {
+                const geo = await lookAtAndBbox(width, length);
+                const nadir = await viewportJpeg();
+                const resp = await fetch(CREATE_TWIN_URL, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                    body: JSON.stringify({
+                        vehicle_class: klass,
+                        count: 1,
+                        width_m: geo.width_m,
+                        length_m: geo.length_m,
+                        look_at: geo.look_at,
+                        bbox: geo.bbox,
+                        nadir,
+                    }),
+                });
+                const data = await resp.json().catch(() => ({}));
+                working.remove();
+                if (!resp.ok) {
+                    addMsg('error', data.error || `Twin job failed (HTTP ${resp.status})`);
+                    busy(false);
+                    return;
+                }
+                row.remove();
+                addMsg('ai', `Twin job ${data.callsign || data.id}: ${data.message || data.status}`);
+                await pollCreateTwin(data.id, out);
+            } catch (err) {
+                working.remove();
+                addMsg('error', `Twin job failed: ${err.message || err}`);
+                busy(false);
+            }
+        });
+        log.scrollTop = log.scrollHeight;
+    }
+
+    async function pollCreateTwin(jobId, sink) {
+        if (!jobId) return;
+        const statusEl = addMsg('step', 'Building twin...');
+        const started = Date.now();
+        try {
+            while (Date.now() - started < 15 * 60 * 1000) {
+                await new Promise(r => setTimeout(r, 1500));
+                const resp = await fetch(`${CREATE_TWIN_URL}${encodeURIComponent(jobId)}/`, {
+                    credentials: 'same-origin',
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    statusEl.remove();
+                    addMsg('error', data.error || `Twin status failed (HTTP ${resp.status})`);
+                    return;
+                }
+                statusEl.textContent = data.message || data.status || 'Building twin...';
+                if (data.status === 'ready') {
+                    statusEl.remove();
+                    const vehicle = data.vehicle || data.callsign;
+                    const readyMsg = addMsg('ai', `Twin ready: ${vehicle}. Following in chase view.`);
+                    if (typeof data.url === 'string' && /^\/openuav\/llm\/40\d{3}\/$/.test(data.url)) {
+                        const open = document.createElement('a');
+                        open.href = data.url;
+                        open.target = '_blank';
+                        open.rel = 'noopener noreferrer';
+                        open.textContent = ' Open desktop';
+                        readyMsg.appendChild(open);
+                    }
+                    if (vehicle) {
+                        hud.run([{ type: 'follow_vehicle', vehicle, view: data.follow_view || 'chase' }], sink);
+                    }
+                    return;
+                }
+                if (data.status === 'failed') {
+                    statusEl.remove();
+                    addMsg('error', data.message || 'Twin build failed');
+                    return;
+                }
+            }
+            statusEl.remove();
+            addMsg('error', 'Twin build timed out; check the job later.');
+        } catch (err) {
+            statusEl.remove();
+            addMsg('error', `Twin status failed: ${err.message || err}`);
+        }
+    }
 
     function robotCommandCard(a) {
         const card = base.msg('robot', '');
@@ -237,7 +388,8 @@
             history.splice(0, Math.max(0, history.length - 8));
             const actions = data.actions || [];
             actions.filter(a => a.type === 'robot_command').forEach(robotCommandCard);
-            const camera = actions.filter(a => a.type !== 'robot_command');
+            actions.filter(a => a.type === 'create_twin').forEach(createTwinCard);
+            const camera = actions.filter(a => a.type !== 'robot_command' && a.type !== 'create_twin');
             camera.filter(a => a.type === 'describe_view').forEach(a => { a.question = message; });
             if (camera.length) hud.run(camera, out);
         } catch (err) {

@@ -543,8 +543,10 @@ class RobotCommandTests(TestCase):
         with mock.patch.object(pilot.requests, "post",
                                side_effect=[pilot.requests.ConnectionError("down"), mcp_response(plan)]) as post:
             resp = self.chat("land kestrel")
+        # robot_command is dropped when no commandable robots; create_twin remains available
         self.assertEqual(resp.json()["actions"], [])
-        self.assertEqual(post.call_args.kwargs["json"]["params"]["arguments"]["json_schema"], pilot.PILOT_SCHEMA)
+        self.assertEqual(post.call_args.kwargs["json"]["params"]["arguments"]["json_schema"], pilot.CONTROL_SCHEMA)
+        self.assertIn("create_twin", post.call_args.kwargs["json"]["params"]["arguments"]["system_prompt"])
 
     def test_command_needs_superuser(self):
         payload = {"vehicle": "kestrel", "command": "land"}

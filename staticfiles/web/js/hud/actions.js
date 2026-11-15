@@ -2156,6 +2156,11 @@
     }
 
     const runners = {
+        // create_twin is confirm-gated in pilot.js (never auto-run in a plan)
+        async create_twin(a, id, out) {
+            out.msg('step', 'Twin create waits for confirmation in the chat');
+        },
+
         async goto(a, id, out) {
             // No destination: change height where we are, then point the camera
             if (!a.place && !(Number.isFinite(a.lat) && Number.isFinite(a.lon))) {
@@ -2520,6 +2525,7 @@
         // The live fleet as last polled (every FLEET_POLL_MS on Earth), and why it failed
         vehicles: () => ({ list: fleetList.slice(), error: fleetError }),
         currentView,
+        captureView,
         csrfToken,
         logSink,
     };

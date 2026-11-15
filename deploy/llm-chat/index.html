@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepGIS</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #141414; color: #f2f2f2; font: 16px/1.45 "Segoe UI", sans-serif; }
+  main { max-width: 42rem; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 1.25rem 1rem 1rem; }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+  h1 { font-size: 1.15rem; font-weight: 600; margin: 0; }
+  select, textarea, button { font: inherit; color: inherit; background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 8px; }
+  select { padding: 0.35rem 0.5rem; }
+  #log { flex: 1; display: flex; flex-direction: column; gap: 0.75rem; margin: 1rem 0; }
+  .msg { white-space: pre-wrap; padding: 0.7rem 0.85rem; border-radius: 10px; max-width: 100%; }
+  .user { background: #243044; align-self: flex-end; }
+  .assistant { background: #1c1c1c; border: 1px solid #2c2c2c; }
+  .meta { color: #9a9a9a; font-size: 0.8rem; margin-top: 0.35rem; }
+  form { display: flex; flex-direction: column; gap: 0.5rem; }
+  textarea { min-height: 4.5rem; resize: vertical; padding: 0.6rem 0.7rem; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; }
+  button { padding: 0.45rem 0.9rem; background: #d7e4f5; color: #141414; border: 0; cursor: pointer; }
+  button:disabled { opacity: 0.55; cursor: default; }
+  .err { color: #f0b4b4; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>DeepGIS</h1>
+    <label>Model <select id="model"></select></label>
+  </header>
+  <div id="log" aria-live="polite"></div>
+  <form id="composer">
+    <textarea id="text" placeholder="Ask the lab model" autofocus></textarea>
+    <div class="row">
+      <label>Image <input id="image" type="file" accept="image/jpeg,image/png,image/webp"></label>
+      <button id="send" type="submit">Send</button>
+    </div>
+  </form>
+</main>
+<script>
+const log = document.getElementById("log");
+const text = document.getElementById("text");
+const model = document.getElementById("model");
+const image = document.getElementById("image");
+const send = document.getElementById("send");
+const history = [];
+
+function add(role, body, meta) {
+  const el = document.createElement("div");
+  el.className = "msg " + role;
+  el.textContent = body;
+  if (meta) {
+    const m = document.createElement("div");
+    m.className = "meta";
+    m.textContent = meta;
+    el.appendChild(m);
+  }
+  log.appendChild(el);
+  el.scrollIntoView({block: "end"});
+  return el;
+}
+
+async function loadModels() {
+  const resp = await fetch("/api/models");
+  if (!resp.ok) return;
+  const data = await resp.json();
+  for (const name of data.models || []) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    if (name === data.default_model) opt.selected = true;
+    model.appendChild(opt);
+  }
+}
+
+function fileData() {
+  const file = image.files && image.files[0];
+  if (!file) return Promise.resolve("");
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById("composer").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const message = text.value.trim();
+  let picture = "";
+  try { picture = await fileData(); }
+  catch (err) { add("assistant", "Could not read that image.", ""); return; }
+  if (!message && !picture) return;
+  add("user", message || "Image");
+  text.value = "";
+  image.value = "";
+  send.disabled = true;
+  const pending = add("assistant", "…");
+  try {
+    const resp = await fetch("/api/chat", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({message, image: picture, model: model.value, history}),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      pending.textContent = data.error || "The model did not answer.";
+      pending.classList.add("err");
+      return;
+    }
+    pending.textContent = data.response || "";
+    if (data.model) {
+      const m = document.createElement("div");
+      m.className = "meta";
+      m.textContent = data.model;
+      pending.appendChild(m);
+    }
+    history.push({role: "user", content: message || "Image"});
+    history.push({role: "assistant", content: data.response || ""});
+    if (history.length > 12) history.splice(0, history.length - 12);
+  } catch (err) {
+    pending.textContent = "The model did not answer.";
+    pending.classList.add("err");
+  } finally {
+    send.disabled = false;
+    text.focus();
+  }
+});
+
+loadModels();
+</script>
+</body>
+</html>

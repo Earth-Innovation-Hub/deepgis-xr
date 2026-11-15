@@ -1,13 +1,13 @@
 """
-Gate for https://llm.deepgis.org/ (Unsloth Studio).
+Gate for https://llm.deepgis.org/ (the lab chat).
 
 The studio hostname cannot see the deepgis.org session cookie, so a superuser
 signs in on deepgis.org, the gate redirects to /_auth with a 90-second signed
 token, and that response sets an HttpOnly cookie scoped to llm.deepgis.org.
 nginx auth_request calls llm_access with that cookie on every later request.
 
-Only an active DeepGIS superuser (deepgis-xr is_superuser) passes. The shared
-Studio password is unchanged and still applies after this gate.
+Only an active DeepGIS superuser (deepgis-xr is_superuser) passes. The chat
+behind the gate calls the same read-only model path as the AI pilot.
 """
 
 from urllib.parse import quote

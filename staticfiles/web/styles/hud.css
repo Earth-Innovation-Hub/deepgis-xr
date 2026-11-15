@@ -1319,3 +1319,26 @@
 .pw-note { color: #94a3b8; font-size: 0.75rem; }
 .pw-note a { color: #fbbf24; }
 .pw-rule { border-color: rgba(148, 163, 184, 0.25); margin: 12px 0; }
+
+/* ========== SIM DESKTOPS (hud/sims.js) ========== */
+.hud-btn.hud-sims { border-color: rgba(56, 189, 248, 0.5); }
+.hud-btn.hud-sims:hover, .hud-btn.hud-sims.active {
+    background: rgba(56, 189, 248, 0.25);
+    border-color: #38bdf8;
+    color: #7dd3fc;
+}
+.sims-note { color: #94a3b8; font-size: 0.78rem; margin: 0 0 10px; }
+.sims-list { display: flex; flex-direction: column; gap: 8px; }
+.sim-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 8px 10px; border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px;
+    background: rgba(15, 23, 42, 0.45);
+}
+.sim-row-text { min-width: 0; }
+.sim-row-name { color: #f1f5f9; font-weight: 600; font-size: 0.86rem; }
+.sim-row-robots { color: #94a3b8; font-size: 0.76rem; }
+a.sim-open {
+    color: #7dd3fc; text-decoration: none; border: 1px solid rgba(56, 189, 248, 0.45);
+    border-radius: 6px; padding: 4px 10px; white-space: nowrap; font-size: 0.8rem;
+}
+a.sim-open:hover { background: rgba(56, 189, 248, 0.2); color: #e0f2fe; }

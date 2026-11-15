@@ -69,7 +69,8 @@ PROMISE_RE = re.compile(r"\b(show|showing|fly|flying|orbit|orbiting|pull|pulling
                         r"zoom|zooming|display|displaying|draw|drawing|load|loading|switch|switching|climb|climbing|"
                         r"land|landing|descend|descending|take off|taking off|"
                         r"take a look|describe|describing|analy[sz]e|analy[sz]ing|"
-                        r"follow|following|sync|syncing|ride along|riding along)\b", re.IGNORECASE)
+                        r"follow|following|sync|syncing|ride along|riding along|"
+                        r"create|creating|spin up|spinning up|twin)\b", re.IGNORECASE)
 
 # Display names; keys match planet-bodies.js and web/geo/nomenclature/<body>.json
 BODIES = {
@@ -141,16 +142,25 @@ FOLLOW_FIELDS = ("type", "vehicle", "view")
 ROBOT_COMMANDS = ("instruct", "return_home", "land")
 ROBOT_FIELDS = ("type", "vehicle", "command", "instruction")
 MAX_INSTRUCTION_CHARS = 300
+# Superusers' create_twin: Gazebo x500 twin at the Cesium look-at (confirm-gated like robot_command)
+VEHICLE_CLASSES = ("kestrel",)
+CREATE_TWIN_FIELDS = ("type", "vehicle_class", "count", "width_m", "length_m")
+TWIN_PATCH_LIMITS = (20.0, 400.0)
+DEFAULT_TWIN_PATCH_M = 150.0
 
 
 def _control_schema():
     props = dict(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
-    props["type"] = {"enum": [*ACTION_TYPES, "robot_command"]}
+    props["type"] = {"enum": [*ACTION_TYPES, "robot_command", "create_twin"]}
     keys = list(props)
     at = keys.index("vehicle") + 1
     ordered = {k: props[k] for k in keys[:at]}
     ordered["command"] = {"enum": list(ROBOT_COMMANDS)}
     ordered["instruction"] = {"type": "string"}
+    ordered["vehicle_class"] = {"enum": list(VEHICLE_CLASSES)}
+    ordered["count"] = {"type": "number"}
+    ordered["width_m"] = {"type": "number"}
+    ordered["length_m"] = {"type": "number"}
     ordered.update({k: props[k] for k in keys[at:]})
     items = {**PILOT_SCHEMA["properties"]["actions"]["items"], "properties": ordered}
     actions = {**PILOT_SCHEMA["properties"]["actions"], "items": items}
@@ -321,17 +331,24 @@ Robot control: this user may also command these robots (simulated digital twins 
 - robot_command: propose a command for one of them. Fields: vehicle (its callsign); command: "instruct" (with instruction: what the robot should do, in plain words, keeping every distance, height, direction, pattern and ending the user gave), "return_home" (go back to its home position and land or stop there) or "land" (land where it is). The chat shows it to the user, who confirms it before anything is sent.
 - Use robot_command only when the user asks a robot itself to move or act: take off, fly, drive, sail, go somewhere, survey, orbit something, hold, point its camera, go home, land. A request about the view (orbit kestrel, fly to the rover, follow or chase the boat, show me badger) moves the camera, not the robot: use goto, orbit or follow_vehicle as before. "The drone" with no robot named is the camera drone.
 - Put follow_vehicle (chase) for the same vehicle after a robot_command when the user wants to watch it, or when the robot is far from the view.
+- create_twin: bake a new Gazebo world of the ground at the center of the view and spawn one kestrel-class drone (x500_gimbal) in it. This is a new session, not a command to the kestrel that is already flying. Fields: vehicle_class ("kestrel"); count (always 1; a request for any other number is not this action); width_m and length_m (the patch in metres, default 150, between 20 and 400). "20x20 m" means width_m 20 and length_m 20. "200 m across" means both sides 200. Never invent lat/lon — the page reads the center of the view and sends that image. The chat shows a confirm card. One create_twin per request; do not combine it with robot_command.
 - In reply, say which command you are proposing and that it waits for confirmation; never say it has been sent or done.
 Examples (actions only):
 - "kestrel, take off and survey a 40 m square at 15 m" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "instruct", "instruction": "take off and do a 40 x 40 m lawnmower survey at 15 m altitude"}}, {{"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}}]
 - "drive the rover 10 m north" -> [{{"type": "robot_command", "vehicle": "badger", "command": "instruct", "instruction": "drive 10 m north"}}]
 - "send kestrel home" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "return_home"}}]
-- "land the drone kestrel now" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "land"}}]"""
+- "land the drone kestrel now" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "land"}}]
+- "create a digital twin of this place with a kestrel-class multirotor" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 150, "length_m": 150}}]
+- "spin up a Gazebo twin here, about 200 m across" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 200, "length_m": 200}}]
+- "create digital twin of a 20x20m path at the center of view, with one kestrel class drone" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 20, "length_m": 20}}]"""
 
 
 def control_prompt(control):
-    names = "; ".join(f'{cs} ({PLATFORM_NAMES.get(robots.PLATFORM_ALIASES.get(r["type"], r["type"]), "robot")})'
-                      for cs, r in control.items())
+    if control:
+        names = "; ".join(f'{cs} ({PLATFORM_NAMES.get(robots.PLATFORM_ALIASES.get(r["type"], r["type"]), "robot")})'
+                          for cs, r in control.items())
+    else:
+        names = "(none listed right now; do not emit robot_command)"
     return CONTROL_PROMPT.format(robots=names)
 
 
@@ -425,10 +442,16 @@ def clean_robot_command(a, control):
     return act
 
 
-def clean_actions(raw, body="earth", control=None):
+def clean_create_twin(a):
+    """A create_twin action (superuser confirm card), or None."""
+    from .create_twin import clean_create_twin as _clean
+    return _clean(a)
+
+
+def clean_actions(raw, body="earth", control=None, allow_twin=False):
     """Keep known action types and fields, clamp numbers, drop bad coordinates.
     control: {callsign: robot} that this user may command (superusers); robot_command
-    actions for anything else are dropped."""
+    for anyone else is dropped. allow_twin: superusers may get create_twin confirm cards."""
     if body == "earth":
         types, limits, kinds = ACTION_TYPES, LIMITS, LAYER_KINDS
     else:
@@ -439,6 +462,12 @@ def clean_actions(raw, body="earth", control=None):
         if isinstance(a, dict) and a.get("type") == "robot_command" and body == "earth" and control:
             if cmd := clean_robot_command(a, control):
                 out.append(cmd)
+            if len(out) == MAX_ACTIONS:
+                break
+            continue
+        if isinstance(a, dict) and a.get("type") == "create_twin" and body == "earth" and allow_twin:
+            if twin := clean_create_twin(a):
+                out.append(twin)
             if len(out) == MAX_ACTIONS:
                 break
             continue
@@ -508,7 +537,7 @@ def clean_actions(raw, body="earth", control=None):
     return out
 
 
-def _clean_history(raw, body="earth", control=None):
+def _clean_history(raw, body="earth", control=None, allow_twin=False):
     hist = []
     for h in raw if isinstance(raw, list) else []:
         if (isinstance(h, dict) and h.get("role") in ("user", "assistant")
@@ -522,7 +551,8 @@ def _clean_history(raw, body="earth", control=None):
                     plan = None
                 if isinstance(plan, dict) and "actions" in plan:
                     content = json.dumps({"reply": str(plan.get("reply", "")),
-                                          "actions": clean_actions(plan["actions"], body, control)})
+                                          "actions": clean_actions(plan["actions"], body, control,
+                                                                   allow_twin=allow_twin)})
             hist.append({"role": h["role"], "content": content[:2000]})
     return hist[-MAX_HISTORY:]
 
@@ -913,10 +943,11 @@ def pilot_chat(request):
         context.append(robots_context(data.get("view")))
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
-    control = control_robots(request.user) if body == "earth" else {}
+    allow_twin = body == "earth" and request.user.is_superuser
+    control = control_robots(request.user) if allow_twin else {}
     if body != "earth":
         system_prompt, schema = planet_prompt(body), PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA)
-    elif control:
+    elif allow_twin:
         system_prompt, schema = SYSTEM_PROMPT + control_prompt(control), CONTROL_SCHEMA
     else:
         system_prompt, schema = SYSTEM_PROMPT, PILOT_SCHEMA
@@ -924,7 +955,7 @@ def pilot_chat(request):
         "prompt": prompt,
         "system_prompt": system_prompt,
         "json_schema": schema,
-        "history": _clean_history(data.get("history"), body, control),
+        "history": _clean_history(data.get("history"), body, control, allow_twin=allow_twin),
         "temperature": 0.2,
         "max_tokens": 800,
         "timeout_sec": timeout,
@@ -940,15 +971,20 @@ def pilot_chat(request):
         if not isinstance(plan, dict):
             return JsonResponse({"error": "The AI pilot returned no plan; try rephrasing."}, status=502)
         reply = plan.get("reply") if isinstance(plan.get("reply"), str) else ""
-        actions = clean_actions(plan.get("actions"), body, control)
+        actions = clean_actions(plan.get("actions"), body, control, allow_twin=allow_twin)
         if actions or not PROMISE_RE.search(reply):
             break
     cmap = named_colormap(message) if body == "earth" else None
     for a in actions:
         if cmap and a["type"] == "show_layer" and a.get("kind") in RASTER_KINDS:
             a["colormap"] = cmap
-    actions = [{k: a[k] for k in (ROBOT_FIELDS if a["type"] == "robot_command" else FIELD_ORDER) if k in a}
-               for a in actions]
+    def _action_fields(a):
+        if a["type"] == "robot_command":
+            return ROBOT_FIELDS
+        if a["type"] == "create_twin":
+            return CREATE_TWIN_FIELDS
+        return FIELD_ORDER
+    actions = [{k: a[k] for k in _action_fields(a) if k in a} for a in actions]
     _record_use(request, "chat", out.get("model", ""), out.get("duration_sec"), True)
     return JsonResponse({
         "reply": reply.strip()[:1000],

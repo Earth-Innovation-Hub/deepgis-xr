@@ -37,6 +37,12 @@
             <span>Models</span>
         </button>
         {% if hud_body == "earth" %}
+        {% if user.is_authenticated %}
+        <button class="hud-btn hud-sims" id="hudSimsBtn" data-panel="simsPanel" title="Open a simulation desktop in a new tab">
+            <i class="fas fa-desktop"></i>
+            <span>Sims</span>
+        </button>
+        {% endif %}
         <button class="hud-btn hud-weather" id="hudWeatherBtn" data-panel="weatherPanel">
             <i class="fas fa-cloud-sun"></i>
             <span>Weather</span>
