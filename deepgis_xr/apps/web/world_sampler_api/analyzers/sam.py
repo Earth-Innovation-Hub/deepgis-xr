@@ -151,8 +151,21 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
                     },
                     'report_url': f'/label/ai-analysis/report/{session_id}/'
                 })
-            except requests.exceptions.ConnectionError:
-                print(f"Warning: SAM API unavailable at {api_url}; falling back to local SAM")
+            except requests.exceptions.ConnectionError as conn_err:
+                print(
+                    f"⚠ SAM: cannot connect to {api_url} ({conn_err}); "
+                    f"degrading gracefully (no in-process fallback)"
+                )
+                return _unavailable_response(
+                    image=image,
+                    location=location,
+                    model_type=model_type,
+                    reason='connection_error',
+                    message=f'Cannot connect to SAM API at {api_url}',
+                    api_url=api_url,
+                    suggestion='Ensure the SAM service is running on the GPU host',
+                    detail=str(conn_err),
+                )
             except requests.exceptions.Timeout:
                 print(
                     f"⚠ SAM: request to {api_url} timed out; "
@@ -237,34 +250,36 @@ def _analyze_viewport_sam(image, location, model_type, min_area, scripts_dir):
                     device_info['cuda_failed'] = str(e)
                 except Exception as e2:
                     error_msg = str(e2)
-                # Check if it's the SAM_AVAILABLE check
-                if 'SAM_AVAILABLE' in error_msg or 'Segment Anything not installed' in error_msg:
-                    # Force reload and try again
-                    import importlib
-                    if 'segment_anything_rocks' in sys.modules:
-                        importlib.reload(sys.modules['segment_anything_rocks'])
-                    try:
-                        segmenter = SegmentAnythingRocks(model_type=model_type, device='cpu')
-                    except Exception as e3:
+                    # Stay inside this except. A successful CPU fallback
+                    # leaves error_msg unset, and reading it outside used
+                    # to raise NameError and turn that success into HTTP 500.
+                    if 'SAM_AVAILABLE' in error_msg or 'Segment Anything not installed' in error_msg:
+                        # Force reload and try again
+                        import importlib
+                        if 'segment_anything_rocks' in sys.modules:
+                            importlib.reload(sys.modules['segment_anything_rocks'])
+                        try:
+                            segmenter = SegmentAnythingRocks(model_type=model_type, device='cpu')
+                        except Exception as e3:
+                            return JsonResponse({
+                                'status': 'error',
+                                'message': f'Failed to initialize SAM after reload: {str(e3)}',
+                                'suggestion': 'Restart Django server to clear module cache',
+                                'debug': {
+                                    'original_error': error_msg,
+                                    'reload_error': str(e3)
+                                }
+                            }, status=500)
+                    else:
                         return JsonResponse({
                             'status': 'error',
-                            'message': f'Failed to initialize SAM after reload: {str(e3)}',
-                            'suggestion': 'Restart Django server to clear module cache',
+                            'message': f'Failed to initialize SAM: {error_msg}',
                             'debug': {
-                                'original_error': error_msg,
-                                'reload_error': str(e3)
+                                'model_type': model_type,
+                                'tried_cuda': True,
+                                'tried_cpu': True
                             }
                         }, status=500)
-                else:
-                    return JsonResponse({
-                        'status': 'error',
-                        'message': f'Failed to initialize SAM: {error_msg}',
-                        'debug': {
-                            'model_type': model_type,
-                            'tried_cuda': True,
-                            'tried_cpu': True
-                        }
-                    }, status=500)
         
         # Create organized directory structure for saving results
         from django.conf import settings

@@ -8,7 +8,9 @@ in here are the ones the maskrcnn-rocks pipeline depends on:
   1. When a detection ships `mask_polygons_norm`, the resulting
      feature is a Polygon whose exterior ring matches that data
      (with closure enforced) and `has_mask` is True.
-  2. Multiple rings round-trip in `[exterior, hole, ...]` order.
+  2. Multiple rings become one Polygon feature each. The rocks
+     service emits them with RETR_EXTERNAL, so a later ring is a
+     disjoint component, not a hole.
   3. Detections without polygons fall back to a normalized bbox
      rectangle and `has_mask` is False.
   4. Degenerate ring data (fewer than 3 distinct points) is treated
@@ -75,20 +77,29 @@ def test_polygon_path_closes_ring_when_caller_forgot():
     assert len(coords[0]) == len(open_ring) + 1
 
 
-def test_multiple_rings_round_trip_as_exterior_then_holes():
-    exterior = [
+def test_multiple_rings_are_separate_polygons():
+    larger = [
         [0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0],
     ]
-    hole = [
+    smaller = [
         [0.4, 0.4], [0.6, 0.4], [0.6, 0.6], [0.4, 0.6], [0.4, 0.4],
     ]
-    det = _make_det(3, polygons=[exterior, hole])
+    det = _make_det(3, polygons=[larger, smaller], area=50.0)
 
     fc = _polygons_norm_to_geojson([det], 100, 100)
 
-    coords = fc["features"][0]["geometry"]["coordinates"]
-    assert coords == [exterior, hole]
-    assert fc["features"][0]["properties"]["has_mask"] is True
+    assert len(fc["features"]) == 2
+    assert fc["features"][0]["geometry"]["coordinates"] == [larger]
+    assert fc["features"][1]["geometry"]["coordinates"] == [smaller]
+    for feature in fc["features"]:
+        assert feature["properties"]["has_mask"] is True
+        assert feature["properties"]["detection_id"] == 3
+        assert len(feature["geometry"]["coordinates"]) == 1
+    assert fc["features"][0]["properties"]["ring_index"] == 0
+    assert fc["features"][1]["properties"]["ring_index"] == 1
+    # Instance area stays on the largest component only.
+    assert fc["features"][0]["properties"]["area"] == 50.0
+    assert "area" not in fc["features"][1]["properties"]
 
 
 def test_falls_back_to_normalized_bbox_when_no_polygons():

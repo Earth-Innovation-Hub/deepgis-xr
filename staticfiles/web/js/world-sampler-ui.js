@@ -1412,12 +1412,19 @@ class WorldSamplerUI {
      * degrees and bbox is { minLon, maxLon, minLat, maxLat }. Returns null if
      * fewer than two corners can be picked (degenerate viewport, e.g. fully
      * off-globe).
+     *
+     * Picks use CSS pixels. canvas.width/height is the drawing buffer, and
+     * this viewer sets useBrowserRecommendedResolution false, so that buffer
+     * is client size times devicePixelRatio. Cesium's pickPosition and
+     * pickEllipsoid reject a window position past clientWidth/clientHeight,
+     * which used to null the snapshot and send every overlay through the
+     * heading-blind fallback. The last pixel is client size minus one.
      */
     computeViewportCornersGeo() {
         const scene = this.viewer.scene;
         const canvas = scene.canvas;
-        const w = canvas.width;
-        const h = canvas.height;
+        const w = Math.max((canvas.clientWidth || 0) - 1, 0);
+        const h = Math.max((canvas.clientHeight || 0) - 1, 0);
         const pickPositionSupported = scene.pickPositionSupported &&
             scene.mode === Cesium.SceneMode.SCENE3D;
 
@@ -2816,6 +2823,24 @@ class WorldSamplerUI {
                 if (!result || result.status !== 'success') {
                     throw new Error(result?.message || 'Analysis failed');
                 }
+
+                // A dead remote model is HTTP 200 with status success and an
+                // empty collection. message includes the service URL, so the
+                // panel shows the reason code instead.
+                if (result.degraded) {
+                    const reasonText = {
+                        not_configured: 'is not configured',
+                        connection_error: 'is unreachable',
+                        timeout: 'timed out',
+                    }[result.unavailable_reason] || 'is unavailable';
+                    const unavailable = `${analysisType} ${reasonText}`;
+                    statusText.textContent = result.suggestion
+                        ? `${unavailable}. ${result.suggestion}`
+                        : unavailable;
+                    statusText.style.color = '#f59e0b';
+                    this.showNotification(unavailable, 'warning');
+                    return;
+                }
                 
                 // Show device info
                 const deviceInfo = result.device_info || {};
@@ -3618,6 +3643,7 @@ class WorldSamplerUI {
             const imageSize = [canvas.width, canvas.height];
 
             const kernelResults = {};
+            const degradedKernels = [];
             for (let i = 0; i < selectedKernels.length; i++) {
                 const k = selectedKernels[i];
                 setStatus(`(${i + 1}/${selectedKernels.length}) Querying ${k.kind}...`);
@@ -3665,7 +3691,11 @@ class WorldSamplerUI {
                         continue;
                     }
                     const result = await r.json();
-                    if (result && result.status === 'success') {
+                    if (result && result.degraded) {
+                        console.warn(`[SceneGraph] ${k.kind} unavailable:`, result.unavailable_reason);
+                        degradedKernels.push(k.kind);
+                        kernelResults[k.kind] = {};
+                    } else if (result && result.status === 'success') {
                         kernelResults[k.kind] = result;
                     } else {
                         console.warn(`[SceneGraph] ${k.kind} non-success:`, result?.message);
@@ -3742,10 +3772,18 @@ class WorldSamplerUI {
                     cgTail = ` — ⚠ ${fmeta.city_graph_warning}`;
                 }
             }
-            setStatus(`✓ ${nNodes} nodes — ${histStr}${cgTail}`, '#10b981');
+            const degTail = degradedKernels.length
+                ? ` — unavailable: ${degradedKernels.join(', ')}`
+                : '';
+            setStatus(
+                `✓ ${nNodes} nodes — ${histStr}${cgTail}${degTail}`,
+                degradedKernels.length ? '#f59e0b' : '#10b981'
+            );
             this.showNotification(
-                `SceneGraph built: ${nNodes} nodes (${built.session_id})`,
-                'success'
+                degradedKernels.length
+                    ? `SceneGraph built: ${nNodes} nodes. Unavailable: ${degradedKernels.join(', ')}`
+                    : `SceneGraph built: ${nNodes} nodes (${built.session_id})`,
+                degradedKernels.length ? 'warning' : 'success'
             );
         } catch (err) {
             console.error('[SceneGraph] build failed:', err);

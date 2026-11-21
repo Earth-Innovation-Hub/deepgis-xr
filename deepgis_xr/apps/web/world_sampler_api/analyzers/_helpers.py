@@ -25,19 +25,20 @@ Helpers:
     _polygons_norm_to_geojson(detections, image_width, image_height)
         Build GeoJSON polygons from pre-vectorized, normalized mask
         contours (`mask_polygons_norm`). Used by maskrcnn_rocks, where
-        the upstream service already runs cv2.findContours on the GPU
-        host and ships ring lists in [0, 1] image space.
+        the upstream service already runs cv2.findContours
+        (RETR_EXTERNAL) on the GPU host and ships ring lists in
+        [0, 1] image space. Each ring is its own Polygon feature.
 
     _unavailable_response(image, location, model_type, reason, ...)
         Graceful-degradation envelope returned when a remote AI
         service is missing/unreachable/overloaded. See its docstring
         for the full rationale; in short, this returns HTTP 200 with
-        the same shape as a successful empty response so frontend
-        code that checks `response.ok` and `result.status ===
-        'success'` continues to render (as "0 detections") instead of
-        throwing an error toast on every viewport change. Callers
-        that want to surface an "AI offline" badge can read
-        `result.degraded === true` and `result.unavailable_reason`.
+        the same shape as a successful empty response so callers that
+        only check `response.ok` and `result.status === 'success'`
+        do not throw. The viewport-analysis panel reads
+        `result.degraded` and shows the model as unavailable instead
+        of a green "Found 0 objects". Scene-graph fusion still
+        continues with the other kernels.
 """
 
 
@@ -72,18 +73,16 @@ def _unavailable_response(
     Returning an *empty success* response with a ``degraded`` flag
     instead has three properties we want:
 
-    1. **All current call sites keep working without UI changes.**
-       The two strict callers in ``world-sampler-ui.js`` check
-       ``response.ok && result.status === 'success'``; both pass.
-       The one already-graceful caller (SceneGraph kernel
-       orchestration) treats an empty result the same as a successful
-       run with no detections, so the kernel just contributes nothing
-       to the fused graph that round.
+    1. **The HTTP status stays 200.** Callers that only check
+       ``response.ok`` still parse a body. The analyze panel then
+       branches on ``degraded`` and does not draw a success count.
+       Scene-graph orchestration skips that kernel and says so,
+       and still fuses whatever else was checked.
 
-    2. **AI-offline UX becomes opt-in, not forced.** Frontend code
-       that *wants* to render a "remote AI unreachable" badge can
-       branch on ``result.degraded`` / ``result.unavailable_reason``;
-       legacy code paths see a normal empty response.
+    2. **The reason stays on the body.** ``unavailable_reason``,
+       ``message``, and ``suggestion`` are there for the panel and
+       for operators. The panel shows the reason code, not
+       ``message``, because ``message`` embeds the service URL.
 
     3. **Operators still see what happened.** The server log line
        printed by the analyzer (``Cannot connect to ... at ...``) is
@@ -253,6 +252,30 @@ def _detections_to_geojson(detections_data, image_width, image_height):
     }
 
 
+def _polygon_feature(det, coordinates, has_mask, ring_index, include_area):
+    """One Polygon feature for a mask component or a bbox fallback."""
+    properties = {
+        'detection_id': det.get('detection_id'),
+        'class_name': det.get('class_name'),
+        'category': det.get('class_name'),
+        'confidence': det.get('confidence'),
+        'class_id': det.get('detection_id'),
+        'bbox_pixels': det.get('bbox', []),
+        'has_mask': has_mask,
+        'ring_index': ring_index,
+    }
+    if include_area and det.get('area') is not None:
+        properties['area'] = det['area']
+    return {
+        'type': 'Feature',
+        'geometry': {
+            'type': 'Polygon',
+            'coordinates': coordinates,
+        },
+        'properties': properties,
+    }
+
+
 def _polygons_norm_to_geojson(detections_data, image_width, image_height):
     """
     Build a normalized GeoJSON FeatureCollection from detections that
@@ -261,15 +284,19 @@ def _polygons_norm_to_geojson(detections_data, image_width, image_height):
     Each detection may include `mask_polygons_norm`, a list of rings,
     where each ring is `[[x_norm, y_norm], ...]` already in [0, 1]
     image space (the convention used by the maskrcnn-rocks service).
-    Rings are conventionally ordered largest-area first; we treat
-    rings[0] as the polygon exterior and the remainder as holes — the
-    same shape `displayZeroShotResults` on the frontend already
-    expects (`coordinates: [exterior, hole1, hole2, ...]`).
+    The service extracts those rings with ``cv2.RETR_EXTERNAL``, so
+    every ring is an outer contour of a disjoint component, largest
+    first. Each ring becomes its own Polygon feature. Packing the
+    later rings in as holes makes a second blob that does not lie
+    inside the first illegal GeoJSON, and Cesium then drops the
+    whole overlay.
 
     When a detection has no usable polygons we fall back to its
     bounding box so the feature still renders. `has_mask` reflects
     whether the geometry is mask-derived (used by the frontend to
-    upgrade outline / label styling).
+    upgrade outline / label styling). The instance ``area`` is
+    attached to the first ring only, so a sum over features does
+    not count one mask once per component.
 
     Args:
         detections_data: list of detection dicts with at minimum
@@ -295,41 +322,32 @@ def _polygons_norm_to_geojson(detections_data, image_width, image_height):
                 cleaned.append(cleaned[0])
             usable_rings.append(cleaned)
 
-        if usable_rings:
-            coordinates = usable_rings  # [exterior, hole1, hole2, ...]
-            has_mask = True
-        else:
+        if not usable_rings:
             bbox = det.get('bbox') or [0.0, 0.0, image_width, image_height]
             x1, y1, x2, y2 = bbox
-            coordinates = [[
-                [x1 / image_width, y1 / image_height],
-                [x2 / image_width, y1 / image_height],
-                [x2 / image_width, y2 / image_height],
-                [x1 / image_width, y2 / image_height],
-                [x1 / image_width, y1 / image_height],
-            ]]
-            has_mask = False
+            features.append(_polygon_feature(
+                det,
+                coordinates=[[
+                    [x1 / image_width, y1 / image_height],
+                    [x2 / image_width, y1 / image_height],
+                    [x2 / image_width, y2 / image_height],
+                    [x1 / image_width, y2 / image_height],
+                    [x1 / image_width, y1 / image_height],
+                ]],
+                has_mask=False,
+                ring_index=0,
+                include_area=True,
+            ))
+            continue
 
-        properties = {
-            'detection_id': det.get('detection_id'),
-            'class_name': det.get('class_name'),
-            'category': det.get('class_name'),
-            'confidence': det.get('confidence'),
-            'class_id': det.get('detection_id'),
-            'bbox_pixels': det.get('bbox', []),
-            'has_mask': has_mask,
-        }
-        if det.get('area') is not None:
-            properties['area'] = det['area']
-
-        features.append({
-            'type': 'Feature',
-            'geometry': {
-                'type': 'Polygon',
-                'coordinates': coordinates,
-            },
-            'properties': properties,
-        })
+        for ring_index, ring in enumerate(usable_rings):
+            features.append(_polygon_feature(
+                det,
+                coordinates=[ring],
+                has_mask=True,
+                ring_index=ring_index,
+                include_area=(ring_index == 0),
+            ))
 
     return {
         'type': 'FeatureCollection',

@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import cv2
+import numpy as np
 import torch
 from flask import Flask, jsonify, render_template, request, send_file
 from flask_cors import CORS
@@ -95,6 +96,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 EAGER_WARMUP = _env_bool("MASKRCNN_EAGER_WARMUP", True)
 UNLOAD_AFTER_PREDICT = _env_bool("MASKRCNN_UNLOAD_AFTER_PREDICT", False)
 EMPTY_CACHE_AFTER_PREDICT = _env_bool("MASKRCNN_EMPTY_CACHE_AFTER_PREDICT", True)
+# A full viewport is several thousand pixels on a side. Pasting masks at
+# that size asks for several GiB, which does not fit beside another model
+# on an 11 GB card. Inference runs on the long side capped here; polygon
+# coordinates stay normalized, and pixel boxes are scaled back.
+MAX_SIDE = int(os.environ.get("MASKRCNN_MAX_SIDE", "1280"))
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
@@ -122,6 +128,30 @@ log.info("empty CUDA cache after predict: %s", EMPTY_CACHE_AFTER_PREDICT)
 _MODEL_CACHE: Dict[str, Tuple[torch.nn.Module, Dict[str, Any]]] = {}
 _MODEL_CACHE_LOCK = threading.RLock()
 _INFERENCE_LOCK = threading.Lock()
+
+
+def _fit_max_side(image, max_side: int):
+    """Shrink so the long side is at most max_side. Returns (image, scale)."""
+    height, width = image.shape[:2]
+    long_side = max(height, width)
+    if max_side <= 0 or long_side <= max_side:
+        return image, 1.0
+    scale = max_side / float(long_side)
+    new_w = max(1, int(round(width * scale)))
+    new_h = max(1, int(round(height * scale)))
+    channels = image.shape[2] if image.ndim == 3 else 1
+    if channels <= 4:
+        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        if resized.ndim == 2:
+            resized = resized[:, :, None]
+        return resized, scale
+    # OpenCV resize rejects more than 4 channels. The rock checkpoints
+    # pad RGB up to 6, so shrink the color planes and the pad separately.
+    color = cv2.resize(image[:, :, :3], (new_w, new_h), interpolation=cv2.INTER_AREA)
+    extra = cv2.resize(image[:, :, 3:], (new_w, new_h), interpolation=cv2.INTER_AREA)
+    if extra.ndim == 2:
+        extra = extra[:, :, None]
+    return np.concatenate([color, extra], axis=2), scale
 
 
 def _labels_from_env(entry: ModelEntry) -> Optional[list[str]]:
@@ -426,6 +456,13 @@ def api_predict():
         try:
             fallback_label, label_names = _label_config(entry, meta)
             image = load_image_any(raw, filename, meta["input_channel"])
+            orig_h, orig_w = image.shape[:2]
+            image, scale = _fit_max_side(image, MAX_SIDE)
+            if scale != 1.0:
+                log.info(
+                    "resized input %sx%s -> %sx%s for inference",
+                    orig_w, orig_h, image.shape[1], image.shape[0],
+                )
             tensor = to_tensor(image, DEVICE)
             t0 = time.time()
             detections, (w, h) = run_inference(
@@ -436,6 +473,12 @@ def api_predict():
                 label_name=fallback_label,
                 label_names=label_names,
             )
+            if scale != 1.0:
+                inv = 1.0 / scale
+                for det in detections:
+                    det.box = [value * inv for value in det.box]
+                    det.area = float(det.area) * inv * inv
+                w, h = orig_w, orig_h
             elapsed_ms = int((time.time() - t0) * 1000)
         except Exception as exc:
             log.exception("inference failed")
