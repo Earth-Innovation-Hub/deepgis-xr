@@ -646,6 +646,7 @@ class TrainingDataset(models.Model):
     KIND_CHOICES = [
         ('mask2former', 'Mask2Former (semantic)'),
         ('rock_maskrcnn', 'Rock Mask R-CNN (400×400 tiles)'),
+        ('osm_virtual', 'OSM virtual annotations'),
     ]
 
     name = models.CharField(max_length=200, unique=True)

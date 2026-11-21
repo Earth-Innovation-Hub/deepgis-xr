@@ -221,6 +221,50 @@ class WorldSampler:
         
         return sampled_points
     
+
+    # City centers the gaussian-mixture init already knows, plus a wider
+    # set so a caller can draw views inside real cities instead of the
+    # 10-degree blobs that init uses.
+    CITY_CENTERS = (
+        ("New York", 40.748, -73.986),
+        ("London", 51.507, -0.128),
+        ("Tokyo", 35.682, 139.759),
+        ("Mexico City", 19.432, -99.133),
+        ("Singapore", 1.283, 103.851),
+        ("Cape Town", -33.925, 18.424),
+        ("Rio de Janeiro", -22.906, -43.173),
+        ("Paris", 48.857, 2.352),
+        ("Phoenix", 33.449, -112.074),
+        ("Nairobi", -1.286, 36.817),
+        ("Chicago", 41.878, -87.630),
+        ("Berlin", 52.520, 13.405),
+    )
+
+    def sample_around_cities(self, n: int, spread_deg: float = 0.006,
+                             cities: Optional[tuple] = None) -> List[SamplePoint]:
+        """Draw n points around city centers.
+
+        ``spread_deg`` is the gaussian standard deviation in degrees.
+        A tenth of a degree is a metro; a few thousandths stays on the
+        fetched OSM patch. ``cities`` overrides ``CITY_CENTERS`` with
+        ``(name, lat, lon)`` tuples.
+        """
+        catalog = tuple(cities) if cities is not None else self.CITY_CENTERS
+        if n < 1 or not catalog:
+            return []
+        points = []
+        for _ in range(n):
+            name, clat, clon = catalog[int(self.rng.integers(0, len(catalog)))]
+            lat = float(np.clip(self.rng.normal(clat, spread_deg), -85.0, 85.0))
+            lon = float(self.rng.normal(clon, spread_deg))
+            lon = ((lon + 180.0) % 360.0) - 180.0
+            points.append(SamplePoint(
+                lat=lat, lon=lon, alt=0.0,
+                metadata={"city": name},
+            ))
+        self.sample_history.extend(points)
+        return points
+
     def update_weights(
         self,
         rule: str,
