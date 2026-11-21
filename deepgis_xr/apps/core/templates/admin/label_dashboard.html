@@ -1,0 +1,119 @@
+{% extends "admin/base_site.html" %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">Home</a>
+    &rsaquo; Label dashboard
+</div>
+{% endblock %}
+
+{% block content %}
+<style>
+    .label-counts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+    .label-counts span {
+        background: var(--darkened-bg, #f8f8f8);
+        border: 1px solid var(--hairline-color, #ddd);
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 13px;
+    }
+    .label-counts strong { font-size: 16px; margin-right: 4px; }
+    .label-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; margin-bottom: 16px; }
+    .label-filters label { display: flex; flex-direction: column; font-size: 12px; gap: 4px; }
+    .label-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        gap: 12px;
+    }
+    .label-card {
+        border: 1px solid var(--hairline-color, #ddd);
+        border-radius: 6px;
+        background: var(--body-bg, #fff);
+        overflow: hidden;
+    }
+    .label-card img { display: block; width: 100%; height: 160px; object-fit: contain; background: #111; }
+    .label-card .body { padding: 10px 12px 12px; font-size: 13px; }
+    .label-card h3 { margin: 0 0 6px; font-size: 14px; word-break: break-word; }
+    .label-card p { margin: 2px 0; color: var(--body-quiet-color, #666); }
+    .label-pager { margin-top: 16px; }
+    .label-empty { padding: 24px; }
+</style>
+
+<div class="label-counts">
+    <span><strong>{{ counts.image_labels }}</strong> image labels</span>
+    <span><strong>{{ counts.category_labels }}</strong> category labels</span>
+    <span><strong>{{ counts.training_labels }}</strong> training labels</span>
+    <span><strong>{{ counts.datasets }}</strong> datasets</span>
+    <span><strong>{{ counts.tiled }}</strong> tiled labels</span>
+    <span><strong>{{ counts.showing }}</strong> match the filter</span>
+</div>
+
+<form class="label-filters" method="get">
+    <label>Dataset
+        <select name="dataset">
+            <option value="">All</option>
+            {% for dataset in datasets %}
+            <option value="{{ dataset.id }}" {% if filters.dataset == dataset.id|stringformat:"s" %}selected{% endif %}>{{ dataset.name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Category
+        <select name="category">
+            <option value="">All</option>
+            {% for cat in categories %}
+            <option value="{{ cat.category_name }}" {% if filters.category == cat.category_name %}selected{% endif %}>{{ cat.category_name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>City
+        <select name="city">
+            <option value="">All</option>
+            {% for name in cities %}
+            <option value="{{ name }}" {% if filters.city == name %}selected{% endif %}>{{ name }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Name
+        <input type="search" name="q" value="{{ filters.q }}" placeholder="image name">
+    </label>
+    <button type="submit" class="button">Filter</button>
+    <a href="{% url 'admin:label-dashboard' %}">Clear</a>
+</form>
+
+{% if rows %}
+<div class="label-grid">
+    {% for row in rows %}
+    <article class="label-card">
+        {% if row.mask_url %}
+        <a href="{{ row.change_url }}"><img src="{{ row.mask_url }}" alt="Mask for {{ row.name }}"></a>
+        {% endif %}
+        <div class="body">
+            <h3><a href="{{ row.change_url }}">{{ row.name }}</a></h3>
+            <p>{{ row.polygons }} polygon{{ row.polygons|pluralize }}
+                {% if row.categories %} · {{ row.categories|join:", " }}{% endif %}
+            </p>
+            {% if row.datasets %}<p>{{ row.datasets|join:", " }}</p>{% endif %}
+            {% if row.city or row.zoom or row.density %}
+            <p>{{ row.city }}{% if row.zoom %} · zoom {{ row.zoom }}{% endif %}{% if row.density %} · {{ row.density }}{% endif %}{% if row.buildings %} · {{ row.buildings }} buildings{% endif %}</p>
+            {% endif %}
+            <p>{% if row.labeler %}{{ row.labeler }} · {% endif %}{{ row.when }}</p>
+        </div>
+    </article>
+    {% endfor %}
+</div>
+{% else %}
+<p class="label-empty">No labels match this filter.</p>
+{% endif %}
+
+{% if page_obj.paginator.num_pages > 1 %}
+<p class="label-pager">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}&dataset={{ filters.dataset }}&category={{ filters.category }}&city={{ filters.city }}&q={{ filters.q }}">Previous</a>
+    {% endif %}
+    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}&dataset={{ filters.dataset }}&category={{ filters.category }}&city={{ filters.city }}&q={{ filters.q }}">Next</a>
+    {% endif %}
+</p>
+{% endif %}
+{% endblock %}

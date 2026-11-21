@@ -1,0 +1,17 @@
+{% extends "admin/index.html" %}
+{% load i18n %}
+
+{% block content %}
+<div id="content-main">
+    <div class="module" style="margin-bottom: 16px;">
+        <table>
+            <caption>Labels</caption>
+            <tr>
+                <th scope="row"><a href="{% url 'admin:label-dashboard' %}">Label dashboard</a></th>
+                <td>Every image label, category, and training set</td>
+            </tr>
+        </table>
+    </div>
+</div>
+{{ block.super }}
+{% endblock %}
