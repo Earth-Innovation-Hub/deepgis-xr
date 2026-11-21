@@ -37,7 +37,7 @@ def ai_analysis_report(request, session_id):
     # Try to find the session directory
     # Use exact match instead of substring to avoid matching wrong directories
     session_dir = None
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results', 'maskrcnn_house_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results', 'maskrcnn_house_results', 'rock_capture_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             # Try exact match first (session_id should match directory name exactly)
@@ -149,7 +149,7 @@ def serve_analysis_geojson(request, session_id):
     
     # Try to find the session directory
     session_dir = None
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results', 'maskrcnn_house_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results', 'maskrcnn_house_results', 'rock_capture_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             session_path = results_dir / session_id
@@ -213,7 +213,7 @@ def serve_analysis_image(request, session_id, image_type):
     session_dir = None
     
     # Find session directory - use exact match instead of substring
-    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results', 'maskrcnn_house_results']:
+    for subdir in ['sam_results', 'zero_shot_results', 'mask2former_results', 'yolov8_results', 'grounding_dino_results', 'grounded_sam_results', 'maskrcnn_rocks_results', 'maskrcnn_house_results', 'rock_capture_results']:
         results_dir = results_base / subdir
         if results_dir.exists():
             # Try exact match first

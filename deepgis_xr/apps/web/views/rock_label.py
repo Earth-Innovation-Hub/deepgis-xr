@@ -329,10 +329,10 @@ def rock_label_edit(request, session_id: str):
     # Derive a default dataset name from the session timestamp / location
     # so the user has something to accept without typing.
     location = metadata.get('location') or {}
-    default_dataset_name = "Bishop rocks corpus"
+    default_dataset_name = "Category labels"
     if location.get('lat') is not None and location.get('lon') is not None:
         default_dataset_name = (
-            f"Rocks @ {location['lat']:.4f},{location['lon']:.4f}"
+            f"Labels @ {location['lat']:.4f},{location['lon']:.4f}"
         )
 
     # Categories the editor offers as quick chips: defaults first, then
@@ -398,6 +398,12 @@ def rock_label_capture(request):
         pil = PILImage.open(io.BytesIO(png_bytes)).convert('RGB')
     except Exception as exc:
         return JsonResponse({'error': f'cannot decode image: {exc}'}, status=400)
+
+    extrema = pil.getextrema()
+    if extrema and all(channel[1] < 12 for channel in extrema):
+        return JsonResponse({
+            'error': 'captured view is blank; wait for the map to finish drawing',
+        }, status=400)
 
     timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
     lat = payload.get('lat')

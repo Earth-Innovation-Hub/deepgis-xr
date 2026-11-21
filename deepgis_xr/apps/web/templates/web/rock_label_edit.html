@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rock Label Editor – {{ session_id }}</title>
+    <title>Category Label Editor – {{ session_id }}</title>
     {% csrf_token %}
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -286,9 +286,13 @@
 
 <div id="appShell">
     <header id="topbar">
-        <strong><i class="fas fa-mountain me-1"></i> Rock Label Editor</strong>
+        <strong><i class="fas fa-tags me-1"></i> Category Label Editor</strong>
         <span class="session-id">{{ session_id }}</span>
-        {% if model_type == 'sam' %}
+        {% if model_type == 'rockcapture' %}
+            <span id="modeBanner" title="Polygons drawn on the view that was on screen when Label was pressed.">
+                <i class="fas fa-map"></i> Current view
+            </span>
+        {% elif model_type == 'sam' %}
             <span id="modeBanner" class="sam" title="SAM produces class-agnostic masks. Each polygon needs a category before saving.">
                 <i class="fas fa-bolt"></i> SAM mode — assign category per polygon
             </span>

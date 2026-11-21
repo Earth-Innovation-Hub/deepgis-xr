@@ -168,16 +168,56 @@
         }
     }
 
-    // Function to sync current location to 2D map
-    // Workflow B entry — capture the current Cesium viewport, POST it
-    // to /label/rocks/capture/, then redirect into the rock label editor
-    // with no AI predictions pre-populated. The editor handles tile
-    // selection, polygon drawing, and saving 400×400 .npy training tiles.
+    // Read the globe while postRender still holds this frame. A timer plus
+    // toDataURL runs after Cesium has cleared the drawing buffer, so the
+    // saved PNG is black and the editor opens on an empty canvas.
+    function captureCurrentView(viewer) {
+        const scene = viewer.scene;
+        const maxSide = 1600;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                off();
+                reject(new Error('the view did not render'));
+            }, 5000);
+            const off = scene.postRender.addEventListener(() => {
+                off();
+                clearTimeout(timer);
+                try {
+                    const src = scene.canvas;
+                    const k = Math.min(1, maxSide / Math.max(src.width, src.height));
+                    const c = document.createElement('canvas');
+                    c.width = Math.max(1, Math.round(src.width * k));
+                    c.height = Math.max(1, Math.round(src.height * k));
+                    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+                    const dataUrl = c.toDataURL('image/png');
+                    if (!dataUrl || dataUrl.length < 20000) {
+                        reject(new Error('the captured view is blank'));
+                        return;
+                    }
+                    resolve(dataUrl);
+                } catch (err) {
+                    reject(new Error('could not read the view (' + (err.message || err) + ')'));
+                }
+            });
+            scene.requestRender();
+        });
+    }
+
+    // Category label editor entry. Capture the current Cesium view, POST it
+    // to /label/rocks/capture/, then open the editor on that image with no
+    // AI predictions. The editor draws category polygons and saves a
+    // 400x400 training tile.
     async function captureForRockLabel() {
         const viewer = window.AppState?.viewer || window.viewer;
         if (!viewer || !viewer.camera || !viewer.scene) {
             alert('Cesium viewer not ready yet — try again in a moment.');
             return;
+        }
+        const button = document.getElementById('quickLabelRocks');
+        const previousLabel = button ? button.innerHTML : '';
+        if (button) {
+            button.disabled = true;
+            button.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Capturing';
         }
         try {
             const cam = viewer.camera.positionCartographic;
@@ -187,12 +227,7 @@
             const heading = Cesium.Math.toDegrees(viewer.camera.heading);
             const pitch = Cesium.Math.toDegrees(viewer.camera.pitch);
 
-            // Force a render so the off-screen canvas reflects the
-            // current frame before we serialize it.
-            viewer.scene.requestRender();
-            await new Promise(r => setTimeout(r, 50));
-
-            const dataUrl = viewer.scene.canvas.toDataURL('image/png');
+            const dataUrl = await captureCurrentView(viewer);
 
             const csrfInput = document.querySelector('input[name=csrfmiddlewaretoken]');
             const csrf = csrfInput ? csrfInput.value
@@ -218,6 +253,10 @@
         } catch (err) {
             console.error('captureForRockLabel failed', err);
             alert('Capture failed: ' + (err.message || err));
+            if (button) {
+                button.disabled = false;
+                button.innerHTML = previousLabel;
+            }
         }
     }
     window.captureForRockLabel = captureForRockLabel;
