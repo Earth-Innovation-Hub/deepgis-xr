@@ -583,11 +583,56 @@ def adapt_sam(
     return claims
 
 
+def ultralytics_source_id(result: Mapping[str, Any]) -> str:
+    model = str(result.get('yolo_model') or '').lower()
+    family = str(result.get('family') or '').lower()
+    if model.startswith('sam3') or family == 'sam3':
+        return 'sam3'
+    if model.startswith('yoloe') or family == 'yoloe':
+        return 'yoloe'
+    return 'yolo26'
+
+
+def adapt_ultralytics(
+    result: Mapping[str, Any],
+    *,
+    corners_lonlat: Optional[Sequence[Tuple[float, float]]] = None,
+) -> List[KernelClaim]:
+    """``yolov8`` analyzer JSON (YOLO26, YOLOE-26 or SAM 3) → urban_v1 claims.
+
+    The source id follows the served model, so SAM 3 and YOLO get
+    separate Q_s rows. Prompt phrases and COCO names are mapped onto the
+    native vocabularies in :mod:`.urban_taxonomy`; anything else becomes
+    the source's catch-all label, which carries almost no evidence.
+    """
+    from .urban_taxonomy import coco_native_label, prompt_native_label
+
+    img_size = tuple(result.get('image_size') or (0, 0))[:2]
+    if img_size == (0, 0):
+        return []
+    source_id = ultralytics_source_id(result)
+    to_native = coco_native_label if source_id == 'yolo26' else prompt_native_label
+    detections = [
+        dict(det, class_name=to_native(det.get('class_name') or ''))
+        for det in (result.get('detections') or [])
+    ]
+    return _adapt_maskrcnn_family(
+        detections,
+        source_id=source_id,
+        fallback_label=to_native(''),
+        image_size=img_size,
+        corners_lonlat=corners_lonlat,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Top-level dispatch
 # ---------------------------------------------------------------------------
 
 ADAPTERS = {
+    'yolov8':          adapt_ultralytics,
+    'yolo':            adapt_ultralytics,
+    'sam3':            adapt_ultralytics,
     'maskrcnn_rocks':  adapt_maskrcnn_rocks,
     'mr_rocks':        adapt_maskrcnn_rocks,
     'maskrcnn_house':  adapt_maskrcnn_house,

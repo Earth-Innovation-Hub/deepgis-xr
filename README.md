@@ -178,8 +178,34 @@ clamped to the terrain in 3D, flat with outlines in 2D. Degenerate rings are
 dropped before drawing, and if a frame still fails the page clears the AI
 overlay and keeps rendering.
 On Earth, the **SceneGraph** button runs several of these (Mask R-CNN rocks,
-Grounding DINO, SAM) on the same frame and fuses them with OSM buildings and
-roads into one labelled graph.
+Grounding DINO, SAM, SAM 3, YOLO) on the same frame and fuses them with OSM
+buildings and roads into one labelled graph. Builds that include SAM 3 or YOLO
+use the `urban_v1` categories, which add house, pool, parking lot and solar
+panel to building, road, vehicle, tree, grass, pavement, water and so on; the
+SAM 3 prompts are editable in the panel.
+
+### 🧭 World model: a spatiotemporal scene graph
+When the observations database is configured, every SceneGraph build is also
+folded into a persistent world model in PostGIS (`deepgis_xr/apps/scene_store`):
+- **What was seen**: each capture (footprint, time, camera pose), the kernels
+  that ran, their detections and each kernel's raw claims.
+- **What is there**: entities, one per world object, matched across captures
+  by overlap (or by centroid distance for small objects such as cars).
+- **Factors as rows**: perceptual, existence (hit / miss), context
+  (co-occurrence of neighbours) and containment (a solar panel on a roof, a car
+  in a parking lot) factors, each with a valid-time range and recorded /
+  superseded times, so corrections never erase history.
+- **Time**: an entity's category is fixed, but its existence is a chain that
+  forgets at a rate set by the category (hours for cars, years for buildings).
+  The store can answer "what was here at time *t*" and notices a car that left.
+- **Incremental inference**: a new capture re-runs belief propagation only on
+  the entities it touched; a 70-object capture is stored in about a second.
+- **Feedback and preferences**: signed-in users can confirm, relabel or reject
+  an entity; the correction becomes a strong factor and is counted per source
+  as a signal for recalibrating the kernels. Per-user settings are kept too.
+
+`python manage.py ingest_scene_graphs` replays stored SceneGraphs into the
+world model (`--reset` to rebuild it).
 
 ### 🌍 World Sampler: adaptive geospatial sampling
 - Probabilistic location sampling that updates from feedback and rewards
@@ -474,6 +500,8 @@ deepgis-xr/
 │   │   ├── auth/                     # phone-based auth (Twilio)
 │   │   ├── core/                     # core models, admin, image processing
 │   │   ├── ml/                       # ML helpers (admin training)
+│   │   ├── scene_store/              # world model: PostGIS factor graph,
+│   │   │                             # fusion, inference, world API
 │   │   ├── tile_catalog/             # Site→Dataset→Timestep→Product registry
 │   │   │   └── management/commands/  # seed_tile_catalog, validate_tile_catalog
 │   │   └── web/                      # main web app
@@ -485,6 +513,7 @@ deepgis-xr/
 │   │       ├── world_sampler.py      # adaptive spatial sampler
 │   │       ├── world_sampler_api/    # sampling + AI viewport API
 │   │       │   ├── core.py, http.py  # helpers + HTTP endpoints
+│   │       │   ├── scenegraph.py     # SceneGraph build (+ urban_taxonomy.py)
 │   │       │   └── analyzers/        # per-model analyzers (sam, yolov8,
 │   │       │                         # grounding_dino, maskrcnn_rocks, ...)
 │   │       ├── templatetags/hud_tags.py  # Layers panel catalog (#hudLayerCatalog)
@@ -671,6 +700,27 @@ deepgis-xr/
 - `GET /webclient/sampler/statistics`: distribution statistics
 - `POST /webclient/sampler/reset`: reset the sampler
 - `GET /webclient/sampler/history`: sample history
+
+### SceneGraph and world model API
+
+- `POST /webclient/sampler/scenegraph/build`: fuse per-kernel results into a
+  SceneGraph. Optional `taxonomy` (`phx_urban_v0` or `urban_v1`; defaults to
+  `urban_v1` when SAM 3 or YOLO contributed). The response includes
+  `world_update` (matched, new and missed entities) when the world model is on.
+- `GET /webclient/sampler/world/entities?bbox=west,south,east,north`: world
+  entities in a box (at most 0.05° square). Optional `at` (ISO 8601 with a
+  zone) recomputes beliefs for that instant, `taxonomy`, `min_p_exists`.
+- `GET /webclient/sampler/world/entities/<id>`: one entity's belief history,
+  detections, feedback and factor counts.
+- `POST /webclient/sampler/world/feedback`: `{entity_id, kind: confirm |
+  relabel | reject, category?, note?}`; sign-in required.
+- `GET`/`POST /webclient/sampler/world/preferences`: per-user settings as a
+  JSON object (`null` deletes a key); sign-in required.
+- `GET /webclient/sampler/world/stats[?taxonomy=]`: counts, plus per-source
+  label agreement with user feedback when a taxonomy is given.
+
+Without `OBSERVATIONS_DATABASE_URL` the world endpoints return 503 and builds
+skip the world model.
 
 ### Labeling API
 
@@ -1087,6 +1137,8 @@ GUNICORN_TIMEOUT=600
 
 # Database: unset = SQLite; Postgres after the migration runbook
 # DATABASE_URL=postgres://deepgis:deepgis@db:5432/deepgis
+# PostGIS database for field readings and the world model (optional)
+# OBSERVATIONS_DATABASE_URL=postgres://deepgis:<password>@observations_db:5432/deepgis_observations
 REDIS_URL=redis://redis:6379/0
 
 # Remote AI services
@@ -1168,6 +1220,15 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 ---
 
 ## 📊 Recent Updates
+
+### November 2026: urban scene graph and world model
+- **Urban categories**: SceneGraph builds can query SAM 3 (editable prompts)
+  and YOLO, fused under `urban_v1`, which adds house, pool, parking lot and
+  solar panel. kernelcal's confusion tables are lifted onto the new
+  categories; SAM 3, YOLOE and YOLO26 get their own.
+- **World model in PostGIS**: the `scene_store` app keeps captures,
+  detections, entities and factors, infers each entity's category and
+  existence over time, and takes user feedback. See *World model* above.
 
 ### November 2026: pilot widgets and immersive VR
 - **One Flight panel** (`2ae3f71`): the Fly and Orbit widgets, the quick

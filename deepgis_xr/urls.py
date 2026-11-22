@@ -31,6 +31,7 @@ urlpatterns = [
 
     # Web interface
     path('', include('deepgis_xr.apps.web.urls')),
+    path('', include('deepgis_xr.apps.scene_store.urls')),
 
     # Authentication URLs
     path('auth/', include('deepgis_xr.apps.auth.urls')),

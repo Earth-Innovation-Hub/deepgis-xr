@@ -99,13 +99,13 @@ def _load_fit_payload(fit_artifact_dir: Optional[Path]) -> Dict[str, Any]:
 def _q_s_table_from_fit(payload: Mapping[str, Any]):
     from kernelcal.distinction_game import PHX_URBAN_V0
     from kernelcal.distinction_game.q_s import ConfusionMatrix
-    from kernelcal.distinction_game.taxonomy import by_name
+    from .urban_taxonomy import taxonomy_by_name
 
     out = {}
     for sid, raw in (payload.get('q_s_table') or {}).items():
         tax_name = raw.get('taxonomy') or PHX_URBAN_V0.name
         try:
-            taxonomy = by_name(tax_name)
+            taxonomy = taxonomy_by_name(tax_name)
         except KeyError:
             taxonomy = PHX_URBAN_V0
         out[sid] = ConfusionMatrix(
@@ -250,6 +250,18 @@ def run_collapse_for_rows(
     lambdas = _lambdas_from_fit(fit_payload)
     lambdas = _fill_anchor_lambdas(lambdas, q_s_table, fit_payload)
     taxonomy = next(iter(q_s_table.values())).taxonomy
+
+    # Category indices differ between taxonomies, so a fit only applies
+    # to scene graphs built under the same one.
+    matching = [r for r in rows if (getattr(r, 'taxonomy_name', None) or taxonomy.name) == taxonomy.name]
+    if len(matching) < len(rows):
+        log.warning(
+            'scene_graph_collapse: skipping %d scene graphs not built under %s',
+            len(rows) - len(matching), taxonomy.name,
+        )
+    rows = matching
+    if not rows:
+        raise ValueError(f'no SceneGraph rows were built under the fit taxonomy {taxonomy.name!r}')
 
     sg_dicts = [scene_graph_row_to_kc_dict(r) for r in rows]
     fused = collapse_scene_graphs(

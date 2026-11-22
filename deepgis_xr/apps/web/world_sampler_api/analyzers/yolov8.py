@@ -181,7 +181,7 @@ def _analyze_viewport_yolov8(image, location, confidence_threshold, yolo_model, 
         'status': 'success',
         'num_detections': len(detections),
         'detections': [
-            {key: det.get(key) for key in ('detection_id', 'class_name', 'class_id', 'confidence', 'bbox', 'area')}
+            {key: det.get(key) for key in ('detection_id', 'class_name', 'class_id', 'confidence', 'bbox', 'area', 'mask_polygons_norm')}
             for det in detections
         ],
         'geojson': geojson,

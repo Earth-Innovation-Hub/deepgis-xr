@@ -25,8 +25,15 @@ Request body (JSON)::
         "mr_rocks":   { ... raw analyze-viewport JSON ... },
         "mr_house":   { ... },
         "grounding_dino": { ... },
-        "sam":        { ... }
+        "sam":        { ... },
+        "sam3":       { ... yolov8 analyzer JSON with yolo_model=sam3 ... },
+        "yolov8":     { ... YOLO26 / YOLOE-26 ... }
       },
+
+      // Optional: "phx_urban_v0" or "urban_v1" (adds house, pool,
+      // parking_lot, solar_panel). Defaults to urban_v1 when a SAM 3 /
+      // YOLO kernel contributed claims, phx_urban_v0 otherwise.
+      "taxonomy": "urban_v1",
 
       // OR, additionally / alternatively, ground-truth sources to fetch
       // server-side. PR-2 supports OSM-buildings + OSM-roads:
@@ -70,10 +77,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from kernelcal.distinction_game import (
-    PHX_URBAN_V0,
     Viewport,
     build_scene_graph,
-    default_q_s_table,
     uniform_lambdas,
 )
 
@@ -90,6 +95,7 @@ from .scenegraph_city_graph import (
     city_graph_to_osm_features,
     spectral_block,
 )
+from .urban_taxonomy import pick_taxonomy, q_s_table_for
 
 
 SCENEGRAPH_RESULTS_DIR = Path('/app/deepgis_results') / 'scenegraph_results'
@@ -399,9 +405,21 @@ def build_scenegraph_view(request):
         all_claims.extend(road_claims)
 
     # 3. Build the SceneGraph.
-    taxonomy = PHX_URBAN_V0
-    q_s_table = default_q_s_table(taxonomy=taxonomy)
     contributing_sources = sorted({c.source_id for c in all_claims})
+    try:
+        taxonomy = pick_taxonomy(data.get('taxonomy'), contributing_sources)
+        q_s_table = q_s_table_for(taxonomy)
+    except KeyError as exc:
+        return JsonResponse({'status': 'error', 'message': str(exc)}, status=400)
+    unscored = [s for s in contributing_sources if s not in q_s_table]
+    if unscored:
+        return JsonResponse({
+            'status': 'error',
+            'message': (
+                f'taxonomy {taxonomy.name!r} has no Q_s for {unscored}; '
+                'use taxonomy "urban_v1" for SAM 3 / YOLO kernels'
+            ),
+        }, status=400)
     fit = uniform_lambdas(
         sources=contributing_sources or list(q_s_table.keys()),
         taxonomy=taxonomy,
@@ -567,11 +585,30 @@ def build_scenegraph_view(request):
         # primary deliverable to the frontend.
         print(f"[scenegraph] failed to persist DB row: {exc}")
 
+    # 6. Fold into the spatiotemporal world model (PostGIS), also best-effort.
+    world_update = None
+    try:
+        from deepgis_xr.apps.scene_store import fusion as world_fusion
+        if world_fusion.enabled():
+            kernel_meta = {
+                kind: {'model': (res or {}).get('yolo_model') or (res or {}).get('model_type') or kind}
+                for kind, res in kernel_results.items() if isinstance(res, dict)
+            }
+            world_update = world_fusion.ingest_scene_graph(
+                graph_dict, session_id=session_id, taxonomy_name=taxonomy.name,
+                user_id=getattr(user, 'id', None), artifact_path=artifact_path,
+                kernel_meta=kernel_meta,
+            )
+    except Exception as exc:
+        print(f"[scenegraph] world-model ingest failed: {exc}")
+        world_update = {'status': 'error', 'message': str(exc)}
+
     return JsonResponse(
         {
             'status': 'success',
             'session_id': session_id,
             'scene_graph': graph_dict,
+            'world_update': world_update,
             'saved_to': {
                 'session_dir': artifact_path,
                 'host_path': str(SCENEGRAPH_RESULTS_DIR / session_id).replace(

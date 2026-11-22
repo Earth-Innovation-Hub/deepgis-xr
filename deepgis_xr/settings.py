@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'deepgis_xr.apps.ml',
     'deepgis_xr.apps.web',
     'deepgis_xr.apps.tile_catalog.apps.TileCatalogConfig',
+    'deepgis_xr.apps.scene_store.apps.SceneStoreConfig',
 ]
 
 # Middleware
@@ -139,6 +140,20 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
+# Field readings (camera keyframe, spectrum, laser target) live in their own
+# PostGIS database. Unset, the live cache behaves exactly as before.
+_OBS_URL = os.environ.get('OBSERVATIONS_DATABASE_URL', '').strip()
+OBSERVATIONS_ROOT = os.environ.get('OBSERVATIONS_ROOT', '').strip()
+if _OBS_URL:
+    import dj_database_url
+    DATABASES['observations'] = dj_database_url.parse(
+        _OBS_URL, conn_max_age=600, conn_health_checks=True)
+    DATABASES['observations']['ENGINE'] = 'django.contrib.gis.db.backends.postgis'
+    DATABASES['observations'].setdefault('OPTIONS', {})
+    DATABASES['observations']['OPTIONS']['connect_timeout'] = 3
+
+DATABASE_ROUTERS = ['deepgis_xr.db_router.FieldReadingRouter']
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

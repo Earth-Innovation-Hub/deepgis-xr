@@ -3740,6 +3740,8 @@ class WorldSamplerUI {
             { id: 'sgKernelGroundingDino', kind: 'grounding_dino',  analysis: 'grounding_dino'  },
             { id: 'sgKernelGroundedSam',   kind: 'grounded_sam',    analysis: 'grounded_sam'    },
             { id: 'sgKernelSam',           kind: 'sam',             analysis: 'sam'             },
+            { id: 'sgKernelSam3',          kind: 'sam3',            analysis: 'yolov8'          },
+            { id: 'sgKernelYolo',          kind: 'yolov8',          analysis: 'yolov8'          },
         ];
         const selectedKernels = kernelChecks.filter((k) => {
             const el = document.getElementById(k.id);
@@ -3817,6 +3819,15 @@ class WorldSamplerUI {
                         if (modelId) reqBody.model_id = modelId;
                         reqBody.score_threshold = parseFloat(document.getElementById('maskrcnnHouseScore')?.value || 50) / 100;
                         reqBody.max_detections = parseInt(document.getElementById('maskrcnnHouseMaxDet')?.value || 200, 10);
+                    } else if (k.kind === 'sam3') {
+                        reqBody.yolo_model = 'sam3';
+                        reqBody.confidence_threshold = 0.3;
+                        reqBody.class_filter = document.getElementById('sgSam3Prompts')?.value?.trim()
+                            || 'building, house, tree, grass, car, swimming pool, road, parking lot, solar panel';
+                    } else if (k.kind === 'yolov8') {
+                        reqBody.yolo_model = document.getElementById('yolov8ModelType')?.value || 'yolo26x-seg';
+                        reqBody.confidence_threshold = parseFloat(document.getElementById('yolov8Confidence')?.value || 25) / 100;
+                        reqBody.class_filter = document.getElementById('yolov8Classes')?.value?.trim() || '';
                     }
                     const r = await fetch('/webclient/sampler/analyze-viewport', {
                         method: 'POST',
@@ -3854,9 +3865,11 @@ class WorldSamplerUI {
             const useCityGraph = !!document.getElementById('sgUseCityGraph')?.checked;
             const graphMode = document.getElementById('sgGraphMode')?.value || 'road_knn';
 
+            const taxonomyName = selectedKernels.some((k) => k.analysis === 'yolov8')
+                ? 'urban_v1' : 'phx_urban_v0';
             setStatus(useCityGraph
-                ? `Fusing under PHX_URBAN_V0 + CityGraph (${graphMode})...`
-                : 'Fusing kernel claims under PHX_URBAN_V0...');
+                ? `Fusing under ${taxonomyName} + CityGraph (${graphMode})...`
+                : `Fusing kernel claims under ${taxonomyName}...`);
             const buildBody = {
                 viewport: {
                     image_size: imageSize,
@@ -3865,6 +3878,7 @@ class WorldSamplerUI {
                 },
                 kernel_results: kernelResults,
                 ground_truth_sources: gtSources,
+                taxonomy: taxonomyName,
                 min_score: 0.2,
                 iou_threshold: 0.4,
                 edge_proximity: 0.06,
@@ -3968,7 +3982,11 @@ class WorldSamplerUI {
         const colorByCategory = {
             unknown:           Cesium.Color.GRAY,
             building:          Cesium.Color.fromCssColorString('#3b82f6'), // blue
+            house:             Cesium.Color.fromCssColorString('#a855f7'), // purple
+            solar_panel:       Cesium.Color.fromCssColorString('#1e3a8a'), // navy
             road:              Cesium.Color.fromCssColorString('#facc15'), // yellow
+            parking_lot:       Cesium.Color.fromCssColorString('#e5e7eb'), // light gray
+            pool:              Cesium.Color.fromCssColorString('#38bdf8'), // sky blue
             vehicle:           Cesium.Color.fromCssColorString('#ef4444'), // red
             tree:              Cesium.Color.fromCssColorString('#16a34a'), // green
             vegetation_other:  Cesium.Color.fromCssColorString('#84cc16'), // lime
