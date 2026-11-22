@@ -65,6 +65,7 @@ class Detection(models.Model):
     node_id = models.CharField(max_length=40)
     observed_at = models.DateTimeField()
     geom = gis.PolygonField(srid=4326)
+    area_m2 = models.FloatField(null=True, blank=True)  # geodesic area of geom
     category = models.CharField(max_length=40)
     posterior = ArrayField(models.FloatField())
     score = models.FloatField()
@@ -98,6 +99,7 @@ class Entity(models.Model):
     score = models.FloatField()
     p_exists = models.FloatField(default=0.5)
     geom = gis.PolygonField(srid=4326)
+    area_m2 = models.FloatField(null=True, blank=True)  # median over its detections, not the area of geom
     first_seen = models.DateTimeField()
     last_seen = models.DateTimeField()
     n_hits = models.IntegerField(default=0)

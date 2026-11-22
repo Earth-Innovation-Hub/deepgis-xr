@@ -134,6 +134,16 @@ _ENTITY_COLUMNS = {
 }
 
 
+ENTITY_AREA_SQL = """
+UPDATE sg_entity e SET area_m2 = m.area
+FROM (SELECT a.entity_id, percentile_cont(0.5) WITHIN GROUP (ORDER BY d.area_m2) AS area
+      FROM sg_association a JOIN sg_detection d ON d.id = a.detection_id
+      WHERE a.entity_id = ANY(%s)
+      GROUP BY a.entity_id) m
+WHERE e.id = m.entity_id
+"""
+
+
 def _update_entities(entities, fields):
     """One ``UPDATE ... FROM (VALUES ...)``; Django's bulk_update builds a CASE per row and field."""
     if not entities:
@@ -231,6 +241,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                       score=float(post.max()), sources=list(node.get('sources') or []))
             for node, shp, post in dets
         ])
+        with connections[DB].cursor() as cur:
+            cur.execute('UPDATE sg_detection SET area_m2 = ST_Area(geom::geography) WHERE capture_id = %s', [cap.id])
         claims = []
         for (node, _, _), row in zip(dets, det_rows):
             for c in node.get('claims') or []:
@@ -350,6 +362,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                                            variables=[cvar(parent), cvar(child)], decays=False, capture=cap))
 
         Association.objects.bulk_create(assocs)
+        with connections[DB].cursor() as cur:
+            cur.execute(ENTITY_AREA_SQL, [sorted(touched)])
         Factor.objects.bulk_create(factors, batch_size=500)
         new_ids = {e.id for e in new_rows}
         _update_entities([by_id[eid] for eid in (touched | set(missed)) - new_ids],
@@ -514,6 +528,7 @@ def entity_to_dict(e, belief=None):
         'posterior': [round(float(p), 4) for p in post],
         'first_seen': e.first_seen.isoformat(), 'last_seen': e.last_seen.isoformat(),
         'n_hits': e.n_hits, 'n_misses': e.n_misses, 'sources': e.sources,
+        'area_m2': round(e.area_m2, 2) if e.area_m2 is not None else None,
         'geo_polygon': [list(p) for p in e.geom.coords[0]],
     }
 
@@ -538,6 +553,26 @@ def entities_in_bbox(bbox, *, at=None, taxonomy=None, min_p_exists=0.0, limit=20
             bp[name] = r
     out = [entity_to_dict(e, beliefs.get(e.id)) for e in ents]
     return [d for d in out if d['p_exists'] >= min_p_exists], bp
+
+
+def area_histogram(areas, *, bin_m2, max_m2=None):
+    """Fixed-width bins from 0 to ``max_m2`` (default: the 99th percentile), plus an overflow count."""
+    a = np.asarray([v for v in areas if v is not None and np.isfinite(v)], dtype=float)
+    if a.size == 0:
+        return {'n': 0, 'bin_m2': bin_m2, 'bins': [], 'overflow': 0, 'stats': None}
+    top = max_m2 if max_m2 else float(np.percentile(a, 99))
+    n_bins = max(1, min(500, int(math.ceil(top / bin_m2))))
+    top = n_bins * bin_m2
+    counts, edges = np.histogram(a[a < top], bins=n_bins, range=(0.0, top))
+    return {
+        'n': int(a.size), 'bin_m2': bin_m2,
+        'bins': [{'lo': round(float(lo), 3), 'hi': round(float(hi), 3), 'n': int(c)}
+                 for lo, hi, c in zip(edges[:-1], edges[1:], counts)],
+        'overflow': int((a >= top).sum()),
+        'stats': {k: round(float(v), 2) for k, v in (
+            ('min', a.min()), ('p10', np.percentile(a, 10)), ('median', np.median(a)), ('mean', a.mean()),
+            ('p90', np.percentile(a, 90)), ('max', a.max()))},
+    }
 
 
 def source_reliability(taxonomy):

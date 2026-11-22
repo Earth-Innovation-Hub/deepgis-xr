@@ -180,3 +180,31 @@ class FusionTests(TransactionTestCase):
         self.assertEqual(r.json()['preferences'], {'sam3_prompts': 'tree, pool'})
         r = self.client.get(f'/webclient/sampler/world/entities/{bld.id}')
         self.assertEqual(r.json()['factor_counts']['feedback'], 2)
+
+    def test_areas_are_geodesic_and_entities_take_the_median(self):
+        self._ingest('s1', self.t1)
+        self.assertAlmostEqual(self._entity('vehicle').area_m2, 9.0, delta=0.1)
+        self.assertAlmostEqual(self._entity('building').area_m2, 900.0, delta=5)
+        big = _scene(self.t2)
+        big['nodes'][2]['region']['geo_polygon'] = _square(10, 2, 1.6)
+        fusion.ingest_scene_graph(big, session_id='s2', taxonomy_name='urban_v1')
+        big['viewport']['capture_metadata']['captured_at'] = self.t3.isoformat()
+        big['nodes'][2]['region']['geo_polygon'] = _square(10, 2, 1.7)
+        fusion.ingest_scene_graph(big, session_id='s3', taxonomy_name='urban_v1')
+        self.assertAlmostEqual(self._entity('vehicle').area_m2, 3.2 ** 2, delta=0.1)
+
+    def test_histogram_api(self):
+        self._ingest('s1', self.t1)
+        bbox = f'{LON - 0.002},{LAT - 0.002},{LON + 0.002},{LAT + 0.002}'
+        url = '/webclient/sampler/world/histogram'
+        r = self.client.get(url, {'bbox': bbox, 'category': 'vehicle', 'bin_m2': 2, 'max_m2': 20}).json()
+        self.assertEqual((r['level'], r['n'], r['overflow'], len(r['bins'])), ('entity', 1, 0, 10))
+        self.assertEqual([b['n'] for b in r['bins']].index(1), 4)  # 9 m² lands in [8, 10)
+        r = self.client.get(url, {'bbox': bbox, 'bin_m2': 100, 'max_m2': 500}).json()
+        self.assertEqual((r['n'], r['overflow']), (3, 1))
+        r = self.client.get(url, {'capture': 'latest', 'source': 'sam3', 'label': 'vehicle', 'bin_m2': 1}).json()
+        self.assertEqual((r['level'], r['capture']['session_id'], r['n']), ('detection', 's1', 1))
+        self.assertEqual(r['stats']['median'], r['stats']['max'])
+        self.assertEqual(self.client.get(url, {'capture': 'nope'}).status_code, 404)
+        self.assertEqual(self.client.get(url, {'bbox': bbox, 'bin_m2': 0}).status_code, 400)
+        self.assertEqual(self.client.get(url).status_code, 400)

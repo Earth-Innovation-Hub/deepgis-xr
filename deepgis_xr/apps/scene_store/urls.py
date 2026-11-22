@@ -8,4 +8,5 @@ urlpatterns = [
     path('webclient/sampler/world/feedback', views.feedback_view, name='world_feedback'),
     path('webclient/sampler/world/preferences', views.preferences_view, name='world_preferences'),
     path('webclient/sampler/world/stats', views.stats_view, name='world_stats'),
+    path('webclient/sampler/world/histogram', views.histogram_view, name='world_histogram'),
 ]

@@ -6,12 +6,17 @@
     GET  /webclient/sampler/world/preferences
     POST /webclient/sampler/world/preferences   {key: value, ...}
     GET  /webclient/sampler/world/stats[?taxonomy=]
+    GET  /webclient/sampler/world/histogram?bbox=w,s,e,n | capture=<session_id>|latest
+         [&category=][&label=][&source=][&taxonomy=][&min_p_exists=][&bin_m2=1][&max_m2=]
+         Area histogram. With bbox: world entities (median area over their sightings).
+         With capture: that capture's detections, one per region as the models saw it.
 
 Reads are public; feedback and preferences need a signed-in user.
 """
 
 import json
 
+from django.contrib.gis.geos import Polygon
 from django.db.models import Count
 from django.http import JsonResponse
 from django.utils.dateparse import parse_datetime
@@ -79,7 +84,8 @@ def entity_detail_view(request, entity_id):
         'history': [{'at': s.at.isoformat(), 'category': s.category, 'p_exists': round(s.p_exists, 4),
                      'score': round(max(s.posterior), 4), 'cause': s.cause} for s in snaps],
         'detections': [{'at': d.observed_at.isoformat(), 'session_id': d.capture.session_id,
-                        'category': d.category, 'score': round(d.score, 4), 'sources': d.sources} for d in dets],
+                        'category': d.category, 'score': round(d.score, 4), 'sources': d.sources,
+                        'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None} for d in dets],
         'feedback': [{'kind': f.kind, 'category': f.category, 'at': f.created_at.isoformat(),
                       'superseded': f.superseded_at is not None}
                      for f in Feedback.objects.filter(entity=e).order_by('created_at')],
@@ -154,3 +160,60 @@ def stats_view(request):
         'n_feedback': Feedback.objects.filter(superseded_at__isnull=True).count(),
         'source_reliability': fusion.source_reliability(taxonomy) if taxonomy else None,
     })
+
+
+@require_GET
+def histogram_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    q = request.GET
+    try:
+        bin_m2 = float(q.get('bin_m2', 1))
+        max_m2 = float(q['max_m2']) if q.get('max_m2') else None
+        min_p = float(q.get('min_p_exists', 0))
+    except ValueError:
+        return _error('bin_m2, max_m2 and min_p_exists must be numbers')
+    if not 0 < bin_m2 <= 1e6 or (max_m2 is not None and max_m2 <= 0):
+        return _error('bin_m2 and max_m2 must be positive')
+    category, label, source = q.get('category'), q.get('label'), q.get('source')
+    filters = {k: v for k, v in (('category', category), ('label', label), ('source', source)) if v}
+
+    if q.get('capture'):
+        caps = Capture.objects.order_by('-captured_at')
+        if source:
+            caps = caps.filter(sources__contains=[source])
+        cap = caps.first() if q['capture'] == 'latest' else caps.filter(session_id=q['capture']).first()
+        if cap is None:
+            return _error('no such capture', 404)
+        rows = Detection.objects.filter(capture=cap)
+        if category:
+            rows = rows.filter(category=category)
+        if source:
+            rows = rows.filter(sources__contains=[source])
+        if label:
+            rows = rows.filter(claims__native_label=label).distinct()
+        hist = fusion.area_histogram(rows.values_list('area_m2', flat=True), bin_m2=bin_m2, max_m2=max_m2)
+        return JsonResponse({'status': 'success', 'level': 'detection', 'filters': filters,
+                             'capture': {'session_id': cap.session_id, 'captured_at': cap.captured_at.isoformat(),
+                                         'taxonomy': cap.taxonomy, 'sources': cap.sources},
+                             **hist})
+
+    try:
+        west, south, east, north = [float(v) for v in q.get('bbox', '').split(',')]
+    except ValueError:
+        return _error('bbox=west,south,east,north or capture=<session_id>|latest is required')
+    if not (west < east and south < north) or (east - west) * (north - south) > MAX_BBOX_DEG ** 2:
+        return _error(f'bbox must be non-empty and at most {MAX_BBOX_DEG} degrees square')
+    rows = Entity.objects.filter(geom__intersects=Polygon.from_bbox((west, south, east, north)),
+                                 p_exists__gte=min_p)
+    if q.get('taxonomy'):
+        rows = rows.filter(taxonomy=q['taxonomy'])
+    if category:
+        rows = rows.filter(category=category)
+    if source:
+        rows = rows.filter(sources__contains=[source])
+    if label:
+        rows = rows.filter(associations__detection__claims__native_label=label).distinct()
+    hist = fusion.area_histogram(rows.values_list('area_m2', flat=True), bin_m2=bin_m2, max_m2=max_m2)
+    return JsonResponse({'status': 'success', 'level': 'entity', 'filters': filters,
+                         'min_p_exists': min_p, **hist})
