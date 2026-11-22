@@ -182,7 +182,12 @@ Grounding DINO, SAM, SAM 3, YOLO) on the same frame and fuses them with OSM
 buildings and roads into one labelled graph. Builds that include SAM 3 or YOLO
 use the `urban_v1` categories, which add house, pool, parking lot and solar
 panel to building, road, vehicle, tree, grass, pavement, water and so on; the
-SAM 3 prompts are editable in the panel.
+SAM 3 prompts are editable in the panel. Each object is drawn as a polygon
+coloured by its most likely category, more opaque the surer the fusion is,
+with an outline that thickens with the number of models that found it; the
+strongest links between neighbouring objects are drawn as lines. *Show scene
+graph* and *Links* toggle them. The AI overlays are hidden while a frame is
+captured, so the models never see earlier results.
 
 ### 🧭 World model: a spatiotemporal scene graph
 When the observations database is configured, every SceneGraph build is also
@@ -203,6 +208,12 @@ folded into a persistent world model in PostGIS (`deepgis_xr/apps/scene_store`):
 - **Feedback and preferences**: signed-in users can confirm, relabel or reject
   an entity; the correction becomes a strong factor and is counted per source
   as a signal for recalibrating the kernels. Per-user settings are kept too.
+
+In the AI panel, *World model* draws the remembered objects in view, faded by
+how likely each one is still there, now or at a chosen time ahead (in 12
+hours, in a week). Clicking one shows its category, sightings, misses and
+models, with *Correct*, *Relabel* and *Not there* buttons for signed-in users.
+The panel also remembers each user's model, prompts and scene-graph models.
 
 `python manage.py ingest_scene_graphs` replays stored SceneGraphs into the
 world model (`--reset` to rebuild it).
@@ -1229,6 +1240,11 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **World model in PostGIS**: the `scene_store` app keeps captures,
   detections, entities and factors, infers each entity's category and
   existence over time, and takes user feedback. See *World model* above.
+- **AI panel**: a world-model layer with click-to-inspect and feedback
+  buttons, saved per-user panel settings, scene-graph links and show/hide
+  toggles, overlays kept out of captured frames, and the unused model
+  branches (zero-shot, Mask2Former, Grounded-SAM, house and sibling Mask
+  R-CNN, Prithvi) removed from the viewport analysis code.
 
 ### November 2026: pilot widgets and immersive VR
 - **One Flight panel** (`2ae3f71`): the Fly and Orbit widgets, the quick

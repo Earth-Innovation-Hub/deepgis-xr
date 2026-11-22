@@ -1,5 +1,5 @@
-    <!-- AI Analysis Panel -->
-    <div class="hud-panel" id="aiPanel">
+    <!-- AI Analysis Panel. Form behaviour lives in hud/ai-panel.js; actions in world-sampler-ui.js. -->
+    <div class="hud-panel" id="aiPanel" data-signed-in="{% if user.is_authenticated %}1{% else %}0{% endif %}">
         <div class="hud-panel-header">
             <div class="hud-panel-title"><i class="fas fa-brain" style="color: #10b981;"></i> AI Viewport Analysis</div>
             <button class="hud-panel-close" onclick="closeHudPanel('aiPanel')"><i class="fas fa-times"></i></button>
@@ -20,19 +20,32 @@
             {% endif %}
         </div>
         <hr class="pw-rule">
-        <div class="form-group mb-3">
-            <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Analysis Type:</label>
-            <select class="form-select form-select-sm" id="analysisTypeSelect">
-                <option value="sam"{% if hud_body != "earth" %} selected{% endif %}>SAM (Universal Segmentation)</option>
-                <option value="yolov8">YOLO26 / YOLOE-26 / SAM 3 ⚡</option>
-                <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
+        <div class="dl-heading">Find objects</div>
+        <div class="form-group mb-2">
+            <select class="form-select form-select-sm" id="analysisTypeSelect" aria-label="Model">
+                <option value="sam3"{% if hud_body == "earth" %} selected{% endif %}>SAM 3: find what you name</option>
+                <option value="yolov8">YOLO26 / YOLOE-26 (fast)</option>
+                <option value="grounding_dino">Grounding DINO (boxes from text)</option>
+                <option value="sam"{% if hud_body != "earth" %} selected{% endif %}>SAM: outline everything</option>
                 {% if hud_body == "earth" %}
-                <option value="maskrcnn_rocks" selected>MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
+                <option value="maskrcnn_rocks">Mask R-CNN rocks</option>
                 {% endif %}
             </select>
         </div>
+        <!-- SAM 3 Options (sent as model_type yolov8 + yolo_model sam3) -->
+        <div id="sam3Options" style="display: none;">
+            <div class="form-group mb-2">
+                <input type="text" class="form-control form-control-sm" id="sam3Prompts"
+                       value="{% if hud_body == "earth" %}building, house, tree, grass, car, swimming pool, road, parking lot, solar panel{% else %}crater, boulder, rock{% endif %}"
+                       aria-label="Objects to find, comma-separated" title="Objects to find, comma-separated">
+            </div>
+            <div class="form-group mb-3">
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Confidence: <span id="sam3ConfidenceValue">30%</span></label>
+                <input type="range" class="form-range" id="sam3Confidence" min="10" max="90" step="5" value="30">
+            </div>
+        </div>
         <!-- SAM Options -->
-        <div id="samOptions">
+        <div id="samOptions" style="display: none;">
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model:</label>
                 <select class="form-select form-select-sm" id="samModelType">
@@ -51,20 +64,17 @@
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model:</label>
                 <select class="form-select form-select-sm" id="yolov8ModelType">
-                    <optgroup label="YOLO26 (COCO classes, masks)">
+                    <optgroup label="YOLO26 (80 COCO classes)">
                         <option value="yolo26n-seg">Nano (Fastest)</option>
                         <option value="yolo26s-seg">Small</option>
                         <option value="yolo26m-seg">Medium</option>
                         <option value="yolo26l-seg">Large</option>
                         <option value="yolo26x-seg" selected>XLarge (Best)</option>
                     </optgroup>
-                    <optgroup label="YOLOE-26 (open vocabulary: list what to find)">
+                    <optgroup label="YOLOE-26 (finds the classes you list)">
                         <option value="yoloe-26s-seg">Small</option>
                         <option value="yoloe-26m-seg">Medium</option>
                         <option value="yoloe-26l-seg">Large</option>
-                    </optgroup>
-                    <optgroup label="SAM 3 (text prompts, best masks, ~30 s)">
-                        <option value="sam3">SAM 3</option>
                     </optgroup>
                 </select>
             </div>
@@ -79,14 +89,10 @@
         <!-- Grounding DINO Options -->
         <div id="groundingDinoOptions" style="display: none;">
             <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Text Prompt:</label>
-                <input type="text" class="form-control form-control-sm" id="groundingDinoPrompt" 
-                       value="{% if hud_body == "earth" %}building . roof . road . vehicle . parking lot . field . crop row . orchard . irrigation canal . tree . shrub . grass . wetland . water . bare soil . rock . boulder . outcrop . crater . debris . erosion channel{% else %}crater . small crater . boulder . rock . outcrop . ridge . rille . scarp . channel . dune . regolith . debris . shadow{% endif %}"
-                       placeholder="{% if hud_body == "earth" %}Describe objects: building . road . field . tree . rock . crater{% else %}Describe features: crater . boulder . ridge . rille{% endif %}"
+                <input type="text" class="form-control form-control-sm" id="groundingDinoPrompt"
+                       value="{% if hud_body == "earth" %}building . roof . road . vehicle . parking lot . tree . grass . water . bare soil . rock{% else %}crater . boulder . rock . outcrop . ridge . rille{% endif %}"
+                       aria-label="Objects to find, separated with dots" title="Objects to find, separated with dots"
                        style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
-                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    {% if hud_body == "earth" %}Shared DINO/SAM vocabulary: urban, agricultural, ecological, and geological classes.{% else %}Planetary/geologic vocabulary, separated with dots.{% endif %}
-                </small>
             </div>
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Box Threshold: <span id="gdBoxThresholdValue">0.30</span></label>
@@ -106,9 +112,6 @@
                        value=""
                        placeholder="e.g. bishop_hero_e0004"
                        style="background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
-                <small style="color: #64748b; font-size: 0.7rem; display: block; margin-top: 4px;">
-                    Checkpoint IDs are listed by the rocks service at <code>/api/models</code>.
-                </small>
             </div>
             <div class="form-group mb-2">
                 <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Score Threshold: <span id="maskrcnnRocksScoreValue">0.50</span></label>
@@ -126,88 +129,77 @@
         <div id="samAnalysisStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(16, 185, 129, 0.15); border-radius: 4px; font-size: 0.8rem;">
             <span id="samStatusText">Processing...</span>
         </div>
-        <small id="analysisDescription" style="display: block; margin-top: 6px; font-size: 0.75rem; color: #64748b;">
-            Segments all visible regions using Segment Anything Model
-        </small>
+        <small id="analysisDescription" style="display: block; margin-top: 6px; font-size: 0.75rem; color: #64748b;"></small>
 
         {% if hud_body == "earth" %}
-        <!-- Distinction-Game SceneGraph orchestrator (kernelcal §4 / §11.4):
-             one click calls every selected kernel on the captured viewport,
-             fuses all claims through PHX_URBAN_V0 + Q_s, and renders the
-             scene graph nodes on the globe coloured by argmax category. -->
-        <hr style="border-color: rgba(148, 163, 184, 0.25); margin: 12px 0 8px;">
-        <div style="font-size: 0.78rem; color: #cbd5e1; margin-bottom: 6px;">
-            <i class="fas fa-project-diagram me-1"></i>
-            <strong>Distinction-Game SceneGraph</strong>
-            <span style="color: #64748b;">— fuse multiple kernels into one labelled graph</span>
-        </div>
-        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">Kernels to query:</div>
+        <!-- Scene graph: runs each ticked model on one capture, fuses the claims
+             (urban_v1 when SAM 3 or YOLOE is ticked) and feeds the world model. -->
+        <hr class="pw-rule">
+        <div class="dl-heading">Scene graph</div>
+        <small style="display: block; margin-bottom: 6px; font-size: 0.72rem; color: #64748b;">
+            Runs the ticked models on this view and merges them into one labelled map. Each build also updates the world model below.
+        </small>
         <div class="d-flex flex-wrap gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelMrRocks" checked> MR-rocks 🪨</label>
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelGroundingDino"> GD</label>
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgKernelSam"> SAM</label>
-            <label class="form-check" title="Text-prompted masks; adds house, pool, parking lot, solar panel (~30 s)"><input class="form-check-input me-1" type="checkbox" id="sgKernelSam3"> SAM 3</label>
-            <label class="form-check" title="Uses the YOLO model, confidence and classes set above"><input class="form-check-input me-1" type="checkbox" id="sgKernelYolo"> YOLO</label>
+            <label class="d-inline-flex align-items-center gap-1 mb-0" title="Text-prompted masks (~30 s)"><input class="form-check-input m-0" type="checkbox" id="sgKernelSam3" checked> SAM 3</label>
+            <label class="d-inline-flex align-items-center gap-1 mb-0" title="YOLOE-26 Large with the same object list"><input class="form-check-input m-0" type="checkbox" id="sgKernelYolo"> YOLOE</label>
+            <label class="d-inline-flex align-items-center gap-1 mb-0" title="Boxes from the same object list"><input class="form-check-input m-0" type="checkbox" id="sgKernelGroundingDino"> Grounding DINO</label>
+            <label class="d-inline-flex align-items-center gap-1 mb-0" title="Unlabelled outlines; refines shapes"><input class="form-check-input m-0" type="checkbox" id="sgKernelSam"> SAM</label>
+            <label class="d-inline-flex align-items-center gap-1 mb-0" title="Rock detector; fires on some roofs"><input class="form-check-input m-0" type="checkbox" id="sgKernelMrRocks"> Rocks</label>
         </div>
-        <input type="text" class="form-control form-control-sm mb-2" id="sgSam3Prompts"
+        <input type="text" class="form-control form-control-sm mb-2" id="sgPrompts"
                value="building, house, tree, grass, car, swimming pool, road, parking lot, solar panel"
-               title="SAM 3 prompts, comma-separated" style="font-size: 0.75rem;">
-        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">Ground truth:</div>
-        <div class="d-flex flex-wrap gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgGtOsmBuildings" checked> OSM buildings</label>
-            <label class="form-check"><input class="form-check-input me-1" type="checkbox" id="sgGtOsmRoads"> OSM roads</label>
-        </div>
-        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 6px;">
-            Region backbone (Option&nbsp;A — urban-spectral merge):
-        </div>
-        <div class="d-flex flex-wrap gap-2 align-items-center mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
-            <label class="form-check">
-                <input class="form-check-input me-1" type="checkbox" id="sgUseCityGraph">
-                Use OSM road-graph regions
-            </label>
-            <select id="sgGraphMode" class="form-select form-select-sm"
-                    style="display:inline-block; width:auto; font-size:0.72rem; padding:2px 4px;"
-                    title="knn = Euclidean centroid k-NN; road_knn = shortest path along OSM streets"
-                    disabled>
-                <option value="road_knn" selected>road_knn (street-aware)</option>
-                <option value="knn">knn (Euclidean)</option>
-            </select>
-        </div>
+               aria-label="Objects to find, comma-separated" title="Objects to find, comma-separated" style="font-size: 0.75rem;">
+        <details class="mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <summary style="color: #94a3b8; cursor: pointer;">OpenStreetMap inputs (need Overpass access)</summary>
+            <div class="d-flex flex-wrap gap-2 mt-1">
+                <label class="d-inline-flex align-items-center gap-1 mb-0"><input class="form-check-input m-0" type="checkbox" id="sgGtOsmBuildings"> OSM buildings</label>
+                <label class="d-inline-flex align-items-center gap-1 mb-0"><input class="form-check-input m-0" type="checkbox" id="sgGtOsmRoads"> OSM roads</label>
+                <label class="d-inline-flex align-items-center gap-1 mb-0" title="Adds street-aware adjacency between buildings"><input class="form-check-input m-0" type="checkbox" id="sgUseCityGraph"> Road-graph regions</label>
+            </div>
+        </details>
         <button class="btn btn-info w-100" id="buildSceneGraphBtn" style="font-size: 0.85rem;">
             <i class="fas fa-project-diagram me-2"></i>Build Scene Graph
         </button>
-        <label class="form-check d-flex align-items-center mt-2 mb-0"
-               style="font-size: 0.75rem; color: #cbd5e1;">
-            <input class="form-check-input me-2" type="checkbox" id="sgShowFusedOnViewport">
-            Show latest fused SceneGraph (factor graph) on Cesium viewport
-        </label>
-        <div style="font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 8px;">
-            Factor-graph fuse:
-        </div>
-        <div class="d-flex align-items-center gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
-            <label for="sgFuseLatestN" style="margin:0;">Latest rows</label>
-            <input type="number" class="form-control form-control-sm" id="sgFuseLatestN"
-                   value="1" min="1" max="5" step="1"
-                   style="width: 64px; background: #374151; border: 1px solid #4b5563; color: #f1f5f9;">
-            <button class="btn btn-secondary btn-sm" id="previewFusedSceneGraphBtn" type="button"
-                    style="font-size: 0.72rem;">Preview</button>
-            <button class="btn btn-primary btn-sm" id="buildFusedSceneGraphBtn" type="button"
-                    style="font-size: 0.72rem;">Fuse + Show</button>
-        </div>
-        <div id="fusedSceneGraphStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(37, 99, 235, 0.15); border-radius: 4px; font-size: 0.72rem; color: #cbd5e1;">
-            <span id="fusedSceneGraphStatusText">Ready.</span>
-        </div>
         <div id="sceneGraphStatus" style="display: none; margin-top: 8px; padding: 8px; background: rgba(59, 130, 246, 0.15); border-radius: 4px; font-size: 0.78rem; color: #cbd5e1;">
-            <span id="sceneGraphStatusText">Building...</span>
+            <span id="sceneGraphStatusText"></span>
         </div>
-        <small style="display: block; margin-top: 6px; font-size: 0.72rem; color: #64748b;">
-            Calls each selected kernel on the same captured frame, then runs
-            <code>kernelcal.distinction_game.build_scene_graph</code> to fuse
-            claims under PHX_URBAN_V0. Colour = argmax category, opacity = posterior score.
-            Ticking <em>Use OSM road-graph regions</em> additionally builds a
-            <code>kernelcal.urban.CityGraph</code> from OSM buildings + the
-            road network and splices its road-aware adjacency + Laplacian
-            spectrum into the SceneGraph.
+        <div class="d-flex flex-wrap gap-2 mt-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label class="d-inline-flex align-items-center gap-1 mb-0"><input class="form-check-input m-0" type="checkbox" id="sgShow" checked> Show scene graph</label>
+            <label class="d-inline-flex align-items-center gap-1 mb-0" title="Lines between neighbouring objects; thicker is a stronger link"><input class="form-check-input m-0" type="checkbox" id="sgShowLinks" checked> Links</label>
+        </div>
+
+        <!-- World model: /webclient/sampler/world/* (apps/scene_store) -->
+        <hr class="pw-rule">
+        <div class="dl-heading">World model</div>
+        <small style="display: block; margin-bottom: 6px; font-size: 0.72rem; color: #64748b;">
+            Objects remembered across scene-graph builds. Opacity is how likely each one is still there; click one to inspect it.
         </small>
+        <div class="d-flex align-items-center gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+            <label class="d-inline-flex align-items-center gap-1 mb-0 text-nowrap flex-shrink-0"><input class="form-check-input m-0" type="checkbox" id="wmShow"> Show in view</label>
+            <select class="form-select form-select-sm" id="wmAt" aria-label="Belief at"
+                    style="width: auto; font-size: 0.72rem; padding: 2px 24px 2px 6px;">
+                <option value="" selected>As last seen</option>
+                <option value="0">Now</option>
+                <option value="12">In 12 hours</option>
+                <option value="168">In a week</option>
+            </select>
+            <button class="btn btn-secondary btn-sm" id="wmRefreshBtn" type="button" title="Reload for the current view"
+                    style="font-size: 0.72rem;"><i class="fas fa-sync-alt"></i></button>
+        </div>
+        <div id="wmStatus" style="font-size: 0.72rem; color: #94a3b8;"></div>
+        <div id="wmSelected" hidden style="margin-top: 8px; padding: 8px; background: rgba(148, 163, 184, 0.12); border-radius: 4px; font-size: 0.75rem; color: #cbd5e1;">
+            <div id="wmSelectedText"></div>
+            {% if user.is_authenticated %}
+            <div class="d-flex flex-wrap align-items-center gap-1 mt-2">
+                <button class="btn btn-success btn-sm" id="wmConfirmBtn" type="button" style="font-size: 0.72rem;">Correct</button>
+                <select class="form-select form-select-sm" id="wmRelabelSelect" aria-label="Relabel as"
+                        style="width: auto; font-size: 0.72rem; padding: 2px 24px 2px 6px;"></select>
+                <button class="btn btn-warning btn-sm" id="wmRelabelBtn" type="button" style="font-size: 0.72rem;">Relabel</button>
+                <button class="btn btn-danger btn-sm" id="wmRejectBtn" type="button" style="font-size: 0.72rem;">Not there</button>
+            </div>
+            {% else %}
+            <small class="pw-note"><a href="/label/admin/login/?next={{ request.get_full_path|urlencode }}">Sign in</a> to correct labels.</small>
+            {% endif %}
+        </div>
         {% endif %}
     </div>
