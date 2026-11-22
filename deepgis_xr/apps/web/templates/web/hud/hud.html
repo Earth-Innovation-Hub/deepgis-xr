@@ -17,7 +17,7 @@ parts that need Earth data or Earth-only scripts are switched on it.
 {% include "web/hud/models_panel.html" %}
 {% include "web/hud/mission_panel.html" %}
 {% include "web/hud/sampler_panel.html" %}
-{% if hud_body == "earth" %}{% include "web/hud/weather_panel.html" %}{% endif %}
+{% if hud_body == "earth" %}{% include "web/hud/weather_panel.html" %}{% if user.is_authenticated %}{% include "web/hud/sims_panel.html" %}{% endif %}{% endif %}
 {% include "web/hud/vr_panel.html" %}
 {% if hud_body == "earth" %}{% include "web/hud/quick_views.html" %}{% endif %}
 {% include "web/hud/indicators.html" %}

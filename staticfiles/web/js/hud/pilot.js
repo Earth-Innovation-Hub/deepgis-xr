@@ -137,6 +137,241 @@
     const ROBOT_COMMAND_URL = '/label/api/pilot/robot-command/';
     const ROBOT_COMMAND_NAMES = { instruct: 'instruction', return_home: 'return home and land', land: 'land now' };
 
+    const CREATE_TWIN_URL = '/label/api/pilot/create-twin/';
+    const CREATE_TWIN_FIELDS = { vehicle_class: 'kestrel', count: 1, width_m: 150, length_m: 150 };
+
+    function patchMetres(value, fallback) {
+        const n = Number(value);
+        const side = Number.isFinite(n) ? n : fallback;
+        return Math.min(400, Math.max(20, side));
+    }
+
+    const MOON_DEM_GRID = 65;
+
+    function terrainPoint(view) {
+        const t = view && view.target;
+        if (!t || !Number.isFinite(t.lat) || !Number.isFinite(t.lon)) {
+            throw new Error('No terrain under the crosshair; tilt the camera toward the ground.');
+        }
+        return t;
+    }
+
+    function lookAtAndBbox(widthM, lengthM) {
+        const width = patchMetres(widthM, CREATE_TWIN_FIELDS.width_m);
+        const length = patchMetres(lengthM, CREATE_TWIN_FIELDS.length_m);
+        return hud.currentView().then(async (view) => {
+            const t = terrainPoint(view);
+            const look = {
+                lat: t.lat, lon: t.lon, elev_m: Number.isFinite(t.elev_m) ? t.elev_m : 0,
+            };
+            if (body !== 'moon') {
+                const dem = await sampleDem(look, width, length);
+                const dlat = (length / 2) / 111320;
+                const cos = Math.max(0.05, Math.abs(Math.cos(t.lat * Math.PI / 180)));
+                const dlon = (width / 2) / (111320 * cos);
+                return {
+                    body: 'earth',
+                    dem,
+                    look_at: look,
+                    bbox: { west: t.lon - dlon, south: t.lat - dlat, east: t.lon + dlon, north: t.lat + dlat },
+                    width_m: width,
+                    length_m: length,
+                };
+            }
+            const dem = await sampleDem(look, width, length);
+            const metres = 1737400 * Math.PI / 180;
+            const dlat = (length / 2) / metres;
+            const cos = Math.max(0.001, Math.abs(Math.cos(t.lat * Math.PI / 180)));
+            const dlon = (width / 2) / (metres * cos);
+            return {
+                body: 'moon',
+                dem,
+                look_at: look,
+                bbox: { west: t.lon - dlon, south: t.lat - dlat, east: t.lon + dlon, north: t.lat + dlat },
+                width_m: width,
+                length_m: length,
+            };
+        });
+    }
+
+    // East-north grid on the viewer's ellipsoid. Row 0 is the north edge.
+    // Heights are metres relative to the look-at. On Earth this is Cesium World
+    // Terrain, which includes USGS 3DEP where that survey covers the patch.
+    // On the Moon it is the LOLA terrain already drawn on the globe.
+    async function sampleDem(look, width, length) {
+        const viewer = getViewer();
+        const provider = viewer && viewer.terrainProvider;
+        const place = body === 'moon' ? 'Lunar terrain' : 'Terrain';
+        if (!provider || provider instanceof Cesium.EllipsoidTerrainProvider) {
+            throw new Error(`${place} has not loaded. Wait for the ground to draw, then confirm again.`);
+        }
+        const ellipsoid = viewer.scene.globe.ellipsoid;
+        const origin = Cesium.Cartesian3.fromDegrees(look.lon, look.lat, look.elev_m || 0, ellipsoid);
+        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(origin, ellipsoid);
+        const mid = (MOON_DEM_GRID - 1) / 2;
+        const stepE = width / (MOON_DEM_GRID - 1);
+        const stepN = length / (MOON_DEM_GRID - 1);
+        const carts = [];
+        for (let row = 0; row < MOON_DEM_GRID; row++) {
+            const north = (mid - row) * stepN;
+            for (let col = 0; col < MOON_DEM_GRID; col++) {
+                const east = (col - mid) * stepE;
+                const offset = Cesium.Matrix4.multiplyByPoint(
+                    enu, new Cesium.Cartesian3(east, north, 0), new Cesium.Cartesian3());
+                carts.push(Cesium.Cartographic.fromCartesian(offset, ellipsoid));
+            }
+        }
+        const sampled = await Cesium.sampleTerrainMostDetailed(provider, carts);
+        let missing = 0;
+        const heights = sampled.map((cart) => {
+            if (!Number.isFinite(cart.height)) {
+                missing += 1;
+                return 0;
+            }
+            return Math.round((cart.height - look.elev_m) * 100) / 100;
+        });
+        // A missed pick uses the ellipsoid (height 0). The centre cell is the
+        // look-at, so it is near 0 only when that height is the terrain height.
+        // Missing cells used to be stored as 0, which punches flats into the mesh.
+        const center = heights[(MOON_DEM_GRID * MOON_DEM_GRID - 1) / 2];
+        if (missing > 0) {
+            throw new Error(`${place} has not loaded under the crosshair. Wait for the ground, then confirm again.`);
+        }
+        if (!Number.isFinite(center) || Math.abs(center) > 30) {
+            throw new Error(`${place} under the crosshair does not match the sampled ground. Tilt onto the ground and confirm again.`);
+        }
+        return { grid: MOON_DEM_GRID, heights };
+    }
+
+    function viewportJpeg() {
+        if (!hud.captureView) return Promise.resolve('');
+        return hud.captureView().catch(() => '');
+    }
+
+    function createTwinCard(a) {
+        const card = base.msg('robot', '');
+        const title = document.createElement('div');
+        title.className = 'pilot-robot-title';
+        const width = patchMetres(a.width_m, CREATE_TWIN_FIELDS.width_m);
+        const length = patchMetres(a.length_m, CREATE_TWIN_FIELDS.length_m);
+        const klass = a.vehicle_class || CREATE_TWIN_FIELDS.vehicle_class;
+        const where = body === 'moon' ? 'the lunar ground under the crosshair' : 'the center of the view';
+        title.textContent = `Create Gazebo twin (${klass}, ${Math.round(width)}×${Math.round(length)} m) of ${where}`;
+        announce('robot', `${title.textContent}. Confirm it from the chat on the page.`);
+        card.appendChild(title);
+        const text = document.createElement('div');
+        text.className = 'pilot-robot-text';
+        text.textContent = body === 'moon'
+            ? 'Samples the LOLA elevation into a heightmap and spawns one x500, 15 m above the center.'
+            : 'Samples Cesium World Terrain (3DEP where it covers this place) and uses that grid as the Gazebo ground.';
+        card.appendChild(text);
+        const row = document.createElement('div');
+        row.className = 'pilot-robot-buttons';
+        const button = (label, cls) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = cls;
+            b.textContent = label;
+            row.appendChild(b);
+            return b;
+        };
+        const send = button('Create twin', 'send');
+        const cancel = button('Cancel', 'cancel');
+        card.appendChild(row);
+        const busy = on => [send, cancel].forEach(b => { b.disabled = on; });
+        cancel.addEventListener('click', () => { row.remove(); addMsg('step', 'Twin not created'); });
+        send.addEventListener('click', async () => {
+            busy(true);
+            const working = addMsg('step', body === 'moon'
+                ? 'Sampling lunar elevation and starting the twin...'
+                : 'Sampling terrain elevation and starting the twin...');
+            try {
+                const geo = await lookAtAndBbox(width, length);
+                const nadir = await viewportJpeg();
+                const resp = await fetch(CREATE_TWIN_URL, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                    body: JSON.stringify({
+                        vehicle_class: klass,
+                        count: 1,
+                        width_m: geo.width_m,
+                        length_m: geo.length_m,
+                        body: geo.body || body,
+                        look_at: geo.look_at,
+                        bbox: geo.bbox,
+                        dem: geo.dem,
+                        nadir,
+                    }),
+                });
+                const data = await resp.json().catch(() => ({}));
+                working.remove();
+                if (!resp.ok) {
+                    addMsg('error', data.error || `Twin job failed (HTTP ${resp.status})`);
+                    busy(false);
+                    return;
+                }
+                row.remove();
+                addMsg('ai', `Twin job ${data.callsign || data.id}: ${data.message || data.status}`);
+                await pollCreateTwin(data.id, out);
+            } catch (err) {
+                working.remove();
+                addMsg('error', `Twin job failed: ${err.message || err}`);
+                busy(false);
+            }
+        });
+        log.scrollTop = log.scrollHeight;
+    }
+
+    async function pollCreateTwin(jobId, sink) {
+        if (!jobId) return;
+        const statusEl = addMsg('step', 'Building twin...');
+        const started = Date.now();
+        try {
+            while (Date.now() - started < 15 * 60 * 1000) {
+                await new Promise(r => setTimeout(r, 1500));
+                const resp = await fetch(`${CREATE_TWIN_URL}${encodeURIComponent(jobId)}/`, {
+                    credentials: 'same-origin',
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    statusEl.remove();
+                    addMsg('error', data.error || `Twin status failed (HTTP ${resp.status})`);
+                    return;
+                }
+                statusEl.textContent = data.message || data.status || 'Building twin...';
+                if (data.status === 'ready') {
+                    statusEl.remove();
+                    const vehicle = data.vehicle || data.callsign;
+                    const readyMsg = addMsg('ai', `Twin ready: ${vehicle}. Following in chase view.`);
+                    if (typeof data.url === 'string' && /^\/openuav\/llm\/40\d{3}\/$/.test(data.url)) {
+                        const open = document.createElement('a');
+                        open.href = data.url;
+                        open.target = '_blank';
+                        open.rel = 'noopener noreferrer';
+                        open.textContent = ' Open desktop';
+                        readyMsg.appendChild(open);
+                    }
+                    if (vehicle) {
+                        hud.run([{ type: 'follow_vehicle', vehicle, view: data.follow_view || 'chase' }], sink);
+                    }
+                    return;
+                }
+                if (data.status === 'failed') {
+                    statusEl.remove();
+                    addMsg('error', data.message || 'Twin build failed');
+                    return;
+                }
+            }
+            statusEl.remove();
+            addMsg('error', 'Twin build timed out; check the job later.');
+        } catch (err) {
+            statusEl.remove();
+            addMsg('error', `Twin status failed: ${err.message || err}`);
+        }
+    }
+
+
     function robotCommandCard(a) {
         const card = base.msg('robot', '');
         const title = document.createElement('div');
@@ -269,7 +504,8 @@
             history.splice(0, Math.max(0, history.length - 8));
             const actions = data.actions || [];
             actions.filter(a => a.type === 'robot_command').forEach(robotCommandCard);
-            const camera = actions.filter(a => a.type !== 'robot_command');
+            actions.filter(a => a.type === 'create_twin').forEach(createTwinCard);
+            const camera = actions.filter(a => a.type !== 'robot_command' && a.type !== 'create_twin');
             camera.filter(a => a.type === 'describe_view').forEach(a => { a.question = message; });
             if (camera.length) hud.run(camera, out);
         } catch (err) {

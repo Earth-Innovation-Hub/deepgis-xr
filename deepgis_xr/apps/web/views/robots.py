@@ -5,7 +5,7 @@ A robot's id is its callsign ("kestrel", "badger", "otter"): lowercase, hyphenat
 and independent of the world or container it runs in. Its publisher posts as that id
 (views/vehicles.py), the DREAMS Lab MCP serves it as robot=<id>, and the AI pilot follows it
 by that id. The world it is in ("Locutus world", "Tempe Town Lake world") is its site, so a
-query for a world finds every robot in it. Students' OpenUAV sims are openuav-<username>.
+query for a world finds every robot in it. Students' OpenUAV sims are openuav-<username>. A create_twin desktop is ktwin-<hex>-<username>; its site is "Session world (…)" so a query for that world finds it.
 
 core.Vehicle holds each robot's identity (name, platform, airframe, site, aliases, its
 MCP id) and last-known position; core.VehiclePosition holds a downsampled track. The
@@ -217,17 +217,36 @@ def _vehicle_type(platform):
     return vt
 
 
+def _session_username(vid):
+    parts = vid.split("-")
+    return parts[-1] if len(parts) >= 3 and parts[0] == "ktwin" else ""
+
+
+def _session_site(vid):
+    from deepgis_xr.apps.core.models import Simulation
+    sim = Simulation.objects.filter(slug=vid[:40], kind="session").first()
+    label = ((sim.world or sim.name) if sim else "") or vid
+    return f"Session world ({label.strip()})"[:200]
+
+
 def _new_vehicle(vid, pose):
-    fleet = settings.VEHICLE_FLEET_PREFIX and vid.startswith(settings.VEHICLE_FLEET_PREFIX)
-    platform = pose.get("platform") or ("multirotor" if fleet else "other")
+    session = isinstance(vid, str) and vid.startswith("ktwin-")
+    fleet = settings.VEHICLE_FLEET_PREFIX and isinstance(vid, str) and vid.startswith(settings.VEHICLE_FLEET_PREFIX)
+    platform = pose.get("platform") or ("multirotor" if (fleet or session) else "other")
     owner = None
-    if fleet:
+    if session or fleet:
         from django.contrib.auth import get_user_model
-        owner = get_user_model().objects.filter(username=vid[len(settings.VEHICLE_FLEET_PREFIX):]).first()
+        username = _session_username(vid) if session else vid[len(settings.VEHICLE_FLEET_PREFIX):]
+        if username:
+            owner = get_user_model().objects.filter(username=username).first()
+    if session:
+        site, airframe = _session_site(vid), "x500_gimbal"
+    else:
+        site, airframe = ("OpenUAV" if fleet else pose.get("site", "")), ""
     return Vehicle.objects.create(
         vehicle_id=vid, name=pose.get("name") or vid, vehicle_type=_vehicle_type(platform),
         kind=pose.get("kind") or "sim", platform=platform, owner=owner,
-        site="OpenUAV" if fleet else pose.get("site", ""))
+        site=site, airframe=airframe)
 
 
 def record_pose(vid, pose):

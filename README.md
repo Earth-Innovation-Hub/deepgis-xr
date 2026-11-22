@@ -1246,6 +1246,33 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   branches (zero-shot, Mask2Former, Grounded-SAM, house and sibling Mask
   R-CNN, Prithvi) removed from the viewport analysis code.
 
+### November 2026: digital twins, sims and field readings
+- **Create a digital twin** (superusers): ask the AI pilot to "create a digital
+  twin of this place" on Earth or the Moon. After a confirm in the chat, the
+  ground under the crosshair (terrain, or LOLA elevation on the Moon) is baked
+  into a Gazebo world with one kestrel-class drone, by a twin-builder worker
+  (`DEEPGIS_TWIN_BUILDER_URL` / `_TOKEN`; a local stub runs without them).
+  The pilot shows the job's progress, and the new drone appears on the globe.
+- **Sims panel**: signed-in users get a *Sims* toolbar button that lists the
+  lab's OpenUAV simulation desktops (the `Simulation` model, editable in the
+  admin) and opens one in a new tab. The owner of a session twin (one made
+  with create_twin) can stop, start or purge it from the same list.
+- **Field readings**: a field robot's camera keyframe, spectrum and laser
+  range are kept in the observations database (`FieldReading`), with the
+  laser's target on the ground. `/label/api/field-readings/` serves them as
+  GeoJSON for the readings layer, and they are browsable in the admin.
+- **Acquisition advice**: the reply to each spectrum a robot posts can carry
+  exposure advice (target level, band that must not clip, co-add window) from
+  sun geometry and the robot's motion, refined now and then by the lab's vision
+  model from the robot's camera frame (`DEEPGIS_ACQUISITION_ADVICE`). The
+  pilot's description of a robot's frame now says how the rover set its
+  exposure.
+- **llm.deepgis.org chat**: a superuser chat on the same read-only model path
+  as the pilot (`/label/api/llm-chat/`), so it does not load another model
+  copy onto the GPUs.
+- **Compose**: the `observations_db` PostGIS service, and `migrate
+  --database=observations` on start when `OBSERVATIONS_DATABASE_URL` is set.
+
 ### November 2026: pilot widgets and immersive VR
 - **One Flight panel** (`2ae3f71`): the Fly and Orbit widgets, the quick
   2D/3D/Home buttons, the perspective widget and the joystick toolbar

@@ -2058,11 +2058,35 @@
     let follow = null;
     const originGround = new Map();
 
+    const POSE_EARTH_R = 6371000;
+    const MOON_R = 1737400;
+
+    function moonSession(v) {
+        return typeof v.name === 'string' && v.name.indexOf('Moon session') === 0;
+    }
+
+    // The pose agent converts Gazebo metres with Earth's radius. On the Moon
+    // page, scale that offset by Earth/Moon so the pin stays on the patch.
+    function moonPose(v) {
+        if (!moonSession(v) || !v.ref || !Number.isFinite(v.ref.lat) || !Number.isFinite(v.lat)) return v;
+        const scale = POSE_EARTH_R / MOON_R;
+        let lon = v.ref.lon + (v.lon - v.ref.lon) * scale;
+        if (lon > 180) lon -= 360;
+        if (lon < -180) lon += 360;
+        return { ...v, lat: v.ref.lat + (v.lat - v.ref.lat) * scale, lon };
+    }
+
+    function vehiclesHere(list) {
+        if (body === 'moon') return list.filter(moonSession).map(moonPose);
+        if (isEarth) return list.filter(v => !moonSession(v));
+        return [];
+    }
+
     async function liveVehicles() {
         const resp = await fetch(VEHICLES_URL, { credentials: 'same-origin' });
         if (resp.status === 401) throw new Error('Following a vehicle is for signed-in users.');
         if (!resp.ok) throw new Error(`Vehicle list failed (HTTP ${resp.status})`);
-        return (await resp.json()).vehicles || [];
+        return vehiclesHere((await resp.json()).vehicles || []);
     }
 
     async function vehicleHeight(v) {
@@ -2147,9 +2171,52 @@
     const SPECTRUM_INDICES = [['nir_red', 'NIR/red ', true], ['red_edge', 'red edge \u00d7'], ['blue_red', 'blue/red '],
         ['o2a', 'O\u2082 band ']];
 
-    // band ratios and the instrument's own notes underneath
+    // How the reading's exposure was set, for a vehicle whose spectrometer sets its own
+    // (data.acquisition): what it took, what it aimed for, and whose policy that was.
+    // DeepGIS advises the policy in its reply to each reading (views/acquisition.py).
+    const EXPOSURE_POLICY = {
+        'default': "the rover's own default",
+        'deepgis:rules': 'DeepGIS, from the sun and the rover\u2019s motion',
+        'deepgis:llm': 'DeepGIS, its vision model looking at this camera',
+    };
+
+    // "unsloth/Qwen3.8-27B-GGUF" -> "Qwen3.8-27B"
+    function modelName(model) {
+        return typeof model === 'string' ? model.split('/').pop().replace(/[-_.]?gguf$/i, '').replace(/:latest$/, '') : '';
+    }
+
+    function exposureText(product) {
+        const d = product.data, acq = d.acquisition, advice = product.advice;
+        const scans = Number.isFinite(acq.scans) ? Math.round(acq.scans) : 1;
+        let text = 'Auto exposure';
+        if (Number.isFinite(d.integration_ms)) text += ` ${scans} \u00d7 ${+d.integration_ms.toFixed(1)} ms`;
+        if (Number.isFinite(acq.target)) text += `, aiming at ${Math.round(acq.target * 100)}% of full scale`;
+        const band = acq.band, wlEnd = d.wl0 + d.dwl * d.counts.length;
+        if (Array.isArray(band) && (band[0] > d.wl0 + 5 || band[1] < wlEnd - 5)) {
+            text += ` in ${Math.round(band[0])}\u2013${Math.round(band[1])} nm`;
+        }
+        const model = advice && advice.source === acq.source ? modelName(advice.model) : '';
+        text += `. Policy: ${acq.source === 'deepgis:llm' && model ? `DeepGIS, with ${model} looking at this camera`
+            : EXPOSURE_POLICY[acq.source] || acq.source || 'unknown'}`;
+        if (acq.reason) text += ` (${acq.reason.replace(/\.$/, '')})`;
+        const sun = advice && advice.sun;
+        if (sun && Number.isFinite(sun.sun_elevation_deg)) {
+            text += `. Sun ${Math.round(sun.sun_elevation_deg)}\u00b0 high`;
+            const rel = sun.sun_relative_deg;
+            if (Number.isFinite(rel) && sun.sun_elevation_deg > 0) {
+                text += Math.abs(rel) <= 60 ? ', ahead of the camera' : Math.abs(rel) >= 120 ? ', behind the camera'
+                    : `, to the camera\u2019s ${rel > 0 ? 'right' : 'left'}`;
+            }
+        }
+        return text + '.';
+    }
+
+    // The vehicle's "spectrum" product (/label/api/vehicles/product/) as an annotated plot:
+    // counts against wavelength up to the detector's full scale, clipped spans in red, the
+    // band ratios, how the exposure was set and the instrument's own notes underneath
     function drawSpectrum(canvas, product, w, h) {
         const d = product.data;
+        const acq = d.acquisition && d.acquisition.auto ? d.acquisition : null;
         const dpr = window.devicePixelRatio || 1;
         canvas.width = Math.round(w * dpr);
         canvas.height = Math.round(h * dpr);
@@ -2165,7 +2232,10 @@
         g.fillText('Spectrometer', 8, 6);
         const titleEnd = 8 + g.measureText('Spectrometer').width;
         const about = [`${Math.round(d.wl0)}\u2013${Math.round(wlEnd)} nm`];
-        if (Number.isFinite(d.integration_ms)) about.push(`${+d.integration_ms.toFixed(1)} ms`);
+        if (Number.isFinite(d.integration_ms)) {
+            const scans = acq && Number.isFinite(acq.scans) ? Math.round(acq.scans) : 1;
+            about.push(`${scans > 1 ? `${scans} \u00d7 ` : ''}${+d.integration_ms.toFixed(1)} ms${acq ? ' auto' : ''}`);
+        }
         about.push('raw counts');
         g.font = '10px sans-serif';
         g.fillStyle = '#9aa4b2';
@@ -2177,7 +2247,9 @@
             const v = Math.round(d.indices[k] * 100) / 100 + 0;  // + 0: a tiny negative is not "-0.00"
             return label + (signed && v >= 0 ? '+' : '') + v.toFixed(2);
         });
-        const maxLines = Math.max(2, Math.floor((h * 0.5 - 20) / lineH));
+        g.font = '10.5px sans-serif';  // the font the text below is drawn in, for wrapping
+        const exposure = acq ? wrapText(g, exposureText(product), textW).slice(0, 3) : [];
+        const maxLines = Math.max(2, Math.floor((h * 0.5 - 20) / lineH) - exposure.length);
         let notes = [];
         for (const note of d.notes || []) {
             const wrapped = wrapText(g, note, textW - 9);
@@ -2187,7 +2259,8 @@
             notes = notes.slice(0, maxLines);
             notes[maxLines - 1].text = notes[maxLines - 1].text.replace(/.{2}$/, '\u2026');
         }
-        const textTop = h - 6 - notes.length * lineH - (ratios.length ? lineH + 3 : 0);
+        const textTop = h - 6 - notes.length * lineH - (ratios.length ? lineH + 3 : 0)
+            - (exposure.length ? exposure.length * lineH + 3 : 0);
         const x0 = 30, x1 = w - 8, y0 = 44, y1 = Math.max(y0 + 40, textTop - 18);
         const X = (nm) => x0 + (nm - d.wl0) / (wlEnd - d.wl0) * (x1 - x0);
         const Y = (c) => y1 - Math.min(1, Math.max(0, c / d.full_scale)) * (y1 - y0);
@@ -2255,6 +2328,12 @@
             y += lineH + 3;
         }
         g.font = '10.5px sans-serif';
+        g.fillStyle = '#7dd3fc';
+        for (const text of exposure) {
+            g.fillText(text, 8, y, textW);
+            y += lineH;
+        }
+        if (exposure.length) y += 3;
         for (const { text, first } of notes) {
             g.fillStyle = '#e6e9ee';
             if (first) g.fillText('\u2022', 8, y);
@@ -2517,7 +2596,7 @@
         }
     }
 
-    if (isEarth) setInterval(syncFleet, FLEET_POLL_MS);
+    if (isEarth || body === 'moon') setInterval(syncFleet, FLEET_POLL_MS);
 
     function startFollow(v, view, out) {
         stopFollow();
@@ -2788,7 +2867,7 @@
         },
 
         async follow_vehicle(a, id, out) {
-            if (!isEarth) throw new Error(`No vehicles report positions on ${body}`);
+            if (!isEarth && body !== 'moon') throw new Error(`No vehicles report positions on ${body}`);
             const list = await liveVehicles();
             check(id);
             const live = list.filter(v => v.age_sec < FOLLOW_STALE_SEC);
@@ -3096,6 +3175,7 @@
         // The live fleet as last polled (every FLEET_POLL_MS on Earth), and why it failed
         vehicles: () => ({ list: fleetList.slice(), error: fleetError }),
         currentView,
+        captureView,
         csrfToken,
         logSink,
     };

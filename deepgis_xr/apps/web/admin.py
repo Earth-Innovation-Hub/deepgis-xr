@@ -3,11 +3,15 @@ Django Admin for World Sampler Models
 """
 
 import json
+import math
 from collections import Counter
 from pathlib import Path
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib import admin, messages
+from django.db.models import Case, When, Value
+from django.db.models import BooleanField as ModelBooleanField
 from django.http import (
     FileResponse,
     Http404,
@@ -22,6 +26,7 @@ from django.utils.safestring import mark_safe
 
 from .models import (
     DistributionUpdate,
+    FieldReading,
     Observation,
     SampledLocation,
     SamplingSession,
@@ -1917,3 +1922,415 @@ class ObservationAdmin(admin.ModelAdmin):
             )
         except Exception as exc:  # pragma: no cover - defensive
             return f"(failed to render: {exc})"
+
+
+
+def _spectrum_svg(spec) -> str:
+    """Counts against wavelength. Only numbers are written into the markup."""
+    if not isinstance(spec, dict):
+        return ''
+    raw = spec.get('counts')
+    if not isinstance(raw, list) or len(raw) < 2:
+        return ''
+    try:
+        ys = [float(v) for v in raw]
+        wl0 = float(spec.get('wl0'))
+        dwl = float(spec.get('dwl'))
+    except (TypeError, ValueError):
+        return ''
+    if dwl == 0 or not math.isfinite(wl0) or not math.isfinite(dwl):
+        return ''
+    if not all(math.isfinite(v) for v in ys):
+        return ''
+    n = len(ys)
+    width, height = 720, 160
+    left, right, top, bottom = 56, 12, 12, 26
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+    peak = max(ys)
+    try:
+        full = float(spec.get('full_scale') or 0)
+    except (TypeError, ValueError):
+        full = 0.0
+    ceiling = peak
+    if math.isfinite(full) and full > ceiling:
+        ceiling = full
+    if ceiling <= 0:
+        ceiling = 1.0
+    ymax = ceiling * 1.04
+    wl1 = wl0 + (n - 1) * dwl
+
+    def x_at(wl):
+        return left + plot_w * (wl - wl0) / (wl1 - wl0)
+
+    def y_at(v):
+        return top + plot_h * (1 - (v / ymax))
+
+    shades = []
+    spans = spec.get('clipped')
+    if isinstance(spans, list):
+        for span in spans[:64]:
+            if not isinstance(span, (list, tuple)) or len(span) != 2:
+                continue
+            try:
+                lo, hi = float(span[0]), float(span[1])
+            except (TypeError, ValueError):
+                continue
+            if not (math.isfinite(lo) and math.isfinite(hi)) or hi <= lo:
+                continue
+            x0 = min(max(x_at(lo), left), left + plot_w)
+            x1 = min(max(x_at(hi), left), left + plot_w)
+            if x1 <= x0:
+                continue
+            shades.append(
+                '<rect x="{:.1f}" y="{}" width="{:.1f}" height="{}" fill="#e74c3c" opacity="0.28"/>'.format(
+                    x0, top, x1 - x0, plot_h
+                )
+            )
+    points = ' '.join(
+        '{:.1f},{:.1f}'.format(x_at(wl0 + i * dwl), y_at(v)) for i, v in enumerate(ys)
+    )
+    labels = (
+        '<text x="{:.1f}" y="{}" fill="#c8c8c8" font-size="11" text-anchor="start" font-family="sans-serif">{:.0f} nm</text>'
+        '<text x="{:.1f}" y="{}" fill="#c8c8c8" font-size="11" text-anchor="middle" font-family="sans-serif">{:.0f} nm</text>'
+        '<text x="{:.1f}" y="{}" fill="#c8c8c8" font-size="11" text-anchor="end" font-family="sans-serif">{:.0f} nm</text>'
+        '<text x="{:.1f}" y="{}" fill="#c8c8c8" font-size="11" text-anchor="end" font-family="sans-serif">{:.0f}</text>'
+        '<text x="{:.1f}" y="{}" fill="#c8c8c8" font-size="11" text-anchor="end" font-family="sans-serif">0</text>'
+    ).format(
+        left, height - 8, wl0,
+        left + plot_w / 2, height - 8, (wl0 + wl1) / 2,
+        left + plot_w, height - 8, wl1,
+        left - 6, top + 11, ceiling,
+        left - 6, top + plot_h,
+    )
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="100%" height="auto" '
+        'preserveAspectRatio="xMidYMid meet" role="img" aria-label="spectrum" '
+        'style="display:block;width:100%;height:auto;background:#141414;border-radius:4px">'
+        '{shades}'
+        '<polyline fill="none" stroke="#7ec8e3" stroke-width="1.4" points="{points}"/>'
+        '<line x1="{left}" y1="{axis_y}" x2="{axis_x}" y2="{axis_y}" stroke="#555"/>'
+        '<line x1="{left}" y1="{top}" x2="{left}" y2="{axis_y}" stroke="#555"/>'
+        '{labels}</svg>'
+    ).format(
+        w=width, h=height, shades=''.join(shades), points=points,
+        left=left, top=top, axis_y=top + plot_h, axis_x=left + plot_w, labels=labels,
+    )
+
+
+
+
+def _spectrum_spark(spec) -> str:
+    """A short curve for the changelist, beside the thumbnail."""
+    if not isinstance(spec, dict):
+        return ''
+    raw = spec.get('counts')
+    if not isinstance(raw, list) or len(raw) < 2:
+        return ''
+    try:
+        ys = [float(v) for v in raw]
+    except (TypeError, ValueError):
+        return ''
+    if not all(math.isfinite(v) for v in ys):
+        return ''
+    buckets = 64
+    if len(ys) > buckets:
+        step = len(ys) / buckets
+        pooled = []
+        for i in range(buckets):
+            chunk = ys[int(i * step):int((i + 1) * step)]
+            pooled.append(max(chunk) if chunk else ys[min(int(i * step), len(ys) - 1)])
+        ys = pooled
+    peak = max(ys)
+    if peak <= 0:
+        peak = 1.0
+    width, height, pad = 120, 48, 2
+    n = len(ys)
+    points = ' '.join(
+        '{:.1f},{:.1f}'.format(
+            pad + (width - 2 * pad) * i / (n - 1),
+            pad + (height - 2 * pad) * (1 - v / peak),
+        )
+        for i, v in enumerate(ys)
+    )
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" width="{w}" height="{h}" '
+        'aria-label="spectrum" style="vertical-align:middle;background:#141414;border-radius:2px">'
+        '<polyline fill="none" stroke="#7ec8e3" stroke-width="1.2" points="{points}"/>'
+        '</svg>'
+    ).format(w=width, h=height, points=points)
+
+
+_READING_PAIR_STYLE = (
+    "<style>"
+    ".form-row.field-frame_and_spectrum .flex-container{display:block}"
+    ".form-row.field-frame_and_spectrum label{display:none}"
+    ".form-row.field-frame_and_spectrum .readonly{width:100%;max-width:none}"
+    ".reading-pair{display:flex;flex-direction:column;gap:8px;align-items:flex-start}"
+    ".reading-pair .reading-frame,.reading-pair .reading-spectrum{width:100%;max-width:720px}"
+    ".reading-pair .reading-frame img{width:auto;max-width:100%;max-height:200px;height:auto;display:block}"
+    ".reading-pair .reading-spectrum svg{width:100%;height:auto;display:block}"
+    "</style>"
+)
+
+
+def _where(pt) -> str:
+    if pt is None:
+        return '—'
+    return f'{pt.y:.6f}, {pt.x:.6f}'
+
+
+def _frame_url(obj):
+    if not getattr(obj, 'pk', None) or not obj.image_relpath:
+        return None
+    return reverse('field_reading_frame', args=[obj.pk])
+
+
+@admin.register(FieldReading)
+class FieldReadingAdmin(admin.ModelAdmin):
+    '''Field-robot keyframes stored in the observations database.
+
+    The live frame and spectrum posts write these rows. This screen only
+    shows them; it does not create readings.
+    '''
+
+    list_display = (
+        'captured',
+        'vehicle_id',
+        'range_m',
+        'range_valid',
+        'heading_deg',
+        'camera_where',
+        'target_where',
+        'has_spectrum',
+        'frame_thumb',
+    )
+    list_filter = ('vehicle_id', 'range_valid')
+    search_fields = ('vehicle_id',)
+    date_hierarchy = 'captured'
+    ordering = ('-captured',)
+    list_per_page = 50
+
+    readonly_fields = (
+        'vehicle_id',
+        'captured',
+        'captured_usec',
+        'alt_amsl',
+        'heading_deg',
+        'pitch_deg',
+        'speed_mps',
+        'camera_where',
+        'range_m',
+        'range_min_m',
+        'range_max_m',
+        'range_valid',
+        'target_where',
+        'target_up_m',
+        'frame_and_spectrum',
+        'image_relpath',
+        'image_bytes',
+        'width',
+        'height',
+        'sky_line',
+        'adsb_line',
+        'image_note',
+        'combined_note',
+        'spectrum_pretty',
+    )
+    fieldsets = (
+        ('Capture', {
+            'fields': (
+                'frame_and_spectrum',
+                ('vehicle_id', 'captured'),
+                'captured_usec',
+                ('image_relpath', 'image_bytes'),
+                ('width', 'height'),
+            ),
+        }),
+        ('Camera', {
+            'fields': (
+                'camera_where',
+                ('alt_amsl', 'heading_deg'),
+                ('pitch_deg', 'speed_mps'),
+            ),
+        }),
+        ('Laser', {
+            'fields': (
+                ('range_m', 'range_valid'),
+                ('range_min_m', 'range_max_m'),
+                'target_where',
+                'target_up_m',
+            ),
+        }),
+        ('Sky', {
+            'fields': ('sky_line',),
+        }),
+        ('Aircraft', {
+            'fields': ('adsb_line',),
+        }),
+        ('Notes', {
+            'fields': ('image_note', 'combined_note'),
+        }),
+        ('Spectrum JSON', {
+            'fields': ('spectrum_pretty',),
+            'classes': ('collapse',),
+        }),
+    )
+
+    def get_queryset(self, request):
+        present = Case(
+            When(spectrum__isnull=False, then=Value(True)),
+            default=Value(False),
+            output_field=ModelBooleanField(),
+        )
+        return super().get_queryset(request).annotate(spectrum_present=present)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return True
+
+    def save_model(self, request, obj, form, change):
+        return
+
+    @admin.display(description='camera')
+    def camera_where(self, obj):
+        return _where(obj.camera)
+
+    @admin.display(description='target')
+    def target_where(self, obj):
+        return _where(obj.target)
+
+    @admin.display(description='spectrum', boolean=True)
+    def has_spectrum(self, obj):
+        return bool(obj.spectrum_present)
+
+    @admin.display(description='aircraft')
+    def adsb_line(self, obj):
+        from deepgis_xr.apps.web.field_readings import aircraft_lines, schedule_adsb
+
+        report = obj.adsb if isinstance(obj.adsb, dict) else None
+        if not report:
+            if obj.camera is not None:
+                schedule_adsb(obj.pk)
+                return "Writing the aircraft list."
+            return "—"
+        lines = aircraft_lines(report)
+        ground = sum(line["status"] == "on ground" for line in lines)
+        airborne = sum(line["status"] == "airborne" for line in lines)
+        summary = "%d aircraft within %s nm" % (len(lines), report.get("radius_nm", 25))
+        if ground or airborne:
+            summary += ", %d on ground, %d airborne" % (ground, airborne)
+        body = "".join(str(format_html(
+            "<tr><td style='padding:2px 8px'>{}</td><td style='padding:2px 8px'>{}</td>"
+            "<td style='padding:2px 8px'>{}</td><td style='padding:2px 8px'>{}</td>"
+            "<td style='padding:2px 8px'>{}</td><td style='padding:2px 8px'>{}</td>"
+            "<td style='padding:2px 8px'>{}</td></tr>",
+            line["callsign"], line["status"], line["altitude"], line["heading"],
+            line["speed"], line["distance"], line["type"],
+        )) for line in lines)
+        return format_html(
+            "<div style='margin-bottom:6px'>{}</div>"
+            "<table style='border-collapse:collapse;font-size:12px'>"
+            "<tr>"
+            "<th style='text-align:left;padding:2px 8px'>Callsign</th>"
+            "<th style='text-align:left;padding:2px 8px'>Where</th>"
+            "<th style='text-align:left;padding:2px 8px'>Altitude</th>"
+            "<th style='text-align:left;padding:2px 8px'>Heading</th>"
+            "<th style='text-align:left;padding:2px 8px'>Speed</th>"
+            "<th style='text-align:left;padding:2px 8px'>Distance</th>"
+            "<th style='text-align:left;padding:2px 8px'>Type</th>"
+            "</tr>{}</table>",
+            summary,
+            mark_safe(body),
+        )
+
+
+
+    @admin.display(description='sky')
+    def sky_line(self, obj):
+        from deepgis_xr.apps.web.field_readings import schedule_sky
+
+        sky = obj.sky if isinstance(obj.sky, dict) else None
+        if not sky:
+            if obj.camera is not None:
+                schedule_sky(obj.pk)
+                return "Writing the sun angle and the atmosphere."
+            return "—"
+        sun = sky.get("sun") or {}
+        air = sky.get("atmosphere") or {}
+        parts = []
+        if isinstance(sun.get("azimuth_deg"), (int, float)) and isinstance(sun.get("elevation_deg"), (int, float)):
+            parts.append("sun %.0f° from north, %.0f° up" % (sun["azimuth_deg"], sun["elevation_deg"]))
+        if isinstance(air.get("temperature_c"), (int, float)):
+            parts.append("%.0f°C" % air["temperature_c"])
+        if isinstance(air.get("relative_humidity_pct"), (int, float)):
+            parts.append("%.0f%% humidity" % air["relative_humidity_pct"])
+        if isinstance(air.get("cloud_cover_pct"), (int, float)):
+            parts.append("%.0f%% cloud" % air["cloud_cover_pct"])
+        if isinstance(air.get("us_aqi"), (int, float)):
+            parts.append("AQI %.0f" % air["us_aqi"])
+        if isinstance(air.get("shortwave_wm2"), (int, float)):
+            parts.append("%.0f W/m²" % air["shortwave_wm2"])
+        text = ", ".join(parts) if parts else "—"
+        return format_html("{}", text)
+
+    def _stored_note(self, obj, key):
+        from deepgis_xr.apps.web.field_readings import schedule_analysis
+
+        note = obj.analysis.get(key) if isinstance(obj.analysis, dict) else None
+        if note:
+            return format_html('<div style="max-width:720px;white-space:pre-wrap">{}</div>', note)
+        if obj.image_relpath and obj.spectrum and getattr(settings, "DEEPGIS_PILOT_MCP_TOKEN", ""):
+            schedule_analysis(obj.pk)
+            return "Writing the note from the photograph and the instrument readings."
+        return "—"
+
+    @admin.display(description='image')
+    def image_note(self, obj):
+        return self._stored_note(obj, "image")
+
+    @admin.display(description='combined')
+    def combined_note(self, obj):
+        return self._stored_note(obj, "combined")
+
+    @admin.display(description='frame')
+    def frame_thumb(self, obj):
+        url = _frame_url(obj)
+        spark = _spectrum_spark(obj.spectrum)
+        if url is None and not spark:
+            return '—'
+        image = format_html(
+            '<a href="{0}"><img src="{0}" alt="" style="height:48px;width:auto;vertical-align:middle"></a>',
+            url,
+        ) if url else ''
+        return mark_safe(
+            '<span style="display:inline-flex;align-items:center;gap:6px">%s%s</span>' % (image, spark)
+        )
+
+    @admin.display(description='frame and spectrum')
+    def frame_and_spectrum(self, obj):
+        url = _frame_url(obj)
+        svg = _spectrum_svg(obj.spectrum)
+        if url is None and not svg:
+            return '—'
+        image = format_html(
+            '<a class="reading-frame" href="{0}"><img src="{0}" alt="keyframe"></a>',
+            url,
+        ) if url else ''
+        plot = mark_safe('<div class="reading-spectrum">%s</div>' % svg) if svg else ''
+        return mark_safe(_READING_PAIR_STYLE + '<div class="reading-pair">%s%s</div>' % (image, plot))
+
+    @admin.display(description='spectrum')
+    def spectrum_pretty(self, obj):
+        if not obj.spectrum:
+            return '—'
+        try:
+            text = json.dumps(obj.spectrum, indent=2)[:200_000]
+        except (TypeError, ValueError):
+            text = str(obj.spectrum)[:200_000]
+        return format_html(
+            "<pre style='max-height:480px; overflow:auto'>{}</pre>",
+            text,
+        )

@@ -162,14 +162,21 @@ ROBOT_FIELDS = ("type", "vehicle", "command", "instruction")
 MAX_INSTRUCTION_CHARS = 300
 
 
+VEHICLE_CLASSES = ("kestrel",)
+
+
 def _control_schema():
     props = dict(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
-    props["type"] = {"enum": [*ACTION_TYPES, "robot_command"]}
+    props["type"] = {"enum": [*ACTION_TYPES, "robot_command", "create_twin"]}
     keys = list(props)
     at = keys.index("vehicle") + 1
     ordered = {k: props[k] for k in keys[:at]}
     ordered["command"] = {"enum": list(ROBOT_COMMANDS)}
     ordered["instruction"] = {"type": "string"}
+    ordered["vehicle_class"] = {"enum": list(VEHICLE_CLASSES)}
+    ordered["count"] = {"type": "number"}
+    ordered["width_m"] = {"type": "number"}
+    ordered["length_m"] = {"type": "number"}
     ordered.update({k: props[k] for k in keys[at:]})
     items = {**PILOT_SCHEMA["properties"]["actions"]["items"], "properties": ordered}
     actions = {**PILOT_SCHEMA["properties"]["actions"], "items": items}
@@ -364,8 +371,12 @@ Robot control: this user may also command these robots (simulated digital twins 
 Examples (actions only):
 - "kestrel, take off and survey a 40 m square at 15 m" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "instruct", "instruction": "take off and do a 40 x 40 m lawnmower survey at 15 m altitude"}}, {{"type": "follow_vehicle", "vehicle": "kestrel", "view": "chase"}}]
 - "drive the rover 10 m north" -> [{{"type": "robot_command", "vehicle": "badger", "command": "instruct", "instruction": "drive 10 m north"}}]
+- "otter_k, drive 8 m forward" -> [{{"type": "robot_command", "vehicle": "otter-k", "command": "instruct", "instruction": "drive 8 m forward along your heading"}}, {{"type": "follow_vehicle", "vehicle": "otter_k", "view": "chase"}}]
+- "undock xudrone and swim a helix for 20 seconds" -> [{{"type": "robot_command", "vehicle": "xudrone", "command": "instruct", "instruction": "detach from the boat and swim a helix for 20 seconds"}}, {{"type": "follow_vehicle", "vehicle": "xudrone", "view": "chase"}}]
 - "send kestrel home" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "return_home"}}]
-- "land the drone kestrel now" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "land"}}]"""
+- "land the drone kestrel now" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "land"}}]
+- create_twin: bake a new Gazebo world of the ground at the center of the view and spawn one kestrel-class drone (x500_gimbal) in it. This is a new session, not a command to a kestrel that is already flying. Fields: vehicle_class ("kestrel"); count (always 1); width_m and length_m (metres on a side, default 150, between 20 and 400). A 20x20 m path means width_m 20 and length_m 20. Never invent lat/lon or heights. The page reads the center of the view and samples the terrain there for the ground the simulator uses. One create_twin per request; do not combine it with robot_command.
+- "create digital twin of a 20x20m path at the center of view, with one kestrel class drone" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 20, "length_m": 20}}]"""
 
 
 def control_prompt(control):
@@ -436,6 +447,32 @@ def planet_prompt(body):
     return PLANET_PROMPT.format(body=BODIES[body], layer_actions=actions, layer_rules=rules)
 
 
+MOON_TWIN_PROMPT = """
+
+Creating a twin: this user may bake a Gazebo world of the lunar ground at the center of the view.
+- create_twin: one kestrel-class drone (x500_gimbal) on a heightmap of the LOLA elevation under the crosshair. This is a new session, not a camera move. Fields: vehicle_class ("kestrel"); count (always 1); width_m and length_m (metres on a side, default 150, between 20 and 400). A 20x20 m path means width_m 20 and length_m 20. Never invent lat/lon. The page reads the center of the view and the elevation. The chat shows a confirm card. One create_twin per request.
+- In reply, say the twin waits for confirmation. Never say it has been created.
+Examples (actions only):
+- "create a digital twin of this place" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 150, "length_m": 150}}]
+- "spin up a Gazebo twin here, about 200 m across" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 200, "length_m": 200}}]
+- "create digital twin of a 20x20m path at the center of view, with one kestrel class drone" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 20, "length_m": 20}}]"""
+
+
+def moon_twin_schema():
+    """The Moon layer schema plus a confirm-gated create_twin, for superusers."""
+    base = PLANET_LAYER_SCHEMAS["moon"]
+    item = dict(base["properties"]["actions"]["items"])
+    props = dict(item["properties"])
+    props["type"] = {"enum": [*props["type"]["enum"], "create_twin"]}
+    props["vehicle_class"] = {"enum": ["kestrel"]}
+    props["count"] = {"type": "number"}
+    props["width_m"] = {"type": "number"}
+    props["length_m"] = {"type": "number"}
+    item = {**item, "properties": props}
+    actions = {**base["properties"]["actions"], "items": item}
+    return {**base, "properties": {**base["properties"], "actions": actions}}
+
+
 def _num(v, field, limits=LIMITS):
     if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
         return None
@@ -500,7 +537,7 @@ def catalog_site(place):
     return round((so + n) / 2, 6), round((w + e) / 2, 6), best[1].name[:120]
 
 
-def clean_actions(raw, body="earth", control=None):
+def clean_actions(raw, body="earth", control=None, allow_twin=False):
     """Keep known action types and fields, clamp numbers, drop bad coordinates.
     control: {callsign: robot} that this user may command (superusers); robot_command
     actions for anything else are dropped."""
@@ -514,6 +551,13 @@ def clean_actions(raw, body="earth", control=None):
         if isinstance(a, dict) and a.get("type") == "robot_command" and body == "earth" and control:
             if cmd := clean_robot_command(a, control):
                 out.append(cmd)
+            if len(out) == MAX_ACTIONS:
+                break
+            continue
+        if isinstance(a, dict) and a.get("type") == "create_twin" and body in ("earth", "moon") and allow_twin:
+            from .create_twin import clean_create_twin
+            if twin := clean_create_twin(a):
+                out.append(twin)
             if len(out) == MAX_ACTIONS:
                 break
             continue
@@ -1177,9 +1221,12 @@ def pilot_chat(request):
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     control = control_robots(request.user) if body == "earth" else {}
-    if body != "earth":
+    allow_twin = request.user.is_superuser and body in ("earth", "moon")
+    if body == "moon" and allow_twin:
+        system_prompt, schema = planet_prompt(body) + MOON_TWIN_PROMPT, moon_twin_schema()
+    elif body != "earth":
         system_prompt, schema = planet_prompt(body), PLANET_LAYER_SCHEMAS.get(body, PLANET_SCHEMA)
-    elif control:
+    elif control or request.user.is_superuser:
         system_prompt, schema = SYSTEM_PROMPT + control_prompt(control), CONTROL_SCHEMA
     else:
         system_prompt, schema = SYSTEM_PROMPT, PILOT_SCHEMA
@@ -1203,7 +1250,7 @@ def pilot_chat(request):
         if not isinstance(plan, dict):
             return JsonResponse({"error": "The AI pilot returned no plan; try rephrasing."}, status=502)
         reply = plan.get("reply") if isinstance(plan.get("reply"), str) else ""
-        actions = clean_actions(plan.get("actions"), body, control)
+        actions = clean_actions(plan.get("actions"), body, control, allow_twin=allow_twin)
         if actions or not PROMISE_RE.search(reply):
             break
     cmap = named_colormap(message) if body == "earth" else None
@@ -1213,8 +1260,15 @@ def pilot_chat(request):
     view = data.get("view")
     if isinstance(view, dict) and view.get("activity") == "orbiting":
         actions = while_orbiting(actions, goal_check=message.startswith(GOAL_CHECK_PREFIX))
-    actions = [{k: a[k] for k in (ROBOT_FIELDS if a["type"] == "robot_command" else FIELD_ORDER) if k in a}
-               for a in actions]
+    def _kept(a):
+        if a["type"] == "robot_command":
+            fields = ROBOT_FIELDS
+        elif a["type"] == "create_twin":
+            fields = ("type", "vehicle_class", "count", "width_m", "length_m")
+        else:
+            fields = FIELD_ORDER
+        return {k: a[k] for k in fields if k in a}
+    actions = [_kept(a) for a in actions]
     _record_use(request, "chat", out.get("model", ""), out.get("duration_sec"), True)
     return JsonResponse({
         "reply": reply.strip()[:1000],
@@ -1390,6 +1444,11 @@ def spectrum_lines(product):
         lines.append(text + ".")
     elif laser:
         lines.append("The laser ranger got no return from that point (beyond its range, or open sky).")
+    acq = d.get("acquisition") or {}
+    if acq.get("auto") and "integration_ms" in d:
+        scans = int(acq.get("scans", 1))
+        lines.append(f"The rover set the exposure for this reading itself: {scans} scan{'s' if scans != 1 else ''} "
+                     f"of {d['integration_ms']:g} ms each (the brighter the patch, the shorter the scan it needs).")
     if d["notes"]:
         lines.append("The instrument's own notes on this reading: " + " ".join(d["notes"]))
     ratios = [_ratio(k, d["indices"][k]) for k in robots.SPECTRUM_INDICES if k in d["indices"]]

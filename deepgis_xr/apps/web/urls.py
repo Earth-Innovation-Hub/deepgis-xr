@@ -1,7 +1,7 @@
 from django.urls import path
 from . import views
 from deepgis_xr.apps.web.views import label_3d_sigma
-from deepgis_xr.apps.web import world_sampler_api
+from deepgis_xr.apps.web import field_readings, world_sampler_api
 
 urlpatterns = [
     # Main pages
@@ -64,6 +64,8 @@ urlpatterns = [
     path('label/api/pilot/', views.pilot_chat, name='pilot_chat'),
     path('label/api/pilot/models/', views.pilot_models, name='pilot_models'),
     path('label/api/pilot/robot-command/', views.pilot_robot_command, name='pilot_robot_command'),  # superusers: a confirmed robot_command to the lab's command server
+    path('label/api/pilot/create-twin/', views.pilot_create_twin, name='pilot_create_twin'),
+    path('label/api/pilot/create-twin/<str:job_id>/', views.pilot_create_twin_status, name='pilot_create_twin_status'),  # superusers: a confirmed create_twin (views/create_twin.py)
     path('label/api/pilot/describe/', views.pilot_describe, name='pilot_describe'),  # describe_view: one canvas frame to the lab's vision model
     path('label/api/pilot/ocean/', views.pilot_ocean, name='pilot_ocean'),  # NOAA ERDDAP relay for the sea layers
     path('label/api/pilot/topo/', views.pilot_topo, name='pilot_topo'),  # OpenTopography lidar stored in data/topo
@@ -76,12 +78,18 @@ urlpatterns = [
     path('label/api/vehicles/<str:vid>/frame.jpg', views.vehicle_frame_image, name='vehicle_frame_image'),
     path('label/api/vehicles/product/', views.vehicle_product, name='vehicle_product'),  # instrument readings posted beside the frames
     path('label/api/vehicles/<str:vid>/product/<str:kind>.json', views.vehicle_product_json, name='vehicle_product_json'),
+    path('label/api/field-readings/', field_readings.geojson, name='field_readings'),
+    path('label/api/field-readings/<int:pk>/frame.jpg', field_readings.frame_image, name='field_reading_frame'),
     # nginx auth_request target for the OpenUAV twin panel (views/twin_access.py)
     path('label/api/twin-access/', views.twin_access, name='twin_access'),
-    # Unsloth Studio at llm.deepgis.org: superusers only (views/llm_access.py)
+    path('label/api/sims/', views.sims_list, name='sims_list'),
+    path('label/api/sims/<slug:slug>/', views.sims_control, name='sims_control'),
+    # llm.deepgis.org chat: superusers only (views/llm_access.py, views/llm_chat.py)
     path('label/llm-gate/', views.llm_gate, name='llm_gate'),
     path('label/api/llm-exchange/', views.llm_exchange, name='llm_exchange'),
     path('label/api/llm-access/', views.llm_access, name='llm_access'),
+    path('label/api/llm-chat/', views.llm_chat, name='llm_chat'),
+    path('label/api/llm-chat/models/', views.llm_chat_models, name='llm_chat_models'),
 
     # Mission planning API endpoints
     path('label/api/missions/', views.list_missions, name='list_missions'),

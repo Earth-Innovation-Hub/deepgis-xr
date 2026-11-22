@@ -35,6 +35,8 @@ services:
       # DATABASE_URL=postgres://deepgis:deepgis@db:5432/deepgis to switch
       # to the bundled `db` service after running the runbook.
       - DATABASE_URL=${DATABASE_URL:-}
+      - OBSERVATIONS_DATABASE_URL=${OBSERVATIONS_DATABASE_URL:-}
+      - OBSERVATIONS_ROOT=${OBSERVATIONS_ROOT:-}
       - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
       - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
       - TWILIO_PHONE_NUMBER=${TWILIO_PHONE_NUMBER:-}
@@ -79,6 +81,7 @@ services:
       # this image; YOLOv8 inference is dispatched to a remote service.
       # Mount dreamslab-store for accessing training data
       - /mnt/dreamslab-store:/mnt/dreamslab-store:ro
+      - /mnt/22tb-hdd/deepgis-observations/files:/observations
       # Overlay the in-development kernelcal.distinction_game subpackage
       # onto the wheel-installed kernelcal in the image. PyPI/git wheel of
       # kernelcal lags behind the local source where distinction_game lives;
@@ -125,7 +128,7 @@ services:
     # and the host port mapping (8060->8090) had nothing to connect to.
     # Keep this on one line — line continuations inside a JSON-string YAML
     # value re-introduce the same trap.
-    command: ["bash", "-c", "python manage.py migrate --noinput && exec gunicorn deepgis_xr.wsgi:application --bind 0.0.0.0:8090 --workers ${GUNICORN_WORKERS:-2} --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-600} --access-logfile - --error-logfile -"]
+    command: ["bash", "-c", "python manage.py migrate --noinput && if [ -n \"$$OBSERVATIONS_DATABASE_URL\" ]; then python manage.py migrate --database=observations --noinput || echo observations-migrate-failed; fi && exec gunicorn deepgis_xr.wsgi:application --bind 0.0.0.0:8090 --workers ${GUNICORN_WORKERS:-2} --threads ${GUNICORN_THREADS:-4} --timeout ${GUNICORN_TIMEOUT:-600} --access-logfile - --error-logfile -"]
 
   # Celery broker / result backend. Tiny memory footprint; the only consumer
   # today is the admin-only model-training task in apps/api/v1/views/training.
@@ -253,6 +256,25 @@ services:
       - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-deepgis} -d ${POSTGRES_DB:-deepgis}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+
+  # Geocoded field readings only. Not the app database; DATABASE_URL stays unset.
+  observations_db:
+    image: postgis/postgis:16-3.5
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=deepgis_observations
+      - POSTGRES_USER=deepgis
+      - POSTGRES_PASSWORD=${OBSERVATIONS_DB_PASSWORD:?set OBSERVATIONS_DB_PASSWORD in .env}
+    volumes:
+      - /mnt/22tb-hdd/deepgis-observations/pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deepgis -d deepgis_observations"]
       interval: 10s
       timeout: 3s
       retries: 5

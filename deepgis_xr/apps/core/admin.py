@@ -6,7 +6,7 @@ from .models import (
     Image, ImageLabel, ImageSourceType, CategoryType, ImageFilter,
     Color, TiledGISLabel, RasterImage, CategoryLabel, Labeler,
     TrainingDataset, TrainingLabel, ModelVersion,
-    Mission, MissionWaypoint
+    Mission, MissionWaypoint, Simulation,
 )
 
 admin.site.register(Image)
@@ -213,3 +213,12 @@ class MissionWaypointAdmin(admin.ModelAdmin):
     search_fields = ('mission__name',)
     readonly_fields = ('created_at',)
     ordering = ['mission', 'sequence']
+
+
+
+@admin.register(Simulation)
+class SimulationAdmin(admin.ModelAdmin):
+    list_display = ('world', 'host_port', 'kind', 'status', 'commands')
+    list_filter = ('kind', 'status', 'commands')
+    search_fields = ('slug', 'name', 'world', 'container')
+    ordering = ('position', 'name')

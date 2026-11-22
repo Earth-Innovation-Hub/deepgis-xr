@@ -5,6 +5,7 @@ Django models for persisting geospatial sampling data and feedback.
 """
 
 from django.db import models
+from django.contrib.gis.db import models as gis_models
 from django.conf import settings
 from django.utils import timezone
 
@@ -415,3 +416,44 @@ class Observation(models.Model):
             f"Observation {self.source_id}@{self.received_at:%Y-%m-%d %H:%M:%SZ} "
             f"(n_sq={self.n_superquadrics}, {self.payload_size} B)"
         )
+
+
+
+class FieldReading(gis_models.Model):
+    """One stored camera keyframe and, when the laser could be aimed, the object it hit.
+
+    Lives in the observations database (PostGIS), not the SQLite registry.
+    """
+
+    vehicle_id = models.CharField(max_length=40)
+    captured_usec = models.BigIntegerField()
+    captured = models.DateTimeField()
+    alt_amsl = models.FloatField(null=True, blank=True)
+    heading_deg = models.FloatField(null=True, blank=True)
+    pitch_deg = models.FloatField(null=True, blank=True)
+    speed_mps = models.FloatField(null=True, blank=True)
+    camera = gis_models.PointField(geography=True, srid=4326, null=True, blank=True)
+    range_m = models.FloatField(null=True, blank=True)
+    range_min_m = models.FloatField(null=True, blank=True)
+    range_max_m = models.FloatField(null=True, blank=True)
+    range_valid = models.BooleanField(default=False)
+    target = gis_models.PointField(geography=True, srid=4326, null=True, blank=True)
+    target_up_m = models.FloatField(null=True, blank=True)
+    image_relpath = models.CharField(max_length=300, blank=True, default="")
+    image_bytes = models.PositiveIntegerField(null=True, blank=True)
+    width = models.PositiveSmallIntegerField(null=True, blank=True)
+    height = models.PositiveSmallIntegerField(null=True, blank=True)
+    spectrum = models.JSONField(null=True, blank=True)
+    analysis = models.JSONField(null=True, blank=True)
+    sky = models.JSONField(null=True, blank=True)
+    adsb = models.JSONField(null=True, blank=True)
+
+    class Meta:
+        db_table = "field_readings"
+        constraints = [
+            models.UniqueConstraint(fields=["vehicle_id", "captured_usec"], name="field_reading_capture"),
+        ]
+        indexes = [
+            models.Index(fields=["-captured"], name="field_reading_captured_idx"),
+        ]
+

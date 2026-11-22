@@ -239,11 +239,24 @@ DEEPGIS_PILOT_MCP_URL = os.environ.get('DEEPGIS_PILOT_MCP_URL', 'http://10.99.0.
 DEEPGIS_PILOT_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_MCP_TOKEN', '')
 DEEPGIS_PILOT_TIMEOUT_SEC = float(os.environ.get('DEEPGIS_PILOT_TIMEOUT_SEC', '90'))
 DEEPGIS_PILOT_RATE_PER_MIN = int(os.environ.get('DEEPGIS_PILOT_RATE_PER_MIN', '12'))
+# Acquisition advice for a field robot's spectrometer, returned with each spectrum it posts
+# (views/acquisition.py): "llm" = rules from the sun and the robot's motion, refined now and
+# then by the vision model above from the robot's camera frame; "rules"; or "off".
+DEEPGIS_ACQUISITION_ADVICE = os.environ.get('DEEPGIS_ACQUISITION_ADVICE', 'llm')
+# The vision model asked, by its name in the lab's model list; empty = the one being served.
+DEEPGIS_ACQUISITION_MODEL = os.environ.get('DEEPGIS_ACQUISITION_MODEL', '')
 # Superusers' robot commands from the AI pilot (pilot_robot_command): the command-enabled
 # dreams_mcp and a token of its own (its DREAMS_MCP_EXTRA_TOKENS), both only in .env.
 # Unset, the pilot offers no robot commands.
 DEEPGIS_PILOT_CONTROL_MCP_URL = os.environ.get('DEEPGIS_PILOT_CONTROL_MCP_URL', '')
 DEEPGIS_PILOT_CONTROL_MCP_TOKEN = os.environ.get('DEEPGIS_PILOT_CONTROL_MCP_TOKEN', '')
+
+# Superuser create_twin. The worker address and token live only in .env.
+# When either is empty, a confirm runs the in-process stub and does not start a container.
+DEEPGIS_TWIN_BUILDER_URL = os.environ.get('DEEPGIS_TWIN_BUILDER_URL', '')
+DEEPGIS_TWIN_BUILDER_TOKEN = os.environ.get('DEEPGIS_TWIN_BUILDER_TOKEN', '')
+DEEPGIS_TWIN_JOBS_DIR = os.environ.get('DEEPGIS_TWIN_JOBS_DIR', '')
+DEEPGIS_TWIN_BUILDER_STUB_FAIL = os.environ.get('DEEPGIS_TWIN_BUILDER_STUB_FAIL', '') == '1'
 
 # Live vehicle poses for the pilot's follow_vehicle (views/vehicles.py).
 # "vehicle_id:sha256hex,..."; each publisher holds its own token, the server only the hash.

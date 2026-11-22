@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 from datetime import datetime
 from django.contrib.auth.models import User
 from django.db import models
-from django.core.validators import MaxValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 import random
 from django.db.models import JSONField
 from django.conf import settings
@@ -762,3 +762,53 @@ class ModelVersion(models.Model):
     def is_deployed(self):
         """Check if this model version is currently deployed"""
         return self.status == 'deployed'
+
+
+class Simulation(models.Model):
+    """One OpenUAV desktop. Several robots can share it.
+
+    The browser opens /openuav/llm/<host_port>/ in a new tab. That path is derived
+    from host_port; this row never stores a host address. status and last_seen are
+    for a later heartbeat. Lab desktops are listed whether or not a heartbeat has run.
+    """
+
+    KINDS = [
+        ('lab', 'Lab twin'),
+        ('session', 'Session'),
+        ('course', 'Course'),
+    ]
+    STATUSES = [
+        ('unknown', 'Unknown'),
+        ('up', 'Up'),
+        ('down', 'Down'),
+    ]
+
+    slug = models.SlugField(max_length=40, unique=True)
+    name = models.CharField(max_length=80)
+    container = models.CharField(max_length=80)
+    host_port = models.PositiveIntegerField(
+        unique=True,
+        validators=[MinValueValidator(40000), MaxValueValidator(40999)],
+        help_text="Published noVNC port. The hub only proxies 40000-40999.",
+    )
+    world = models.CharField(max_length=120)
+    robots = JSONField(default=list, blank=True, help_text="Callsigns that share this desktop")
+    commands = models.BooleanField(
+        default=False,
+        help_text="The OpenUAV panel on this port can fly, not only show the desktop",
+    )
+    kind = models.CharField(max_length=10, choices=KINDS, default='lab')
+    status = models.CharField(max_length=10, choices=STATUSES, default='unknown')
+    last_seen = models.DateTimeField(null=True, blank=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='openuav_sims',
+    )
+    position = models.PositiveSmallIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['position', 'name']
+
+    def __str__(self):
+        return f'{self.world} (:{self.host_port})'

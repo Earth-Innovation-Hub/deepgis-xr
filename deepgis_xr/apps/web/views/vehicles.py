@@ -25,7 +25,9 @@ Instrument products are small JSON readings a vehicle posts beside its frames, a
 the same token (vehicle_product): only the latest of each kind is kept, vehicles_live says
 which vehicles have one, and signed-in viewers fetch it from vehicle_product_json. The one
 kind so far is "spectrum": a point-spectrometer reading reduced on the vehicle, with the
-laser range to its target and the patch it averaged over.
+laser range to its target and the patch it averaged over. The reply to a spectrum may
+carry acquisition advice for the vehicle's exposure control (views/acquisition.py); that
+reply is the only thing here that goes back to a vehicle, and the vehicle may ignore it.
 
 Robot identity (one hyphenated id per robot, its name, platform, aliases), last-known
 positions and a downsampled track live in the database through views/robots.py;
@@ -49,7 +51,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 from PIL import Image
 
-from . import robots
+from deepgis_xr.apps.web import field_readings
+from . import acquisition, robots
 
 log = logging.getLogger(__name__)
 
@@ -102,11 +105,21 @@ def fleet_token(secret, vid):
     return hmac.new(secret.encode(), vid.encode(), hashlib.sha256).hexdigest()
 
 
+def fleet_prefixes():
+    """Launcher prefix plus ktwin- for session twins created from the Cesium view."""
+    raw = settings.VEHICLE_FLEET_PREFIX or ""
+    prefixes = [p.strip() for p in str(raw).split(",") if p.strip()]
+    if "ktwin-" not in prefixes:
+        prefixes.append("ktwin-")
+    return prefixes
+
+
 def fleet_vehicle(token, vid):
-    """vid if token is the launcher's token for this sim, else None."""
-    secret, prefix = settings.VEHICLE_FLEET_SECRET, settings.VEHICLE_FLEET_PREFIX
-    if not (secret and prefix and isinstance(vid, str) and vid.startswith(prefix)
-            and VEHICLE_ID.fullmatch(vid)):
+    """vid if token is HMAC(secret, vid) for a launcher sim or a session twin, else None."""
+    secret = settings.VEHICLE_FLEET_SECRET
+    if not (secret and isinstance(vid, str) and VEHICLE_ID.fullmatch(vid)):
+        return None
+    if not any(vid.startswith(prefix) for prefix in fleet_prefixes()):
         return None
     return vid if hmac.compare_digest(fleet_token(secret, vid), token) else None
 
@@ -273,6 +286,7 @@ def vehicle_frame(request):
     info["seq"] = (live.get(f"frame_info:{vid}") or {}).get("seq", 0) + 1
     live.set(f"frame:{vid}", bytes(request.body), FRAME_TTL_SEC)
     live.set(f"frame_info:{vid}", info, FRAME_TTL_SEC)
+    field_readings.remember_frame(vid, info, request.body)
     return JsonResponse({"ok": True, "seq": info["seq"]})
 
 
@@ -303,6 +317,8 @@ SPECTRUM_INDEX_LIMITS = {k: (-1000.0, 1000.0) for k in robots.SPECTRUM_INDICES}
 LASER_LIMITS = {"valid": (0.0, 1.0), "range_m": (0.0, 5000.0), "min_m": (0.0, 5000.0), "max_m": (0.0, 5000.0)}
 FOOTPRINT_LIMITS = {"u": (0.0, 1.0), "v": (0.0, 1.0), "fov_deg": (0.01, 180.0), "frac_w": (0.0, 20.0),
                     "diameter_m": (0.0, 5000.0)}
+ACQUISITION_LIMITS = {"scans": (1.0, 4096.0), "target": (0.0, 1.0), "window_ms": (0.0, 600000.0),
+                      "band_peak": (0.0, 1.0)}
 
 
 def _numbers(src, limits):
@@ -327,8 +343,9 @@ def clean_spectrum(d):
     optional and dropped if malformed: clipped ([lo, hi] nm spans), indices (band ratios),
     laser (range to the target during the reading), footprint (where the instrument points
     in the vehicle's camera frame, u and v from the left and top, and how wide it sees),
-    t_rel (when it was integrated, seconds relative to the frame) and the instrument's own
-    notes on what the numbers mean."""
+    t_rel (when it was integrated, seconds relative to the frame), acquisition (how the
+    exposure was set: auto, scans co-added, the target, band and window it aimed for and
+    where that policy came from) and the instrument's own notes on what the numbers mean."""
     if not isinstance(d, dict):
         return None
     counts = d.get("counts")
@@ -350,6 +367,15 @@ def clean_spectrum(d):
     t_rel = _pair(d.get("t_rel"), -60.0, 60.0)
     if t_rel:
         out["t_rel"] = t_rel
+    acq = d.get("acquisition")
+    if isinstance(acq, dict):
+        out["acquisition"] = {**_numbers(acq, ACQUISITION_LIMITS), "auto": acq.get("auto") is True}
+        band = _pair(acq.get("band"), 100.0, 30000.0)
+        if band:
+            out["acquisition"]["band"] = band
+        for key, limit in (("source", 40), ("reason", 200)):
+            if isinstance(acq.get(key), str) and acq[key].strip():
+                out["acquisition"][key] = " ".join(acq[key].split())[:limit]
     notes = d.get("notes")
     out["notes"] = [" ".join(n.split())[:300] for n in (notes if isinstance(notes, list) else [])
                     if isinstance(n, str) and n.strip()][:SPECTRUM_MAX_NOTES]
@@ -363,7 +389,8 @@ PRODUCT_CLEANERS = {"spectrum": clean_spectrum}  # one per kind in robots.PRODUC
 @require_POST
 def vehicle_product(request):
     """One instrument product from a vehicle: the JSON {vehicle, product, captured (unix s), data},
-    where product names its kind ("spectrum")."""
+    where product names its kind ("spectrum"). The reply to a spectrum may carry advice
+    for the vehicle's exposure control (acquisition.advise)."""
     tokens = pose_tokens()
     if not ingest_configured(tokens):
         return JsonResponse({"error": "Vehicle products are not configured"}, status=503)
@@ -393,7 +420,18 @@ def vehicle_product(request):
     if _finite(captured) and abs(captured - t) <= CAPTURE_SKEW_SEC:
         product["captured"] = float(captured)
     live.set(key, product, PRODUCT_TTL_SEC)
-    return JsonResponse({"ok": True, "seq": product["seq"]})
+    if kind == "spectrum":
+        field_readings.remember_spectrum(vid, product.get("captured"), data)
+    reply = {"ok": True, "seq": product["seq"]}
+    if kind == "spectrum":
+        try:
+            advice = acquisition.advise(vid, data, t)
+        except Exception:  # advice is a courtesy: the reading is stored whatever happens to it
+            log.exception("acquisition advice for %s failed", vid)
+            advice = None
+        if advice:
+            reply["advice"] = advice
+    return JsonResponse(reply)
 
 
 @require_GET
@@ -403,6 +441,9 @@ def vehicle_product_json(request, vid, kind):
     product = robots.live_product(vid, kind, now()) if VEHICLE_ID.fullmatch(vid) else None
     if product is None:
         return JsonResponse({"error": "No recent reading of this kind from this vehicle"}, status=404)
+    advice = acquisition.live_advice(vid, now()) if kind == "spectrum" else None
+    if advice:
+        product["advice"] = advice  # the latest sent to the vehicle; the reading says what it used
     resp = JsonResponse(product)
     resp["Cache-Control"] = "private, no-store"
     return resp

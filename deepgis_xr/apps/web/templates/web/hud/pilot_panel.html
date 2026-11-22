@@ -12,9 +12,15 @@
         <div class="pilot-log" id="pilotLog">
             {% if hud_body == "earth" %}
             <div class="pilot-msg ai">Tell me where to fly, e.g. "orbit around Tempe Town Lake", "fly to Hayden Library at 200 m", "climb to 500 m and look at the horizon".</div>
+            {% if user.is_superuser %}
+            <div class="pilot-msg ai">Ask to create a digital twin of this place to sample the terrain under the crosshair into the Gazebo ground. Confirm it in the chat.</div>
+            {% endif %}
             {% elif hud_body == "moon" %}
             <div class="pilot-msg ai">Tell me where to fly, e.g. "orbit Tycho", "fly to the Apollo 15 landing site at 5 km", "climb to 50 km and look at the horizon".</div>
-            {% else %}
+                        {% if user.is_superuser %}
+            <div class="pilot-msg ai">Ask to create a digital twin of this place to bake the LOLA elevation under the crosshair into a Gazebo world. Confirm it in the chat.</div>
+            {% endif %}
+{% else %}
             <div class="pilot-msg ai">Tell me where to fly on {{ hud_body|title }} by IAU feature name or coordinates, e.g. "fly to 10 N 45 E at 20 km", "orbit what I am looking at", "climb to 50 km".</div>
             {% endif %}
             {% if not user.is_authenticated %}

@@ -54,6 +54,7 @@ SPECTRUM = {
     VEHICLE_POSE_TOKENS=f"locutus:{digest(TOKEN)}, boat1:{digest(OTHER)}, bad entry",
     VEHICLE_FLEET_SECRET="",
     VEHICLE_ENROLL_SECRET="",
+    DEEPGIS_ACQUISITION_ADVICE="off",  # tested in test_acquisition.py
     CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
             "live": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "vehicles-test"}},
 )

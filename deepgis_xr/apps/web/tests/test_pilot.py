@@ -613,7 +613,8 @@ class RobotCommandTests(TestCase):
                                side_effect=[pilot.requests.ConnectionError("down"), mcp_response(plan)]) as post:
             resp = self.chat("land kestrel")
         self.assertEqual(resp.json()["actions"], [])
-        self.assertEqual(post.call_args.kwargs["json"]["params"]["arguments"]["json_schema"], pilot.PILOT_SCHEMA)
+        # Superusers keep create_twin, so the schema still lists robot_command; the action is dropped.
+        self.assertEqual(post.call_args.kwargs["json"]["params"]["arguments"]["json_schema"], pilot.CONTROL_SCHEMA)
 
     def test_command_needs_superuser(self):
         payload = {"vehicle": "kestrel", "command": "land"}
@@ -821,8 +822,9 @@ class PilotDescribeRobotTests(TestCase):
         return resp.json(), post.call_args.kwargs["json"]["params"]["arguments"]
 
     def test_a_field_robots_frame_is_read_with_its_instruments(self):
+        reading = {**SPECTRUM, "integration_ms": 31.0, "acquisition": {"auto": True, "scans": 12, "target": 0.8}}
         caches["live"].set("product:santacruz:spectrum", {
-            "product": "spectrum", "seq": 3, "received": time.time() - 12, "data": vehicles.clean_spectrum(SPECTRUM)}, 120)
+            "product": "spectrum", "seq": 3, "received": time.time() - 12, "data": vehicles.clean_spectrum(reading)}, 120)
         out, args = self.describe("santacruz")
         self.assertEqual(out["instruments"], ["camera", "spectrometer", "laser range"])
         self.assertIn("real photograph from a camera on a field robot", args["system_prompt"])
@@ -832,6 +834,7 @@ class PilotDescribeRobotTests(TestCase):
                      "50% from the left and 40% from the top",
                      "a cone about 25 degrees wide: a patch about 1.7 m across at the laser's range",
                      "Laser range to the surface at that point: 3.8 m.",
+                     "The rover set the exposure for this reading itself: 12 scans of 31 ms each (the brighter",
                      "NIR/red index (780-800 against 650-680 nm, -1 to +1) = +0.06",
                      "oxygen band at 761 nm relative to its shoulders (about 0.4 to 0.5 in daylight) = 0.48",
                      "The instrument's own notes on this reading: NIR/red index +0.06, a strong red-edge step"):

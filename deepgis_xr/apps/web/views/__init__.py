@@ -72,7 +72,10 @@ from .features import pilot_feature
 from .vehicles import (vehicle_frame, vehicle_frame_image, vehicle_pose, vehicle_product, vehicle_product_json,
                        vehicles_live, vehicles_nearby)
 from .twin_access import twin_access
+from .sims import sims_control, sims_list
+from .create_twin import pilot_create_twin, pilot_create_twin_status
 from .llm_access import llm_access, llm_exchange, llm_gate
+from .llm_chat import llm_chat, llm_chat_models
 from .planet import label_planet_viewer
 from .pages import (
     BaseView,
@@ -123,8 +126,14 @@ __all__ = [
     "vehicle_product",
     "vehicle_product_json",
     "twin_access",
+    "sims_list",
+    "sims_control",
+    "pilot_create_twin",
+    "pilot_create_twin_status",
     "llm_access",
     "llm_exchange",
     "llm_gate",
+    "llm_chat",
+    "llm_chat_models",
     "label_planet_viewer",
 ]
