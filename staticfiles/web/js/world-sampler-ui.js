@@ -50,6 +50,8 @@ class WorldSamplerUI {
         
         // Setup event listeners
         this.setupEventListeners();
+        this.viewer.scene.morphComplete.addEventListener(() => this.restyleResultsForSceneMode());
+        this.viewer.scene.renderError.addEventListener((_scene, error) => this.recoverFromRenderError(error));
         
         console.log('World Sampler UI ready!');
     }
@@ -1434,6 +1436,13 @@ class WorldSamplerUI {
             if (pickPositionSupported) {
                 try { cart = scene.pickPosition(sp); } catch (e) { cart = null; }
             }
+            // pickPosition can miss at the canvas edge. The bare ellipsoid sits
+            // at height 0, hundreds of metres under high terrain, which skews
+            // that corner, so try the terrain surface first.
+            if (!Cesium.defined(cart) && scene.globe && scene.mode === Cesium.SceneMode.SCENE3D) {
+                const ray = scene.camera.getPickRay(sp);
+                cart = ray ? scene.globe.pick(ray, scene) : undefined;
+            }
             if (!Cesium.defined(cart) && scene.globe) {
                 cart = scene.camera.pickEllipsoid(sp, scene.globe.ellipsoid);
             }
@@ -1498,6 +1507,135 @@ class WorldSamplerUI {
             ];
         }
         return null;
+    }
+
+    /**
+     * Clean a projected [lon, lat] ring before Cesium tessellates it. A ring
+     * that folds back on itself, has zero area, or repeats a vertex throws
+     * inside Cesium's geometry worker ("Invalid array length", "EllipsoidRhumbLine
+     * must have distinct start and end set") and stops rendering for the page.
+     * Drops non-finite and repeated points, spikes and collinear vertices, and
+     * returns a closed ring, or null when no real area is left.
+     */
+    cleanGeoRing(rawRing) {
+        if (!rawRing || rawRing.length < 3) return null;
+        const eps = 1e-7; // degrees, about 1 cm
+        const same = (a, b) => Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps;
+        let pts = [];
+        for (const p of rawRing) {
+            if (!p || p.length < 2) continue;
+            const q = [Number(p[0]), Number(p[1])];
+            if (!Number.isFinite(q[0]) || !Number.isFinite(q[1])) continue;
+            if (pts.length && same(pts[pts.length - 1], q)) continue;
+            pts.push(q);
+        }
+        while (pts.length > 1 && same(pts[0], pts[pts.length - 1])) pts.pop();
+
+        const o = pts[0];
+        const k = o ? Math.cos(Cesium.Math.toRadians(o[1])) : 1;
+        const local = (p) => [(p[0] - o[0]) * k, p[1] - o[1]];
+        let changed = true;
+        while (changed && pts.length >= 3) {
+            changed = false;
+            for (let i = 0; i < pts.length && pts.length >= 3; i++) {
+                const a = local(pts[(i - 1 + pts.length) % pts.length]);
+                const b = local(pts[i]);
+                const c = local(pts[(i + 1) % pts.length]);
+                const ux = b[0] - a[0], uy = b[1] - a[1];
+                const vx = c[0] - b[0], vy = c[1] - b[1];
+                const cross = ux * vy - uy * vx;
+                const scale = Math.hypot(ux, uy) * Math.hypot(vx, vy);
+                if (same(a, c) || Math.abs(cross) <= 1e-9 * scale) {
+                    pts.splice(i, 1);
+                    changed = true;
+                    i--;
+                }
+            }
+        }
+        if (pts.length < 3) return null;
+
+        let area2 = 0;
+        for (let i = 0; i < pts.length; i++) {
+            const a = local(pts[i]);
+            const b = local(pts[(i + 1) % pts.length]);
+            area2 += a[0] * b[1] - b[0] * a[1];
+        }
+        if (Math.abs(area2) < eps * eps) return null;
+
+        pts.push([pts[0][0], pts[0][1]]);
+        return pts;
+    }
+
+    /** Clean every ring of a projected polygon; null if the outer ring is gone. */
+    cleanGeoPolygon(rings) {
+        const outer = this.cleanGeoRing(rings && rings[0]);
+        if (!outer) return null;
+        const holes = (rings || []).slice(1).map((r) => this.cleanGeoRing(r)).filter(Boolean);
+        return [outer, ...holes];
+    }
+
+    /**
+     * Ground-clamped polygons draw in 3D but not in 2D or Columbus view, and
+     * Cesium drops outlines on clamped polygons. Clamp in 3D; draw flat with
+     * an outline in the other modes. Labels sit on the ring's centroid.
+     */
+    styleResultEntity(entity) {
+        const flat = this.viewer.scene.mode !== Cesium.SceneMode.SCENE3D;
+        const polygon = entity.polygon;
+        if (polygon) {
+            polygon.heightReference = flat
+                ? Cesium.HeightReference.NONE
+                : Cesium.HeightReference.CLAMP_TO_GROUND;
+            polygon.height = flat ? 0 : undefined;
+            polygon.extrudedHeight = undefined;
+            polygon.outline = flat;
+            if (entity.label && !entity.position) {
+                const ring = polygon.hierarchy.getValue(Cesium.JulianDate.now()).positions;
+                if (ring && ring.length) {
+                    const sum = ring.reduce((acc, p) => Cesium.Cartesian3.add(acc, p, acc), new Cesium.Cartesian3());
+                    const centre = Cesium.Cartesian3.divideByScalar(sum, ring.length, sum);
+                    entity.position = Cesium.Ellipsoid.WGS84.scaleToGeodeticSurface(centre, centre) || centre;
+                }
+            }
+        }
+        if (entity.label) {
+            entity.label.heightReference = flat
+                ? Cesium.HeightReference.NONE
+                : Cesium.HeightReference.CLAMP_TO_GROUND;
+        }
+    }
+
+    resultDataSources() {
+        return [this.samDataSource, this.sceneGraphDataSource, this.fusedSceneGraphDataSource]
+            .filter((ds) => ds && this.viewer.dataSources.contains(ds));
+    }
+
+    restyleResultsForSceneMode() {
+        for (const ds of this.resultDataSources()) {
+            ds.entities.values.forEach((entity) => this.styleResultEntity(entity));
+        }
+    }
+
+    /**
+     * Cesium stops its render loop after any exception in a frame. If AI
+     * results are on the map, they are the likely cause: remove them and
+     * restart rendering instead of leaving a frozen page.
+     */
+    recoverFromRenderError(error) {
+        const now = Date.now();
+        if (this._lastRenderRecovery && now - this._lastRenderRecovery < 10000) return;
+        const sources = this.resultDataSources();
+        if (!sources.length) return;
+        this._lastRenderRecovery = now;
+        console.error('Render error with AI results on the map; removing them:', error);
+        sources.forEach((ds) => this.viewer.dataSources.remove(ds));
+        this.samDataSource = null;
+        this.sceneGraphDataSource = null;
+        this.fusedSceneGraphDataSource = null;
+        document.querySelectorAll('.cesium-widget-errorPanel').forEach((el) => el.remove());
+        this.viewer.useDefaultRenderLoop = true;
+        this.viewer.scene.requestRender();
+        this.showNotification('AI overlay could not be drawn and was cleared. Rendering resumed.', 'warning');
     }
     
     async runVegetationBootstrap() {
@@ -2722,10 +2860,10 @@ class WorldSamplerUI {
                     const yolov8Model = document.getElementById('yolov8ModelType');
                     const yolov8Confidence = document.getElementById('yolov8Confidence');
                     const yolov8Classes = document.getElementById('yolov8Classes');
-                    requestBody.yolo_model = yolov8Model ? yolov8Model.value : 'yolov8n';
+                    requestBody.yolo_model = yolov8Model ? yolov8Model.value : 'yolo26x-seg';
                     requestBody.confidence_threshold = yolov8Confidence ? parseFloat(yolov8Confidence.value) / 100 : 0.25;
                     requestBody.class_filter = yolov8Classes ? yolov8Classes.value.trim() : '';
-                    statusText.textContent = 'Running YOLOv8 detection...';
+                    statusText.textContent = 'Running YOLO detection...';
                 } else if (analysisType === 'grounding_dino') {
                     const textPrompt = document.getElementById('groundingDinoPrompt');
                     const boxThreshold = document.getElementById('gdBoxThreshold');
@@ -2832,6 +2970,7 @@ class WorldSamplerUI {
                         not_configured: 'is not configured',
                         connection_error: 'is unreachable',
                         timeout: 'timed out',
+                        weights_missing: 'needs its weights file',
                     }[result.unavailable_reason] || 'is unavailable';
                     const unavailable = `${analysisType} ${reasonText}`;
                     statusText.textContent = result.suggestion
@@ -2846,7 +2985,7 @@ class WorldSamplerUI {
                 const deviceInfo = result.device_info || {};
                 const deviceText = deviceInfo.cuda_available 
                     ? `GPU: ${deviceInfo.gpu_name || 'CUDA'}` 
-                    : 'CPU';
+                    : (deviceInfo.mode === 'remote_api' ? 'GPU service' : 'CPU');
                 
                 // Handle results based on analysis type
                 const _isSiblingType = window.MASKRCNN_SIBLING_TYPES && window.MASKRCNN_SIBLING_TYPES.has(analysisType);
@@ -2868,8 +3007,8 @@ class WorldSamplerUI {
                     let modelName = 'Zero-Shot Detection';
                     if (analysisType === 'mask2former') modelName = 'Mask2Former';
                     if (analysisType === 'yolov8') {
-                        const yoloModel = result.yolo_model || 'yolov8n';
-                        modelName = `YOLOv8 (${yoloModel})`;
+                        const yoloModel = result.yolo_model || 'yolo26x-seg';
+                        modelName = `YOLO (${yoloModel})`;
                     }
                     if (analysisType === 'grounding_dino') {
                         modelName = 'Grounding DINO';
@@ -2909,7 +3048,7 @@ class WorldSamplerUI {
                     this.displaySAMResults(result);
                     
                     // Show notification
-                    const deviceNote = deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)';
+                    const deviceNote = deviceInfo.mode === 'remote_api' ? ' (Remote GPU)' : (deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)');
                     this.showNotification(
                         `SAM Analysis: Found ${numSegments} segments in viewport${deviceNote}`,
                         'success'
@@ -2992,9 +3131,10 @@ class WorldSamplerUI {
         const features = result.geojson.features.map((feature, index) => {
             const props = feature.properties;
             const coords = feature.geometry.coordinates[0];
-            const geographicCoords = coords.map(([x_norm, y_norm]) =>
+            const geographicCoords = this.cleanGeoRing(coords.map(([x_norm, y_norm]) =>
                 pixelToGeographic(x_norm, y_norm)
-            ).filter(Boolean);
+            ).filter(Boolean));
+            if (!geographicCoords) return null;
 
             return {
                 type: 'Feature',
@@ -3009,7 +3149,7 @@ class WorldSamplerUI {
                     stability_score: props.stability || props.stability_score || 0
                 }
             };
-        });
+        }).filter(Boolean);
 
         const convertedGeoJSON = {
             type: 'FeatureCollection',
@@ -3029,11 +3169,9 @@ class WorldSamplerUI {
 
                 if (entity.polygon) {
                     entity.polygon.material = color;
-                    entity.polygon.outline = true;
                     entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
                     entity.polygon.outlineWidth = 2;
-                    entity.polygon.extrudedHeight = 0;
-                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                    this.styleResultEntity(entity);
                 }
 
                 entity.description = `
@@ -3083,13 +3221,14 @@ class WorldSamplerUI {
         const features = result.geojson.features.map((feature, index) => {
             const props = feature.properties;
             const coords = feature.geometry.coordinates[0];
-            const geographicCoords = coords.map(([x_norm, y_norm]) => {
+            const geographicCoords = this.cleanGeoRing(coords.map(([x_norm, y_norm]) => {
                 const pixelX = (x_norm - 0.5) * viewportWidth;
                 const pixelY = (y_norm - 0.5) * viewportHeight;
                 const lonOffset = pixelX * degreesPerPixel;
                 const latOffset = -pixelY * degreesPerPixel;
                 return [centerLon + lonOffset, centerLat + latOffset];
-            });
+            }));
+            if (!geographicCoords) return null;
             
             return {
                 type: 'Feature',
@@ -3101,7 +3240,7 @@ class WorldSamplerUI {
                     stability_score: props.stability || props.stability_score || 0
                 }
             };
-        });
+        }).filter(Boolean);
         
         const convertedGeoJSON = { type: 'FeatureCollection', features: features };
         
@@ -3115,10 +3254,9 @@ class WorldSamplerUI {
                 
                 if (entity.polygon) {
                     entity.polygon.material = color;
-                    entity.polygon.outline = true;
                     entity.polygon.outlineColor = Cesium.Color.WHITE.withAlpha(0.8);
                     entity.polygon.outlineWidth = 2;
-                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
+                    this.styleResultEntity(entity);
                 }
             });
             
@@ -3164,10 +3302,11 @@ class WorldSamplerUI {
 
                 // Transform ALL rings in the polygon (exterior + holes)
                 // coordinates structure: [ [exterior_ring], [hole1], [hole2], ... ]
-                const transformedCoords = geom.coordinates.map(ring =>
+                const transformedCoords = this.cleanGeoPolygon(geom.coordinates.map(ring =>
                     ring.map(([x_norm, y_norm]) => pixelToGeographic(x_norm, y_norm))
                         .filter(Boolean)
-                );
+                ));
+                if (!transformedCoords) return null;
 
                 if (index === 0 && transformedCoords[0] && transformedCoords[0][0]) {
                     console.log('🔍 First entity coordinates:', {
@@ -3185,7 +3324,7 @@ class WorldSamplerUI {
                     },
                     properties: { ...props }
                 };
-            });
+            }).filter(Boolean);
 
             const convertedGeoJSON = {
                 type: 'FeatureCollection',
@@ -3229,13 +3368,11 @@ class WorldSamplerUI {
                         // Style the polygon (segmentation mask or bounding box)
                         if (entity.polygon) {
                             entity.polygon.material = color;
-                            entity.polygon.outline = true;
                             // Segmentation masks get thicker, brighter outlines
                             entity.polygon.outlineColor = hasMask 
                                 ? baseColor.withAlpha(1.0)  // Full opacity for mask outlines
                                 : baseColor.withAlpha(0.8); // Slightly dimmer for bbox outlines
                             entity.polygon.outlineWidth = hasMask ? 4 : 3;  // Thicker outline for masks
-                            entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
                         }
                         
                         // Enhanced label with ID number, class name, and confidence
@@ -3256,6 +3393,7 @@ class WorldSamplerUI {
                             backgroundPadding: new Cesium.Cartesian2(8, 4),
                             disableDepthTestDistance: Number.POSITIVE_INFINITY // Always show labels on top
                         };
+                        this.styleResultEntity(entity);
                         
                         // Enhanced description popup with segmentation indicator
                         const segmentationType = hasMask 
@@ -3333,13 +3471,14 @@ class WorldSamplerUI {
             const geom = feature.geometry;
             
             // Transform ALL rings in the polygon (exterior + holes)
-            const transformedCoords = geom.coordinates.map(ring => 
+            const transformedCoords = this.cleanGeoPolygon(geom.coordinates.map(ring => 
                 ring.map(([x_norm, y_norm]) => {
                     const lon = Cesium.Math.toDegrees(position.longitude) + (x_norm - 0.5) * viewportWidth * degreesPerPixel;
                     const lat = Cesium.Math.toDegrees(position.latitude) + (0.5 - y_norm) * viewportHeight * degreesPerPixel;
                     return [lon, lat];
                 })
-            );
+            ));
+            if (!transformedCoords) return null;
             
             return {
                 type: 'Feature',
@@ -3351,7 +3490,7 @@ class WorldSamplerUI {
                     ...props  // Use backend properties as-is
                 }
             };
-        });
+        }).filter(Boolean);
         
         const convertedGeoJSON = { type: 'FeatureCollection', features: features };
         
@@ -3373,12 +3512,10 @@ class WorldSamplerUI {
                     
                     if (entity.polygon) {
                         entity.polygon.material = color;
-                        entity.polygon.outline = true;
                         entity.polygon.outlineColor = hasMask 
                             ? baseColor.withAlpha(1.0)
                             : baseColor.withAlpha(0.8);
                         entity.polygon.outlineWidth = hasMask ? 4 : 3;
-                        entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
                     }
                     
                     // Enhanced label with ID number and mask indicator
@@ -3398,6 +3535,7 @@ class WorldSamplerUI {
                         backgroundPadding: new Cesium.Cartesian2(8, 4),
                         disableDepthTestDistance: Number.POSITIVE_INFINITY // Always show labels on top
                     };
+                    this.styleResultEntity(entity);
                     
                     // Enhanced description popup with mask indicator
                     const segmentationType = hasMask 
@@ -3840,44 +3978,7 @@ class WorldSamplerUI {
             debris:            Cesium.Color.fromCssColorString('#f97316'), // orange
         };
 
-        const cleanRing = (rawRing) => {
-            if (!rawRing || rawRing.length < 3) return null;
-            const eps = 1e-10;
-            const pts = [];
-            for (const p of rawRing) {
-                if (!p || p.length < 2) continue;
-                const lon = Number(p[0]);
-                const lat = Number(p[1]);
-                if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
-                const prev = pts[pts.length - 1];
-                if (prev && Math.abs(prev[0] - lon) < eps && Math.abs(prev[1] - lat) < eps) {
-                    continue;
-                }
-                pts.push([lon, lat]);
-            }
-            if (pts.length > 1) {
-                const first = pts[0];
-                const last = pts[pts.length - 1];
-                if (Math.abs(first[0] - last[0]) < eps && Math.abs(first[1] - last[1]) < eps) {
-                    pts.pop();
-                }
-            }
-            const distinct = new Set(pts.map((p) => `${p[0].toFixed(10)},${p[1].toFixed(10)}`));
-            if (pts.length < 3 || distinct.size < 3) return null;
-
-            // Reject line-like masks: Cesium's polygon tessellator builds
-            // rhumb-line segments and throws if degenerate rings slip through.
-            let area2 = 0;
-            for (let i = 0; i < pts.length; i++) {
-                const a = pts[i];
-                const b = pts[(i + 1) % pts.length];
-                area2 += (a[0] * b[1]) - (b[0] * a[1]);
-            }
-            if (Math.abs(area2) < 1e-16) return null;
-
-            pts.push([pts[0][0], pts[0][1]]);
-            return pts;
-        };
+        const cleanRing = (rawRing) => this.cleanGeoRing(rawRing);
 
         const features = [];
         for (const node of sceneGraph.nodes) {
@@ -3923,10 +4024,8 @@ class WorldSamplerUI {
                 const opacity = 0.25 + Math.min(0.6, score * 0.6);
                 if (entity.polygon) {
                     entity.polygon.material = baseColor.withAlpha(opacity);
-                    entity.polygon.outline = true;
                     entity.polygon.outlineColor = baseColor.withAlpha(0.95);
                     entity.polygon.outlineWidth = 1 + nSources;
-                    entity.polygon.heightReference = Cesium.HeightReference.CLAMP_TO_GROUND;
                 }
                 entity.label = {
                     text: `${category} ${(score * 100).toFixed(0)}% [${sourcesArr.join(',')}]`,
@@ -3942,6 +4041,7 @@ class WorldSamplerUI {
                     backgroundPadding: new Cesium.Cartesian2(6, 3),
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 };
+                this.styleResultEntity(entity);
             });
             this[dataSourceProp || 'sceneGraphDataSource'] = ds;
             this.viewer.dataSources.add(ds);

@@ -1,0 +1,51 @@
+# YOLO26, YOLOE-26 and SAM 3 for the DeepGIS AI panel.
+#
+#   cd services/ultralytics-api && docker compose up -d --build
+#
+# The web app reaches it by container name on the deepgis-xr network
+# (ULTRALYTICS_API_URL=http://ultralytics-api:5000), so no host port is
+# published. Weights download into ./weights on first use, except
+# sam3.pt, which is gated on Hugging Face and has to be placed there.
+services:
+  ultralytics-api:
+    build:
+      context: .
+    image: ultralytics-api:latest
+    container_name: ultralytics-api
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              # Use a GPU that is not driving a display. Other AI services
+              # may share it, so models unload after each prediction.
+              device_ids: ["1"]
+              capabilities: [gpu]
+    shm_size: 1gb
+    volumes:
+      - ./weights:/weights
+    environment:
+      - DEFAULT_MODEL=yolo26x-seg
+      - UNLOAD_AFTER_PREDICT=true
+      - DEFAULT_IMGSZ=1024
+      - MAX_IMGSZ=1280
+    networks:
+      - deepgis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  deepgis:
+    external: true
+    name: deepgis-xr_default
+

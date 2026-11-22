@@ -161,15 +161,22 @@ Analyze what the camera sees with one of four models:
 - **Segment Anything (SAM)**: prompt-free segmentation of every region in the
   view, with GeoJSON export and polygon simplification. Remote service, with
   a local fallback in the web container when the service is unreachable.
-- **YOLOv8**: fast detection of the 80 COCO classes, with an optional class
-  filter. Runs in the web container (ultralytics).
+- **YOLO26 / YOLOE-26 / SAM 3** (one panel option, served by
+  `services/ultralytics-api/`): YOLO26 segments the 80 COCO classes, with an
+  optional class filter; YOLOE-26 finds the classes you list; SAM 3 returns
+  masks for text prompts such as `building, tree, car`, at about 30 s a call.
+  SAM 3's weights are gated on Hugging Face, so the service reports
+  `weights_missing` until `sam3.pt` is in its weights folder.
 - **Grounding DINO**: open-vocabulary detection from a text prompt, e.g.
   `"rock . boulder . crater . debris"`. Suited to domain-specific targets
   (geology, archaeology, agriculture). Remote service.
 - **Mask R-CNN rocks** (Earth only): rock instance segmentation from the
   Bishop/Jezero checkpoints. Remote service.
 
-Results come back as GeoJSON, drawn on the globe with labels and confidences.
+Results come back as GeoJSON, drawn on the globe with labels and confidences:
+clamped to the terrain in 3D, flat with outlines in 2D. Degenerate rings are
+dropped before drawing, and if a frame still fails the page clears the AI
+overlay and keeps rendering.
 On Earth, the **SceneGraph** button runs several of these (Mask R-CNN rocks,
 Grounding DINO, SAM) on the same frame and fuses them with OSM buildings and
 roads into one labelled graph.
@@ -264,10 +271,10 @@ roads into one labelled graph.
 
 ### Prerequisites
 - Docker and Docker Compose
-- NVIDIA GPU + NVIDIA Container Toolkit (for YOLOv8, SAM's local fallback
-  and the admin model-training worker)
+- NVIDIA GPU + NVIDIA Container Toolkit (for the ultralytics service, SAM's
+  local fallback and the admin model-training worker)
 - Python 3.10 for local development (matches the Docker image)
-- Reachable SAM / Grounding DINO / Mask R-CNN rocks services for AI analysis
+- Reachable SAM / Grounding DINO / Mask R-CNN rocks / ultralytics services for AI analysis
   (optional; the page works without them)
 
 ### Installation
@@ -439,7 +446,8 @@ trace, the issues found and a suggested order of work are in
 **AI / ML** (the web image ships no model weights; they are fetched on first use)
 - Segment Anything (Meta AI), remote API, `SAM_API_URL`; falls back to
   `segment_anything` in the web process, on its GPU, when the API is unreachable
-- YOLOv8 (Ultralytics), in the web process
+- YOLO26, YOLOE-26 and SAM 3 (Ultralytics 8.4), remote API in
+  `services/ultralytics-api/`, `ULTRALYTICS_API_URL`
 - Grounding DINO (IDEA Research), remote API, `GROUNDING_DINO_API_URL`
 - Mask R-CNN rocks, remote API, `MASKRCNN_ROCKS_API_URL`
 - AI pilot: a language model reached through a read-only MCP server
@@ -490,6 +498,7 @@ deepgis-xr/
 │   │       └── management/commands/
 │   └── settings.py
 ├── services/topology/                # standalone Flask tile/3D-tiles server
+├── services/ultralytics-api/         # YOLO26, YOLOE-26, SAM 3 (Flask, GPU)
 ├── staticfiles/web/                  # tracked JS, CSS, vendor libs
 │   ├── js/hud/                       # shared HUD, drone, actions (actions.js: LAYERS),
 │   │                                 # Layers panel (layers-panel.js), AI pilot, VR (xr.js)
@@ -633,8 +642,11 @@ deepgis-xr/
     `'maskrcnn_rocks'`; anything else returns 400
   - `image`: Base64-encoded viewport image; `location`: camera metadata
   - **SAM:** `sam_model` (`'vit_b'`, `'vit_l'`, `'vit_h'`), `min_area` (pixels)
-  - **YOLOv8:** `yolo_model` (`'yolov8n'` to `'yolov8x'`),
-    `confidence_threshold`, `class_filter` (comma-separated COCO names)
+  - **YOLO (`model_type: 'yolov8'`, kept for compatibility):** `yolo_model`
+    (`'yolo26n-seg'` to `'yolo26x-seg'`, `'yoloe-26s-seg'` to `'yoloe-26l-seg'`,
+    or `'sam3'`; old `'yolov8n'`..`'yolov8x'` map to YOLO26),
+    `confidence_threshold`, `class_filter` (comma-separated; COCO names for
+    YOLO26, any phrases for YOLOE-26 and SAM 3, which require it)
   - **Grounding DINO:** `text_prompt` (dot-separated, e.g.
     `"rock . boulder . crater"`), `box_threshold` (default 0.3),
     `text_threshold` (default 0.25)
@@ -644,7 +656,8 @@ deepgis-xr/
   - **Graceful degradation.** If a remote service is unconfigured,
     unreachable or times out, the endpoint returns **HTTP 200** with an empty
     FeatureCollection and `degraded: true`. It also sets `unavailable_reason`
-    (`"not_configured"`, `"connection_error"` or `"timeout"`) and a
+    (`"not_configured"`, `"connection_error"`, `"timeout"`, or
+    `"weights_missing"` for SAM 3 without its weights) and a
     `Retry-After` header (30 s; 60 s on timeout). The frontend's
     per-viewport poll therefore stays quiet during outages. Real upstream 5xx
     responses and analyzer crashes still surface as 502/500.
@@ -844,7 +857,8 @@ request after the model has been idle.
 │  apps/web/world_sampler_api/http.py::analyze_viewport()              │
 │   └─ analyzers/  (model_type not in VIEWPORT_MODEL_TYPES → 400)      │
 │        sam · grounding_dino · maskrcnn_rocks → remote services       │
-│        yolov8 (and SAM's fallback)           → web container GPU     │
+│        yolov8 (YOLO26 · YOLOE-26 · SAM 3)    → remote services       │
+│        SAM's local fallback                  → web container GPU     │
 │                                                                      │
 │   On AI-down (not_configured · connection_error · timeout):          │
 │      → HTTP 200 + {status:"success", degraded:true, detections:[]}   │
@@ -856,6 +870,7 @@ request after the model has been idle.
 │       :5000  Grounding DINO      (GROUNDING_DINO_API_URL)            │
 │       :5002  Mask R-CNN rocks    (MASKRCNN_ROCKS_API_URL)            │
 │       :5010  SAM                 (SAM_API_URL)                       │
+│       :5000  YOLO26 · SAM 3      (ULTRALYTICS_API_URL)               │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -911,10 +926,11 @@ python scripts/grounding_dino_api_client.py --image viewport.jpg --prompt "rock 
 
 ### AI Viewport Analysis
 1. Open DeepGIS Search and the **AI** panel.
-2. Choose **SAM**, **YOLOv8**, **Grounding DINO** or (on Earth)
-   **MaskRCNN Rocks**.
-3. Set the model size and minimum area (SAM), the model size, confidence and
-   class filter (YOLOv8), the text prompt and thresholds (Grounding DINO), or
+2. Choose **SAM**, **YOLO26 / YOLOE-26 / SAM 3**, **Grounding DINO** or (on
+   Earth) **MaskRCNN Rocks**.
+3. Set the model size and minimum area (SAM); the model, confidence and
+   classes (YOLO: pick **SAM 3** and type e.g. `building, tree, car` for
+   text-prompted masks); the text prompt and thresholds (Grounding DINO); or
    the checkpoint, score threshold and detection limit (Mask R-CNN rocks).
 4. Click **Analyze Viewport**. Results are drawn as labelled polygons.
 
@@ -1077,8 +1093,10 @@ REDIS_URL=redis://redis:6379/0
 SAM_API_URL=http://<ai-host>:5010
 GROUNDING_DINO_API_URL=http://<ai-host>:5000
 MASKRCNN_ROCKS_API_URL=http://<ai-host>:5002
+# YOLO26 / YOLOE-26 / SAM 3: services/ultralytics-api, on the compose network
+ULTRALYTICS_API_URL=http://ultralytics-api:5000
 
-# Host GPU index for the web container (YOLOv8 and SAM's local fallback).
+# Host GPU index for the web container (SAM's local fallback).
 # Use a GPU that is not driving a display or simulator.
 DEEPGIS_WEB_GPU=0
 

@@ -303,6 +303,10 @@ GROUNDED_SAM_API_URL = os.environ.get('GROUNDED_SAM_API_URL', None)
 # Example: SAM_API_URL=http://192.168.0.232:5010
 SAM_API_URL = os.environ.get('SAM_API_URL', None)
 
+# YOLO26, YOLOE-26 and SAM 3 (services/ultralytics-api).
+# Example: ULTRALYTICS_API_URL=http://ultralytics-api:5000
+ULTRALYTICS_API_URL = os.environ.get('ULTRALYTICS_API_URL', None)
+
 # Unified MaskRCNN API — single Flask container that serves the full model
 # registry across all eight families (rocks, house, hypolith, litter,
 # roadkill, newlife, brent_moon_craters, harish_moon_craters). When set,

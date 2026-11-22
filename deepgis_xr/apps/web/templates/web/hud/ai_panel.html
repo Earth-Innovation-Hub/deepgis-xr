@@ -24,7 +24,7 @@
             <label class="form-label" style="color: #cbd5e1; font-size: 0.85rem;">Analysis Type:</label>
             <select class="form-select form-select-sm" id="analysisTypeSelect">
                 <option value="sam"{% if hud_body != "earth" %} selected{% endif %}>SAM (Universal Segmentation)</option>
-                <option value="yolov8">YOLOv8 (Fast Detection) ⚡</option>
+                <option value="yolov8">YOLO26 / YOLOE-26 / SAM 3 ⚡</option>
                 <option value="grounding_dino">Grounding DINO (Open Vocab) 🎯</option>
                 {% if hud_body == "earth" %}
                 <option value="maskrcnn_rocks" selected>MaskRCNN Rocks (Bishop/Jezero) 🪨</option>
@@ -46,16 +46,26 @@
                 <input type="number" class="form-control form-control-sm" id="samMinArea" value="100" min="10" max="10000" step="10">
             </div>
         </div>
-        <!-- YOLOv8 Options -->
+        <!-- YOLO Options -->
         <div id="yolov8Options" style="display: none;">
             <div class="form-group mb-2">
-                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model Size:</label>
+                <label class="form-label" style="color: #94a3b8; font-size: 0.8rem;">Model:</label>
                 <select class="form-select form-select-sm" id="yolov8ModelType">
-                    <option value="yolov8n" selected>Nano (Fastest)</option>
-                    <option value="yolov8s">Small</option>
-                    <option value="yolov8m">Medium</option>
-                    <option value="yolov8l">Large</option>
-                    <option value="yolov8x">XLarge (Best)</option>
+                    <optgroup label="YOLO26 (COCO classes, masks)">
+                        <option value="yolo26n-seg">Nano (Fastest)</option>
+                        <option value="yolo26s-seg">Small</option>
+                        <option value="yolo26m-seg">Medium</option>
+                        <option value="yolo26l-seg">Large</option>
+                        <option value="yolo26x-seg" selected>XLarge (Best)</option>
+                    </optgroup>
+                    <optgroup label="YOLOE-26 (open vocabulary: list what to find)">
+                        <option value="yoloe-26s-seg">Small</option>
+                        <option value="yoloe-26m-seg">Medium</option>
+                        <option value="yoloe-26l-seg">Large</option>
+                    </optgroup>
+                    <optgroup label="SAM 3 (text prompts, best masks, ~30 s)">
+                        <option value="sam3">SAM 3</option>
+                    </optgroup>
                 </select>
             </div>
             <div class="form-group mb-2">
@@ -63,7 +73,7 @@
                 <input type="range" class="form-range" id="yolov8Confidence" min="10" max="90" step="5" value="25">
             </div>
             <div class="form-group mb-3">
-                <input type="text" class="form-control form-control-sm" id="yolov8Classes" placeholder="Filter: person, car, truck...">
+                <input type="text" class="form-control form-control-sm" id="yolov8Classes" placeholder="Classes: car, truck (YOLOE: building, tree, ...)">
             </div>
         </div>
         <!-- Grounding DINO Options -->
