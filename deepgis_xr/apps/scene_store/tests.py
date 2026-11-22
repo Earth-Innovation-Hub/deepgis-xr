@@ -205,6 +205,9 @@ class FusionTests(TransactionTestCase):
         r = self.client.get(url, {'capture': 'latest', 'source': 'sam3', 'label': 'vehicle', 'bin_m2': 1}).json()
         self.assertEqual((r['level'], r['capture']['session_id'], r['n']), ('detection', 's1', 1))
         self.assertEqual(r['stats']['median'], r['stats']['max'])
+        r = self.client.get(url, {'bbox': bbox}).json()
+        self.assertEqual((r['n'], r['bin_m2']), (3, 50.0))  # p99 ~870 m² / 25 -> 50 m² bins
+        self.assertEqual([fusion.nice_bin(s) for s in (0.04, 9, 25, 120, 0)], [0.002, 0.5, 1.0, 5.0, 1.0])
         self.assertEqual(self.client.get(url, {'capture': 'nope'}).status_code, 404)
         self.assertEqual(self.client.get(url, {'bbox': bbox, 'bin_m2': 0}).status_code, 400)
         self.assertEqual(self.client.get(url).status_code, 400)

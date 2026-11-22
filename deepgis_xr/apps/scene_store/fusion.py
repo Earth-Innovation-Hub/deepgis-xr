@@ -555,21 +555,36 @@ def entities_in_bbox(bbox, *, at=None, taxonomy=None, min_p_exists=0.0, limit=20
     return [d for d in out if d['p_exists'] >= min_p_exists], bp
 
 
-def area_histogram(areas, *, bin_m2, max_m2=None):
-    """Fixed-width bins from 0 to ``max_m2`` (default: the 99th percentile), plus an overflow count."""
+def nice_bin(span, target=25):
+    """1, 2 or 5 x 10^k, about ``target`` bins across ``span`` (the panel's WorldSamplerUI.niceBin)."""
+    if not span > 0:
+        return 1.0
+    raw = span / target
+    p = 10.0 ** math.floor(math.log10(raw))
+    m = raw / p
+    return (1 if m <= 1 else 2 if m <= 2 else 5 if m <= 5 else 10) * p
+
+
+def area_histogram(areas, *, bin_m2=None, max_m2=None):
+    """Fixed-width bins from 0 to ``max_m2`` (default: the 99th percentile), plus an overflow count.
+
+    ``bin_m2=None`` picks a round width giving about 25 bins.
+    """
     a = np.asarray([v for v in areas if v is not None and np.isfinite(v)], dtype=float)
     if a.size == 0:
         return {'n': 0, 'bin_m2': bin_m2, 'bins': [], 'overflow': 0, 'stats': None}
     top = max_m2 if max_m2 else float(np.percentile(a, 99))
+    bin_m2 = bin_m2 or nice_bin(top)
     n_bins = max(1, min(500, int(math.ceil(top / bin_m2))))
     top = n_bins * bin_m2
     counts, edges = np.histogram(a[a < top], bins=n_bins, range=(0.0, top))
+    sig = lambda v: float(f'{float(v):.6g}')  # noqa: E731
     return {
-        'n': int(a.size), 'bin_m2': bin_m2,
-        'bins': [{'lo': round(float(lo), 3), 'hi': round(float(hi), 3), 'n': int(c)}
+        'n': int(a.size), 'bin_m2': sig(bin_m2),
+        'bins': [{'lo': sig(lo), 'hi': sig(hi), 'n': int(c)}
                  for lo, hi, c in zip(edges[:-1], edges[1:], counts)],
         'overflow': int((a >= top).sum()),
-        'stats': {k: round(float(v), 2) for k, v in (
+        'stats': {k: sig(v) for k, v in (
             ('min', a.min()), ('p10', np.percentile(a, 10)), ('median', np.median(a)), ('mean', a.mean()),
             ('p90', np.percentile(a, 90)), ('max', a.max()))},
     }

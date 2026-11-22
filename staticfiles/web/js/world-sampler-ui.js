@@ -3852,6 +3852,7 @@ class WorldSamplerUI {
 
             this.currentSceneGraph = built.scene_graph;
             this.currentSceneGraphCorners = corners;
+            this.lastSceneGraphSessionId = built.session_id || null;
             const sgShow = document.getElementById('sgShow');
             if (sgShow) sgShow.checked = true;
             this.displaySceneGraph(built.scene_graph, corners);
@@ -4296,6 +4297,214 @@ class WorldSamplerUI {
             this.showNotification(`Feedback failed: ${err.message || err}`, 'error');
         }
     }
+
+    // ---- Object sizes: area histograms (/webclient/sampler/world/histogram) ----
+
+    // 1, 2 or 5 x 10^k, about `target` bins across `span`; same rule as scene_store.fusion.nice_bin.
+    static niceBin(span, target = 25) {
+        if (!(span > 0)) return 1;
+        const raw = span / target;
+        const p = Math.pow(10, Math.floor(Math.log10(raw)));
+        const m = raw / p;
+        return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+    }
+
+    static formatArea(m2) {
+        if (m2 >= 1e6) return `${(m2 / 1e6).toPrecision(3)} km²`;
+        if (m2 >= 100) return `${Math.round(m2)} m²`;
+        if (m2 >= 1) return `${m2.toFixed(1)} m²`;
+        return `${m2.toPrecision(2)} m²`;
+    }
+
+    // Client-side twin of scene_store.fusion.area_histogram, for results that are not stored.
+    areaHistogram(areas) {
+        const a = areas.filter((v) => Number.isFinite(v)).sort((x, y) => x - y);
+        if (!a.length) return { n: 0, bins: [], overflow: 0, stats: null };
+        const pct = (q) => {
+            const i = (a.length - 1) * q;
+            const lo = Math.floor(i);
+            return a[lo] + (a[Math.min(lo + 1, a.length - 1)] - a[lo]) * (i - lo);
+        };
+        const p99 = pct(0.99);
+        const bin = WorldSamplerUI.niceBin(p99);
+        const nBins = Math.max(1, Math.min(500, Math.ceil(p99 / bin)));
+        const top = nBins * bin;
+        const bins = Array.from({ length: nBins }, (_, i) => ({ lo: i * bin, hi: (i + 1) * bin, n: 0 }));
+        let overflow = 0;
+        a.forEach((v) => {
+            if (v >= top) overflow++;
+            else bins[Math.min(nBins - 1, Math.floor(v / bin))].n++;
+        });
+        return {
+            n: a.length, bin_m2: bin, bins, overflow,
+            stats: { min: a[0], p10: pct(0.1), median: pct(0.5), mean: a.reduce((s, v) => s + v, 0) / a.length,
+                p90: pct(0.9), max: a[a.length - 1] },
+        };
+    }
+
+    // Area of a Cesium polygon entity on the current body, holes subtracted.
+    entityAreaM2(entity) {
+        const h = entity.polygon?.hierarchy?.getValue(Cesium.JulianDate.now());
+        if (!h || !h.positions) return null;
+        const ellipsoid = this.viewer.scene.globe.ellipsoid;
+        const R = ellipsoid.maximumRadius;
+        const ringArea = (positions) => {
+            const c = positions.map((p) => Cesium.Cartographic.fromCartesian(p, ellipsoid)).filter(Boolean);
+            if (c.length < 3) return 0;
+            const k = Math.cos(c.reduce((s, p) => s + p.latitude, 0) / c.length);
+            let sum = 0;
+            for (let i = 0; i < c.length; i++) {
+                const p = c[i], q = c[(i + 1) % c.length];
+                sum += p.longitude * k * q.latitude - q.longitude * k * p.latitude;
+            }
+            return Math.abs(sum / 2) * R * R;
+        };
+        let area = ringArea(h.positions);
+        (h.holes || []).forEach((hole) => { area -= ringArea(hole.positions || []); });
+        return area > 0 ? area : null;
+    }
+
+    analysisObjects() {
+        const ds = this.samDataSource;
+        if (!ds || !this.viewer.dataSources.contains(ds)) return [];
+        return ds.entities.values
+            .filter((e) => e.polygon)
+            .map((e) => ({ entity: e, label: String(e.properties?.class_name?.getValue() || 'segment').toLowerCase() }));
+    }
+
+    sizeObjectOptions(source) {
+        const counts = {};
+        if (source === 'analysis') {
+            this.analysisObjects().forEach((o) => { counts[o.label] = (counts[o.label] || 0) + 1; });
+        } else if (source === 'scenegraph') {
+            (this.currentSceneGraph?.nodes || []).forEach((n) => { counts[n.category] = (counts[n.category] || 0) + 1; });
+        } else {
+            this.worldCategories('urban_v1').filter((c) => c !== 'unknown').forEach((c) => { counts[c] = null; });
+        }
+        return Object.entries(counts).sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    }
+
+    refreshSizeOptions() {
+        const source = document.getElementById('sizeSource')?.value;
+        const select = document.getElementById('sizeObject');
+        if (!source || !select) return;
+        const previous = select.value;
+        const options = this.sizeObjectOptions(source);
+        select.innerHTML = '';
+        if (!options.length) {
+            select.add(new Option(source === 'scenegraph' ? 'build a scene graph first' : 'analyze the view first', ''));
+            select.disabled = true;
+            return;
+        }
+        select.disabled = false;
+        const name = (c) => c.replace(/_/g, ' ');
+        options.forEach(([key, n]) => select.add(new Option(n === null ? name(key) : `${name(key)} (${n})`, key)));
+        if (source !== 'world') select.add(new Option('all objects', '*'));
+        const keys = options.map(([k]) => k);
+        select.value = keys.includes(previous) ? previous
+            : ['car', 'vehicle'].find((k) => keys.includes(k)) || keys[0];
+    }
+
+    async showSizeHistogram() {
+        const source = document.getElementById('sizeSource')?.value;
+        const object = document.getElementById('sizeObject')?.value;
+        const box = document.getElementById('sizeHistogram');
+        if (!source || !box) return;
+        if (!object) {
+            this.refreshSizeOptions();
+            if (!document.getElementById('sizeObject')?.value) return;
+            return this.showSizeHistogram();
+        }
+        const label = object === '*' ? 'objects' : object.replace(/_/g, ' ');
+        box.hidden = false;
+        box.style.color = '#94a3b8';
+        box.textContent = 'Measuring...';
+        try {
+            let hist;
+            if (source === 'analysis') {
+                const objs = this.analysisObjects().filter((o) => object === '*' || o.label === object);
+                hist = this.areaHistogram(objs.map((o) => this.entityAreaM2(o.entity)));
+            } else {
+                const params = new URLSearchParams();
+                if (object !== '*') params.set('category', object);
+                if (source === 'scenegraph') {
+                    if (!this.lastSceneGraphSessionId) throw new Error('build a scene graph first');
+                    params.set('capture', this.lastSceneGraphSessionId);
+                } else {
+                    const bbox = this.worldViewBbox();
+                    if (!bbox) throw new Error('point the camera at the ground');
+                    params.set('bbox', bbox.map((v) => v.toFixed(6)).join(','));
+                    params.set('min_p_exists', '0.05');
+                }
+                const resp = await fetch(`/webclient/sampler/world/histogram?${params}`);
+                const payload = await resp.json().catch(() => ({}));
+                if (resp.status === 404 && source === 'scenegraph') {
+                    throw new Error('this build is not in the world model');
+                }
+                if (!resp.ok || payload.status !== 'success') throw new Error(payload.message || `HTTP ${resp.status}`);
+                hist = payload;
+            }
+            this.renderSizeHistogram(box, hist, label);
+        } catch (err) {
+            box.textContent = `Could not measure: ${err.message || err}`;
+            box.style.color = '#ef4444';
+        }
+    }
+
+    renderSizeHistogram(box, hist, label) {
+        box.innerHTML = '';
+        box.style.color = '#cbd5e1';
+        if (!hist.n) {
+            box.textContent = `No ${label} to measure.`;
+            return;
+        }
+        const fmt = WorldSamplerUI.formatArea;
+        const cols = hist.bins.map((b) => ({ ...b, over: false }));
+        if (hist.overflow) cols.push({ lo: hist.bins.length ? hist.bins[hist.bins.length - 1].hi : 0, hi: Infinity, n: hist.overflow, over: true });
+        const W = 300, H = 110, left = 22, bottom = 16, top = 4;
+        const maxN = Math.max(1, ...cols.map((c) => c.n));
+        const bw = (W - left - 2) / cols.length;
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.setAttribute('width', '100%');
+        svg.setAttribute('role', 'img');
+        svg.setAttribute('aria-label', `Area histogram of ${hist.n} ${label}`);
+        const add = (tag, attrs, text) => {
+            const el = document.createElementNS(NS, tag);
+            Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+            if (text !== undefined) el.textContent = text;
+            svg.appendChild(el);
+            return el;
+        };
+        add('line', { x1: left, y1: H - bottom, x2: W, y2: H - bottom, stroke: '#475569' });
+        cols.forEach((c, i) => {
+            if (!c.n) return;
+            const h = (H - bottom - top) * c.n / maxN;
+            const rect = add('rect', {
+                x: left + i * bw + 0.5, y: H - bottom - h, width: Math.max(1, bw - 1), height: h,
+                fill: c.over ? '#f59e0b' : '#38bdf8',
+            });
+            const t = document.createElementNS(NS, 'title');
+            t.textContent = c.over ? `${c.n} at or above ${fmt(c.lo)}` : `${fmt(c.lo)} to ${fmt(c.hi)}: ${c.n}`;
+            rect.appendChild(t);
+        });
+        const textAttrs = { fill: '#94a3b8', 'font-size': 9 };
+        add('text', { ...textAttrs, x: left - 3, y: top + 8, 'text-anchor': 'end' }, String(maxN));
+        add('text', { ...textAttrs, x: left - 3, y: H - bottom, 'text-anchor': 'end' }, '0');
+        const edge = hist.bins.length ? hist.bins[hist.bins.length - 1].hi : 0;
+        add('text', { ...textAttrs, x: left, y: H - 4 }, '0');
+        add('text', { ...textAttrs, x: left + hist.bins.length * bw / 2, y: H - 4, 'text-anchor': 'middle' }, fmt(edge / 2));
+        add('text', { ...textAttrs, x: left + hist.bins.length * bw, y: H - 4, 'text-anchor': hist.overflow ? 'middle' : 'end' }, fmt(edge));
+        box.appendChild(svg);
+        const s = hist.stats;
+        const line = document.createElement('div');
+        line.style.color = '#94a3b8';
+        line.textContent = `${hist.n} ${label}: median ${fmt(s.median)}, middle 80% ${fmt(s.p10)} to ${fmt(s.p90)}, `
+            + `largest ${fmt(s.max)}. Bins of ${fmt(hist.bin_m2)}`
+            + `${hist.overflow ? `; ${hist.overflow} above ${fmt(edge)} in orange` : ''}.`;
+        box.appendChild(line);
+    }
 }
 
 
@@ -4399,6 +4608,16 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         document.getElementById('sgShowLinks')?.addEventListener('change', () => {
             if (worldSamplerUI.sceneGraphDataSource) worldSamplerUI.setSceneGraphViewportVisible(true);
         });
+
+        // Object sizes: the object list follows whatever results were drawn last.
+        document.getElementById('sizeSource')?.addEventListener('change', () => worldSamplerUI.refreshSizeOptions());
+        document.getElementById('sizeHistogramBtn')?.addEventListener('click', () => worldSamplerUI.showSizeHistogram());
+        viewer.dataSources.dataSourceAdded.addEventListener((_, ds) => {
+            if (ds === worldSamplerUI.samDataSource || ds === worldSamplerUI.sceneGraphDataSource) {
+                worldSamplerUI.refreshSizeOptions();
+            }
+        });
+        worldSamplerUI.refreshSizeOptions();
     }
 
     // Distinction-Game SceneGraph orchestrator button.

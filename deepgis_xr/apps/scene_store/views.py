@@ -7,7 +7,7 @@
     POST /webclient/sampler/world/preferences   {key: value, ...}
     GET  /webclient/sampler/world/stats[?taxonomy=]
     GET  /webclient/sampler/world/histogram?bbox=w,s,e,n | capture=<session_id>|latest
-         [&category=][&label=][&source=][&taxonomy=][&min_p_exists=][&bin_m2=1][&max_m2=]
+         [&category=][&label=][&source=][&taxonomy=][&min_p_exists=][&bin_m2=auto][&max_m2=]
          Area histogram. With bbox: world entities (median area over their sightings).
          With capture: that capture's detections, one per region as the models saw it.
 
@@ -168,12 +168,12 @@ def histogram_view(request):
         return _unavailable()
     q = request.GET
     try:
-        bin_m2 = float(q.get('bin_m2', 1))
+        bin_m2 = float(q['bin_m2']) if q.get('bin_m2', 'auto') != 'auto' else None
         max_m2 = float(q['max_m2']) if q.get('max_m2') else None
         min_p = float(q.get('min_p_exists', 0))
     except ValueError:
         return _error('bin_m2, max_m2 and min_p_exists must be numbers')
-    if not 0 < bin_m2 <= 1e6 or (max_m2 is not None and max_m2 <= 0):
+    if (bin_m2 is not None and not 0 < bin_m2 <= 1e6) or (max_m2 is not None and max_m2 <= 0):
         return _error('bin_m2 and max_m2 must be positive')
     category, label, source = q.get('category'), q.get('label'), q.get('source')
     filters = {k: v for k, v in (('category', category), ('label', label), ('source', source)) if v}
