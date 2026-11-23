@@ -10,6 +10,10 @@
          [&category=][&label=][&source=][&taxonomy=][&min_p_exists=][&bin_m2=auto][&max_m2=]
          Area histogram. With bbox: world entities (median area over their sightings).
          With capture: that capture's detections, one per region as the models saw it.
+    GET  /webclient/sampler/world/captures?bbox=w,s,e,n[&taxonomy=][&limit=20]
+         Stored scene graphs whose footprint meets the box, newest first.
+    GET  /webclient/sampler/world/captures/<session_id>
+         One stored scene graph: its detections (with their world entity) and context / contains links.
 
 Reads are public; feedback and preferences need a signed-in user.
 """
@@ -17,7 +21,7 @@ Reads are public; feedback and preferences need a signed-in user.
 import json
 
 from django.contrib.gis.geos import Polygon
-from django.db.models import Count
+from django.db.models import Count, Max, Min
 from django.http import JsonResponse
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
@@ -27,6 +31,8 @@ from . import fusion
 from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, UserPreference
 
 MAX_BBOX_DEG = 0.05
+MAX_CAPTURE_BBOX_DEG = 0.5
+MAX_CAPTURE_DETECTIONS = 3000
 
 
 def _unavailable():
@@ -217,3 +223,82 @@ def histogram_view(request):
     hist = fusion.area_histogram(rows.values_list('area_m2', flat=True), bin_m2=bin_m2, max_m2=max_m2)
     return JsonResponse({'status': 'success', 'level': 'entity', 'filters': filters,
                          'min_p_exists': min_p, **hist})
+
+
+def _lonlat_ring(geom):
+    """Exterior ring as [[lon, lat], ...], or None for rows stored in projected metres."""
+    ring = [list(p) for p in geom.coords[0]]
+    return ring if all(abs(x) <= 180 and abs(y) <= 90 for x, y in ring) else None
+
+
+def _capture_dict(cap, categories):
+    return {
+        'session_id': cap.session_id,
+        'captured_at': cap.captured_at.isoformat(),
+        'taxonomy': cap.taxonomy,
+        'sources': cap.sources,
+        'n_detections': sum(categories.values()),
+        'categories': dict(sorted(categories.items(), key=lambda kv: -kv[1])),
+        'footprint': _lonlat_ring(cap.footprint),
+        'camera': list(cap.camera.coords) if cap.camera else None,
+        'camera_alt_m': cap.camera_alt_m,
+    }
+
+
+@require_GET
+def captures_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    q = request.GET
+    try:
+        west, south, east, north = [float(v) for v in q.get('bbox', '').split(',')]
+        limit = min(max(int(q.get('limit', 20)), 1), 100)
+    except ValueError:
+        return _error('bbox=west,south,east,north is required and limit must be an integer')
+    if not (west < east and south < north) or (east - west) * (north - south) > MAX_CAPTURE_BBOX_DEG ** 2:
+        return _error(f'bbox must be non-empty and at most {MAX_CAPTURE_BBOX_DEG} degrees square')
+    caps = Capture.objects.filter(footprint__intersects=Polygon.from_bbox((west, south, east, north)))
+    if q.get('taxonomy'):
+        caps = caps.filter(taxonomy=q['taxonomy'])
+    span = caps.aggregate(n=Count('id'), first=Min('captured_at'), last=Max('captured_at'))
+    rows = list(caps.order_by('-captured_at')[:limit])
+    cats = {}
+    for cap_id, category, n in (Detection.objects.filter(capture__in=rows)
+                                .values_list('capture_id', 'category').annotate(n=Count('id')).order_by()):
+        cats.setdefault(cap_id, {})[category] = n
+    return JsonResponse({
+        'status': 'success',
+        'n_captures': span['n'],
+        'first': span['first'].isoformat() if span['first'] else None,
+        'last': span['last'].isoformat() if span['last'] else None,
+        'captures': [_capture_dict(c, cats.get(c.id, {})) for c in rows],
+    })
+
+
+@require_GET
+def capture_detail_view(request, session_id):
+    if not fusion.enabled():
+        return _unavailable()
+    cap = Capture.objects.filter(session_id=session_id).first()
+    if cap is None:
+        return _error('no such capture', 404)
+    dets = list(Detection.objects.filter(capture=cap).select_related('association')
+                .order_by('-score')[:MAX_CAPTURE_DETECTIONS])
+    out, cats = [], {}
+    for d in dets:
+        cats[d.category] = cats.get(d.category, 0) + 1
+        ring = _lonlat_ring(d.geom)
+        if ring is None:
+            continue
+        assoc = getattr(d, 'association', None)
+        out.append({'id': d.id, 'node_id': d.node_id, 'category': d.category, 'score': round(d.score, 4),
+                    'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None,
+                    'entity_id': assoc.entity_id if assoc else None, 'geo_polygon': ring})
+    # A pair's link is stored once, by the capture that first saw both; list every link among these entities
+    entity_ids = {d['entity_id'] for d in out if d['entity_id']}
+    links = [{'kind': kind, 'entities': ids} for kind, ids in
+             Factor.objects.filter(entity_ids__overlap=list(entity_ids), kind__in=('context', 'contains'),
+                                   superseded_at__isnull=True, valid__contains=cap.captured_at)
+             .values_list('kind', 'entity_ids') if set(ids) <= entity_ids]
+    return JsonResponse({'status': 'success', 'capture': _capture_dict(cap, cats),
+                         'n_skipped': len(dets) - len(out), 'detections': out, 'links': links})

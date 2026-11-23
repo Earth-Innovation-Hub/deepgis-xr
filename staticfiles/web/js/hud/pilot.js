@@ -1,6 +1,6 @@
 // DeepGIS AI pilot chat, shared by the Earth, Moon and planet viewers.
 // POST /label/api/pilot/ turns a request into actions (goto, orbit, adjust, takeoff, land,
-// look, stop, wait, show_layer, hide_layer, describe_view, check_view, follow_vehicle); they
+// look, stop, wait, show_layer, hide_layer, describe_view, check_view, follow_vehicle, find_objects, show_scene_graphs); they
 // run in order through window.DeepGISActions (hud/actions.js), which reports into this chat.
 // A plan that ends in check_view is a task with a goal for the view: when the vision model
 // says it is not met yet, the chat asks the planner again with what it saw ("Goal check"),
@@ -104,10 +104,21 @@
             el.remove = () => { remove(); emit({ type: 'remove', id }); };
             return el;
         },
+        // The chart stays on the page; listeners (the VR comms panel) get its text
+        histogram(hist, label, text) {
+            const el = base.histogram(hist, label);
+            announce('step', text);
+            return el;
+        },
         // Follow-up questions ("what is the dark patch on the left?") can refer to it
         described(data) {
             history.push({ role: 'assistant',
                            content: `What I saw in the view: ${[data.summary, ...(data.observations || [])].join(' ')}`.slice(0, 2000) });
+            history.splice(0, Math.max(0, history.length - 8));
+        },
+        // Measured results ("what is the median house size?" can refer to them)
+        noted(text) {
+            history.push({ role: 'assistant', content: String(text).slice(0, 2000) });
             history.splice(0, Math.max(0, history.length - 8));
         },
         goal: onGoalChecked,

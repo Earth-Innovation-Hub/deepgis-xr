@@ -193,6 +193,32 @@ class CleanActionsTests(TestCase):
                                {"type": "orbit", "place": "Tycho", "radius_m": 60000.0, "alt_m": 500000.0},
                                {"type": "hide_layer"}])
 
+    def test_find_objects_cleans_prompts(self):
+        plan = [{"type": "find_objects", "objects": " Buildings and houses; buildings / solar panel. ", "stats": True,
+                 "place": "Tempe", "kind": "ndvi"},
+                {"type": "find_objects", "objects": "car", "stats": "yes"},
+                {"type": "find_objects", "objects": "<script>, ;"},
+                {"type": "find_objects"}]
+        for body in ("earth", "moon"):
+            self.assertEqual(pilot.clean_actions(plan, body=body), [
+                {"type": "find_objects", "objects": "buildings, houses, solar panel", "stats": True},
+                {"type": "find_objects", "objects": "car"},
+            ])
+        self.assertEqual(pilot.clean_objects(", ".join(f"thing {i}" for i in range(12))).count(","), pilot.MAX_OBJECTS - 1)
+        for schema in (pilot.PILOT_SCHEMA, pilot.PLANET_SCHEMA, pilot.CONTROL_SCHEMA):
+            props = schema["properties"]["actions"]["items"]["properties"]
+            self.assertIn("find_objects", props["type"]["enum"])
+            self.assertTrue({"objects", "stats"} <= set(props))
+
+    def test_show_scene_graphs_is_earth_only(self):
+        plan = [{"type": "show_scene_graphs", "place": "Tempe", "objects": "car", "alt_m": 300}]
+        self.assertEqual(pilot.clean_actions(plan), [{"type": "show_scene_graphs"}])
+        self.assertEqual(pilot.clean_actions(plan, body="moon"), [])
+        for schema in (pilot.PILOT_SCHEMA, pilot.CONTROL_SCHEMA):
+            self.assertIn("show_scene_graphs", schema["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+        for schema in (pilot.PLANET_SCHEMA, *pilot.PLANET_LAYER_SCHEMAS.values()):
+            self.assertNotIn("show_scene_graphs", schema["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+
     def test_describe_view_keeps_only_its_type(self):
         plan = [{"type": "goto", "place": "Olympus Mons"},
                 {"type": "describe_view", "place": "Olympus Mons", "kind": "elevation", "seconds": 3}]

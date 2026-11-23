@@ -185,14 +185,40 @@ def _ultralytics_q_s() -> Dict[str, ConfusionMatrix]:
     }
 
 
+# mr_rocks was trained on Bishop rock fields. Over a city its "rock" masks are roofs, yards and
+# oblique smears, not debris, so in urban taxonomies "rock" points at unknown and debris gets the
+# same small rate as pavement. The rooftop (building 0.45) and bare-ground rates are kept.
+MR_ROCKS_URBAN_ROCK = {'unknown': 0.85, 'debris': 0.1}
+
+
+def urban_mr_rocks(cm: ConfusionMatrix) -> ConfusionMatrix:
+    m = np.array(cm.matrix, dtype=float)
+    rock = list(cm.native_labels).index('rock')
+    for cat, p in MR_ROCKS_URBAN_ROCK.items():
+        j = cm.taxonomy.index_of(cat)
+        rest = m[:, j].sum() - m[rock, j]
+        m[:, j] *= (1 - p) / rest if rest > 0 else 1.0
+        m[rock, j] = p
+    return ConfusionMatrix(
+        source_id=cm.source_id,
+        taxonomy=cm.taxonomy,
+        native_labels=tuple(cm.native_labels),
+        matrix=m,
+        description=f'{cm.description} (urban: rock -> unknown, not debris)',
+    )
+
+
 def q_s_table_for(taxonomy: Taxonomy) -> Dict[str, ConfusionMatrix]:
     if taxonomy is PHX_URBAN_V0:
-        return default_q_s_table(taxonomy=PHX_URBAN_V0)
-    if taxonomy is URBAN_V1:
+        table = dict(default_q_s_table(taxonomy=PHX_URBAN_V0))
+    elif taxonomy is URBAN_V1:
         table = {sid: lift_to_urban_v1(cm) for sid, cm in default_q_s_table(taxonomy=PHX_URBAN_V0).items()}
         table.update(_ultralytics_q_s())
-        return table
-    raise KeyError(f'no Q_s priors for taxonomy {taxonomy.name!r}')
+    else:
+        raise KeyError(f'no Q_s priors for taxonomy {taxonomy.name!r}')
+    if 'mr_rocks' in table:
+        table['mr_rocks'] = urban_mr_rocks(table['mr_rocks'])
+    return table
 
 
 def pick_taxonomy(requested: Optional[str], sources: Sequence[str]) -> Taxonomy:

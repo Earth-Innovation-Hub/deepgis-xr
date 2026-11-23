@@ -81,7 +81,8 @@ data layers:
 
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
-`hide_layer`, `describe_view`, `follow_vehicle`). Django validates and clamps
+`hide_layer`, `describe_view`, `find_objects`, `show_scene_graphs`,
+`follow_vehicle`). Django validates and clamps
 them, and the page runs them on the existing drone controls. These actions
 never touch a vehicle.
 
@@ -93,7 +94,12 @@ card. Nothing is sent until you press **Send**. **Preview plan** asks the
 robot's mission supervisor for the plan without flying it. See
 [Robot commands](#robot-commands-superusers).
 `describe_view` sends one frame of the 3D view to the lab's vision model,
-which returns a summary and a list of what it sees. `follow_vehicle` locks
+which returns a summary and a list of what it sees. `find_objects` runs
+SAM 3 on the view for the objects named (*"show me buildings and houses
+with a histogram"*) and posts their count, area statistics and an area
+histogram in the chat. `show_scene_graphs` lists the stored world-model
+captures in view; clicking one draws its objects and links and flies to
+it. `follow_vehicle` locks
 the view to a live vehicle (see [Live vehicles](#-live-vehicles)). Off Earth the
 pilot resolves IAU feature names from the USGS Gazetteer of Planetary
 Nomenclature and flies at orbiter scale. See
@@ -729,6 +735,12 @@ deepgis-xr/
   JSON object (`null` deletes a key); sign-in required.
 - `GET /webclient/sampler/world/stats[?taxonomy=]`: counts, plus per-source
   label agreement with user feedback when a taxonomy is given.
+- `GET /webclient/sampler/world/captures?bbox=west,south,east,north`: stored
+  captures (scene graphs) whose footprint meets the box (at most 0.5°
+  square), newest first. Optional `taxonomy`, `limit`.
+- `GET /webclient/sampler/world/captures/<session_id>`: one capture's
+  footprint, its entities with their current beliefs, and the context and
+  contains links between them that were valid at capture time.
 
 Without `OBSERVATIONS_DATABASE_URL` the world endpoints return 503 and builds
 skip the world model.
@@ -1245,6 +1257,11 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   toggles, overlays kept out of captured frames, and the unused model
   branches (zero-shot, Mask2Former, Grounded-SAM, house and sibling Mask
   R-CNN, Prithvi) removed from the viewport analysis code.
+- **Pilot and the world model**: `find_objects` (SAM 3 by request, with an
+  area histogram and stats in the chat; islands of one mask count as one
+  object) and `show_scene_graphs` (stored captures in view, drawn on click),
+  backed by the new `world/captures` endpoints. A lone `mr_rocks` "rock"
+  claim now means *unknown* rather than *debris* in the urban categories.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital
@@ -1434,13 +1451,14 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - [x] Moon and planet viewers (ten more bodies) sharing Earth's HUD, drone
       and AI pilot
 - [x] AI pilot visual analysis of the view (`describe_view`)
+- [x] AI pilot viewport analysis by request (`find_objects`) and stored
+      scene graphs (`show_scene_graphs`)
 - [x] Follow a live vehicle (`follow_vehicle`), starting with the OpenUAV
       PX4 SITL + Gazebo twin
 
 ### 🔧 Next
 - [ ] AI pilot: a sign-in path for lab members, persistent rate limiting
       (shared cache), and server-side geocoding with a cache if traffic grows
-- [ ] AI pilot: run viewport analysis by request ("find boulders here")
 - [ ] SQLite → Postgres data cutover
 - [ ] `kernelcal` integration: MaxCal World Sampler, Model-Kernel Selector,
       terrain diagnostics endpoint

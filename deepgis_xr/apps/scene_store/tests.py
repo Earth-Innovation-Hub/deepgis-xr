@@ -211,3 +211,23 @@ class FusionTests(TransactionTestCase):
         self.assertEqual(self.client.get(url, {'capture': 'nope'}).status_code, 404)
         self.assertEqual(self.client.get(url, {'bbox': bbox, 'bin_m2': 0}).status_code, 400)
         self.assertEqual(self.client.get(url).status_code, 400)
+
+    def test_captures_api(self):
+        self._ingest('s1', self.t1)
+        self._ingest('s2', self.t2)
+        url = '/webclient/sampler/world/captures'
+        r = self.client.get(url, {'bbox': f'{LON - 0.01},{LAT - 0.01},{LON + 0.01},{LAT + 0.01}'}).json()
+        self.assertEqual((r['n_captures'], [c['session_id'] for c in r['captures']]), (2, ['s2', 's1']))
+        self.assertEqual(r['captures'][0]['n_detections'], 3)
+        self.assertEqual(set(r['captures'][0]['categories']), {'building', 'road', 'vehicle'})
+        self.assertEqual(len(r['captures'][0]['footprint']), 5)
+        far = self.client.get(url, {'bbox': f'{LON + 1},{LAT + 1},{LON + 1.01},{LAT + 1.01}'}).json()
+        self.assertEqual((far['n_captures'], far['captures'], far['first']), (0, [], None))
+        self.assertEqual(self.client.get(url, {'bbox': f'{LON},{LAT},{LON + 1},{LAT + 1}'}).status_code, 400)
+        self.assertEqual(self.client.get(url).status_code, 400)
+        d = self.client.get(f'{url}/s2').json()
+        self.assertEqual(len(d['detections']), 3)
+        self.assertTrue(all(det['entity_id'] for det in d['detections']))
+        entities = {det['entity_id'] for det in d['detections']}
+        self.assertTrue(d['links'] and all(set(link['entities']) <= entities for link in d['links']))
+        self.assertEqual(self.client.get(f'{url}/nope').status_code, 404)

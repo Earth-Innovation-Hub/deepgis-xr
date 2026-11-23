@@ -42,6 +42,16 @@ class UrbanTaxonomyTests(SimpleTestCase):
         row = np.asarray(cm.matrix)[cm.native_labels.index('swimming pool')]
         self.assertGreater(row[URBAN_V1.index_of('pool')], row[URBAN_V1.index_of('water')])
 
+    def test_mr_rocks_rock_points_at_unknown_not_debris(self):
+        for tax in (PHX_URBAN_V0, URBAN_V1):
+            cm = q_s_table_for(tax)['mr_rocks']
+            m = np.asarray(cm.matrix)
+            np.testing.assert_allclose(m.sum(axis=0), 1.0)
+            row = m[list(cm.native_labels).index('rock')]
+            self.assertEqual(int(np.argmax(row)), tax.index_of('unknown'), tax.name)
+            self.assertLessEqual(row[tax.index_of('debris')], row[tax.index_of('pavement')] + 1e-9, tax.name)
+            self.assertAlmostEqual(row[tax.index_of('building')], 0.45, places=6)
+
     def test_pick_taxonomy(self):
         self.assertIs(pick_taxonomy(None, ['osm', 'mr_rocks']), PHX_URBAN_V0)
         self.assertIs(pick_taxonomy(None, ['osm', 'sam3']), URBAN_V1)

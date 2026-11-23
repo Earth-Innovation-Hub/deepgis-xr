@@ -2798,15 +2798,18 @@ class WorldSamplerUI {
     /**
      * Analyze viewport using AI models (SAM or Zero-Shot Detection)
      */
-    async analyzeViewportWithSAM() {
+    // opts {type, prompts} override the panel's model and SAM 3 prompts (the AI pilot's
+    // find_objects). Resolves {ok, n} once results are drawn, or {ok: false, error}.
+    async analyzeViewportWithSAM(opts = {}) {
         const statusDiv = document.getElementById('samAnalysisStatus');
         const statusText = document.getElementById('samStatusText');
         const analyzeBtn = document.getElementById('analyzeViewportBtn');
         const analysisTypeSelect = document.getElementById('analysisTypeSelect');
         let orbitPausedForAnalysis = false;
+        let outcome = { ok: false, error: 'analysis did not run' };
         
         // SAM 3 is served by the Ultralytics (yolov8) analyzer.
-        const selectedType = analysisTypeSelect ? analysisTypeSelect.value : 'sam';
+        const selectedType = opts.type || (analysisTypeSelect ? analysisTypeSelect.value : 'sam');
         const analysisType = selectedType === 'sam3' ? 'yolov8' : selectedType;
         
         // Show status
@@ -2873,7 +2876,7 @@ class WorldSamplerUI {
                     const confidence = document.getElementById('sam3Confidence');
                     requestBody.yolo_model = 'sam3';
                     requestBody.confidence_threshold = confidence ? parseFloat(confidence.value) / 100 : 0.3;
-                    requestBody.class_filter = document.getElementById('sam3Prompts')?.value.trim() || '';
+                    requestBody.class_filter = opts.prompts ?? (document.getElementById('sam3Prompts')?.value.trim() || '');
                     statusText.textContent = 'Running SAM 3 (about 30 s)...';
                 } else if (analysisType === 'yolov8') {
                     const yolov8Model = document.getElementById('yolov8ModelType');
@@ -2961,7 +2964,8 @@ class WorldSamplerUI {
                         : unavailable;
                     statusText.style.color = '#f59e0b';
                     this.showNotification(unavailable, 'warning');
-                    return;
+                    outcome = { ok: false, error: unavailable };
+                    return outcome;
                 }
                 
                 // Show device info
@@ -2979,7 +2983,8 @@ class WorldSamplerUI {
                     // Display results (all detection models use same display method)
                     result.capture_pose = capturePose;
                     result.world_corners = viewportData.world_corners;
-                    this.displayZeroShotResults(result);
+                    await this.displayZeroShotResults(result);
+                    outcome = { ok: true, n: numDetections };
                     
                     // Show notification
                     const deviceNote = deviceInfo.mode === 'remote_api' ? ' (Remote GPU)' : (deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)');
@@ -3007,6 +3012,7 @@ class WorldSamplerUI {
                     result.capture_pose = capturePose;
                     result.world_corners = viewportData.world_corners;
                     this.displaySAMResults(result);
+                    outcome = { ok: true, n: numSegments };
                     
                     // Show notification
                     const deviceNote = deviceInfo.mode === 'remote_api' ? ' (Remote GPU)' : (deviceInfo.cuda_available ? ' (GPU)' : ' (CPU)');
@@ -3053,12 +3059,14 @@ class WorldSamplerUI {
             statusText.textContent = `Error: ${error.message}`;
             statusText.style.color = '#ef4444';
             this.showNotification(`SAM Analysis failed: ${error.message}`, 'error');
+            outcome = { ok: false, error: error.message };
         } finally {
             analyzeBtn.disabled = false;
             if (orbitPausedForAnalysis) {
                 this.showNotification('Orbit was stopped to run AI analysis. Click Orbit to resume.', 'info');
             }
         }
+        return outcome;
     }
     
     /**
@@ -3292,7 +3300,7 @@ class WorldSamplerUI {
                 features: features
             };
 
-            this.samDataSource.load(convertedGeoJSON).then(() => {
+            return this.samDataSource.load(convertedGeoJSON).then(() => {
                 const entities = this.samDataSource.entities.values;
 
                 const classColors = {
@@ -4144,6 +4152,120 @@ class WorldSamplerUI {
         this.viewer.scene.requestRender();
     }
 
+    // ---- Stored scene graphs (/webclient/sampler/world/captures), the AI pilot's show_scene_graphs ----
+
+    // Captures whose footprint meets bbox, newest first; their footprints are outlined on the map.
+    async storedSceneGraphs(bbox) {
+        const params = new URLSearchParams({ bbox: bbox.map((v) => v.toFixed(6)).join(','), limit: '20' });
+        const resp = await fetch(`/webclient/sampler/world/captures?${params}`);
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok || payload.status !== 'success') throw new Error(payload.message || `HTTP ${resp.status}`);
+        this.showCaptureFootprints(payload.captures || []);
+        return payload;
+    }
+
+    showCaptureFootprints(captures) {
+        this.removeDataSource('captureDataSource');
+        const ds = new Cesium.CustomDataSource('Stored scene graphs');
+        captures.forEach((c, i) => {
+            const ring = this.cleanGeoRing(c.footprint);
+            if (!ring) return;
+            const age = captures.length > 1 ? i / (captures.length - 1) : 0;
+            ds.entities.add({
+                name: `Scene graph ${c.captured_at}`,
+                polyline: {
+                    positions: Cesium.Cartesian3.fromDegreesArray(ring.flat()),
+                    width: i === 0 ? 3 : 1.5,
+                    material: Cesium.Color.fromCssColorString('#38bdf8').withAlpha(0.95 - 0.6 * age),
+                    clampToGround: true,
+                },
+                properties: { session_id: c.session_id },
+            });
+        });
+        this.viewer.dataSources.add(ds);
+        this.captureDataSource = ds;
+        this.viewer.scene.requestRender();
+    }
+
+    // One stored capture: its detections coloured by category and its context / contains links.
+    async showStoredSceneGraph(sessionId) {
+        const resp = await fetch(`/webclient/sampler/world/captures/${encodeURIComponent(sessionId)}`);
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok || payload.status !== 'success') throw new Error(payload.message || `HTTP ${resp.status}`);
+        const ringArea = (r) => {
+            let a = 0;
+            for (let i = 0; i < r.length - 1; i++) a += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
+            return Math.abs(a / 2);
+        };
+        const footprint = this.cleanGeoRing(payload.capture.footprint);
+        const frameArea = footprint ? ringArea(footprint) : 0;
+        const features = [];
+        const centroids = new Map();
+        let hidden = 0;
+        for (const d of payload.detections) {
+            const ring = this.cleanGeoRing(d.geo_polygon);
+            if (!ring) continue;
+            if (frameArea && ringArea(ring) > 0.25 * frameArea) { hidden++; continue; }
+            const verts = ring.slice(0, -1);
+            if (d.entity_id) {
+                centroids.set(d.entity_id, [verts.reduce((s, p) => s + p[0], 0) / verts.length,
+                    verts.reduce((s, p) => s + p[1], 0) / verts.length]);
+            }
+            features.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [ring] },
+                properties: { class_name: d.category, score: d.score, area_m2: d.area_m2, world_entity_id: d.entity_id } });
+        }
+        const ds = new Cesium.GeoJsonDataSource(`Scene graph ${payload.capture.captured_at}`);
+        await ds.load({ type: 'FeatureCollection', features });
+        ds.entities.values.forEach((entity) => {
+            if (!entity.polygon) return;
+            const color = this.categoryColor(entity.properties.class_name.getValue());
+            entity.polygon.material = color.withAlpha(0.4);
+            entity.polygon.outlineColor = color;
+            this.styleResultEntity(entity);
+        });
+        const edges = (payload.links || []).map((l) => ({ source: l.entities[0], target: l.entities[1],
+            relation: l.kind === 'context' ? 'adjacent' : 'contains', weight: 1 }));
+        const nLinks = this.addSceneGraphLinks(ds, edges, centroids);
+        this.removeDataSource('storedGraphDataSource');
+        await this.viewer.dataSources.add(ds);
+        this.storedGraphDataSource = ds;
+        if (footprint) {
+            const lons = footprint.map((p) => p[0]), lats = footprint.map((p) => p[1]);
+            this.viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(
+                Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)), duration: 1.5 });
+        }
+        return { capture: payload.capture, n: features.length, nLinks, hidden: hidden + payload.n_skipped };
+    }
+
+    // Footprints, an opened capture and a world model the pilot turned on; true if anything was shown
+    clearStoredSceneGraphs() {
+        const shown = !!(this.captureDataSource || this.storedGraphDataSource || (this._pilotWorldModel && this.worldDataSource));
+        this.removeDataSource('captureDataSource');
+        this.removeDataSource('storedGraphDataSource');
+        if (this._pilotWorldModel) {
+            this._pilotWorldModel = false;
+            const box = document.getElementById('wmShow');
+            if (box) box.checked = false;
+            this.setWorldModelVisible(false);
+        }
+        return shown;
+    }
+
+    // The world model layer, kept in step with the AI panel's "Show in view" box
+    async showWorldModelFromPilot() {
+        const box = document.getElementById('wmShow');
+        if (!this.worldDataSource) this._pilotWorldModel = true;
+        if (box) box.checked = true;
+        await this.setWorldModelVisible(true);
+        return document.getElementById('wmStatus')?.textContent || '';
+    }
+
+    removeDataSource(key) {
+        if (this[key] && this.viewer.dataSources.contains(this[key])) this.viewer.dataSources.remove(this[key]);
+        this[key] = null;
+        this.viewer.scene.requestRender();
+    }
+
     async refreshWorldModel() {
         const bbox = this.worldViewBbox();
         if (!bbox) {
@@ -4338,8 +4460,22 @@ class WorldSamplerUI {
         return {
             n: a.length, bin_m2: bin, bins, overflow,
             stats: { min: a[0], p10: pct(0.1), median: pct(0.5), mean: a.reduce((s, v) => s + v, 0) / a.length,
-                p90: pct(0.9), max: a[a.length - 1] },
+                p90: pct(0.9), max: a[a.length - 1], total: a.reduce((s, v) => s + v, 0) },
         };
+    }
+
+    // The AI pilot's find_objects: SAM 3 on the view with these prompts, then one
+    // {label, hist} per label it found, measured on the ground.
+    async findObjects(prompts) {
+        const outcome = await this.analyzeViewportWithSAM({ type: 'sam3', prompts });
+        if (!outcome.ok) throw new Error(`SAM 3: ${outcome.error}`);
+        const byLabel = new Map();
+        this.analysisObjects().forEach((o) => {
+            if (!byLabel.has(o.label)) byLabel.set(o.label, []);
+            byLabel.get(o.label).push(o.areaM2);
+        });
+        return [...byLabel].map(([label, areas]) => ({ label, hist: this.areaHistogram(areas) }))
+            .sort((x, y) => y.hist.n - x.hist.n);
     }
 
     // Area of a Cesium polygon entity on the current body, holes subtracted.
@@ -4364,12 +4500,24 @@ class WorldSamplerUI {
         return area > 0 ? area : null;
     }
 
+    // One object per detection: a mask that breaks into islands arrives as one polygon
+    // entity per island (ring_index 0 is the largest), sharing its detection_id.
     analysisObjects() {
         const ds = this.samDataSource;
         if (!ds || !this.viewer.dataSources.contains(ds)) return [];
-        return ds.entities.values
-            .filter((e) => e.polygon)
-            .map((e) => ({ entity: e, label: String(e.properties?.class_name?.getValue() || 'segment').toLowerCase() }));
+        const byDetection = new Map();
+        ds.entities.values.filter((e) => e.polygon).forEach((e) => {
+            const key = e.properties?.detection_id?.getValue() ?? e.id;
+            if (!byDetection.has(key)) {
+                byDetection.set(key, { entity: e, entities: [],
+                    label: String(e.properties?.class_name?.getValue() || 'segment').toLowerCase() });
+            }
+            byDetection.get(key).entities.push(e);
+        });
+        return [...byDetection.values()].map((o) => {
+            const parts = o.entities.map((e) => this.entityAreaM2(e)).filter(Number.isFinite);
+            return { ...o, areaM2: parts.length ? parts.reduce((s, v) => s + v, 0) : null };
+        });
     }
 
     sizeObjectOptions(source) {
@@ -4423,7 +4571,7 @@ class WorldSamplerUI {
             let hist;
             if (source === 'analysis') {
                 const objs = this.analysisObjects().filter((o) => object === '*' || o.label === object);
-                hist = this.areaHistogram(objs.map((o) => this.entityAreaM2(o.entity)));
+                hist = this.areaHistogram(objs.map((o) => o.areaM2));
             } else {
                 const params = new URLSearchParams();
                 if (object !== '*') params.set('category', object);

@@ -9,4 +9,6 @@ urlpatterns = [
     path('webclient/sampler/world/preferences', views.preferences_view, name='world_preferences'),
     path('webclient/sampler/world/stats', views.stats_view, name='world_stats'),
     path('webclient/sampler/world/histogram', views.histogram_view, name='world_histogram'),
+    path('webclient/sampler/world/captures', views.captures_view, name='world_captures'),
+    path('webclient/sampler/world/captures/<str:session_id>', views.capture_detail_view, name='world_capture'),
 ]

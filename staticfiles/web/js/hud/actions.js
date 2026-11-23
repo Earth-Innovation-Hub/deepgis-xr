@@ -1,10 +1,11 @@
 // DeepGIS HUD actions, shared by the Earth, Moon and planet viewers: the camera-drone
 // moves (goto, orbit, takeoff, land, look, stop, wait), the data layers (show_layer,
-// hide_layer; LAYERS on Earth, PLANET_LAYERS elsewhere), describe_view and
-// follow_vehicle. The AI pilot (hud/pilot.js) runs the plans the model returns through
+// hide_layer; LAYERS on Earth, PLANET_LAYERS elsewhere), describe_view, find_objects,
+// show_scene_graphs and follow_vehicle. The AI pilot (hud/pilot.js) runs the plans the model returns through
 // window.DeepGISActions.run, and toolbar widgets can run the same actions directly.
 // Each plan reports through a sink, {msg(kind, text) -> element, legend?(spec),
-// described?(data)}; logSink(container) writes .pilot-msg lines into any element.
+// histogram?(hist, label, text), described?(data), noted?(text)}; logSink(container)
+// writes .pilot-msg lines into any element.
 // describe_view posts one frame of the globe to /label/api/pilot/describe/;
 // follow_vehicle rides the camera on a live vehicle's pose from /label/api/vehicles/live/
 // until stop. On Earth place names go to the curated geology sites, OpenStreetMap, then
@@ -52,7 +53,16 @@
             div.append(bar, ends);
         }
 
-        return { msg, legend };
+        // Area histogram of detected objects, drawn by world-sampler-ui.js
+        function histogram(hist, label) {
+            const div = msg('step', '');
+            div.style.minWidth = '240px';
+            window.worldSamplerUI?.renderSizeHistogram(div, hist, label);
+            container.scrollTop = container.scrollHeight;
+            return div;
+        }
+
+        return { msg, legend, histogram };
     }
 
     const quietSink = { msg: () => ({ remove() {} }) };
@@ -3028,7 +3038,9 @@
             }
             if (quiet) return;
             const specs = layerSpecs();
-            if (removed.length) out.msg('step', `Removed: ${removed.map(k => specs[k].title.toLowerCase()).join(', ')}`);
+            const names = removed.map(k => specs[k].title.toLowerCase());
+            if (!a.kind && window.worldSamplerUI?.clearStoredSceneGraphs?.()) names.push('stored scene graphs');
+            if (names.length) out.msg('step', `Removed: ${names.join(', ')}`);
             else out.msg('step', a.kind ? `No ${specs[a.kind]?.title.toLowerCase() || a.kind} layer is shown` : 'No layers are shown');
         },
 
@@ -3056,6 +3068,101 @@
             if (data.met) out.msg('ai', `Goal met: ${seen || a.goal}`);
             else out.msg('step', `Not yet: ${seen || 'the goal is not visible'}`);
             out.goal?.({ goal: a.goal, met: !!data.met, seen, suggestion: String(data.suggestion || '').trim() });
+        },
+
+        // SAM 3 through the AI panel's analysis (world-sampler-ui.js findObjects). The outlines
+        // stay on the map; the chat gets counts and, with stats, an area histogram per kind.
+        async find_objects(a, id, out) {
+            const ui = window.worldSamplerUI;
+            if (!ui?.findObjects) throw new Error('Object detection is not available on this page');
+            const scene = getViewer().scene;
+            const settle = Date.now() + 8000;
+            await until(() => scene.globe.tilesLoaded || Date.now() > settle, id);
+            const working = out.msg('step', `Finding ${a.objects} with SAM 3 (about 30 s)...`);
+            let kinds;
+            try {
+                kinds = await ui.findObjects(a.objects);
+            } finally {
+                working.remove();
+            }
+            check(id);
+            const asked = a.objects.split(',').map(s => s.trim()).filter(Boolean);
+            const missing = asked.filter(p => !kinds.some(k => k.label === p));
+            if (!kinds.length) {
+                out.msg('step', `SAM 3 found no ${a.objects} in view`);
+                out.noted?.(`SAM 3 found no ${a.objects} in view.`);
+                return;
+            }
+            out.msg('ai', `SAM 3 found ${kinds.map(k => `${k.hist.n} ${k.label}`).join(', ')}`
+                + `${missing.length ? `; no ${missing.join(' or ')}` : ''}`);
+            const fmt = ui.constructor.formatArea;
+            const lines = kinds.map(({ label, hist: { n, stats: s } }) =>
+                `${label}: ${n}, median ${fmt(s.median)}, middle 80% ${fmt(s.p10)} to ${fmt(s.p90)}, `
+                + `largest ${fmt(s.max)}, total ${fmt(s.total)}`);
+            if (a.stats) {
+                kinds.forEach(({ label, hist }, i) => {
+                    if (out.histogram) out.histogram(hist, label, lines[i]);
+                    else out.msg('step', lines[i]);
+                });
+                out.msg('step', 'Areas are ground footprints of the SAM 3 masks; neighbours that touch can merge into one');
+            }
+            out.noted?.(`SAM 3 results in view (ground areas): ${lines.join('; ')}.`);
+        },
+
+        // Scene graphs stored for the view (scene_store): footprints and the world model on the
+        // map, and the captures in the chat, newest first; clicking one draws that scene graph.
+        async show_scene_graphs(a, id, out) {
+            const ui = window.worldSamplerUI;
+            if (!ui?.storedSceneGraphs) throw new Error('Stored scene graphs are not available on this page');
+            const bbox = ui.worldViewBbox();
+            if (!bbox) throw new Error('Point the camera at the ground to look up stored scene graphs');
+            const data = await ui.storedSceneGraphs(bbox);
+            check(id);
+            const when = (iso, time = true) => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric',
+                year: 'numeric', ...(time ? { hour: 'numeric', minute: '2-digit' } : {}) });
+            if (!data.n_captures) {
+                out.msg('step', 'No scene graphs are stored for this view yet. Build one from the AI panel (Scene graph) to start the world model here.');
+                out.noted?.('No scene graphs are stored for this view.');
+                return;
+            }
+            const span = data.first === data.last ? `on ${when(data.first, false)}`
+                : `from ${when(data.first, false)} to ${when(data.last, false)}`;
+            out.msg('ai', `${data.n_captures} stored scene graph${data.n_captures === 1 ? '' : 's'} here ${span}; `
+                + 'outlines on the map, newest brightest. Click one to open it.');
+            const describe = (c) => {
+                const top = Object.entries(c.categories).slice(0, 3).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
+                return `${when(c.captured_at)}: ${c.n_detections} objects${top ? ` (${top})` : ''}, ${c.sources.join(' + ')}`;
+            };
+            const open = async (c) => {
+                const working = out.msg('step', `Opening the ${when(c.captured_at)} scene graph...`);
+                try {
+                    const r = await ui.showStoredSceneGraph(c.session_id);
+                    out.msg('step', `Showing ${r.n} objects and ${r.nLinks} links from ${when(c.captured_at)}`
+                        + `${r.hidden ? `; ${r.hidden} whole-view regions left out` : ''}`);
+                } catch (err) {
+                    out.msg('error', `Could not open that scene graph: ${err.message || err}`);
+                } finally {
+                    working.remove();
+                }
+            };
+            data.captures.slice(0, 8).forEach((c) => {
+                const el = out.msg('step', describe(c));
+                if (!el) return;
+                el.style.cursor = 'pointer';
+                el.style.textDecoration = 'underline dotted';
+                el.title = 'Show this scene graph on the map';
+                el.tabIndex = 0;
+                el.setAttribute('role', 'button');
+                el.addEventListener('click', () => open(c));
+                el.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(c); });
+            });
+            if (data.n_captures > 8) out.msg('step', `${data.n_captures - 8} older ones are outlined on the map too`
+                + `${data.n_captures > data.captures.length ? ` (the newest ${data.captures.length} are drawn)` : ''}`);
+            const world = await ui.showWorldModelFromPilot();
+            check(id);
+            if (world) out.msg('step', `World model: ${world}`);
+            out.noted?.(`Stored scene graphs in view: ${data.n_captures} ${span}. Newest: `
+                + `${data.captures.slice(0, 3).map(describe).join('; ')}. World model: ${world}`);
         },
     };
 
@@ -3108,7 +3215,8 @@
 
     // Plans of only these leave the camera alone or retune what it is doing (adjust), so
     // they run alongside an orbit, a flight or a follow instead of replacing it
-    const PASSIVE_TYPES = new Set(['show_layer', 'hide_layer', 'describe_view', 'adjust', 'check_view']);
+    const PASSIVE_TYPES = new Set(['show_layer', 'hide_layer', 'describe_view', 'adjust', 'check_view', 'find_objects',
+        'show_scene_graphs']);
     let plansRunning = 0;
     const droneMoving = () => plansRunning > 0 || !!follow ||
         !!drone().isOrbiting?.() || !!drone().isVerticalActive?.();
@@ -3129,7 +3237,7 @@
         plansRunning++;
         try {
             // Describing the view as it is needs no 3D switch
-            if (actions.some(a => !['stop', 'describe_view', 'hide_layer'].includes(a.type))) await ensure3D(id, out);
+            if (actions.some(a => !['stop', 'describe_view', 'hide_layer', 'find_objects', 'show_scene_graphs'].includes(a.type))) await ensure3D(id, out);
             for (const [i, a] of actions.entries()) {
                 check(id);
                 // Frame the area unless a later step moves the camera anyway or the drone is

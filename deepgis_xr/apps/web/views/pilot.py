@@ -12,7 +12,10 @@ public sources in the browser (off Earth: drawn from the body's terrain or
 elevation map; the sea layers come through pilot_ocean below, the lidar
 terrain through pilot_topo); place names are geocoded in the browser, off Earth from the
 IAU planetary gazetteer. describe_view sends one frame of the canvas to pilot_describe,
-which asks the same model what it sees (dreams_mcp's describe_image). follow_vehicle
+which asks the same model what it sees (dreams_mcp's describe_image). find_objects runs SAM 3
+on the view in the browser, through the AI panel's analysis, and lists counts and area
+histograms in the chat. show_scene_graphs lists the scene graphs stored for the view
+(scene_store's world/captures) and turns on the world model. follow_vehicle
 (Earth only) rides the camera on a live vehicle's pose from views/vehicles.py.
 
 For superusers only, the model may also propose robot_command: a command for one of
@@ -44,11 +47,12 @@ from django.views.decorators.http import require_GET, require_POST
 from . import robots
 
 ACTION_TYPES = ("goto", "orbit", "adjust", "takeoff", "land", "look", "stop", "wait",
-                "show_layer", "hide_layer", "place_model", "describe_view", "check_view", "follow_vehicle")
+                "show_layer", "hide_layer", "place_model", "describe_view", "check_view", "follow_vehicle",
+                "find_objects", "show_scene_graphs")
 # The two models the lab's GPU server keeps loaded, one per GPU (Gemma 4 is the bridges' default)
 PILOT_MODELS = ("unsloth/gemma-4-26B-A4B-it-GGUF", "qwen3.8:27b")
-# Vehicles report positions on Earth only
-EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle")
+# Vehicles report positions on Earth only, and the scene-graph store holds Earth captures only
+EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle", "show_scene_graphs")
 FOLLOW_VIEWS = ("camera", "chase")
 VEHICLE_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
 VEHICLE_SPOKEN = re.compile(r"[A-Za-z0-9_. '\u2019-]{1,60}")  # "Jane.Doe", "alice's sim"; not "rm -rf /"
@@ -71,6 +75,7 @@ PROMISE_RE = re.compile(r"\b(show|showing|fly|flying|orbit|orbiting|pull|pulling
                         r"zoom|zooming|display|displaying|draw|drawing|load|loading|switch|switching|climb|climbing|"
                         r"land|landing|descend|descending|take off|taking off|"
                         r"take a look|describe|describing|analy[sz]e|analy[sz]ing|"
+                        r"find|finding|detect|detecting|segment|segmenting|count|counting|measure|measuring|"
                         r"follow|following|sync|syncing|ride along|riding along)\b", re.IGNORECASE)
 
 # Display names; keys match planet-bodies.js and web/geo/nomenclature/<body>.json
@@ -133,6 +138,8 @@ PILOT_SCHEMA = {
                     "heading_deg": {"type": "number"},
                     "seconds": {"type": "number"},
                     "goal": {"type": "string"},
+                    "objects": {"type": "string"},
+                    "stats": {"type": "boolean"},
                     "vehicle": {"type": "string"},
                     "view": {"enum": list(FOLLOW_VIEWS)},
                 },
@@ -152,9 +159,12 @@ FOLLOW_FIELDS = ("type", "vehicle", "view")
 # adjust changes the running orbit (or the hover) in absolute or relative terms
 ADJUST_FIELDS = ("type", "radius_m", "radius_factor", "alt_m", "alt_factor", "revolutions", "continuous",
                  "speed_mps", "pitch_deg")
-# Fields only adjust, orbit (continuous) and check_view (goal) carry
-TASK_FIELDS = ("radius_factor", "alt_factor", "continuous", "goal")
+# Fields only adjust, orbit (continuous), check_view (goal) and find_objects carry
+TASK_FIELDS = ("radius_factor", "alt_factor", "continuous", "goal", "objects", "stats")
 MOTION_FIELDS = tuple(k for k in FIELD_ORDER if k not in TASK_FIELDS)
+# find_objects: SAM 3 text prompts, as plain nouns ("building, house")
+OBJECT_PROMPT = re.compile(r"[a-z][a-z0-9 '-]{0,39}")
+MAX_OBJECTS = 8
 
 # Superusers' robot commands: dreams_mcp tools on the command-enabled server
 ROBOT_COMMANDS = ("instruct", "return_home", "land")
@@ -188,7 +198,7 @@ CONTROL_SCHEMA = _control_schema()
 RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "lidar_dem")
 COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
 PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in EARTH_ONLY_TYPES)
-PLANET_LAYER_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t != "follow_vehicle")
+PLANET_LAYER_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("follow_vehicle", "show_scene_graphs"))
 # Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/actions.js)
 PLANET_LAYER_KINDS = {
     "moon": ("elevation", "slope", "contours"),
@@ -297,6 +307,8 @@ Actions (all heights are metres ABOVE GROUND):
 - place_model: stand a 3D model from the catalog on the globe. Fields: model (a name from the "3D models you can place" line, e.g. "Lunar base" or "moonbase"); place or lat+lon for where it should stand. Put place_model before a goto or orbit of the same place. Do not invent a model that is not listed.
 - check_view: check the camera image against a goal for the view. Fields: goal (what should be visible, in a few words, e.g. "the crater floor is visible"). Put it last. If the goal is not met, the viewer sends a "Goal check" message with what it saw.
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view. While a robot is followed through its camera, it analyses that robot's own camera frame together with its instrument readings (spectrometer, laser range) when the Robots line says it has them, so it is also the action for "analyse the scene", "what is the spectrometer seeing" or "what is the rover looking at".
+- find_objects: run the SAM 3 detector on the camera image: it outlines every object of the kinds named on the map and counts them in the chat. Fields: objects (the kinds to find, comma-separated plain nouns, e.g. "building, house"); stats (true when the user asks for sizes, areas, a histogram or statistics: adds an area histogram and size figures for each kind). Use it for "find", "detect", "segment", "outline", "count" or "SAM 3" requests about objects in view; use describe_view for open questions such as "what do you see?". Put it last, after any goto, orbit or look that sets up the view.
+- show_scene_graphs: show the scene graphs stored for the area in view: outlines where each past scene graph was captured, the world model (objects remembered across them) on the map, and a list of the captures in the chat, newest first, which the user can open one by one. No fields. Use it for "stored", "saved", "past", "previous" or "existing" scene graphs, the world model or the factor graph of a site. It uses the view as it is: add a goto only when the user names another place. Never list captures, dates or object counts in reply; the viewer lists them.
 - follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
@@ -315,6 +327,7 @@ Rules:
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - The request starts with the drone's telemetry ("Current view") and, for questions about the surroundings, the places OpenStreetMap names around the point in view. Answer where-and-which questions from them in reply with no actions ("what dam are we looking at?", "where are we?", "what lake is that?", "how high are we?", "which way are we facing?"): name the best match nearest the point in view, say it is from the map and the drone's position, and give height, heading or distance from the telemetry when asked. Never name a place that is not listed; if none fits, say so and use describe_view.
 - A question about what is visible or what the scene looks like is a describe_view request. Never describe the view yourself in reply; say you will take a look.
+- Never state counts or sizes of objects in reply before find_objects has measured them; the viewer lists them. A later question about them may be answered from the SAM 3 results earlier in the conversation.
 - A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a robot is a follow_vehicle request; its reply only says which robot you will follow.
 - The Robots line lists the robots DeepGIS knows: id, name, platform, airframe and site, whether it is live, and its distance and direction from the point in view. Answer which robots exist, are live or are nearby, where one is, how far it is or what kind it is in reply from that line, nearest first, with no actions unless the user also asks to follow one. Use the robots' names in reply. Never invent a robot, a position or a distance that is not listed; if none is listed, say no robot is reporting.
 - The Models line, when present, lists the 3D models placed on the globe with their distance and direction from the point in view. Answer whether one is nearby, where it is or what it is called from that line with no actions unless the user also asks to fly there or orbit it; use the listed name as place. Never invent a model that is not listed.
@@ -340,6 +353,12 @@ Examples (actions only):
 - "fly to the wildfire site and show the November 2020 survey" -> [{"type": "goto", "place": "Phoenix wildfire site"}, {"type": "show_layer", "kind": "site_imagery", "place": "Phoenix wildfire site", "date": "2020-11"}]
 - "show the rock outlines at Bishop" -> [{"type": "show_layer", "kind": "site_features", "place": "Bishop rock surface site"}]
 - "do a visual analysis of the view and list what you observe" -> [{"type": "describe_view"}]
+- "show me sam3 results for buildings and houses and show histogram and stats" -> [{"type": "find_objects", "objects": "building, house", "stats": true}]
+- "count the cars in this parking lot" -> [{"type": "find_objects", "objects": "car"}]
+- "fly to Tempe Marketplace and find the solar panels and pools, with their sizes" -> [{"type": "goto", "place": "Tempe Marketplace, Tempe, Arizona", "pitch_deg": -90}, {"type": "find_objects", "objects": "solar panel, swimming pool", "stats": true}]
+- "show stored scene graphs for this site" -> [{"type": "show_scene_graphs"}]
+- "show me the world model" -> [{"type": "show_scene_graphs"}]
+- "what has the world model remembered at Tempe Town Lake?" -> [{"type": "goto", "place": "Tempe Town Lake, Tempe, Arizona", "pitch_deg": -90}, {"type": "show_scene_graphs"}]
 - "remove all the layers" -> [{"type": "hide_layer"}]
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
 - "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
@@ -399,6 +418,7 @@ Actions (all heights are metres ABOVE GROUND):
 - place_model: stand a 3D model from the catalog on the globe. Fields: model (a name from the "3D models you can place" line, e.g. "Lunar base" or "moonbase"); place or lat+lon for where it should stand. Put place_model before a goto or orbit of the same place. Do not invent a model that is not listed.
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view.
 - check_view: check the camera image against a goal for the view. Fields: goal (what should be visible, in a few words). Put it last. If the goal is not met, the viewer sends a "Goal check" message with what it saw.
+- find_objects: run the SAM 3 detector on the camera image: it outlines every object of the kinds named on the map and counts them in the chat. Fields: objects (comma-separated plain nouns, e.g. "crater, boulder"); stats (true when the user asks for sizes, areas, a histogram or statistics). Use it for "find", "detect", "segment", "outline", "count" or "SAM 3" requests; never state counts or sizes in reply. Put it last.
 {layer_actions}
 Rules:
 - place is the feature's official IAU name as in the Gazetteer of Planetary Nomenclature, without the body or feature type unless it is part of the name: "Tycho", "Mare Imbrium", "Olympus Mons", "Valles Marineris". On the Moon the Apollo landing sites are "Apollo 11" to "Apollo 17". A 3D model listed in the Models line is also a place: use its listed name (on the Moon the lunar base / moonbase is "Shackleton base"). Use lat/lon (planetocentric, east-positive degrees) only when the user gives coordinates.
@@ -420,6 +440,7 @@ Examples (actions only):
 - "go to 18.4 N 77.7 E and look at the horizon" -> [{{"type": "goto", "lat": 18.4, "lon": 77.7, "pitch_deg": 0}}]
 - "do a visual analysis of the viewport camera scene and list what you observe" -> [{{"type": "describe_view"}}]
 - "fly to Olympus Mons and describe what you see" -> [{{"type": "goto", "place": "Olympus Mons"}}, {{"type": "describe_view"}}]
+- "segment the craters here with SAM 3 and show their size histogram" -> [{{"type": "find_objects", "objects": "crater", "stats": true}}]
 - "is there a moonbase nearby?" -> [] (reply names the listed model nearest the point in view, with distance and direction)
 - "orbit the moonbase" -> [{{"type": "orbit", "place": "Shackleton base"}}]
 - "fly to the lunar base" -> [{{"type": "goto", "place": "Shackleton base"}}]
@@ -537,6 +558,18 @@ def catalog_site(place):
     return round((so + n) / 2, 6), round((w + e) / 2, 6), best[1].name[:120]
 
 
+def clean_objects(text):
+    """SAM 3 prompts from the model's objects field: "Buildings and houses" -> "buildings, houses"."""
+    if not isinstance(text, str):
+        return ""
+    kept = []
+    for part in re.split(r",|;|/|\band\b|\bor\b", text.lower()):
+        part = " ".join(part.split()).strip(" .'-")
+        if part and OBJECT_PROMPT.fullmatch(part) and part not in kept:
+            kept.append(part)
+    return ", ".join(kept[:MAX_OBJECTS])
+
+
 def clean_actions(raw, body="earth", control=None, allow_twin=False):
     """Keep known action types and fields, clamp numbers, drop bad coordinates.
     control: {callsign: robot} that this user may command (superusers); robot_command
@@ -601,6 +634,13 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False):
             if not goal:
                 continue
             act["goal"] = goal
+        if act["type"] == "find_objects":
+            objects = clean_objects(a.get("objects"))
+            if not objects:
+                continue
+            act["objects"] = objects
+            if a.get("stats") is True:
+                act["stats"] = True
         if act["type"] == "follow_vehicle":
             vehicle = a.get("vehicle")
             if isinstance(vehicle, str) and vehicle.strip():
@@ -631,9 +671,11 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False):
                 continue
             act["model"] = hit["name"]  # canonical catalog name for the client
         fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
-                  else ("type",) if act["type"] == "describe_view" else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
+                  else ("type",) if act["type"] in ("describe_view", "show_scene_graphs")
+                  else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
                   else ("type", "model", "place", "lat", "lon", "heading_deg") if act["type"] == "place_model"
                   else ADJUST_FIELDS if act["type"] == "adjust" else ("type", "goal") if act["type"] == "check_view"
+                  else ("type", "objects", "stats") if act["type"] == "find_objects"
                   else (*MOTION_FIELDS, "continuous") if act["type"] == "orbit"
                   else MOTION_FIELDS)
         act = {k: act[k] for k in FIELD_ORDER if k in act and k in fields}
