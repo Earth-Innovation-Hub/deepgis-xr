@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views
+from . import mcp, views
 
 urlpatterns = [
     path('webclient/sampler/world/entities', views.entities_view, name='world_entities'),
@@ -15,4 +15,5 @@ urlpatterns = [
     path('webclient/sampler/world/changes', views.changes_view, name='world_changes'),
     path('webclient/sampler/world/retire', views.retire_view, name='world_retire'),
     path('webclient/sampler/world/restore', views.restore_view, name='world_restore'),
+    path('api/v1/mcp', mcp.mcp_view, name='scene_mcp'),
 ]

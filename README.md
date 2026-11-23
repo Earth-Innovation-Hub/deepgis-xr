@@ -790,6 +790,37 @@ deepgis-xr/
 Without `OBSERVATIONS_DATABASE_URL` the world endpoints return 503 and builds
 skip the world model.
 
+### Scene-graph MCP server
+
+`POST /api/v1/mcp` serves the world model to MCP clients (Cursor, Claude,
+agents) over streamable HTTP: stateless JSON-RPC, read-only, with a bearer
+token whose SHA-256 is listed in `SCENE_MCP_TOKENS` (comma-separated). It is
+off until a token is configured. Areas are a point and a radius instead of a
+bbox, and objects come back as centre points unless outlines are asked for,
+so a city block fits in a model's context.
+
+| Tool | Answers |
+|---|---|
+| `world_stats` | Totals, categories per taxonomy, the low-confidence threshold |
+| `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution |
+| `get_scene_graph` | One capture's nodes and their `context` / `contains` links |
+| `world_summary` | Counts per category, confidence spread, what the unknowns probably are |
+| `find_entities` | Objects near a point: category, top candidates, `p_exists`, area, distance; `at=` for a past time |
+| `get_entity` | One object's sightings, image resolution, belief history and feedback |
+| `world_changes` | Objects that appeared, or are believed gone, between two dates |
+| `area_histogram` | Object sizes in an area |
+
+Client configuration (Cursor `~/.cursor/mcp.json`):
+
+```json
+{"mcpServers": {"deepgis-scene-graph": {
+  "url": "https://deepgis.org/api/v1/mcp",
+  "headers": {"Authorization": "Bearer <token>"}}}}
+```
+
+Create a token with `openssl rand -hex 24` and add `sha256sum` of it to
+`SCENE_MCP_TOKENS` in `.env`.
+
 ### Labeling API
 
 - `POST /label/semi-supervised/api/generate-labels/`: generate assisted labels
@@ -1324,6 +1355,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Object details on click**: world-model shapes open an info box with
   category and runner-up guesses, chance it is still there, size,
   sightings with their image resolution, evidence counts and feedback.
+- **Scene-graph MCP server**: `/api/v1/mcp` lets MCP clients query the world
+  model: stored scene graphs and their links, objects near a point, one
+  object's evidence, area summaries, changes between dates and object sizes.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

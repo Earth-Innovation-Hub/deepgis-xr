@@ -180,13 +180,17 @@ def entity_detail_view(request, entity_id):
     e = Entity.objects.filter(id=entity_id).first()
     if e is None:
         return _error('no such entity', 404)
+    return JsonResponse({'status': 'success', **entity_detail(e)})
+
+
+def entity_detail(e):
+    """One entity with its top candidates, belief history, sightings, feedback and factor counts."""
     snaps = BeliefSnapshot.objects.filter(entity=e).order_by('at')
     dets = Detection.objects.filter(association__entity=e).select_related('capture').order_by('observed_at')
     tax = fusion.taxonomy_by_name(e.taxonomy)
     ranked = sorted(enumerate(e.posterior), key=lambda kv: -kv[1])[:3]
     factors = Factor.objects.filter(entity_ids__contains=[e.id]).values('kind').annotate(n=Count('id'))
-    return JsonResponse({
-        'status': 'success',
+    return {
         'entity': fusion.entity_to_dict(e),
         'candidates': [{'category': tax.name_of(k), 'p': round(float(v), 4)} for k, v in ranked],
         'history': [{'at': s.at.isoformat(), 'category': s.category, 'p_exists': round(s.p_exists, 4),
@@ -199,7 +203,7 @@ def entity_detail_view(request, entity_id):
                       'superseded': f.superseded_at is not None}
                      for f in Feedback.objects.filter(entity=e).order_by('created_at')],
         'factor_counts': {f['kind']: f['n'] for f in factors},
-    })
+    }
 
 
 @csrf_exempt
@@ -371,9 +375,17 @@ def captures_view(request):
         return _error('bbox=west,south,east,north is required and limit must be an integer')
     if not (west < east and south < north) or (east - west) * (north - south) > MAX_CAPTURE_BBOX_DEG ** 2:
         return _error(f'bbox must be non-empty and at most {MAX_CAPTURE_BBOX_DEG} degrees square')
-    caps = Capture.objects.filter(footprint__intersects=Polygon.from_bbox((west, south, east, north)))
-    if q.get('taxonomy'):
-        caps = caps.filter(taxonomy=q['taxonomy'])
+    return JsonResponse({'status': 'success', **captures_in((west, south, east, north),
+                                                            taxonomy=q.get('taxonomy') or None, limit=limit)})
+
+
+def captures_in(bbox, *, taxonomy=None, limit=20):
+    """Stored scene graphs whose footprint meets ``bbox`` (anywhere when it is None), newest first."""
+    caps = Capture.objects.all()
+    if bbox is not None:
+        caps = caps.filter(footprint__intersects=Polygon.from_bbox(bbox))
+    if taxonomy:
+        caps = caps.filter(taxonomy=taxonomy)
     span = caps.aggregate(n=Count('id'), first=Min('captured_at'), last=Max('captured_at'))
     rows = list(caps.order_by('-captured_at')[:limit])
     cats = {}
@@ -381,13 +393,12 @@ def captures_view(request):
                                 .values_list('capture_id', 'category').annotate(n=Count('id')).order_by()):
         cats.setdefault(cap_id, {})[category] = n
     poses = _poses(rows)
-    return JsonResponse({
-        'status': 'success',
+    return {
         'n_captures': span['n'],
         'first': span['first'].isoformat() if span['first'] else None,
         'last': span['last'].isoformat() if span['last'] else None,
         'captures': [_capture_dict(c, cats.get(c.id, {}), poses.get(c.id)) for c in rows],
-    })
+    }
 
 
 @require_GET
@@ -397,6 +408,11 @@ def capture_detail_view(request, session_id):
     cap = Capture.objects.filter(session_id=session_id).first()
     if cap is None:
         return _error('no such capture', 404)
+    return JsonResponse({'status': 'success', **capture_detail(cap)})
+
+
+def capture_detail(cap):
+    """One stored scene graph: its detections with their world entity, and the context / contains links."""
     dets = list(Detection.objects.filter(capture=cap).select_related('association__entity')
                 .order_by('-score')[:MAX_CAPTURE_DETECTIONS])
     out, cats, n_gated, n_retired = [], {}, 0, 0
@@ -423,6 +439,6 @@ def capture_detail_view(request, session_id):
              Factor.objects.filter(entity_ids__overlap=list(entity_ids), kind__in=('context', 'contains'),
                                    superseded_at__isnull=True, valid__contains=cap.captured_at)
              .values_list('kind', 'entity_ids') if set(ids) <= entity_ids]
-    return JsonResponse({'status': 'success', 'capture': _capture_dict(cap, cats, _poses([cap]).get(cap.id)),
-                         'n_skipped': len(dets) - len(out) - n_gated - n_retired, 'n_gated': n_gated,
-                         'n_retired': n_retired, 'detections': out, 'links': links})
+    return {'capture': _capture_dict(cap, cats, _poses([cap]).get(cap.id)),
+            'n_skipped': len(dets) - len(out) - n_gated - n_retired, 'n_gated': n_gated,
+            'n_retired': n_retired, 'detections': out, 'links': links}

@@ -271,6 +271,8 @@ VEHICLE_ENROLL_SECRET = os.environ.get('VEHICLE_ENROLL_SECRET', '')
 # Services that may search robots (/label/api/vehicles/nearby/) without a session, as
 # "sha256hex,..." of their bearer tokens: the DREAMS Lab MCP's find_robots.
 ROBOT_READ_TOKENS = os.environ.get('ROBOT_READ_TOKENS', '')
+# Clients of the scene-graph MCP server (/api/v1/mcp), as "sha256hex,..." of their bearer tokens.
+SCENE_MCP_TOKENS = os.environ.get('SCENE_MCP_TOKENS', '')
 # Every gunicorn worker must see the same latest pose, so production points the
 # "live" cache at redis; without LIVE_CACHE_URL each process keeps its own.
 LIVE_CACHE_URL = os.environ.get('LIVE_CACHE_URL', '')

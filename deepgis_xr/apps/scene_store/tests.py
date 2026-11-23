@@ -1,11 +1,12 @@
 """Spatiotemporal scene-graph store: association, existence, time travel, feedback."""
 
+import hashlib
 import json
 from datetime import timedelta
 
 import numpy as np
 from django.contrib.auth import get_user_model
-from django.test import SimpleTestCase, TransactionTestCase
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
 from deepgis_xr.apps.scene_store import fusion, priors
@@ -366,3 +367,63 @@ class FusionTests(TransactionTestCase):
                              content_type='application/json').json()
         self.assertEqual(r['n_restored'], 1)
         self.assertIsNone(Entity.objects.get(id=car.id).retired_at)
+
+
+@override_settings(SCENE_MCP_TOKENS=hashlib.sha256(b'secret').hexdigest())
+class McpTests(TransactionTestCase):
+    databases = {'default', 'observations'}
+
+    def setUp(self):
+        self.t1 = timezone.now() - timedelta(hours=1)
+        fusion.ingest_scene_graph(_scene(self.t1), session_id='s1', taxonomy_name='urban_v1')
+        fusion.ingest_scene_graph(_scene(self.t1 + timedelta(minutes=20)), session_id='s2', taxonomy_name='urban_v1')
+
+    def _rpc(self, method, params=None, token='secret', mid=1):
+        msg = {'jsonrpc': '2.0', 'method': method, 'params': params or {}}
+        if mid is not None:
+            msg['id'] = mid
+        return self.client.post('/api/v1/mcp', json.dumps(msg), content_type='application/json',
+                                HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    def _tool(self, name, **args):
+        r = self._rpc('tools/call', {'name': name, 'arguments': args}).json()['result']
+        return r if r['isError'] else json.loads(r['content'][0]['text'])
+
+    def test_protocol(self):
+        self.assertEqual(self._rpc('ping', token='wrong').status_code, 401)
+        self.assertEqual(self.client.get('/api/v1/mcp').status_code, 405)
+        init = self._rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},
+                                        'clientInfo': {'name': 't', 'version': '0'}}).json()['result']
+        self.assertEqual((init['protocolVersion'], init['serverInfo']['name']), ('2025-06-18', 'deepgis-scene-graph'))
+        self.assertEqual(self._rpc('notifications/initialized', mid=None).status_code, 202)
+        tools = {t['name'] for t in self._rpc('tools/list').json()['result']['tools']}
+        self.assertEqual(tools, {'world_stats', 'list_scene_graphs', 'get_scene_graph', 'world_summary',
+                                 'find_entities', 'get_entity', 'world_changes', 'area_histogram'})
+        self.assertEqual(self._rpc('nope').json()['error']['code'], -32601)
+        self.assertEqual(self._rpc('tools/call', {'name': 'nope'}).json()['error']['code'], -32602)
+
+    def test_entities_and_graphs(self):
+        found = self._tool('find_entities', lat=LAT, lon=LON, radius_m=300)
+        self.assertEqual([e['category'] for e in found['entities']], ['road', 'vehicle', 'building'])
+        self.assertAlmostEqual(found['entities'][2]['distance_m'], 40, delta=1)
+        self.assertNotIn('polygon', found['entities'][0])
+        self.assertEqual(found['entities'][0]['candidates'][0]['category'], 'road')
+        self.assertEqual(len(self._tool('find_entities', lat=LAT, lon=LON, category='vehicle')['entities']), 1)
+        self.assertEqual(self._tool('find_entities', lat=LAT, lon=LON, radius_m=1e6)['area']['radius_m'],
+                         self._tool('world_summary', lat=LAT, lon=LON, radius_m=1e6)['area']['radius_m'])
+
+        graphs = self._tool('list_scene_graphs')
+        self.assertEqual([c['session_id'] for c in graphs['captures']], ['s2', 's1'])
+        self.assertNotIn('footprint', graphs['captures'][0])
+        g = self._tool('get_scene_graph', session_id='s2')
+        self.assertEqual((g['n_nodes'], len(g['nodes'])), (3, 3))
+        self.assertTrue(g['links'])
+        self.assertTrue(self._tool('get_scene_graph', session_id='missing')['isError'])
+
+        car = self._tool('get_entity', entity_id=found['entities'][1]['id'])
+        self.assertEqual((car['entity']['category'], car['n_sightings']), ('vehicle', 2))
+        changes = self._tool('world_changes', lat=LAT, lon=LON, since=(self.t1 - timedelta(days=1)).date().isoformat())
+        self.assertEqual(changes['appeared']['n'], 3)
+        self.assertEqual(self._tool('area_histogram', lat=LAT, lon=LON)['n'], 3)
+        self.assertEqual(self._tool('world_stats')['n_captures'], 2)
+        self.assertTrue(self._tool('find_entities', lat=95, lon=LON)['isError'])
