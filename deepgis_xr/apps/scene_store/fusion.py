@@ -642,11 +642,13 @@ def entity_to_dict(e, belief=None):
     }
 
 
-def entities_in_bbox(bbox, *, at=None, taxonomy=None, min_p_exists=0.0, limit=2000):
+def entities_in_bbox(bbox, *, at=None, taxonomy=None, min_p_exists=0.0, min_score=0.0, limit=2000):
     """Entities intersecting ``(west, south, east, north)``; beliefs recomputed at ``at`` if given."""
     qs = Entity.objects.filter(geom__intersects=Polygon.from_bbox(bbox), retired_at__isnull=True)
     if taxonomy:
         qs = qs.filter(taxonomy=taxonomy)
+    if min_score > 0 and at is None:
+        qs = qs.filter(score__gte=min_score)
     if at is not None:
         qs = qs.filter(first_seen__lte=at)
     ents = list(qs.order_by('-last_seen')[:limit])
@@ -661,7 +663,63 @@ def entities_in_bbox(bbox, *, at=None, taxonomy=None, min_p_exists=0.0, limit=20
             beliefs.update(r.pop('beliefs', {}))
             bp[name] = r
     out = [entity_to_dict(e, beliefs.get(e.id)) for e in ents]
-    return [d for d in out if d['p_exists'] >= min_p_exists], bp
+    return [d for d in out if d['p_exists'] >= min_p_exists and d['score'] >= min_score], bp
+
+
+def world_summary(bbox, *, taxonomy=None, limit=20000):
+    """What the world model holds in a box: counts per category, how sure it is, and what
+    the unknown entities most likely are."""
+    qs = Entity.objects.filter(geom__intersects=Polygon.from_bbox(bbox), retired_at__isnull=True)
+    if taxonomy:
+        qs = qs.filter(taxonomy=taxonomy)
+    rows = list(qs.values_list('taxonomy', 'category', 'score', 'posterior')[:limit])
+    by_cat, guesses, bins = {}, {}, [0, 0, 0, 0]
+    for tax_name, category, score, post in rows:
+        by_cat[category] = by_cat.get(category, 0) + 1
+        bins[min(3, int(score * 4))] += 1
+        if category == 'unknown':
+            best = int(np.argmax(post))
+            name = taxonomy_by_name(tax_name).name_of(best)
+            n, total = guesses.get(name, (0, 0.0))
+            guesses[name] = (n + 1, total + float(post[best]))
+    return {
+        'n': len(rows), 'truncated': len(rows) == limit,
+        'by_category': dict(sorted(by_cat.items(), key=lambda kv: -kv[1])),
+        'n_unknown': by_cat.get('unknown', 0),
+        'unknown_best_guess': [{'category': c, 'n': n, 'mean_p': round(t / n, 3)}
+                               for c, (n, t) in sorted(guesses.items(), key=lambda kv: -kv[1][0])],
+        'confidence_bins': [{'lo': i / 4, 'hi': (i + 1) / 4, 'n': n} for i, n in enumerate(bins)],
+        'low_confidence': priors.LOW_CONFIDENCE,
+    }
+
+
+def world_changes(bbox, since, until=None, *, taxonomy=None, limit=1000):
+    """Entities first seen in [since, until), and entities missed then that are now believed gone.
+
+    Misses count only where the camera could have resolved the object (see ``ingest``)."""
+    until = until or timezone.now()
+    box = Polygon.from_bbox(bbox)
+    live = Entity.objects.filter(geom__intersects=box, retired_at__isnull=True)
+    if taxonomy:
+        live = live.filter(taxonomy=taxonomy)
+    appeared = live.filter(first_seen__gte=since, first_seen__lt=until).order_by('-first_seen')
+    missed_ids = {ids[0] for ids in Factor.objects.filter(
+        kind='miss', superseded_at__isnull=True, observed_at__gte=since, observed_at__lt=until,
+        capture__footprint__intersects=box).values_list('entity_ids', flat=True)}
+    gone = live.filter(id__in=missed_ids, p_exists__lt=0.5).order_by('p_exists')
+    n_captures = Capture.objects.filter(footprint__intersects=box, captured_at__gte=since,
+                                        captured_at__lt=until).count()
+
+    def pack(qs):
+        rows = list(qs[:limit])
+        counts = {}
+        for e in rows:
+            counts[e.category] = counts.get(e.category, 0) + 1
+        return {'n': qs.count(), 'by_category': dict(sorted(counts.items(), key=lambda kv: -kv[1])),
+                'entities': [entity_to_dict(e) for e in rows]}
+
+    return {'since': since.isoformat(), 'until': until.isoformat(), 'n_captures': n_captures,
+            'appeared': pack(appeared), 'gone': pack(gone)}
 
 
 def nice_bin(span, target=25):

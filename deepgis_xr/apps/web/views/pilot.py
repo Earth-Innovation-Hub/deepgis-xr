@@ -48,11 +48,16 @@ from . import robots
 
 ACTION_TYPES = ("goto", "orbit", "adjust", "takeoff", "land", "look", "stop", "wait",
                 "show_layer", "hide_layer", "place_model", "describe_view", "check_view", "follow_vehicle",
-                "find_objects", "show_scene_graphs")
+                "find_objects", "show_scene_graphs", "world_uncertain", "world_confidence", "capture_quality",
+                "world_changes")
 # The two models the lab's GPU server keeps loaded, one per GPU (Gemma 4 is the bridges' default)
 PILOT_MODELS = ("unsloth/gemma-4-26B-A4B-it-GGUF", "qwen3.8:27b")
 # Vehicles report positions on Earth only, and the scene-graph store holds Earth captures only
-EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle", "show_scene_graphs")
+WORLD_TYPES = ("show_scene_graphs", "world_uncertain", "world_confidence", "capture_quality", "world_changes")
+EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle", *WORLD_TYPES)
+# world_changes: a day, month or year
+WORLD_DATE = re.compile(r"\d{4}(?:-\d{2}(?:-\d{2})?)?")
+DEFAULT_MIN_CONFIDENCE = 0.5
 FOLLOW_VIEWS = ("camera", "chase")
 VEHICLE_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
 VEHICLE_SPOKEN = re.compile(r"[A-Za-z0-9_. '\u2019-]{1,60}")  # "Jane.Doe", "alice's sim"; not "rm -rf /"
@@ -97,6 +102,7 @@ LIMITS = {
     "distance_km": (1.0, 500.0),
     "alt_factor": (0.2, 5.0),
     "radius_factor": (0.2, 5.0),
+    "min_confidence": (0.0, 0.95),
 }
 MAX_GOAL_CHARS = 160
 # Weather and sea layers cover bays and regions, wider than any orbit
@@ -140,6 +146,9 @@ PILOT_SCHEMA = {
                     "goal": {"type": "string"},
                     "objects": {"type": "string"},
                     "stats": {"type": "boolean"},
+                    "min_confidence": {"type": "number"},
+                    "since": {"type": "string"},
+                    "until": {"type": "string"},
                     "vehicle": {"type": "string"},
                     "view": {"enum": list(FOLLOW_VIEWS)},
                 },
@@ -159,8 +168,9 @@ FOLLOW_FIELDS = ("type", "vehicle", "view")
 # adjust changes the running orbit (or the hover) in absolute or relative terms
 ADJUST_FIELDS = ("type", "radius_m", "radius_factor", "alt_m", "alt_factor", "revolutions", "continuous",
                  "speed_mps", "pitch_deg")
-# Fields only adjust, orbit (continuous), check_view (goal) and find_objects carry
-TASK_FIELDS = ("radius_factor", "alt_factor", "continuous", "goal", "objects", "stats")
+# Fields only adjust, orbit (continuous), check_view (goal), find_objects and the world-model actions carry
+TASK_FIELDS = ("radius_factor", "alt_factor", "continuous", "goal", "objects", "stats", "min_confidence",
+               "since", "until")
 MOTION_FIELDS = tuple(k for k in FIELD_ORDER if k not in TASK_FIELDS)
 # find_objects: SAM 3 text prompts, as plain nouns ("building, house")
 OBJECT_PROMPT = re.compile(r"[a-z][a-z0-9 '-]{0,39}")
@@ -177,7 +187,8 @@ VEHICLE_CLASSES = ("kestrel",)
 
 def _control_schema():
     props = dict(PILOT_SCHEMA["properties"]["actions"]["items"]["properties"])
-    props["type"] = {"enum": [*ACTION_TYPES, "robot_command", "create_twin"]}
+    props["type"] = {"enum": [*ACTION_TYPES, "robot_command", "create_twin", "retire_entity"]}
+    props["undo"] = {"type": "boolean"}
     keys = list(props)
     at = keys.index("vehicle") + 1
     ordered = {k: props[k] for k in keys[:at]}
@@ -198,7 +209,7 @@ CONTROL_SCHEMA = _control_schema()
 RASTER_KINDS = ("surface_temp", "ndvi", "humidity", "air_temp", "sea_temp", "chlorophyll", "elevation", "lidar_dem")
 COLORMAP_WORDS = {**{c: c for c in COLORMAPS}, "rainbow": "jet", "red-yellow-green": "rdylgn"}
 PLANET_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in EARTH_ONLY_TYPES)
-PLANET_LAYER_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("follow_vehicle", "show_scene_graphs"))
+PLANET_LAYER_ACTION_TYPES = tuple(t for t in ACTION_TYPES if t not in ("follow_vehicle", *WORLD_TYPES))
 # Layers drawn from each body's terrain or elevation map (PLANET_LAYERS in hud/actions.js)
 PLANET_LAYER_KINDS = {
     "moon": ("elevation", "slope", "contours"),
@@ -249,7 +260,7 @@ def layer_catalog(body):
 def _planet_schema(kinds):
     item = dict(PILOT_SCHEMA["properties"]["actions"]["items"])
     props = {k: v for k, v in item["properties"].items()
-             if k not in ("distance_km", "colormap", "date", "vehicle", "view")}
+             if k not in ("distance_km", "colormap", "date", "vehicle", "view", "min_confidence", "since", "until")}
     if kinds:
         props["type"] = {"enum": list(PLANET_LAYER_ACTION_TYPES)}
         props["kind"] = {"enum": list(kinds)}
@@ -309,6 +320,10 @@ Actions (all heights are metres ABOVE GROUND):
 - describe_view: look at the camera image and list what is visible in it, in the chat. No fields. Use it whenever the user asks what is in view or asks to look at, describe, analyse or list what the camera sees ("what do you see?", "describe the scene", "do a visual analysis of the view"). Put it last, after any goto, orbit, look or show_layer that sets up the view. While a robot is followed through its camera, it analyses that robot's own camera frame together with its instrument readings (spectrometer, laser range) when the Robots line says it has them, so it is also the action for "analyse the scene", "what is the spectrometer seeing" or "what is the rover looking at".
 - find_objects: run the SAM 3 detector on the camera image: it outlines every object of the kinds named on the map and counts them in the chat. Fields: objects (the kinds to find, comma-separated plain nouns, e.g. "building, house"); stats (true when the user asks for sizes, areas, a histogram or statistics: adds an area histogram and size figures for each kind). Use it for "find", "detect", "segment", "outline", "count" or "SAM 3" requests about objects in view; use describe_view for open questions such as "what do you see?". Put it last, after any goto, orbit or look that sets up the view.
 - show_scene_graphs: show the scene graphs stored for the area in view: outlines where each past scene graph was captured, the world model (objects remembered across them) on the map, and a list of the captures in the chat, newest first, which the user can open one by one. No fields. Use it for "stored", "saved", "past", "previous" or "existing" scene graphs, the world model or the factor graph of a site. It uses the view as it is: add a goto only when the user names another place. Never list captures, dates or object counts in reply; the viewer lists them.
+- world_uncertain: report how sure the world model is about the area in view: how many objects are unknown (too uncertain to name) and what each is most likely to be, and how confidence is spread. It shows the world model too. No fields. Use it for "what's uncertain here?", "how confident is the map?", "what don't you know here?".
+- world_confidence: show only world-model objects at least this confident. Fields: min_confidence (0 to 0.95; default 0.5; "very confident" 0.8; 0 shows everything again, for "show all objects"). Use it for "show only confident objects", "hide the unsure ones".
+- capture_quality: list the stored captures in view with how sharp each was: ground sample distance (cm per pixel), the smallest object it could resolve, and how well its camera position is known. No fields. Use it for "how sharp were the captures here?", "how good is the imagery behind the world model?", "what resolution were these scene graphs?".
+- world_changes: show what changed in the world model in view over a time window: objects first seen in it (green) and objects that later captures missed and that are now believed gone (red). Fields: since (YYYY, YYYY-MM or YYYY-MM-DD; "since April" is the latest April on or before the Today line); until (same format, optional, default now). Use it for "what changed here since ...?", "what's new since ...?", "what disappeared ...?".
 - follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
@@ -359,6 +374,12 @@ Examples (actions only):
 - "show stored scene graphs for this site" -> [{"type": "show_scene_graphs"}]
 - "show me the world model" -> [{"type": "show_scene_graphs"}]
 - "what has the world model remembered at Tempe Town Lake?" -> [{"type": "goto", "place": "Tempe Town Lake, Tempe, Arizona", "pitch_deg": -90}, {"type": "show_scene_graphs"}]
+- "what's uncertain here?" -> [{"type": "world_uncertain"}]
+- "show only confident objects" -> [{"type": "world_confidence", "min_confidence": 0.5}]
+- "show all world model objects again" -> [{"type": "world_confidence", "min_confidence": 0}]
+- "how sharp were the captures here?" -> [{"type": "capture_quality"}]
+- (Today: 2026-11-22) "what changed here since April?" -> [{"type": "world_changes", "since": "2026-04"}]
+- "what's new between March and June 2026?" -> [{"type": "world_changes", "since": "2026-03", "until": "2026-07"}]
 - "remove all the layers" -> [{"type": "hide_layer"}]
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
 - "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
@@ -395,7 +416,10 @@ Examples (actions only):
 - "send kestrel home" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "return_home"}}]
 - "land the drone kestrel now" -> [{{"type": "robot_command", "vehicle": "kestrel", "command": "land"}}]
 - create_twin: bake a new Gazebo world of the ground at the center of the view and spawn one kestrel-class drone (x500_gimbal) in it. This is a new session, not a command to a kestrel that is already flying. Fields: vehicle_class ("kestrel"); count (always 1); width_m and length_m (metres on a side, default 150, between 20 and 400). A 20x20 m path means width_m 20 and length_m 20. Never invent lat/lon or heights. The page reads the center of the view and samples the terrain there for the ground the simulator uses. One create_twin per request; do not combine it with robot_command.
-- "create digital twin of a 20x20m path at the center of view, with one kestrel class drone" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 20, "length_m": 20}}]"""
+- "create digital twin of a 20x20m path at the center of view, with one kestrel class drone" -> [{{"type": "create_twin", "vehicle_class": "kestrel", "count": 1, "width_m": 20, "length_m": 20}}]
+- retire_entity: remove the world-model object the user has selected (clicked) on the map from the world model, e.g. a wrong blob. The chat asks the user to confirm first and offers an undo; nothing is deleted. Fields: undo (true to bring back the object retired last, for "undo", "restore it", "put it back"). It takes no ids: the page uses the selection.
+- "remove that blob" -> [{{"type": "retire_entity"}}]
+- "undo that removal" -> [{{"type": "retire_entity", "undo": true}}]"""
 
 
 def control_prompt(control):
@@ -570,10 +594,10 @@ def clean_objects(text):
     return ", ".join(kept[:MAX_OBJECTS])
 
 
-def clean_actions(raw, body="earth", control=None, allow_twin=False):
+def clean_actions(raw, body="earth", control=None, allow_twin=False, allow_retire=False):
     """Keep known action types and fields, clamp numbers, drop bad coordinates.
     control: {callsign: robot} that this user may command (superusers); robot_command
-    actions for anything else are dropped."""
+    actions for anything else are dropped. allow_retire: keep retire_entity (superusers)."""
     if body == "earth":
         types, limits, kinds = ACTION_TYPES, LIMITS, LAYER_KINDS
     else:
@@ -591,6 +615,12 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False):
             from .create_twin import clean_create_twin
             if twin := clean_create_twin(a):
                 out.append(twin)
+            if len(out) == MAX_ACTIONS:
+                break
+            continue
+        if isinstance(a, dict) and a.get("type") == "retire_entity" and body == "earth" and allow_retire:
+            # The page retires the selected world entity after the user confirms; undo restores the last one
+            out.append({"type": "retire_entity", "undo": True} if a.get("undo") is True else {"type": "retire_entity"})
             if len(out) == MAX_ACTIONS:
                 break
             continue
@@ -641,6 +671,15 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False):
             act["objects"] = objects
             if a.get("stats") is True:
                 act["stats"] = True
+        if act["type"] == "world_confidence":
+            act.setdefault("min_confidence", DEFAULT_MIN_CONFIDENCE)
+        if act["type"] == "world_changes":
+            for key in ("since", "until"):
+                v = a.get(key)
+                if isinstance(v, str) and WORLD_DATE.fullmatch(v.strip()):
+                    act[key] = v.strip()
+            if "since" not in act:
+                continue
         if act["type"] == "follow_vehicle":
             vehicle = a.get("vehicle")
             if isinstance(vehicle, str) and vehicle.strip():
@@ -671,7 +710,10 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False):
                 continue
             act["model"] = hit["name"]  # canonical catalog name for the client
         fields = (LAYER_FIELDS if act["type"] == "show_layer" else ("type", "kind") if act["type"] == "hide_layer"
-                  else ("type",) if act["type"] in ("describe_view", "show_scene_graphs")
+                  else ("type",) if act["type"] in ("describe_view", "show_scene_graphs", "world_uncertain",
+                                                    "capture_quality")
+                  else ("type", "min_confidence") if act["type"] == "world_confidence"
+                  else ("type", "since", "until") if act["type"] == "world_changes"
                   else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
                   else ("type", "model", "place", "lat", "lon", "heading_deg") if act["type"] == "place_model"
                   else ADJUST_FIELDS if act["type"] == "adjust" else ("type", "goal") if act["type"] == "check_view"
@@ -1260,6 +1302,8 @@ def pilot_chat(request):
     if models_line:
         context.append(models_line)
     context.append(available_models_line())
+    if body == "earth":
+        context.append("Today: " + time.strftime("%Y-%m-%d", time.gmtime()))
     prompt = "".join(ln + "\n" for ln in context if ln) + "User: " + message.strip()[:MAX_MESSAGE_CHARS]
     timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
     control = control_robots(request.user) if body == "earth" else {}
@@ -1292,7 +1336,8 @@ def pilot_chat(request):
         if not isinstance(plan, dict):
             return JsonResponse({"error": "The AI pilot returned no plan; try rephrasing."}, status=502)
         reply = plan.get("reply") if isinstance(plan.get("reply"), str) else ""
-        actions = clean_actions(plan.get("actions"), body, control, allow_twin=allow_twin)
+        actions = clean_actions(plan.get("actions"), body, control, allow_twin=allow_twin,
+                                allow_retire=request.user.is_superuser and body == "earth")
         if actions or not PROMISE_RE.search(reply):
             break
     cmap = named_colormap(message) if body == "earth" else None
@@ -1307,6 +1352,8 @@ def pilot_chat(request):
             fields = ROBOT_FIELDS
         elif a["type"] == "create_twin":
             fields = ("type", "vehicle_class", "count", "width_m", "length_m")
+        elif a["type"] == "retire_entity":
+            fields = ("type", "undo")
         else:
             fields = FIELD_ORDER
         return {k: a[k] for k in fields if k in a}

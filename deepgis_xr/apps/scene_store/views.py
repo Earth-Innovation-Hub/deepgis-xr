@@ -14,9 +14,18 @@
          Stored scene graphs whose footprint meets the box, newest first.
     GET  /webclient/sampler/world/captures/<session_id>
          One stored scene graph: its detections (with their world entity) and context / contains links.
+    GET  /webclient/sampler/world/summary?bbox=w,s,e,n[&taxonomy=]
+         Counts per category, confidence bins, and the best guesses behind the unknown entities.
+    GET  /webclient/sampler/world/changes?bbox=w,s,e,n&since=YYYY-MM[-DD][&until=][&taxonomy=]
+         Entities first seen in the window, and those missed in it that are now believed gone.
+    POST /webclient/sampler/world/retire        {entity_ids: [...], reason}   superusers
+    POST /webclient/sampler/world/restore       {entity_ids: [...]}           superusers
 
 Reads are public; feedback and preferences need a signed-in user.
 """
+
+import re
+from datetime import datetime, timezone as dt_timezone
 
 import json
 
@@ -28,11 +37,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from . import fusion, priors
-from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, UserPreference
+from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, Pose, UserPreference
 
 MAX_BBOX_DEG = 0.05
 MAX_CAPTURE_BBOX_DEG = 0.5
 MAX_CAPTURE_DETECTIONS = 3000
+MAX_RETIRE_IDS = 50
+DAY = re.compile(r'(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?')
 
 
 def _unavailable():
@@ -48,17 +59,36 @@ def _user_id(request):
     return user.id if user is not None and user.is_authenticated else None
 
 
-@require_GET
-def entities_view(request):
-    if not fusion.enabled():
-        return _unavailable()
+def _bbox(request, max_deg=MAX_BBOX_DEG):
+    """(bbox, None) or (None, error response)."""
     try:
         bbox = [float(v) for v in request.GET.get('bbox', '').split(',')]
         west, south, east, north = bbox
     except ValueError:
-        return _error('bbox=west,south,east,north is required')
-    if not (west < east and south < north) or (east - west) * (north - south) > MAX_BBOX_DEG ** 2:
-        return _error(f'bbox must be non-empty and at most {MAX_BBOX_DEG} degrees square')
+        return None, _error('bbox=west,south,east,north is required')
+    if not (west < east and south < north) or (east - west) * (north - south) > max_deg ** 2:
+        return None, _error(f'bbox must be non-empty and at most {max_deg} degrees square')
+    return bbox, None
+
+
+def _day(value):
+    """Start of a YYYY, YYYY-MM or YYYY-MM-DD day in UTC, or None."""
+    m = DAY.fullmatch((value or '').strip())
+    if not m:
+        return None
+    try:
+        return datetime(int(m.group(1)), int(m.group(2) or 1), int(m.group(3) or 1), tzinfo=dt_timezone.utc)
+    except ValueError:
+        return None
+
+
+@require_GET
+def entities_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    bbox, err = _bbox(request)
+    if err:
+        return err
     at = None
     if request.GET.get('at'):
         at = parse_datetime(request.GET['at'])
@@ -66,12 +96,81 @@ def entities_view(request):
             return _error('at must be an ISO 8601 time with a zone')
     try:
         min_p = float(request.GET.get('min_p_exists', 0))
+        min_score = float(request.GET.get('min_score', 0))
     except ValueError:
-        return _error('min_p_exists must be a number')
+        return _error('min_p_exists and min_score must be numbers')
     ents, bp = fusion.entities_in_bbox(bbox, at=at, taxonomy=request.GET.get('taxonomy') or None,
-                                       min_p_exists=min_p)
+                                       min_p_exists=min_p, min_score=min_score)
     return JsonResponse({'status': 'success', 'at': at.isoformat() if at else None,
                          'n_entities': len(ents), 'entities': ents, 'bp': bp})
+
+
+@require_GET
+def summary_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    bbox, err = _bbox(request)
+    if err:
+        return err
+    return JsonResponse({'status': 'success',
+                         **fusion.world_summary(bbox, taxonomy=request.GET.get('taxonomy') or None)})
+
+
+@require_GET
+def changes_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    bbox, err = _bbox(request)
+    if err:
+        return err
+    since = _day(request.GET.get('since'))
+    until = _day(request.GET.get('until')) if request.GET.get('until') else None
+    if since is None or (request.GET.get('until') and until is None):
+        return _error('since (and until, if given) must be YYYY, YYYY-MM or YYYY-MM-DD')
+    if until is not None and until <= since:
+        return _error('until must be after since')
+    return JsonResponse({'status': 'success', **fusion.world_changes(
+        bbox, since, until, taxonomy=request.GET.get('taxonomy') or None)})
+
+
+def _superuser_ids(request):
+    """(entity ids, None) for a superuser's JSON body, or (None, error response)."""
+    user = getattr(request, 'user', None)
+    if user is None or not user.is_authenticated:
+        return None, _error('sign in first', 401)
+    if not user.is_superuser:
+        return None, _error('only superusers can retire or restore world entities', 403)
+    try:
+        data = json.loads(request.body or b'{}')
+        ids = [int(i) for i in data.get('entity_ids') or []]
+    except (ValueError, TypeError, AttributeError):
+        return None, _error('entity_ids must be a list of integers')
+    if not ids or len(ids) > MAX_RETIRE_IDS:
+        return None, _error(f'give 1 to {MAX_RETIRE_IDS} entity_ids')
+    return (ids, data), None
+
+
+@require_http_methods(['POST'])
+def retire_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    got, err = _superuser_ids(request)
+    if err:
+        return err
+    ids, data = got
+    reason = str(data.get('reason') or '').strip()[:100] or 'retired from the AI pilot'
+    out = fusion.retire_entities(ids, f'{reason} (user {request.user.id})')
+    return JsonResponse({'status': 'success', **out})
+
+
+@require_http_methods(['POST'])
+def restore_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    got, err = _superuser_ids(request)
+    if err:
+        return err
+    return JsonResponse({'status': 'success', **fusion.restore_entities(got[0])})
 
 
 @require_GET
@@ -231,7 +330,8 @@ def _lonlat_ring(geom):
     return ring if all(abs(x) <= 180 and abs(y) <= 90 for x, y in ring) else None
 
 
-def _capture_dict(cap, categories):
+def _capture_dict(cap, categories, pose=None):
+    gsd = cap.gsd_m
     return {
         'session_id': cap.session_id,
         'captured_at': cap.captured_at.isoformat(),
@@ -242,7 +342,17 @@ def _capture_dict(cap, categories):
         'footprint': _lonlat_ring(cap.footprint),
         'camera': list(cap.camera.coords) if cap.camera else None,
         'camera_alt_m': cap.camera_alt_m,
+        'gsd_m': round(gsd, 3) if gsd else None,
+        # the smallest object a miss can be counted for at this resolution
+        'min_object_m2': round(priors.MISS_MIN_PIXELS * gsd ** 2, 1) if gsd else None,
+        'pose': {'source': pose.source, 'sigma_h_m': pose.sigma_h_m, 'sigma_v_m': pose.sigma_v_m,
+                 'pitch_deg': pose.pitch_deg} if pose else None,
     }
+
+
+def _poses(caps):
+    return {p.capture_id: p for p in Pose.objects.filter(capture__in=caps, superseded_at__isnull=True)
+            .order_by('capture_id', 'recorded_at')}  # the newest estimate wins
 
 
 @require_GET
@@ -266,12 +376,13 @@ def captures_view(request):
     for cap_id, category, n in (Detection.objects.filter(capture__in=rows)
                                 .values_list('capture_id', 'category').annotate(n=Count('id')).order_by()):
         cats.setdefault(cap_id, {})[category] = n
+    poses = _poses(rows)
     return JsonResponse({
         'status': 'success',
         'n_captures': span['n'],
         'first': span['first'].isoformat() if span['first'] else None,
         'last': span['last'].isoformat() if span['last'] else None,
-        'captures': [_capture_dict(c, cats.get(c.id, {})) for c in rows],
+        'captures': [_capture_dict(c, cats.get(c.id, {}), poses.get(c.id)) for c in rows],
     })
 
 
@@ -308,6 +419,6 @@ def capture_detail_view(request, session_id):
              Factor.objects.filter(entity_ids__overlap=list(entity_ids), kind__in=('context', 'contains'),
                                    superseded_at__isnull=True, valid__contains=cap.captured_at)
              .values_list('kind', 'entity_ids') if set(ids) <= entity_ids]
-    return JsonResponse({'status': 'success', 'capture': _capture_dict(cap, cats),
+    return JsonResponse({'status': 'success', 'capture': _capture_dict(cap, cats, _poses([cap]).get(cap.id)),
                          'n_skipped': len(dets) - len(out) - n_gated - n_retired, 'n_gated': n_gated,
                          'n_retired': n_retired, 'detections': out, 'links': links})

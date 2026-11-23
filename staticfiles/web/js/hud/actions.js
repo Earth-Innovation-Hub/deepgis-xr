@@ -1,7 +1,8 @@
 // DeepGIS HUD actions, shared by the Earth, Moon and planet viewers: the camera-drone
 // moves (goto, orbit, takeoff, land, look, stop, wait), the data layers (show_layer,
 // hide_layer; LAYERS on Earth, PLANET_LAYERS elsewhere), describe_view, find_objects,
-// show_scene_graphs and follow_vehicle. The AI pilot (hud/pilot.js) runs the plans the model returns through
+// show_scene_graphs, the world-model questions (world_uncertain, world_confidence,
+// capture_quality, world_changes, retire_entity) and follow_vehicle. The AI pilot (hud/pilot.js) runs the plans the model returns through
 // window.DeepGISActions.run, and toolbar widgets can run the same actions directly.
 // Each plan reports through a sink, {msg(kind, text) -> element, legend?(spec),
 // histogram?(hist, label, text), described?(data), noted?(text)}; logSink(container)
@@ -3164,7 +3165,224 @@
             out.noted?.(`Stored scene graphs in view: ${data.n_captures} ${span}. Newest: `
                 + `${data.captures.slice(0, 3).map(describe).join('; ')}. World model: ${world}`);
         },
+
+        // How sure the world model is here: the unknown entities and what each most likely is
+        async world_uncertain(a, id, out) {
+            const ui = worldUI();
+            const s = await worldGet('summary', { bbox: worldBbox(ui) });
+            check(id);
+            if (!s.n) {
+                out.msg('step', 'The world model holds nothing here yet. Build a scene graph to start it.');
+                out.noted?.('The world model holds nothing in view.');
+                return;
+            }
+            const sure = s.n - s.confidence_bins[0].n;
+            out.msg('ai', `${s.n_unknown} of ${s.n} objects here are unknown: no category reaches `
+                + `${pct(s.low_confidence)}. ${s.confidence_bins.slice(2).reduce((t, b) => t + b.n, 0)} are over 50% sure.`);
+            const guesses = s.unknown_best_guess.slice(0, 6)
+                .map(g => `${g.n} ${nameOf(g.category)} (${pct(g.mean_p)} on average)`);
+            if (guesses.length) out.msg('step', `Best guesses for the unknown ones: ${guesses.join(', ')}`);
+            const bins = s.confidence_bins.map(b => `${pct(b.lo)} to ${pct(b.hi)}: ${b.n}`).join(', ');
+            out.msg('step', `How sure of their category: ${bins}`);
+            const world = await ui.showWorldModelFromPilot();
+            check(id);
+            out.noted?.(`World model in view: ${s.n} objects, ${s.n_unknown} unknown, ${sure} at least `
+                + `${pct(s.low_confidence)} sure. Unknown best guesses: ${guesses.join(', ') || 'none'}. `
+                + `Confidence bins: ${bins}. Shown: ${world}`);
+        },
+
+        // Only world-model entities at least this sure of their category (0 shows all again)
+        async world_confidence(a, id, out) {
+            const ui = worldUI();
+            const min = Number.isFinite(a.min_confidence) ? a.min_confidence : 0.5;
+            const status = await ui.setWorldMinScore(min);
+            check(id);
+            out.msg('step', min > 0 ? `Showing world-model objects at least ${pct(min)} sure. ${status}`
+                : `Showing every world-model object. ${status}`);
+            out.noted?.(`World model filter: at least ${pct(min)} sure. ${status}`);
+        },
+
+        // How sharp each stored capture in view was: ground sample distance, the smallest
+        // object a miss counts for, and how well the camera position is known
+        async capture_quality(a, id, out) {
+            const ui = worldUI();
+            const bbox = ui.worldViewBbox();
+            if (!bbox) throw new Error('Point the camera at the ground to look up stored captures');
+            const data = await ui.storedSceneGraphs(bbox);
+            check(id);
+            if (!data.n_captures) {
+                out.msg('step', 'No scene graphs are stored for this view yet.');
+                out.noted?.('No scene graphs are stored for this view.');
+                return;
+            }
+            const when = iso => new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric',
+                hour: 'numeric', minute: '2-digit' });
+            const cm = g => `${(g * 100).toFixed(g < 0.1 ? 1 : 0)} cm/pixel`;
+            const m2 = v => `${v < 10 ? v.toFixed(1) : Math.round(v)} m²`;
+            const describe = c => `${when(c.captured_at)}: `
+                + (c.gsd_m ? `${cm(c.gsd_m)}, objects from ${m2(c.min_object_m2)} resolvable` : 'resolution unknown')
+                + (c.pose ? `, camera within ±${c.pose.sigma_h_m} m (${c.pose.source.replace(/_/g, ' ')})` : '');
+            const gsds = data.captures.map(c => c.gsd_m).filter(Number.isFinite);
+            out.msg('ai', gsds.length
+                ? `${data.n_captures} stored capture${data.n_captures === 1 ? '' : 's'} here, from ${cm(Math.min(...gsds))} `
+                    + `to ${cm(Math.max(...gsds))}; outlines on the map.`
+                : `${data.n_captures} stored captures here; none recorded its resolution.`);
+            const lines = data.captures.slice(0, 10).map(describe);
+            lines.forEach(t => out.msg('step', t));
+            out.msg('step', 'A capture only counts against an object it missed when the object is at least its resolvable size.');
+            out.noted?.(`Capture quality in view (newest first): ${lines.join('; ')}.`);
+        },
+
+        // What changed in the world model in view: first seen in the window (green), and
+        // missed in it by captures that could resolve them, now believed gone (red)
+        async world_changes(a, id, out) {
+            const ui = worldUI();
+            const params = { bbox: worldBbox(ui), since: a.since };
+            if (a.until) params.until = a.until;
+            const d = await worldGet('changes', params);
+            check(id);
+            ui.showWorldChanges(d.appeared.entities, d.gone.entities);
+            const day = iso => new Date(iso).toLocaleDateString([], { timeZone: 'UTC', month: 'short', day: 'numeric',
+                year: 'numeric' });
+            const span = `since ${day(d.since)}${a.until ? `, before ${day(d.until)}` : ''}`;
+            const kinds = b => Object.entries(b.by_category).slice(0, 6).map(([k, n]) => `${n} ${nameOf(k)}`).join(', ');
+            const capped = b => (b.n > b.entities.length ? ` (the first ${b.entities.length} drawn and counted)` : '');
+            if (!d.appeared.n && !d.gone.n) {
+                out.msg('ai', `No changes in the world model here ${span} (${d.n_captures} captures in that time).`);
+                out.noted?.(`World model changes ${span}: none; ${d.n_captures} captures.`);
+                return;
+            }
+            out.msg('ai', `${span[0].toUpperCase()}${span.slice(1)}: ${d.appeared.n} objects first seen (green) and ${d.gone.n} now believed gone (red), `
+                + `from ${d.n_captures} capture${d.n_captures === 1 ? '' : 's'} in that time.`);
+            if (d.appeared.n) out.msg('step', `New: ${kinds(d.appeared)}${capped(d.appeared)}`);
+            if (d.gone.n) out.msg('step', `Gone: ${kinds(d.gone)}${capped(d.gone)}. Gone means captures sharp enough `
+                + 'to see them did not, so the model now doubts they are still there.');
+            out.noted?.(`World model changes ${span}: ${d.appeared.n} new (${kinds(d.appeared) || 'none'}), `
+                + `${d.gone.n} gone (${kinds(d.gone) || 'none'}); ${d.n_captures} captures.`);
+        },
+
+        // Superusers: take the selected world entity out of the world model after the user
+        // confirms here; it is kept, and undo (or the Undo button) restores it
+        async retire_entity(a, id, out) {
+            const ui = worldUI();
+            if (a.undo) {
+                const last = retiredEntities.pop();
+                if (!last) {
+                    out.msg('step', 'Nothing was removed from the world model on this page to bring back.');
+                    return;
+                }
+                await worldPost('restore', { entity_ids: last.ids });
+                await ui.refreshWorldModel();
+                out.msg('step', `Restored the ${last.label} to the world model`);
+                out.noted?.(`Restored world entity ${last.label}.`);
+                return;
+            }
+            const e = ui.selectedWorldEntity;
+            if (!e) {
+                out.msg('step', 'Click an object of the world model on the map first, then ask again.');
+                out.noted?.('No world-model object was selected, so nothing was removed.');
+                return;
+            }
+            const fmt = ui.constructor.formatArea;
+            const label = `${nameOf(e.category)} #${e.id}${Number.isFinite(e.area_m2) && fmt ? `, ${fmt(e.area_m2)}` : ''}`;
+            const card = out.msg('ai', `Remove the ${label} from the world model? It is kept and can be restored.`);
+            out.noted?.(`Asked the user to confirm removing world entity ${label}.`);
+            if (!card) return;
+            const row = document.createElement('div');
+            row.className = 'pilot-robot-buttons';
+            const button = (text, cls) => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = cls;
+                b.textContent = text;
+                row.appendChild(b);
+                return b;
+            };
+            const ok = button('Remove', 'send');
+            const cancel = button('Cancel', 'cancel');
+            card.appendChild(row);
+            cancel.addEventListener('click', () => { row.remove(); out.msg('step', 'Nothing removed'); });
+            ok.addEventListener('click', async () => {
+                ok.disabled = cancel.disabled = true;
+                try {
+                    const r = await worldPost('retire', { entity_ids: [e.id], reason: 'removed from the AI pilot' });
+                    row.remove();
+                    const item = { ids: [e.id], label };
+                    retiredEntities.push(item);
+                    ui.selectWorldEntity(null);
+                    await ui.refreshWorldModel();
+                    const done = out.msg('step', `Removed the ${label}`
+                        + `${r.n_neighbours ? `; re-inferred ${r.n_neighbours} neighbours` : ''}.`);
+                    if (!done) return;
+                    const undoRow = document.createElement('div');
+                    undoRow.className = 'pilot-robot-buttons';
+                    const undo = document.createElement('button');
+                    undo.type = 'button';
+                    undo.className = 'cancel';
+                    undo.textContent = 'Undo';
+                    undoRow.appendChild(undo);
+                    done.appendChild(undoRow);
+                    undo.addEventListener('click', async () => {
+                        undo.disabled = true;
+                        try {
+                            await worldPost('restore', { entity_ids: item.ids });
+                            const i = retiredEntities.indexOf(item);
+                            if (i >= 0) retiredEntities.splice(i, 1);
+                            undoRow.remove();
+                            await ui.refreshWorldModel();
+                            out.msg('step', `Restored the ${label}`);
+                        } catch (err) {
+                            undo.disabled = false;
+                            out.msg('error', `Could not restore it: ${err.message || err}`);
+                        }
+                    });
+                } catch (err) {
+                    ok.disabled = cancel.disabled = false;
+                    out.msg('error', `Could not remove it: ${err.message || err}`);
+                }
+            });
+        },
     };
+
+    // ---- World model (scene_store) helpers for the world_* actions ----
+    const retiredEntities = [];
+    const pct = x => `${Math.round(x * 100)}%`;
+    const nameOf = c => String(c).replace(/_/g, ' ');
+
+    function worldUI() {
+        const ui = window.worldSamplerUI;
+        if (!ui?.setWorldMinScore) throw new Error('The world model is not available on this page');
+        return ui;
+    }
+
+    // The view as a bbox the world-model API takes (at most about 5 km across)
+    function worldBbox(ui) {
+        const bbox = ui.worldViewBbox();
+        if (!bbox) throw new Error('Point the camera at the ground to look at the world model');
+        if ((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) > 0.05 * 0.05) {
+            throw new Error('Zoom in: the world model answers for views up to about 5 km across');
+        }
+        return bbox.map(v => v.toFixed(6)).join(',');
+    }
+
+    async function worldGet(path, params) {
+        const resp = await fetch(`/webclient/sampler/world/${path}?${new URLSearchParams(params)}`);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.status !== 'success') throw new Error(data.message || `HTTP ${resp.status}`);
+        return data;
+    }
+
+    async function worldPost(path, payload) {
+        const resp = await fetch(`/webclient/sampler/world/${path}`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+            body: JSON.stringify(payload),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.status !== 'success') throw new Error(data.message || `HTTP ${resp.status}`);
+        return data;
+    }
 
     // One frame (the followed vehicle's own camera, else the globe) sent to the vision model
     // once the tiles have loaded; extra is { question } or { goal }
@@ -3215,8 +3433,10 @@
 
     // Plans of only these leave the camera alone or retune what it is doing (adjust), so
     // they run alongside an orbit, a flight or a follow instead of replacing it
+    const WORLD_TYPES = ['show_scene_graphs', 'world_uncertain', 'world_confidence', 'capture_quality', 'world_changes',
+        'retire_entity'];
     const PASSIVE_TYPES = new Set(['show_layer', 'hide_layer', 'describe_view', 'adjust', 'check_view', 'find_objects',
-        'show_scene_graphs']);
+        ...WORLD_TYPES]);
     let plansRunning = 0;
     const droneMoving = () => plansRunning > 0 || !!follow ||
         !!drone().isOrbiting?.() || !!drone().isVerticalActive?.();
@@ -3237,7 +3457,7 @@
         plansRunning++;
         try {
             // Describing the view as it is needs no 3D switch
-            if (actions.some(a => !['stop', 'describe_view', 'hide_layer', 'find_objects', 'show_scene_graphs'].includes(a.type))) await ensure3D(id, out);
+            if (actions.some(a => !['stop', 'describe_view', 'hide_layer', 'find_objects', ...WORLD_TYPES].includes(a.type))) await ensure3D(id, out);
             for (const [i, a] of actions.entries()) {
                 check(id);
                 // Frame the area unless a later step moves the camera anyway or the drone is

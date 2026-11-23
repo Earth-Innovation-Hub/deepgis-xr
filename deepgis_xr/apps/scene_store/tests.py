@@ -308,3 +308,59 @@ class FusionTests(TransactionTestCase):
         entities = {det['entity_id'] for det in d['detections']}
         self.assertTrue(d['links'] and all(set(link['entities']) <= entities for link in d['links']))
         self.assertEqual(self.client.get(f'{url}/nope').status_code, 404)
+        gsd = (200 * 200 / (1000 * 800)) ** 0.5
+        self.assertAlmostEqual(r['captures'][0]['gsd_m'], gsd, places=2)
+        self.assertAlmostEqual(r['captures'][0]['min_object_m2'], priors.MISS_MIN_PIXELS * gsd ** 2, delta=0.2)
+        self.assertEqual(r['captures'][0]['pose']['source'], 'virtual_camera')
+
+    def test_summary_lists_best_guesses_behind_unknown(self):
+        sg = _scene(self.t1)
+        sg['nodes'][2] = _node('v', 'vehicle', _square(10, 2, 1.5), p=1 / URBAN_V1.n)
+        fusion.ingest_scene_graph(sg, session_id='s1', taxonomy_name='urban_v1')
+        bbox = f'{LON - 0.01},{LAT - 0.01},{LON + 0.01},{LAT + 0.01}'
+        r = self.client.get('/webclient/sampler/world/summary', {'bbox': bbox}).json()
+        self.assertEqual((r['n'], r['n_unknown']), (3, 1))
+        self.assertEqual(r['unknown_best_guess'][0]['category'], 'vehicle')
+        self.assertEqual(sum(b['n'] for b in r['confidence_bins']), 3)
+        sure = self.client.get('/webclient/sampler/world/entities', {'bbox': bbox, 'min_score': 0.5}).json()
+        self.assertNotIn('unknown', [e['category'] for e in sure['entities']])
+        self.assertEqual(sure['n_entities'], 2)
+
+    def test_changes_since(self):
+        self._ingest('s1', self.t1)
+        self._ingest('s2', self.t2, with_car=False)
+        self._ingest('s3', self.t3, with_car=False)
+        box = (LON - 0.01, LAT - 0.01, LON + 0.01, LAT + 0.01)
+        later = fusion.world_changes(box, self.t1 + timedelta(minutes=1))
+        self.assertEqual(later['appeared']['n'], 0)
+        self.assertEqual(later['gone']['by_category'], {'vehicle': 1})
+        self.assertEqual(later['n_captures'], 2)
+        everything = fusion.world_changes(box, self.t1 - timedelta(minutes=1))
+        self.assertEqual(everything['appeared']['n'], 3)
+        url = '/webclient/sampler/world/changes'
+        bbox = ','.join(map(str, box))
+        since = (self.t1 - timedelta(days=1)).strftime('%Y-%m-%d')
+        r = self.client.get(url, {'bbox': bbox, 'since': since}).json()
+        self.assertEqual((r['appeared']['n'], r['gone']['n']), (3, 1))
+        self.assertEqual(self.client.get(url, {'bbox': bbox, 'since': 'april'}).status_code, 400)
+        self.assertEqual(self.client.get(url, {'bbox': bbox, 'since': '2026-05', 'until': '2026-04'}).status_code, 400)
+
+    def test_retire_api_is_superuser_only_and_undoable(self):
+        self._ingest('s1', self.t1)
+        car = self._entity('vehicle')
+        url, body = '/webclient/sampler/world/retire', json.dumps({'entity_ids': [car.id], 'reason': 'test'})
+        self.assertEqual(self.client.post(url, body, content_type='application/json').status_code, 401)
+        users = get_user_model().objects
+        self.client.force_login(users.create_user('pat', password='x', phone_number='+14805550111'))
+        self.assertEqual(self.client.post(url, body, content_type='application/json').status_code, 403)
+        self.client.force_login(users.create_superuser('root', email='r@example.org', password='x',
+                                                       phone_number='+14805550112'))
+        r = self.client.post(url, body, content_type='application/json').json()
+        self.assertEqual(r['n_retired'], 1)
+        self.assertIsNotNone(Entity.objects.get(id=car.id).retired_at)
+        self.assertEqual(self.client.post(url, json.dumps({'entity_ids': list(range(1, 60))}),
+                                          content_type='application/json').status_code, 400)
+        r = self.client.post('/webclient/sampler/world/restore', json.dumps({'entity_ids': [car.id]}),
+                             content_type='application/json').json()
+        self.assertEqual(r['n_restored'], 1)
+        self.assertIsNone(Entity.objects.get(id=car.id).retired_at)

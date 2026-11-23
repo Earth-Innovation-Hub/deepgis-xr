@@ -82,6 +82,7 @@ data layers:
 A language model only chooses the actions and the numbers the user gave
 (`goto`, `orbit`, `takeoff`, `land`, `look`, `stop`, `wait`, `show_layer`,
 `hide_layer`, `describe_view`, `find_objects`, `show_scene_graphs`,
+`world_uncertain`, `world_confidence`, `capture_quality`, `world_changes`,
 `follow_vehicle`). Django validates and clamps
 them, and the page runs them on the existing drone controls. These actions
 never touch a vehicle.
@@ -99,7 +100,18 @@ SAM 3 on the view for the objects named (*"show me buildings and houses
 with a histogram"*) and posts their count, area statistics and an area
 histogram in the chat. `show_scene_graphs` lists the stored world-model
 captures in view; clicking one draws its objects and links and flies to
-it. `follow_vehicle` locks
+it. Four more questions go to the world model for the area in view:
+*"what's uncertain here?"* (`world_uncertain`: how many objects are
+*unknown*, what each most likely is, and how confidence is spread),
+*"show only confident objects"* (`world_confidence`, 50% by default; *"show
+all objects"* clears it), *"how sharp were the captures here?"*
+(`capture_quality`: cm per pixel, the smallest object each capture could
+resolve, and how well its camera position is known) and *"what changed here
+since April?"* (`world_changes`: objects first seen since then in green,
+objects later captures missed and that are now believed gone in red).
+Superusers can also click a world-model object and say *"remove that
+blob"* (`retire_entity`): the chat asks for confirmation, retires it
+(nothing is deleted) and offers **Undo**. `follow_vehicle` locks
 the view to a live vehicle (see [Live vehicles](#-live-vehicles)). Off Earth the
 pilot resolves IAU feature names from the USGS Gazetteer of Planetary
 Nomenclature and flies at orbiter scale. See
@@ -746,7 +758,8 @@ deepgis-xr/
   `world_update` (matched, new and missed entities) when the world model is on.
 - `GET /webclient/sampler/world/entities?bbox=west,south,east,north`: world
   entities in a box (at most 0.05° square). Optional `at` (ISO 8601 with a
-  zone) recomputes beliefs for that instant, `taxonomy`, `min_p_exists`.
+  zone) recomputes beliefs for that instant, `taxonomy`, `min_p_exists`,
+  `min_score` (only entities at least that sure of their category).
 - `GET /webclient/sampler/world/entities/<id>`: one entity's belief history,
   detections, feedback and factor counts.
 - `POST /webclient/sampler/world/feedback`: `{entity_id, kind: confirm |
@@ -760,7 +773,17 @@ deepgis-xr/
   square), newest first. Optional `taxonomy`, `limit`.
 - `GET /webclient/sampler/world/captures/<session_id>`: one capture's
   footprint, its entities with their current beliefs, and the context and
-  contains links between them that were valid at capture time.
+  contains links between them that were valid at capture time. Captures
+  carry `gsd_m`, `min_object_m2` (the smallest object a miss counts for)
+  and their current `pose` (source and uncertainty).
+- `GET /webclient/sampler/world/summary?bbox=...`: counts per category,
+  confidence bins, and the best guesses behind the *unknown* entities.
+- `GET /webclient/sampler/world/changes?bbox=...&since=YYYY[-MM[-DD]][&until=]`:
+  entities first seen in the window, and those missed in it (by captures
+  that could resolve them) that are now believed gone.
+- `POST /webclient/sampler/world/retire` and `.../restore`:
+  `{entity_ids: [...] (up to 50), reason?}`; superusers only, CSRF token
+  required. Retiring supersedes the entities' factors; restoring revives them.
 
 Without `OBSERVATIONS_DATABASE_URL` the world endpoints return 503 and builds
 skip the world model.
@@ -1285,6 +1308,12 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Geometry in the world model**: capture poses with uncertainty, ground
   sample distance, frame-sized regions gated out, size and shape factors,
   resolution-aware misses, and reversible retirement in place of deletes.
+- **Pilot questions for the world model**: `world_uncertain`,
+  `world_confidence`, `capture_quality`, `world_changes` and, for
+  superusers, `retire_entity` with a confirm card and undo; backed by the
+  new `world/summary`, `world/changes`, `world/retire` and `world/restore`
+  endpoints. The pilot prompt now carries today's date so "since April"
+  resolves.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

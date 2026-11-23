@@ -4239,9 +4239,10 @@ class WorldSamplerUI {
 
     // Footprints, an opened capture and a world model the pilot turned on; true if anything was shown
     clearStoredSceneGraphs() {
-        const shown = !!(this.captureDataSource || this.storedGraphDataSource || (this._pilotWorldModel && this.worldDataSource));
+        const shown = !!(this.captureDataSource || this.storedGraphDataSource || this.changesDataSource || (this._pilotWorldModel && this.worldDataSource));
         this.removeDataSource('captureDataSource');
         this.removeDataSource('storedGraphDataSource');
+        this.removeDataSource('changesDataSource');
         if (this._pilotWorldModel) {
             this._pilotWorldModel = false;
             const box = document.getElementById('wmShow');
@@ -4258,6 +4259,35 @@ class WorldSamplerUI {
         if (box) box.checked = true;
         await this.setWorldModelVisible(true);
         return document.getElementById('wmStatus')?.textContent || '';
+    }
+
+    // Only entities at least this sure of their category (0 shows all); the AI pilot's world_confidence
+    async setWorldMinScore(minScore) {
+        this.worldMinScore = minScore > 0 ? minScore : 0;
+        return this.showWorldModelFromPilot();
+    }
+
+    // The AI pilot's world_changes: entities first seen in a window (green) and those now believed gone (red)
+    showWorldChanges(appeared, gone) {
+        this.removeDataSource('changesDataSource');
+        const ds = new Cesium.CustomDataSource('World model changes');
+        const add = (list, css, label) => list.forEach((e) => {
+            const ring = this.cleanGeoRing(e.geo_polygon);
+            if (!ring) return;
+            const color = Cesium.Color.fromCssColorString(css);
+            const positions = Cesium.Cartesian3.fromDegreesArray(ring.flat());
+            ds.entities.add({
+                name: `${label}: ${e.category.replace(/_/g, ' ')} #${e.id}`,
+                polygon: { hierarchy: positions, material: color.withAlpha(0.3) },
+                polyline: { positions, width: 2, material: color, clampToGround: true },
+            });
+        });
+        add(appeared || [], '#22c55e', 'New');
+        add(gone || [], '#ef4444', 'Gone');
+        this.viewer.dataSources.add(ds);
+        this.changesDataSource = ds;
+        this.viewer.scene.requestRender();
+        return ds.entities.values.length;
     }
 
     removeDataSource(key) {
@@ -4280,6 +4310,7 @@ class WorldSamplerUI {
         const params = new URLSearchParams({ bbox: bbox.map((v) => v.toFixed(6)).join(','), min_p_exists: '0.05' });
         const at = this.worldAtParam();
         if (at) params.set('at', at);
+        if (this.worldMinScore) params.set('min_score', String(this.worldMinScore));
         const seq = (this._worldSeq = (this._worldSeq || 0) + 1);
         this.setWorldStatus('Loading...');
         try {
@@ -4300,7 +4331,8 @@ class WorldSamplerUI {
             shown.forEach((e) => { counts[e.category] = (counts[e.category] || 0) + 1; });
             const kinds = Object.entries(counts).sort((a, b) => b[1] - a[1]);
             const top = kinds.slice(0, 4).map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ');
-            this.setWorldStatus(`${shown.length} objects in view: ${top}${kinds.length > 4 ? ' and more' : ''}.`
+            const sure = this.worldMinScore ? ` at least ${Math.round(this.worldMinScore * 100)}% sure` : '';
+            this.setWorldStatus(`${shown.length} objects${sure} in view: ${top}${kinds.length > 4 ? ' and more' : ''}.`
                 + `${hidden ? ` ${hidden} view-sized regions hidden.` : ''}`);
         } catch (err) {
             if (seq !== this._worldSeq) return;

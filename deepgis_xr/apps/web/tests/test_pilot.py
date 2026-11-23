@@ -219,6 +219,35 @@ class CleanActionsTests(TestCase):
         for schema in (pilot.PLANET_SCHEMA, *pilot.PLANET_LAYER_SCHEMAS.values()):
             self.assertNotIn("show_scene_graphs", schema["properties"]["actions"]["items"]["properties"]["type"]["enum"])
 
+    def test_world_model_actions(self):
+        plan = [{"type": "world_uncertain", "place": "Tempe", "alt_m": 300},
+                {"type": "world_confidence", "min_confidence": 3},
+                {"type": "world_confidence"},
+                {"type": "capture_quality", "objects": "car"},
+                {"type": "world_changes", "since": "2026-04", "until": "nope"},
+                {"type": "world_changes", "until": "2026-05"}]
+        self.assertEqual(pilot.clean_actions(plan), [
+            {"type": "world_uncertain"}, {"type": "world_confidence", "min_confidence": 0.95},
+            {"type": "world_confidence", "min_confidence": 0.5}, {"type": "capture_quality"},
+            {"type": "world_changes", "since": "2026-04"}])
+        self.assertEqual(pilot.clean_actions(plan, body="moon"), [])
+        enums = [s["properties"]["actions"]["items"]["properties"]["type"]["enum"]
+                 for s in (pilot.PLANET_SCHEMA, *pilot.PLANET_LAYER_SCHEMAS.values())]
+        for t in pilot.WORLD_TYPES:
+            self.assertIn(t, pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+            self.assertTrue(all(t not in e for e in enums))
+
+    def test_retire_entity_superusers_only(self):
+        plan = [{"type": "retire_entity", "entity_ids": [1, 2]}, {"type": "retire_entity", "undo": True}]
+        self.assertEqual(pilot.clean_actions(plan), [])
+        self.assertEqual(pilot.clean_actions(plan, allow_retire=True),
+                         [{"type": "retire_entity"}, {"type": "retire_entity", "undo": True}])
+        self.assertEqual(pilot.clean_actions(plan, body="moon", allow_retire=True), [])
+        self.assertNotIn("retire_entity",
+                         pilot.PILOT_SCHEMA["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+        self.assertIn("retire_entity",
+                      pilot.CONTROL_SCHEMA["properties"]["actions"]["items"]["properties"]["type"]["enum"])
+
     def test_describe_view_keeps_only_its_type(self):
         plan = [{"type": "goto", "place": "Olympus Mons"},
                 {"type": "describe_view", "place": "Olympus Mons", "kind": "elevation", "seconds": 3}]
