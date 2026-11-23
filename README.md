@@ -410,6 +410,8 @@ while `DEBUG=False`. After changing Python code or templates, run
 
 ## 🏗️ Architecture
 
+The design, the world model and their current results are written up as an IEEE-style technical report: [`manuscripts/deepgis-techreport/deepgis_techreport.pdf`](manuscripts/deepgis-techreport/deepgis_techreport.pdf) (source and build notes in the same folder).
+
 ### Deployment overview
 
 How deepgis.org is served in the DREAMS Lab deployment. The public edge is the
