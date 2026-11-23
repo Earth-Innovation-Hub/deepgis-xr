@@ -52,6 +52,7 @@ A language model chooses from a fixed catalogue of typed actions. The server val
 every field. The page runs the plan on the same camera controls a person uses. Actions that
 command a robot, build a simulation or change stored beliefs are only proposals, and a person
 confirms them. This report describes the architecture and its main subsystems.
+The world-model queries are also exposed, read-only, as tools for external agents.
 The central technical contribution is a spatiotemporal world model. Each capture of the globe
 is turned into a scene graph by fusing several detectors under one urban taxonomy, and stored
 as evidence in a bitemporal factor graph in PostGIS. Every world object carries a category variable
@@ -502,6 +503,65 @@ shows a confirm card, retires it and offers Undo.
 With the default model, each of the five phrasings above produced exactly the intended action on
 the first try. ``Remove that blob'' from a non-superuser cannot produce a retirement, because the
 action is not in that user's schema and the server drops it.
+
+\subsection{An interface for agents}
+\label{sec:mcp}
+
+The five actions above are how a person asks from inside the page. The same store answers an
+external agent through a read-only Model Context Protocol server at
+\url{https://deepgis.org/api/v1/mcp}. A call is one stateless JSON-RPC request over HTTP
+(\code{initialize}, \code{ping}, \code{tools/list}, \code{tools/call}). The server accepts a
+bearer token and stores only its SHA-256. It has no write tools. Each tool calls the query
+functions behind the web API, so the page and an agent cannot disagree.
+
+\begin{itemize}
+\item \code{world\_stats} describes the whole store: captures, live entities by category, and the
+threshold below which a category is shown as unknown.
+\item \code{list\_scene\_graphs} lists stored captures, newest first. Given no point, it lists the
+newest anywhere, which is how an agent discovers where evidence exists.
+\item \code{get\_scene\_graph} returns one capture: its detections, the world entity each detection
+was merged into, and the \emph{context} and \emph{contains} links among those entities.
+\item \code{world\_summary}, \code{find\_entities}, \code{get\_entity}, \code{world\_changes} and
+\code{area\_histogram} are the area questions. They return counts and the best guesses behind the
+unknown entities; objects around a point, with category, the top three candidates, existence
+probability, area and distance, including as of a past time; one object's sightings, each with its
+capture's ground sample distance, plus its belief history and any feedback; what appeared or is now
+believed gone between two dates; and the distribution of object sizes.
+\end{itemize}
+
+Two limits keep an answer inside a model's context. An area is a latitude, a longitude and a radius,
+clamped to the store's own limit of about 2.5\,km on a side near Tempe, rather than a box the model
+must specify as four coordinates. Objects come back as centres, and as outlines only when asked for.
+A reply larger than 400\,kB is refused, with a hint to ask for less. Confirming, relabelling,
+rejecting or retiring an entity is not offered, because those actions need a person and a shared
+token has no name. Building a new scene graph is not offered either: that still needs the browser,
+which is what captures the map.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.92\textwidth]{tempe-buildings-locations.pdf}
+\caption{Building entities in Tempe on the evening of 23~November~2026 (5{,}327), in the box from
+south Tempe up past the lake ($33.36^\circ$--$33.51^\circ$\,N, $111.97^\circ$--$111.82^\circ$\,W).
+Each circle is one entity, at the median area of its sightings. Diameter follows $\log_{10}$ of that
+area, so the smallest footprint (14\,m$^2$) and the largest (127{,}440\,m$^2$) differ in width by
+about five times. Houses are a separate category and are omitted. The bar is 2\,km.}
+\label{fig:buildings}
+\end{figure*}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{tempe-buildings-areas.pdf}
+\caption{Footprint areas of the buildings in Fig.~\ref{fig:buildings}, in logarithmically spaced
+bins. The dashed line is the median, 295\,m$^2$. The mean is 1{,}036\,m$^2$, pulled up by the tail:
+270 buildings exceed 5{,}000\,m$^2$ and the largest is 127{,}440\,m$^2$. The tenth and ninetieth
+percentiles are 167 and 2{,}398\,m$^2$.}
+\label{fig:bldghist}
+\end{figure}
+
+Figs.~\ref{fig:buildings} and~\ref{fig:bldghist} are the city-scale form of two of these questions,
+plotted from the store directly: one tool call covers a neighbourhood and a few hundred objects, not
+a whole city. The figures use the store later on 23~November than Table~\ref{tab:world}, after the
+captures that followed it. The same box holds 808 entities labelled house, which are not drawn.
 
 %======================================================================
 \section{Live Vehicles and Digital Twins}
