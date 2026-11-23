@@ -2,6 +2,7 @@
 
 Layers, oldest evidence first:
 
+  Capture -> Pose                                where the sensor was, with its uncertainty
   Capture -> KernelRun -> Detection -> Claim     what each kernel saw, when and where
   Entity <- Association -> Detection             one world object per variable
   Factor                                         log-potential tables over entity variables
@@ -37,6 +38,7 @@ class Capture(models.Model):
     camera_alt_m = models.FloatField(null=True, blank=True)
     camera_pose = models.JSONField(default=dict, blank=True)
     image_size = ArrayField(models.IntegerField(), size=2, null=True, blank=True)
+    gsd_m = models.FloatField(null=True, blank=True)  # mean ground size of a pixel: sqrt(footprint / pixels)
     sources = ArrayField(models.CharField(max_length=40), default=list, blank=True)
     artifact_path = models.CharField(max_length=300, blank=True, default='')
     summary = models.JSONField(default=dict, blank=True)
@@ -44,6 +46,43 @@ class Capture(models.Model):
     class Meta:
         db_table = 'sg_capture'
         indexes = [models.Index(fields=['-captured_at'], name='sg_capture_time_idx')]
+
+
+class Pose(models.Model):
+    """A sensor pose estimate for a capture (or a rover keyframe), with 1-sigma uncertainty.
+
+    A later estimate (loop closure, RTK, imagery-bias correction) supersedes an earlier
+    one instead of overwriting it. Angles are degrees, Cesium convention.
+    """
+
+    SOURCES = [
+        ('virtual_camera', 'virtual_camera'),  # the 3D globe's camera; error is the imagery's
+        ('vio', 'vio'),                        # visual(-inertial) odometry
+        ('gps', 'gps'),
+        ('rtk', 'rtk'),
+        ('optimized', 'optimized'),            # pose-graph solution
+    ]
+
+    capture = models.ForeignKey(Capture, on_delete=models.CASCADE, null=True, blank=True, related_name='poses')
+    source = models.CharField(max_length=20, choices=SOURCES)
+    at = models.DateTimeField()
+    position = gis.PointField(srid=4326)
+    alt_m = models.FloatField(null=True, blank=True)
+    heading_deg = models.FloatField(null=True, blank=True)
+    pitch_deg = models.FloatField(null=True, blank=True)
+    roll_deg = models.FloatField(null=True, blank=True)
+    sigma_h_m = models.FloatField(null=True, blank=True)
+    sigma_v_m = models.FloatField(null=True, blank=True)
+    sigma_rot_deg = models.FloatField(null=True, blank=True)
+    covariance = ArrayField(models.FloatField(), size=36, null=True, blank=True)  # 6x6 ENU m / rad, row-major
+    recorded_at = models.DateTimeField(auto_now_add=True)
+    superseded_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'sg_pose'
+        indexes = [models.Index(fields=['capture', 'superseded_at'], name='sg_pose_capture_idx'),
+                   models.Index(fields=['at'], name='sg_pose_time_idx')]
 
 
 class KernelRun(models.Model):
@@ -70,6 +109,7 @@ class Detection(models.Model):
     posterior = ArrayField(models.FloatField())
     score = models.FloatField()
     sources = ArrayField(models.CharField(max_length=40), default=list, blank=True)
+    gate = models.CharField(max_length=20, blank=True, default='')  # why it is not evidence ('frame'), or ''
 
     class Meta:
         db_table = 'sg_detection'
@@ -106,6 +146,9 @@ class Entity(models.Model):
     n_misses = models.IntegerField(default=0)
     sources = ArrayField(models.CharField(max_length=40), default=list, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Retired entities keep their rows; their factors are superseded at ``retired_at``.
+    retired_at = models.DateTimeField(null=True, blank=True)
+    retired_reason = models.CharField(max_length=120, blank=True, default='')
 
     class Meta:
         db_table = 'sg_entity'
@@ -167,6 +210,7 @@ class Factor(models.Model):
         ('context', 'context'),        # c,c: adjacency co-occurrence
         ('contains', 'contains'),      # c,c: parent region contains child (roof -> solar panel)
         ('feedback', 'feedback'),      # c or x: user correction
+        ('geometry', 'geometry'),      # c: a detection's ground area and shape against each category
     ]
 
     kind = models.CharField(max_length=20, choices=KINDS)

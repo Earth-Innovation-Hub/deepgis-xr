@@ -8,8 +8,8 @@ from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase, TransactionTestCase
 from django.utils import timezone
 
-from deepgis_xr.apps.scene_store import fusion
-from deepgis_xr.apps.scene_store.models import Entity, Factor, Feedback
+from deepgis_xr.apps.scene_store import fusion, priors
+from deepgis_xr.apps.scene_store.models import Detection, Entity, Factor, Feedback, Pose
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import URBAN_V1
 from deepgis_xr.db_router import FieldReadingRouter
 
@@ -77,6 +77,21 @@ class InferenceTests(SimpleTestCase):
         post, *_ = category_bp(unary, [e[0] for e in edges], [e[1] for e in edges], tables, max_iter=50, tol=1e-8)
         for i in range(n):
             np.testing.assert_allclose(post[i], ref.posteriors[i], atol=1e-6)
+
+
+class GeometryPriorTests(SimpleTestCase):
+    def test_size_and_shape_penalties(self):
+        v, r, u = (URBAN_V1.index_of(c) for c in ('vehicle', 'road', 'unknown'))
+        self.assertIsNone(priors.geometry_table(URBAN_V1, 0))
+        car = priors.geometry_table(URBAN_V1, 9.0, 0.78)
+        self.assertEqual(car[v], 0.0)
+        self.assertLess(car[URBAN_V1.index_of('parking_lot')], 0)  # 9 m² is too small for a lot
+        blob = priors.geometry_table(URBAN_V1, 27634.0, 0.78)
+        self.assertEqual(blob[v], priors.GEOMETRY_FLOOR)
+        self.assertEqual(blob[r], priors.ROAD_BLOB_PENALTY)
+        self.assertEqual(blob[u], 0.0)
+        thin_road = priors.geometry_table(URBAN_V1, 27634.0, 0.05)
+        self.assertEqual(thin_road[r], 0.0)
 
 
 class FusionTests(TransactionTestCase):
@@ -211,6 +226,57 @@ class FusionTests(TransactionTestCase):
         self.assertEqual(self.client.get(url, {'capture': 'nope'}).status_code, 404)
         self.assertEqual(self.client.get(url, {'bbox': bbox, 'bin_m2': 0}).status_code, 400)
         self.assertEqual(self.client.get(url).status_code, 400)
+
+    def test_frame_sized_region_is_stored_but_not_evidence(self):
+        sg = _scene(self.t1)
+        sg['nodes'].append(_node('f', 'road', _square(0, 0, 90)))  # 81% of the 200 m footprint
+        out = fusion.ingest_scene_graph(sg, session_id='s1', taxonomy_name='urban_v1')
+        self.assertEqual((out['n_detections'], out['n_gated'], out['n_new_entities']), (4, 1, 3))
+        self.assertEqual(Detection.objects.get(node_id='f').gate, 'frame')
+        self.assertEqual(Entity.objects.count(), 3)
+
+    def test_geometry_factor_turns_a_giant_car_away_from_vehicle(self):
+        sg = _scene(self.t1)
+        sg['nodes'][2]['region']['geo_polygon'] = _square(10, 2, 30)  # 3,600 m² "vehicle"
+        fusion.ingest_scene_graph(sg, session_id='s1', taxonomy_name='urban_v1')
+        self.assertFalse(Entity.objects.filter(category='vehicle').exists())
+        car = Detection.objects.get(node_id='v')
+        geo = Factor.objects.get(kind='geometry', detection=car)
+        self.assertAlmostEqual(geo.log_table[URBAN_V1.index_of('vehicle')], -2 * np.log(30), places=2)
+        self.assertAlmostEqual(geo.metadata['area_m2'], 3600, delta=5)
+
+    def test_misses_need_the_resolution_to_see_the_object(self):
+        self._ingest('s1', self.t1)
+        coarse = _scene(self.t2, with_car=False)
+        coarse['viewport']['image_size'] = [100, 80]  # ~2.2 m pixels: a 9 m² car is ~2 pixels
+        out = fusion.ingest_scene_graph(coarse, session_id='s2', taxonomy_name='urban_v1')
+        self.assertEqual(out['n_missed'], 0)
+        self.assertAlmostEqual(out['gsd_m'], 2.24, delta=0.05)
+        self.assertEqual(self._ingest('s3', self.t3, with_car=False)['n_missed'], 1)
+
+    def test_capture_pose_is_recorded_with_uncertainty(self):
+        self._ingest('s1', self.t1)
+        pose = Pose.objects.get()
+        self.assertEqual((pose.source, pose.alt_m, pose.sigma_h_m), ('virtual_camera', 700,
+                                                                     priors.VIRTUAL_CAMERA_SIGMA_H_M))
+        self.assertAlmostEqual(pose.position.x, LON)
+
+    def test_retire_and_restore_round_trip(self):
+        self._ingest('s1', self.t1)
+        car, road = self._entity('vehicle'), self._entity('road')
+        live = Factor.objects.filter(superseded_at__isnull=True).count()
+        out = fusion.retire_entities([car.id], 'test')
+        self.assertEqual((out['n_retired'], out['n_neighbours']), (1, 1))
+        bbox = (LON - 0.002, LAT - 0.002, LON + 0.002, LAT + 0.002)
+        self.assertEqual({e['category'] for e in fusion.entities_in_bbox(bbox)[0]}, {'building', 'road'})
+        self.assertFalse(Factor.objects.filter(entity_ids__overlap=[car.id], superseded_at__isnull=True).exists())
+        self.assertEqual(self._ingest('s2', self.t2)['n_new_entities'], 1)  # a fresh sighting is a new entity
+        self.assertEqual(fusion.restore_entities([car.id])['n_restored'], 1)
+        car.refresh_from_db()
+        self.assertIsNone(car.retired_at)
+        self.assertTrue(Factor.objects.filter(entity_ids__overlap=[car.id, road.id], kind='context',
+                                              superseded_at__isnull=True).exists())
+        self.assertGreater(Factor.objects.filter(superseded_at__isnull=True).count(), live)
 
     def test_captures_api(self):
         self._ingest('s1', self.t1)

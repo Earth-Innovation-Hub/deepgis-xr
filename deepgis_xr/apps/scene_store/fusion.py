@@ -33,6 +33,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from shapely import STRtree
 from shapely import wkb as shapely_wkb
+from shapely.affinity import scale as shapely_scale
 from shapely.geometry import Polygon as ShPolygon
 from shapely.validation import make_valid
 
@@ -40,7 +41,7 @@ from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import taxonomy_by_nam
 
 from . import inference, priors
 from .models import (
-    Association, BeliefSnapshot, Capture, Claim, Detection, Entity, Factor, Feedback, KernelRun, Potential,
+    Association, BeliefSnapshot, Capture, Claim, Detection, Entity, Factor, Feedback, KernelRun, Pose, Potential,
 )
 
 DB = 'observations'
@@ -98,6 +99,14 @@ def _centroid_dist_m(a, b):
     return math.hypot((ca.x - cb.x) * 111320 * k, (ca.y - cb.y) * 111320)
 
 
+def _metric(shp):
+    """(area m², perimeter m, compactness 4πA/P²) on a local equirectangular plane."""
+    c = shp.centroid
+    m = shapely_scale(shp, xfact=111320 * math.cos(math.radians(c.y)), yfact=111320, origin=c)
+    area, perim = m.area, m.length
+    return area, perim, (4 * math.pi * area / perim ** 2 if perim > 0 else 0.0)
+
+
 def _parse_time(value, fallback):
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=dt_timezone.utc)
@@ -138,9 +147,18 @@ ENTITY_AREA_SQL = """
 UPDATE sg_entity e SET area_m2 = m.area
 FROM (SELECT a.entity_id, percentile_cont(0.5) WITHIN GROUP (ORDER BY d.area_m2) AS area
       FROM sg_association a JOIN sg_detection d ON d.id = a.detection_id
-      WHERE a.entity_id = ANY(%s)
+      WHERE a.entity_id = ANY(%s) AND d.gate = ''
       GROUP BY a.entity_id) m
 WHERE e.id = m.entity_id
+"""
+
+ENTITY_GEOM_SQL = """
+UPDATE sg_entity e SET geom = latest.geom
+FROM (SELECT DISTINCT ON (a.entity_id) a.entity_id, d.geom
+      FROM sg_association a JOIN sg_detection d ON d.id = a.detection_id
+      WHERE a.entity_id = ANY(%s) AND d.gate = ''
+      ORDER BY a.entity_id, d.observed_at DESC) latest
+WHERE e.id = latest.entity_id
 """
 
 
@@ -213,6 +231,15 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             continue
         dets.append((node, shp, post / post.sum()))
 
+    footprint_m2 = _metric(footprint)[0]
+    image_size = list(viewport.get('image_size') or [])[:2] or None
+    gsd = math.sqrt(footprint_m2 / (image_size[0] * image_size[1])) \
+        if image_size and len(image_size) == 2 and image_size[0] > 0 and image_size[1] > 0 else None
+    shape = [_metric(shp) for _, shp, _ in dets]
+    gates = ['frame' if footprint_m2 > 0 and area > priors.GATE_FOOTPRINT_FRAC * footprint_m2 else ''
+             for area, _, _ in shape]
+    live = [di for di in range(len(dets)) if not gates[di]]
+
     cam = meta.get('camera') or {}
     fm = sg.get('fusion_metadata') or {}
     sources = sorted({s for node, _, _ in dets for s in (node.get('sources') or [])})
@@ -222,11 +249,16 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             session_id=session_id, captured_at=at, user_id=user_id, taxonomy=tax.name,
             footprint=_geos(footprint),
             camera=Point(float(cam['lon']), float(cam['lat']), srid=4326) if 'lon' in cam and 'lat' in cam else None,
-            camera_alt_m=cam.get('alt'), camera_pose=cam,
-            image_size=list(viewport.get('image_size') or [])[:2] or None,
+            camera_alt_m=cam.get('alt'), camera_pose=cam, image_size=image_size, gsd_m=gsd,
             sources=sources, artifact_path=artifact_path or '',
             summary={'per_kernel_claim_counts': fm.get('per_kernel_claim_counts') or {}},
         )
+        if cap.camera is not None:
+            Pose.objects.create(
+                capture=cap, source='virtual_camera', at=at, position=cap.camera, alt_m=cam.get('alt'),
+                heading_deg=cam.get('heading'), pitch_deg=cam.get('pitch'), roll_deg=cam.get('roll'),
+                sigma_h_m=priors.VIRTUAL_CAMERA_SIGMA_H_M, sigma_v_m=priors.VIRTUAL_CAMERA_SIGMA_V_M,
+                sigma_rot_deg=0.0)
         counts = fm.get('per_kernel_claim_counts') or {}
         KernelRun.objects.bulk_create([
             KernelRun(capture=cap, kernel_kind=kind, n_claims=int(n or 0),
@@ -238,8 +270,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
         det_rows = Detection.objects.bulk_create([
             Detection(capture=cap, node_id=str(node.get('id') or ''), observed_at=at, geom=_geos(shp),
                       category=tax.name_of(int(np.argmax(post))), posterior=post.tolist(),
-                      score=float(post.max()), sources=list(node.get('sources') or []))
-            for node, shp, post in dets
+                      score=float(post.max()), sources=list(node.get('sources') or []), gate=gate)
+            for (node, shp, post), gate in zip(dets, gates)
         ])
         with connections[DB].cursor() as cur:
             cur.execute('UPDATE sg_detection SET area_m2 = ST_Area(geom::geography) WHERE capture_id = %s', [cap.id])
@@ -254,12 +286,14 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
         Claim.objects.bulk_create(claims, batch_size=500)
 
         # Data association against entities already under this footprint.
-        cands = list(Entity.objects.filter(taxonomy=tax.name, geom__intersects=cap.footprint))
+        cands = list(Entity.objects.filter(taxonomy=tax.name, retired_at__isnull=True,
+                                           geom__intersects=cap.footprint))
         cand_shp = {e.id: _from_geos(e.geom) for e in cands}
         cand_tree = STRtree([cand_shp[e.id] for e in cands]) if cands else None
         pad = priors.ASSOC_CENTROID_M / 111320.0 * 2
         pairs = []
-        for di, (_, shp, _) in enumerate(dets):
+        for di in live:
+            shp = dets[di][1]
             near = cand_tree.query(shp.buffer(pad)) if cand_tree is not None else []
             for ci in near:
                 e = cands[int(ci)]
@@ -279,7 +313,7 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             used.add(eid)
 
         by_id = {e.id: e for e in cands}
-        new_dis = [di for di in range(len(dets)) if di not in det_entity]
+        new_dis = [di for di in live if di not in det_entity]
         new_rows = Entity.objects.bulk_create([
             Entity(taxonomy=tax.name, category=det_rows[di].category, posterior=det_rows[di].posterior,
                    score=det_rows[di].score, p_exists=0.5, geom=det_rows[di].geom,
@@ -298,6 +332,12 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             factors.append(_new_factor('perceptual', [eid], _log_probs(post), at, variables=[cvar(eid)],
                                        capture=cap, detection=row,
                                        metadata={'score': row.score, 'sources': row.sources}))
+            area, _, compact = shape[di]
+            geo = priors.geometry_table(tax, area, compact)
+            if geo is not None:
+                factors.append(_new_factor('geometry', [eid], geo, at, variables=[cvar(eid)],
+                                           capture=cap, detection=row,
+                                           metadata={'area_m2': round(area, 2), 'compactness': round(compact, 3)}))
             factors.append(_new_factor('hit', [eid], priors.HIT_TABLE, at, variables=[xvar(eid)],
                                        decays=False, capture=cap, detection=row))
             if method != 'new':
@@ -307,13 +347,17 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                 e.first_seen = min(e.first_seen, at)
                 e.sources = sorted(set(e.sources) | set(row.sources))
 
-        # Misses: covered by this footprint, previously seen by a kernel that ran here, not matched now.
+        # Misses: covered by this footprint, previously seen by a kernel that ran here, not matched
+        # now, and large enough at this capture's resolution to have been seen.
+        min_miss_m2 = priors.MISS_MIN_PIXELS * gsd ** 2 if gsd else 0.0
         missed = []
         for e in cands:
             if e.id in used or not set(e.sources) & set(sources):
                 continue
             es = cand_shp[e.id]
             if es.intersection(footprint).area < priors.MISS_COVERAGE * es.area:
+                continue
+            if (e.area_m2 if e.area_m2 is not None else _metric(es)[0]) < min_miss_m2:
                 continue
             factors.append(_new_factor('miss', [e.id], priors.MISS_TABLE, at, variables=[xvar(e.id)],
                                        decays=False, capture=cap))
@@ -345,11 +389,12 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             factors.append(_new_factor('context', key[1], ctx, at, variables=[cvar(i) for i in key[1]],
                                        decays=False, capture=cap))
         det_tree = STRtree([shp for _, shp, _ in dets]) if dets else None
-        for pi, (_, pshp, _) in enumerate(dets):
+        for pi in live:
+            pshp = dets[pi][1]
             for ci in det_tree.query(pshp, predicate='intersects'):
                 ci = int(ci)
                 cshp = dets[ci][1]
-                if pi == ci or cshp.area > 0.5 * pshp.area:
+                if pi == ci or ci not in det_entity or cshp.area > 0.5 * pshp.area:
                     continue
                 if pshp.intersection(cshp).area < 0.8 * cshp.area:
                     continue
@@ -373,7 +418,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
 
     summary = {
         'status': 'ok', 'capture_id': cap.id, 'n_detections': len(det_rows),
-        'n_new_entities': len(new_rows), 'n_matched': len(det_rows) - len(new_rows),
+        'n_gated': len(det_rows) - len(live), 'gsd_m': round(gsd, 3) if gsd else None,
+        'n_new_entities': len(new_rows), 'n_matched': len(live) - len(new_rows),
         'n_missed': len(missed), 'n_factors': len(factors),
         'elapsed_ms': int((time.perf_counter() - t0) * 1000), 'bp': bp,
     }
@@ -518,6 +564,57 @@ def apply_feedback(entity_id, kind, *, category='', user_id=None, note=''):
     return fb, entity, bp
 
 
+def _neighbours(ids, factors):
+    return {i for f in factors for i in f.entity_ids} - set(ids)
+
+
+def _bp_by_taxonomy(ids, *, cause, chunk=1500):
+    by_tax = {}
+    for eid, name in Entity.objects.filter(id__in=ids, retired_at__isnull=True).values_list('id', 'taxonomy'):
+        by_tax.setdefault(name, []).append(eid)
+    for name, group in by_tax.items():
+        for i in range(0, len(group), chunk):
+            run_local_bp(group[i:i + chunk], cause=cause)
+    return sum(len(g) for g in by_tax.values())
+
+
+def retire_entities(entity_ids, reason, *, infer=True):
+    """Take entities out of the world model without erasing them.
+
+    Every factor touching them is superseded at one instant, which is also stamped on the
+    entity, so ``restore_entities`` can undo exactly this retirement. Neighbours that
+    shared a pairwise factor are re-inferred.
+    """
+    now = timezone.now()
+    ids = list(Entity.objects.filter(id__in=list(entity_ids), retired_at__isnull=True).values_list('id', flat=True))
+    if not ids:
+        return {'n_retired': 0, 'n_neighbours': 0}
+    with transaction.atomic(using=DB):
+        factors = Factor.objects.filter(entity_ids__overlap=ids, superseded_at__isnull=True)
+        neighbours = _neighbours(ids, factors.only('entity_ids'))
+        n_factors = factors.update(superseded_at=now)
+        Entity.objects.filter(id__in=ids).update(retired_at=now, retired_reason=reason[:120])
+        n_bp = _bp_by_taxonomy(neighbours, cause='retire') if infer else 0
+    return {'n_retired': len(ids), 'n_factors': n_factors, 'n_neighbours': n_bp, 'at': now.isoformat()}
+
+
+def restore_entities(entity_ids, *, infer=True):
+    """Undo ``retire_entities``: revive the factors superseded at each entity's retirement."""
+    ents = list(Entity.objects.filter(id__in=list(entity_ids), retired_at__isnull=False))
+    if not ents:
+        return {'n_restored': 0}
+    n_factors, ids = 0, [e.id for e in ents]
+    with transaction.atomic(using=DB):
+        for at in {e.retired_at for e in ents}:
+            group = [e.id for e in ents if e.retired_at == at]
+            n_factors += Factor.objects.filter(entity_ids__overlap=group, superseded_at=at).update(superseded_at=None)
+        Entity.objects.filter(id__in=ids).update(retired_at=None, retired_reason='')
+        touched = set(ids) | _neighbours(ids, Factor.objects.filter(entity_ids__overlap=ids,
+                                                                    superseded_at__isnull=True).only('entity_ids'))
+        n_bp = _bp_by_taxonomy(touched, cause='restore') if infer else 0
+    return {'n_restored': len(ids), 'n_factors': n_factors, 'n_inferred': n_bp}
+
+
 def entity_to_dict(e, belief=None):
     b = belief or {}
     post = b.get('posterior', e.posterior)
@@ -530,12 +627,13 @@ def entity_to_dict(e, belief=None):
         'n_hits': e.n_hits, 'n_misses': e.n_misses, 'sources': e.sources,
         'area_m2': round(e.area_m2, 2) if e.area_m2 is not None else None,
         'geo_polygon': [list(p) for p in e.geom.coords[0]],
+        'retired': {'at': e.retired_at.isoformat(), 'reason': e.retired_reason} if e.retired_at else None,
     }
 
 
 def entities_in_bbox(bbox, *, at=None, taxonomy=None, min_p_exists=0.0, limit=2000):
     """Entities intersecting ``(west, south, east, north)``; beliefs recomputed at ``at`` if given."""
-    qs = Entity.objects.filter(geom__intersects=Polygon.from_bbox(bbox))
+    qs = Entity.objects.filter(geom__intersects=Polygon.from_bbox(bbox), retired_at__isnull=True)
     if taxonomy:
         qs = qs.filter(taxonomy=taxonomy)
     if at is not None:

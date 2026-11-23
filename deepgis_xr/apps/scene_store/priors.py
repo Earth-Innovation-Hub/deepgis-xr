@@ -12,6 +12,37 @@ import numpy as np
 ASSOC_IOU = 0.3
 ASSOC_CENTROID_M = 2.0      # small objects (cars) whose masks jitter between captures
 MISS_COVERAGE = 0.9         # footprint must cover this much of an entity to count a miss
+MISS_MIN_PIXELS = 64        # an entity smaller than this many ground pixels could not have been seen
+
+# Pose uncertainty of a capture taken from the 3D globe (1 sigma). The virtual camera is exact
+# relative to the imagery; the error is the imagery's own georegistration.
+VIRTUAL_CAMERA_SIGMA_H_M = 2.5
+VIRTUAL_CAMERA_SIGMA_V_M = 5.0
+
+# Geometry plausibility. A region covering most of the capture footprint is the frame itself
+# (a whole-image box or mask), not an object: it is stored but never becomes evidence.
+GATE_FOOTPRINT_FRAC = 0.5
+# Plausible ground area (m²) per category; outside the range each e-fold costs GEOMETRY_SLOPE
+# in log-potential, down to GEOMETRY_FLOOR. Categories not listed (unknown) are unconstrained,
+# so an implausible region drifts toward unknown instead of becoming a giant car or road.
+CATEGORY_AREA_M2 = {
+    'vehicle': (1.5, 120.0),
+    'house': (30.0, 3000.0),
+    'pool': (4.0, 600.0),
+    'solar_panel': (1.0, 20000.0),
+    'tree': (1.0, 3000.0),
+    'debris': (0.5, 2000.0),
+    'building': (20.0, 200000.0),
+    'road': (20.0, 300000.0),
+    'parking_lot': (100.0, 100000.0),
+}
+GEOMETRY_SLOPE = 2.0
+GEOMETRY_FLOOR = -8.0
+# A road region this large is long and thin; one this compact (4πA/P², 1 = disc, π/4 = square)
+# is a frame-clipped or whole-area blob.
+ROAD_BLOB_MIN_M2 = 5000.0
+ROAD_BLOB_COMPACTNESS = 0.35
+ROAD_BLOB_PENALTY = -3.0
 
 # Existence sensor model: P(detected | present), P(detected | absent).
 P_DETECT = 0.8
@@ -105,6 +136,25 @@ def context_table(taxonomy):
 
 def contains_table(taxonomy):
     return _pair_table(taxonomy, CONTAINS, symmetric=False)
+
+
+def geometry_table(taxonomy, area_m2, compactness=None):
+    """Log-potential over categories for one region's ground area and shape (None if neutral)."""
+    t = np.zeros(taxonomy.n)
+    if not area_m2 or area_m2 <= 0:
+        return None
+    for cat, (lo, hi) in CATEGORY_AREA_M2.items():
+        if cat not in taxonomy.categories:
+            continue
+        if area_m2 < lo:
+            t[taxonomy.index_of(cat)] = -GEOMETRY_SLOPE * math.log(lo / area_m2)
+        elif area_m2 > hi:
+            t[taxonomy.index_of(cat)] = -GEOMETRY_SLOPE * math.log(area_m2 / hi)
+    if 'road' in taxonomy.categories and compactness is not None and \
+            area_m2 > ROAD_BLOB_MIN_M2 and compactness >= ROAD_BLOB_COMPACTNESS:
+        t[taxonomy.index_of('road')] += ROAD_BLOB_PENALTY
+    t = np.maximum(t, GEOMETRY_FLOOR)
+    return t if t.any() else None
 
 
 HIT_TABLE = [math.log(P_FALSE_ALARM), math.log(P_DETECT)]

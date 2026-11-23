@@ -224,6 +224,23 @@ The panel also remembers each user's model, prompts and scene-graph models.
 `python manage.py ingest_scene_graphs` replays stored SceneGraphs into the
 world model (`--reset` to rebuild it).
 
+Geometry keeps the world model honest about what a camera can see:
+- Each capture stores its camera pose with an uncertainty (`Pose`; the 3D
+  globe's camera is exact, so the error is the imagery's registration) and
+  its ground sample distance. A miss only counts for an object at least 64
+  pixels across at that resolution.
+- A region covering more than half of the capture is the frame, not an
+  object: it is stored but never becomes evidence.
+- Every other region gets a `geometry` factor: its ground area against
+  each category's plausible range (a 3,600 m² "car" is pushed away from
+  vehicle), and large compact "roads" are penalised as blobs.
+- `python manage.py retire_entities` takes entities out of the world
+  model by id or by rule (category, area, compactness, first-seen dates,
+  source) without deleting them; `--restore` undoes it. Without `--apply`
+  it only reports. `apply_geometry_priors` brings stored evidence under
+  these rules (dry run unless `--apply`; `--misses-only` for just the
+  resolution check).
+
 ### 🌍 World Sampler: adaptive geospatial sampling
 - Probabilistic location sampling that updates from feedback and rewards
 - Survey mode that cycles through samples with automatic navigation
@@ -1262,6 +1279,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   object) and `show_scene_graphs` (stored captures in view, drawn on click),
   backed by the new `world/captures` endpoints. A lone `mr_rocks` "rock"
   claim now means *unknown* rather than *debris* in the urban categories.
+- **Geometry in the world model**: capture poses with uncertainty, ground
+  sample distance, frame-sized regions gated out, size and shape factors,
+  resolution-aware misses, and reversible retirement in place of deletes.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

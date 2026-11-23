@@ -153,7 +153,7 @@ def stats_view(request):
     if not fusion.enabled():
         return _unavailable()
     taxonomy = request.GET.get('taxonomy') or None
-    ents = Entity.objects.all()
+    ents = Entity.objects.filter(retired_at__isnull=True)
     if taxonomy:
         ents = ents.filter(taxonomy=taxonomy)
     return JsonResponse({
@@ -211,7 +211,7 @@ def histogram_view(request):
     if not (west < east and south < north) or (east - west) * (north - south) > MAX_BBOX_DEG ** 2:
         return _error(f'bbox must be non-empty and at most {MAX_BBOX_DEG} degrees square')
     rows = Entity.objects.filter(geom__intersects=Polygon.from_bbox((west, south, east, north)),
-                                 p_exists__gte=min_p)
+                                 p_exists__gte=min_p, retired_at__isnull=True)
     if q.get('taxonomy'):
         rows = rows.filter(taxonomy=q['taxonomy'])
     if category:
@@ -282,15 +282,21 @@ def capture_detail_view(request, session_id):
     cap = Capture.objects.filter(session_id=session_id).first()
     if cap is None:
         return _error('no such capture', 404)
-    dets = list(Detection.objects.filter(capture=cap).select_related('association')
+    dets = list(Detection.objects.filter(capture=cap).select_related('association__entity')
                 .order_by('-score')[:MAX_CAPTURE_DETECTIONS])
-    out, cats = [], {}
+    out, cats, n_gated, n_retired = [], {}, 0, 0
     for d in dets:
+        assoc = getattr(d, 'association', None)
+        if d.gate:
+            n_gated += 1
+            continue
+        if assoc and assoc.entity.retired_at:
+            n_retired += 1
+            continue
         cats[d.category] = cats.get(d.category, 0) + 1
         ring = _lonlat_ring(d.geom)
         if ring is None:
             continue
-        assoc = getattr(d, 'association', None)
         out.append({'id': d.id, 'node_id': d.node_id, 'category': d.category, 'score': round(d.score, 4),
                     'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None,
                     'entity_id': assoc.entity_id if assoc else None, 'geo_polygon': ring})
@@ -301,4 +307,5 @@ def capture_detail_view(request, session_id):
                                    superseded_at__isnull=True, valid__contains=cap.captured_at)
              .values_list('kind', 'entity_ids') if set(ids) <= entity_ids]
     return JsonResponse({'status': 'success', 'capture': _capture_dict(cap, cats),
-                         'n_skipped': len(dets) - len(out), 'detections': out, 'links': links})
+                         'n_skipped': len(dets) - len(out) - n_gated - n_retired, 'n_gated': n_gated,
+                         'n_retired': n_retired, 'detections': out, 'links': links})
