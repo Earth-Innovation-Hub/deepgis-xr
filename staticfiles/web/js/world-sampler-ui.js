@@ -2400,7 +2400,76 @@ class WorldSamplerUI {
      * Capture current viewport as image using Cesium's proper method
      * @returns {Object} {image: base64 string, location: camera pose}
      */
+    // Scene graphs are built from a top-down 2D capture only: 3D draws coarser
+    // imagery over a wider footprint, and a tilted view breaks the footprint.
+    // The HUD buttons switch modes because they also apply each mode's tile settings.
+    async captureViewportIn2D() {
+        const scene = this.viewer.scene;
+        if (scene.mode === Cesium.SceneMode.SCENE2D) return this.captureViewportWithoutOverlays();
+        const camera = this.viewer.camera;
+        const mode = scene.mode;
+        const view = {
+            destination: Cesium.Cartesian3.clone(camera.positionWC),
+            orientation: { heading: camera.heading, pitch: camera.pitch, roll: camera.roll },
+        };
+        const height = camera.positionCartographic.height;
+        const centre = new Cesium.Cartesian2(scene.canvas.clientWidth / 2, scene.canvas.clientHeight / 2);
+        const ray = camera.getPickRay(centre);
+        const ground = ray && scene.globe.pick(ray, scene);
+        const target = ground && Cesium.Cartographic.fromCartesian(ground);
+        const switchTo = (id, fallback) => {
+            const btn = document.getElementById(id);
+            if (btn) btn.click(); else fallback();
+        };
+        switchTo('view2D', () => scene.morphTo2D(0));
+        try {
+            if (target) {
+                camera.setView({ destination: Cesium.Cartesian3.fromRadians(target.longitude, target.latitude, height) });
+            }
+            await this.waitForTiles();
+            return await this.captureViewportWithoutOverlays();
+        } finally {
+            if (mode === Cesium.SceneMode.SCENE3D) switchTo('view3D', () => scene.morphTo3D(0));
+            else scene.morphToColumbusView(0);
+            camera.setView(view);
+            scene.requestRender();
+        }
+    }
+
+    // Cesium picks imagery by screen-space error. 3D's limit (6) draws imagery
+    // about two zoom levels coarser than the canvas can show, so the models saw
+    // a blurred frame. Capture at the 2D limit (config SCENE2D) once those tiles are in.
     async captureViewportImage() {
+        const scene = this.viewer.scene;
+        const globe = scene.globe;
+        const saved = globe.maximumScreenSpaceError;
+        const target = 2 / Math.min(Math.max(window.devicePixelRatio || 1, 1), 1.5);
+        if (saved > target) {
+            globe.maximumScreenSpaceError = target;
+            await this.waitForTiles();
+        }
+        try {
+            return await this.captureViewportFrame();
+        } finally {
+            if (globe.maximumScreenSpaceError === target) globe.maximumScreenSpaceError = saved;
+            scene.requestRender();
+        }
+    }
+
+    async waitForTiles(maxWaitMs = 8000) {
+        const scene = this.viewer.scene;
+        const start = performance.now();
+        let loadedFrames = 0;
+        while (performance.now() - start < maxWaitMs) {
+            scene.requestRender();
+            await new Promise((r) => requestAnimationFrame(r));
+            loadedFrames = scene.globe.tilesLoaded ? loadedFrames + 1 : 0;
+            if (loadedFrames >= 5) return true;
+        }
+        return false;
+    }
+
+    async captureViewportFrame() {
         const scene = this.viewer.scene;
         const canvas = scene.canvas;
         const camera = this.viewer.camera;
@@ -3738,8 +3807,8 @@ class WorldSamplerUI {
             this.viewer.scene.render();
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-            setStatus('Capturing viewport...');
-            const viewportData = await this.captureViewportWithoutOverlays();
+            setStatus('Capturing a top-down 2D view...');
+            const viewportData = await this.captureViewportIn2D();
             const corners = viewportData.world_corners;
             if (!corners) {
                 throw new Error('Could not snapshot viewport corners (camera off-globe?).');
@@ -4113,7 +4182,11 @@ class WorldSamplerUI {
 
     worldViewBbox() {
         const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
-        if (!rect) return null;
+        if (!rect) {
+            // computeViewRectangle is undefined in 2D; the corner picks work there.
+            const box = this.computeViewportCornersGeo()?.bbox;
+            return box ? [box.minLon, box.minLat, box.maxLon, box.maxLat] : null;
+        }
         const deg = Cesium.Math.toDegrees;
         return [deg(rect.west), deg(rect.south), deg(rect.east), deg(rect.north)];
     }
@@ -4189,6 +4262,7 @@ class WorldSamplerUI {
 
     // One stored capture: its detections coloured by category and its context / contains links.
     async showStoredSceneGraph(sessionId) {
+        this.installWorldInfoBox();
         const resp = await fetch(`/webclient/sampler/world/captures/${encodeURIComponent(sessionId)}`);
         const payload = await resp.json().catch(() => ({}));
         if (!resp.ok || payload.status !== 'success') throw new Error(payload.message || `HTTP ${resp.status}`);
@@ -4269,6 +4343,7 @@ class WorldSamplerUI {
 
     // The AI pilot's world_changes: entities first seen in a window (green) and those now believed gone (red)
     showWorldChanges(appeared, gone) {
+        this.installWorldInfoBox();
         this.removeDataSource('changesDataSource');
         const ds = new Cesium.CustomDataSource('World model changes');
         const add = (list, css, label) => list.forEach((e) => {
@@ -4280,6 +4355,7 @@ class WorldSamplerUI {
                 name: `${label}: ${e.category.replace(/_/g, ' ')} #${e.id}`,
                 polygon: { hierarchy: positions, material: color.withAlpha(0.3) },
                 polyline: { positions, width: 2, material: color, clampToGround: true },
+                properties: { world_entity_id: e.id },
             });
         });
         add(appeared || [], '#22c55e', 'New');
@@ -4344,6 +4420,7 @@ class WorldSamplerUI {
     // Regions bigger than a quarter of the view are whole-frame claims from
     // oblique captures; drawing them would cover everything else.
     async renderWorldEntities(entities, viewArea) {
+        this.installWorldInfoBox();
         const ringArea = (r) => {
             let a = 0;
             for (let i = 0; i < r.length - 1; i++) a += r[i][0] * r[i + 1][1] - r[i + 1][0] * r[i][1];
@@ -4382,6 +4459,115 @@ class WorldSamplerUI {
         }
         this.viewer.scene.requestRender();
         return [...byId.values()];
+    }
+
+    // Cesium's info box for any clicked shape tied to a world entity (world model layer,
+    // an opened stored scene graph, world changes): the summary at once, sightings when loaded.
+    installWorldInfoBox() {
+        if (this._worldInfoBox) return;
+        this._worldDetails = new Map();
+        // Inside #cesiumContainer (z 1) the info box sits under the HUD's compass and
+        // altimeter (1400); on <body> at 1600 it clears them and stays under the panels (1998+).
+        const box = this.viewer.infoBox?.container;
+        if (box) {
+            const style = document.createElement('style');
+            style.textContent = '.deepgis-infobox{position:fixed;top:60px;right:10px;z-index:1600;width:0;height:0}'
+                + '.deepgis-infobox .cesium-infoBox{top:0;right:0;width:380px;max-width:calc(100vw - 20px);'
+                + 'max-height:calc(100vh - 160px)}';
+            document.head.appendChild(style);
+            box.classList.add('deepgis-infobox');
+            document.body.appendChild(box);
+        }
+        this._worldInfoBox = this.viewer.selectedEntityChanged.addEventListener((entity) => {
+            const id = entity?.properties?.world_entity_id?.getValue();
+            if (id) this.describeWorldEntity(entity, id);
+        });
+    }
+
+    async describeWorldEntity(entity, id) {
+        const known = this.worldEntities.get(id);
+        if (known) this.renderWorldInfo(entity, known, null);
+        else entity.description = '<p>Loading...</p>';
+        let detail = this._worldDetails.get(id);
+        if (!detail || Date.now() - detail.t > 60000) {
+            try {
+                const resp = await fetch(`/webclient/sampler/world/entities/${id}`);
+                const payload = await resp.json().catch(() => ({}));
+                if (!resp.ok || payload.status !== 'success') throw new Error(payload.message || `HTTP ${resp.status}`);
+                detail = { t: Date.now(), data: payload };
+                this._worldDetails.set(id, detail);
+            } catch (err) {
+                if (!known) entity.description = `<p>Could not load this object: ${String(err.message || err).replace(/</g, '&lt;')}</p>`;
+                return;
+            }
+        }
+        this.renderWorldInfo(entity, detail.data.entity, detail.data);
+        this.viewer.scene.requestRender();
+    }
+
+    renderWorldInfo(entity, e, d) {
+        const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const name = (c) => String(c || '').replace(/_/g, ' ');
+        const pct = (p) => `${Math.round(p * 100)}%`;
+        const day = (iso) => new Date(iso).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        const area = (m2) => (m2 == null ? '-' : WorldSamplerUI.formatArea(m2));
+        const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
+        const guess = e.best_guess;
+        const unknown = e.category === 'unknown';
+        const title = unknown && guess ? `Unknown (best guess ${name(guess.category)})` : name(e.category);
+        entity.name = `${title.charAt(0).toUpperCase()}${title.slice(1)} #${e.id}`;
+
+        const rows = [];
+        rows.push(row('Category', unknown && guess
+            ? `unknown: no category above 25%; most likely ${esc(name(guess.category))} (${pct(guess.p)})`
+            : `${esc(name(e.category))}, ${pct(e.score)} sure`));
+        if (d?.candidates?.length > 1) {
+            rows.push(row('Candidates', d.candidates.filter((c) => c.p >= 0.01)
+                .map((c) => `${esc(name(c.category))} ${pct(c.p)}`).join(', ')));
+        }
+        rows.push(row('Still there', e.retired ? `retired ${day(e.retired.at)}${e.retired.reason ? ` (${esc(e.retired.reason)})` : ''}`
+            : `${pct(e.p_exists)} likely`));
+        rows.push(row('Size', area(e.area_m2)));
+        rows.push(row('Seen', `${e.n_hits}&times;${e.n_misses ? `, missed ${e.n_misses}&times;` : ''}`
+            + `, ${day(e.first_seen)}${e.first_seen.slice(0, 10) === e.last_seen.slice(0, 10) ? '' : ` to ${day(e.last_seen)}`}`));
+        rows.push(row('Models', esc((e.sources || []).join(', ') || 'none')));
+        const ring = (e.geo_polygon || []).slice(0, -1);
+        if (ring.length) {
+            const lon = ring.reduce((s, q) => s + q[0], 0) / ring.length;
+            const lat = ring.reduce((s, q) => s + q[1], 0) / ring.length;
+            rows.push(row('Location', `${lat.toFixed(6)}, ${lon.toFixed(6)}`));
+        }
+        const here = entity.properties?.class_name?.getValue();
+        if (here) {
+            const s = entity.properties.score?.getValue();
+            rows.push(row('In this capture', `${esc(name(here))}${s != null ? `, ${pct(s)}` : ''}, ${area(entity.properties.area_m2?.getValue())}`));
+        }
+        if (d) {
+            const fc = Object.entries(d.factor_counts || {}).sort((a, b) => b[1] - a[1]);
+            if (fc.length) rows.push(row('Evidence', fc.map(([k, n]) => `${esc(k)} ${n}`).join(', ')));
+            const fb = (d.feedback || []).filter((f) => !f.superseded);
+            rows.push(row('Feedback', fb.length
+                ? fb.map((f) => `${esc(f.kind)}${f.category ? ` as ${esc(name(f.category))}` : ''} (${day(f.at)})`).join('; ')
+                : 'none yet'));
+        }
+        let html = '<style>table.cesium-infoBox-defaultTable{font-size:13px;width:100%}'
+            + 'table.cesium-infoBox-defaultTable th{text-align:left;white-space:nowrap;width:1%;padding:3px 8px}'
+            + 'table.cesium-infoBox-defaultTable td{padding:3px 8px}</style>'
+            + `<table class="cesium-infoBox-defaultTable"><tbody>${rows.join('')}</tbody></table>`;
+        if (d?.detections?.length) {
+            const recent = d.detections.slice(-8).reverse();
+            html += `<p style="margin:8px 0 4px">Sightings (${d.detections.length}${d.detections.length > 8 ? ', newest 8' : ''})</p>`
+                + '<table class="cesium-infoBox-defaultTable"><tbody>'
+                + '<tr><th>Date</th><th>Label</th><th>Score</th><th>Area</th><th>Image</th><th>Models</th></tr>'
+                + recent.map((s) => `<tr><td>${day(s.at)}</td><td>${esc(name(s.category))}</td><td>${pct(s.score)}</td>`
+                    + `<td>${area(s.area_m2)}</td><td>${s.gsd_m ? `${s.gsd_m < 1 ? `${Math.round(s.gsd_m * 100)} cm` : `${s.gsd_m.toFixed(1)} m`}/px` : '-'}</td>`
+                    + `<td>${esc((s.sources || []).join(', '))}</td></tr>`).join('')
+                + '</tbody></table>';
+        } else if (!d) {
+            html += '<p style="margin:8px 0 0;color:#94a3b8">Loading sightings...</p>';
+        }
+        html += '<p style="margin:8px 0 0;color:#94a3b8">Correct, relabel or mark it not there from the AI panel (World model).</p>';
+        entity.description = html;
     }
 
     installWorldPickHandler() {
@@ -4447,6 +4633,7 @@ class WorldSamplerUI {
                 kind === 'reject' ? 'Marked as not there' : `Saved: ${payload.entity.category.replace(/_/g, ' ')}`,
                 'success',
             );
+            this._worldDetails?.delete(e.id);
             await this.refreshWorldModel();
             this.selectWorldEntity(this.worldEntities.get(e.id) || payload.entity);
         } catch (err) {

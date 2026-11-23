@@ -1316,6 +1316,14 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   new `world/summary`, `world/changes`, `world/retire` and `world/restore`
   endpoints. The pilot prompt now carries today's date so "since April"
   resolves.
+- **Sharper captures, 2D scene graphs**: 3D draws imagery about two zoom
+  levels coarser than 2D, which cost SAM 3 more than half its objects in
+  a test. Captures now load 2D-level tiles first, and Build Scene Graph
+  captures a top-down 2D view centred on what you are looking at, then
+  returns the camera. World-model questions and the layer now work in 2D.
+- **Object details on click**: world-model shapes open an info box with
+  category and runner-up guesses, chance it is still there, size,
+  sightings with their image resolution, evidence counts and feedback.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

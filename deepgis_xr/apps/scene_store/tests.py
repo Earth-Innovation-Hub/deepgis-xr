@@ -195,6 +195,8 @@ class FusionTests(TransactionTestCase):
         self.assertEqual(r.json()['preferences'], {'sam3_prompts': 'tree, pool'})
         r = self.client.get(f'/webclient/sampler/world/entities/{bld.id}')
         self.assertEqual(r.json()['factor_counts']['feedback'], 2)
+        self.assertEqual(r.json()['candidates'][0]['category'], r.json()['entity']['best_guess']['category'])
+        self.assertLessEqual(len(r.json()['candidates']), 3)
 
     def test_areas_are_geodesic_and_entities_take_the_median(self):
         self._ingest('s1', self.t1)

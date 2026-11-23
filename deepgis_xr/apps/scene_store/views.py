@@ -182,15 +182,19 @@ def entity_detail_view(request, entity_id):
         return _error('no such entity', 404)
     snaps = BeliefSnapshot.objects.filter(entity=e).order_by('at')
     dets = Detection.objects.filter(association__entity=e).select_related('capture').order_by('observed_at')
+    tax = fusion.taxonomy_by_name(e.taxonomy)
+    ranked = sorted(enumerate(e.posterior), key=lambda kv: -kv[1])[:3]
     factors = Factor.objects.filter(entity_ids__contains=[e.id]).values('kind').annotate(n=Count('id'))
     return JsonResponse({
         'status': 'success',
         'entity': fusion.entity_to_dict(e),
+        'candidates': [{'category': tax.name_of(k), 'p': round(float(v), 4)} for k, v in ranked],
         'history': [{'at': s.at.isoformat(), 'category': s.category, 'p_exists': round(s.p_exists, 4),
                      'score': round(max(s.posterior), 4), 'cause': s.cause} for s in snaps],
         'detections': [{'at': d.observed_at.isoformat(), 'session_id': d.capture.session_id,
                         'category': d.category, 'score': round(d.score, 4), 'sources': d.sources,
-                        'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None} for d in dets],
+                        'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None,
+                        'gsd_m': round(d.capture.gsd_m, 3) if d.capture.gsd_m else None} for d in dets],
         'feedback': [{'kind': f.kind, 'category': f.category, 'at': f.created_at.isoformat(),
                       'superseded': f.superseded_at is not None}
                      for f in Feedback.objects.filter(entity=e).order_by('created_at')],
