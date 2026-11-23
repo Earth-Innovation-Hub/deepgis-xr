@@ -131,6 +131,14 @@ def _posterior_vector(raw, tax):
     return vec if np.isfinite(vec).all() and vec.sum() > 0 else None
 
 
+def label_of(tax, post):
+    """The category to show: the argmax, or unknown when no category is likely enough."""
+    post = np.asarray(post, dtype=float)
+    if post.max() < priors.LOW_CONFIDENCE and 'unknown' in tax.categories:
+        return 'unknown'
+    return tax.name_of(int(np.argmax(post)))
+
+
 def _log_probs(p, eps=1e-6):
     p = np.clip(np.asarray(p, dtype=float), eps, None)
     return np.log(p / p.sum())
@@ -315,7 +323,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
         by_id = {e.id: e for e in cands}
         new_dis = [di for di in live if di not in det_entity]
         new_rows = Entity.objects.bulk_create([
-            Entity(taxonomy=tax.name, category=det_rows[di].category, posterior=det_rows[di].posterior,
+            Entity(taxonomy=tax.name, category=label_of(tax, det_rows[di].posterior),
+                   posterior=det_rows[di].posterior,
                    score=det_rows[di].score, p_exists=0.5, geom=det_rows[di].geom,
                    first_seen=at, last_seen=at, n_hits=1, sources=det_rows[di].sources)
             for di in new_dis
@@ -503,7 +512,7 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
         p_exists = inference.existence_marginal(
             sorted(existence[eid].items()), at, lambda dt: priors.persistence_table(dt, half_life))
         beliefs[eid] = {
-            'posterior': post, 'category': tax.name_of(int(np.argmax(post))),
+            'posterior': post, 'category': label_of(tax, post),
             'score': float(post.max()), 'p_exists': p_exists,
         }
 
@@ -618,9 +627,11 @@ def restore_entities(entity_ids, *, infer=True):
 def entity_to_dict(e, belief=None):
     b = belief or {}
     post = b.get('posterior', e.posterior)
+    best = int(np.argmax(post))
     return {
         'id': e.id, 'taxonomy': e.taxonomy,
         'category': b.get('category', e.category), 'score': round(float(b.get('score', e.score)), 4),
+        'best_guess': {'category': taxonomy_by_name(e.taxonomy).name_of(best), 'p': round(float(post[best]), 4)},
         'p_exists': round(float(b.get('p_exists', e.p_exists)), 4),
         'posterior': [round(float(p), 4) for p in post],
         'first_seen': e.first_seen.isoformat(), 'last_seen': e.last_seen.isoformat(),

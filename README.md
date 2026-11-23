@@ -234,6 +234,9 @@ Geometry keeps the world model honest about what a camera can see:
 - Every other region gets a `geometry` factor: its ground area against
   each category's plausible range (a 3,600 m² "car" is pushed away from
   vehicle), and large compact "roads" are penalised as blobs.
+- An entity whose most likely category is under 25% is shown as *unknown*;
+  the API's `best_guess` and the panel keep the top category and its
+  probability (most unlabelled OSM and plain SAM regions sit at 10-20%).
 - `python manage.py retire_entities` takes entities out of the world
   model by id or by rule (category, area, compactness, first-seen dates,
   source) without deleting them; `--restore` undoes it. Without `--apply`

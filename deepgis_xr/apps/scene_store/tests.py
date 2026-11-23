@@ -278,6 +278,17 @@ class FusionTests(TransactionTestCase):
                                               superseded_at__isnull=True).exists())
         self.assertGreater(Factor.objects.filter(superseded_at__isnull=True).count(), live)
 
+    def test_low_confidence_entity_is_unknown_with_a_best_guess(self):
+        sg = _scene(self.t1)
+        sg['nodes'][2] = _node('v', 'vehicle', _square(10, 2, 1.5), p=1 / URBAN_V1.n)  # uniform: no label
+        fusion.ingest_scene_graph(sg, session_id='s1', taxonomy_name='urban_v1')
+        car = Entity.objects.get(associations__detection__node_id='v')
+        self.assertLess(car.score, priors.LOW_CONFIDENCE)
+        self.assertEqual(car.category, 'unknown')
+        self.assertEqual(fusion.entity_to_dict(car)['best_guess']['category'], 'vehicle')
+        self.assertEqual(self._entity('building').category, 'building')
+        self.assertEqual(fusion.label_of(URBAN_V1, np.full(URBAN_V1.n, 1 / URBAN_V1.n)), 'unknown')
+
     def test_captures_api(self):
         self._ingest('s1', self.t1)
         self._ingest('s2', self.t2)

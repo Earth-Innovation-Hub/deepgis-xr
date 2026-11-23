@@ -4377,7 +4377,10 @@ class WorldSamplerUI {
         const sources = (e.sources || []).join(', ') || 'none';
         text.innerHTML = '';
         const title = document.createElement('strong');
-        title.textContent = `${name(e.category)} (${Math.round(e.score * 100)}% sure)`;
+        const guess = e.best_guess;
+        title.textContent = guess && guess.category !== e.category
+            ? `${name(e.category)} (best guess: ${name(guess.category)}, ${Math.round(guess.p * 100)}%)`
+            : `${name(e.category)} (${Math.round(e.score * 100)}% sure)`;
         text.appendChild(title);
         const detail = document.createElement('div');
         detail.style.color = '#94a3b8';

@@ -14,6 +14,11 @@ ASSOC_CENTROID_M = 2.0      # small objects (cars) whose masks jitter between ca
 MISS_COVERAGE = 0.9         # footprint must cover this much of an entity to count a miss
 MISS_MIN_PIXELS = 64        # an entity smaller than this many ground pixels could not have been seen
 
+# Below this top posterior an entity is labelled unknown (its posterior keeps the best guess).
+# Stored beliefs cluster at 0.10-0.20 (unlabelled OSM and plain SAM regions, near uniform over
+# 10-14 categories), with a valley at 0.25-0.30 before the next mode.
+LOW_CONFIDENCE = 0.25
+
 # Pose uncertainty of a capture taken from the 3D globe (1 sigma). The virtual camera is exact
 # relative to the imagery; the error is the imagery's own georegistration.
 VIRTUAL_CAMERA_SIGMA_H_M = 2.5

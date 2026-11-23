@@ -27,7 +27,7 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
-from . import fusion
+from . import fusion, priors
 from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, UserPreference
 
 MAX_BBOX_DEG = 0.05
@@ -293,11 +293,13 @@ def capture_detail_view(request, session_id):
         if assoc and assoc.entity.retired_at:
             n_retired += 1
             continue
-        cats[d.category] = cats.get(d.category, 0) + 1
+        category = 'unknown' if d.score < priors.LOW_CONFIDENCE else d.category
+        cats[category] = cats.get(category, 0) + 1
         ring = _lonlat_ring(d.geom)
         if ring is None:
             continue
-        out.append({'id': d.id, 'node_id': d.node_id, 'category': d.category, 'score': round(d.score, 4),
+        out.append({'id': d.id, 'node_id': d.node_id, 'category': category, 'best_guess': d.category,
+                    'score': round(d.score, 4),
                     'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None,
                     'entity_id': assoc.entity_id if assoc else None, 'geo_polygon': ring})
     # A pair's link is stored once, by the capture that first saw both; list every link among these entities
