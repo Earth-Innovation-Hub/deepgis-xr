@@ -2018,6 +2018,7 @@
     }
 
     const PILOT_DESCRIBE_URL = '/label/api/pilot/describe/';
+    const PILOT_ASSESS_URL = '/label/api/pilot/assess/';
     const CAPTURE_MAX_PX = 1280;
 
     // One frame of the globe as a JPEG data URL. It is read in postRender, while the
@@ -3261,6 +3262,130 @@
                 + `${d.gone.n} gone (${kinds(d.gone) || 'none'}); ${d.n_captures} captures.`);
         },
 
+        // One trait (area, confidence, p_exists) of the objects around the point in view: a SAM 3
+        // scene graph of the spot (one from the last 30 days, else a top-down 2D capture from
+        // 1,700 ft), each category's statistics and histogram with the lab model's assessment,
+        // and scene_store's Gaussian-process map of the trait, faded where the data say little.
+        async trait_map(a, id, out) {
+            const ui = worldUI();
+            const centre = ui.viewCentre();
+            if (!centre) throw new Error('Point the camera at the ground to map what is there');
+            const [lon, lat] = centre;
+            const trait = a.trait || 'area';
+            const what = a.category ? nameOf(a.category) : 'objects';
+            const traitName = { area: 'sizes', confidence: 'detection confidence', p_exists: 'chance of still being there' }[trait];
+            const fmt = trait === 'area' ? ui.constructor.formatArea : v => Number(v).toFixed(2);
+            const d = 0.0002;
+            const stored = await worldGet('captures', { bbox: [lon - d, lat - d, lon + d, lat + d].map(v => v.toFixed(6)).join(','),
+                taxonomy: 'urban_v1', limit: '20' });
+            check(id);
+            const covers = (ring) => {
+                let inside = false;
+                for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+                    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+                    if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) inside = !inside;
+                }
+                return inside;
+            };
+            const since = Date.now() - 30 * 86400e3;
+            const recent = stored.captures.find(c => (c.sources || []).includes('sam3') && Date.parse(c.captured_at) >= since
+                && Array.isArray(c.footprint) && covers(c.footprint));
+            let footprint;
+            if (recent) {
+                footprint = recent.footprint;
+                out.msg('step', `Using the SAM 3 scene graph of this spot from ${new Date(recent.captured_at).toLocaleString([],
+                    { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                    + `${recent.camera_alt_m ? ` (${Math.round(recent.camera_alt_m * 3.28084).toLocaleString()} ft)` : ''}`);
+            } else {
+                const scene = getViewer().scene;
+                const settle = Date.now() + 8000;
+                await until(() => scene.globe.tilesLoaded || Date.now() > settle, id);
+                const working = out.msg('step', 'No SAM 3 scene graph of this spot from the last 30 days: building one from a '
+                    + 'top-down 2D view at 1,700 ft (about 30 s)...');
+                const label = working.textContent;
+                let built;
+                try {
+                    built = await ui.buildSceneGraph({ kernels: ['sam3'], prompts: ui.constructor.SCENE_GRAPH_PROMPTS,
+                        height: 518.16, onStatus: (m) => { working.textContent = `${label} ${m}`; } });
+                } finally {
+                    working.remove();
+                }
+                check(id);
+                if (built.degraded.length) throw new Error('SAM 3 is not available right now, so no scene graph could be built');
+                if (!built.worldUpdated) throw new Error('The scene graph was built but the world model did not take it');
+                out.msg('step', `Scene graph built: ${built.nNodes} objects (${built.summary})`);
+                footprint = built.corners;
+            }
+            // The capture's box, at most 300 m each way from the point in view
+            const dy = 300 / 111320, dx = dy / Math.cos(lat * Math.PI / 180);
+            const lons = footprint.map(p => p[0]), lats = footprint.map(p => p[1]);
+            const bbox = [Math.max(Math.min(...lons), lon - dx), Math.max(Math.min(...lats), lat - dy),
+                Math.min(Math.max(...lons), lon + dx), Math.min(Math.max(...lats), lat + dy)];
+            const fitting = out.msg('step', `Measuring every category and fitting a Gaussian process to ${what} ${traitName} on the GPU...`);
+            let r;
+            try {
+                r = await worldGet('trait_map', { bbox: bbox.map(v => v.toFixed(6)).join(','), trait,
+                    ...(a.category ? { category: a.category } : {}) });
+            } finally {
+                fitting.remove();
+            }
+            check(id);
+            const cats = r.categories.filter(c => c.stats.n);
+            if (!cats.length) {
+                out.msg('ai', 'The world model holds no objects here yet.');
+                out.noted?.('trait_map: the world model holds no objects here.');
+                return;
+            }
+            const total = cats.reduce((n, c) => n + c.stats.n, 0);
+            out.msg('ai', `${trait === 'area' ? 'Sizes' : traitName[0].toUpperCase() + traitName.slice(1)} of the ${total} objects `
+                + 'the world model holds in the scene graph\'s area, by category:');
+            const lines = cats.map(({ category, stats: s }) => `${nameOf(category)}: ${s.n}, mean ${fmt(s.mean)}, sd ${fmt(s.sd)}`
+                + `${s.cv != null ? ` (cv ${s.cv.toFixed(2)})` : ''}, median ${fmt(s.median)}, middle 80% ${fmt(s.p10)} to ${fmt(s.p90)}`
+                + (s.log10_sd != null ? `; geometric mean ${fmt(s.geo_mean)}, typical spread ×${(10 ** s.log10_sd).toFixed(2)}` : ''));
+            cats.forEach((c, i) => {
+                if (!out.histogram || c.stats.n < 3) {
+                    out.msg('step', lines[i]);
+                    return;
+                }
+                const chart = out.histogram(c.hist, nameOf(c.category), lines[i]);
+                const s = c.stats, moments = document.createElement('div');
+                moments.style.color = '#cbd5e1';
+                moments.textContent = `Mean ${fmt(s.mean)}, sd ${fmt(s.sd)}${s.cv != null ? ` (cv ${s.cv.toFixed(2)})` : ''}`
+                    + (s.log10_sd != null ? `; geometric mean ${fmt(s.geo_mean)}, typical spread ×${(10 ** s.log10_sd).toFixed(2)}` : '');
+                chart?.appendChild(moments);
+            });
+            const g = r.gp;
+            let mapLine = `No map: ${r.gp_skipped}.`;
+            if (g) {
+                const [lo, hi] = g.map_range;
+                ui.showTraitMap(r.grid, { lo, hi, log: r.log, name: `${what} ${traitName}` });
+                out.legend?.({ title: `Predicted ${trait === 'area' ? 'median size' : traitName} of ${what}`,
+                    colors: ui.constructor.TRAIT_MAP_COLORS, lo: fmt(lo), hi: fmt(hi) });
+                mapLine = `Gaussian process on ${g.n} ${what} (${g.device}, ${(g.fit_ms / 1000).toFixed(1)} s): `
+                    + `${trait === 'area' ? 'sizes' : 'values'} stay alike over about ${Math.round(g.lengthscale_m)} m, and `
+                    + `${pct(g.noise_share)} of the variation is from one object to the next rather than across space. `
+                    + 'Colour is the prediction; it fades where the data say little.';
+            }
+            out.msg('step', mapLine);
+            const assessing = out.msg('step', 'Asking the lab model to assess the means and spreads...');
+            try {
+                const resp = await fetch(PILOT_ASSESS_URL, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken() },
+                    body: JSON.stringify({ trait, category: a.category || '', categories: cats.map(c => ({ category: c.category, stats: c.stats })),
+                        gp: g }),
+                });
+                const data = await resp.json().catch(() => ({}));
+                check(id);
+                if (resp.ok && data.assessment) out.msg('ai', data.assessment);
+                else out.msg('step', `No assessment: ${data.error || `HTTP ${resp.status}`}`);
+            } finally {
+                assessing.remove();
+            }
+            out.noted?.(`trait_map of ${what} ${traitName} around the point in view: ${lines.join('; ')}. ${mapLine}`);
+        },
+
         // Superusers: take the selected world entity out of the world model after the user
         // confirms here; it is kept, and undo (or the Undo button) restores it
         async retire_entity(a, id, out) {
@@ -3457,7 +3582,7 @@
         plansRunning++;
         try {
             // Describing the view as it is needs no 3D switch
-            if (actions.some(a => !['stop', 'describe_view', 'hide_layer', 'find_objects', ...WORLD_TYPES].includes(a.type))) await ensure3D(id, out);
+            if (actions.some(a => !['stop', 'describe_view', 'hide_layer', 'find_objects', 'trait_map', ...WORLD_TYPES].includes(a.type))) await ensure3D(id, out);
             for (const [i, a] of actions.entries()) {
                 check(id);
                 // Frame the area unless a later step moves the camera anyway or the drone is

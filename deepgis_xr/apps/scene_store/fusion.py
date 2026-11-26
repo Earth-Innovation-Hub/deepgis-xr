@@ -14,8 +14,15 @@ transition that forgets toward 0.5 with the category's half-life. Those
 temporal links are derived from timestamps at inference time rather than
 stored, so late-arriving captures and as-of queries need no rewiring.
 
-``run_local_bp`` is also the time-travel query: with ``at`` in the past it
-uses only factors observed and valid then.
+Evidence is dated in world time: a capture's factors carry the date its
+imagery was acquired when the page reports one, not the moment the view
+was taken. Looking again at the same imagery therefore adds detector
+evidence at the same instant instead of pretending time has passed.
+
+``run_local_bp`` without ``at`` gives each entity's belief as last seen:
+at its own newest evidence, with no decay after it. That is what entities
+cache. With ``at`` it is the time-travel query: only factors observed and
+valid by then, decayed to then (``at`` = now answers "is it still there").
 """
 
 import hashlib
@@ -39,7 +46,7 @@ from shapely.validation import make_valid
 
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import taxonomy_by_name
 
-from . import inference, priors
+from . import detection_model, inference, priors
 from .models import (
     Association, BeliefSnapshot, Capture, Claim, Detection, Entity, Factor, Feedback, KernelRun, Pose, Potential,
 )
@@ -110,10 +117,58 @@ def _metric(shp):
 def _parse_time(value, fallback):
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=dt_timezone.utc)
-    parsed = parse_datetime(value) if isinstance(value, str) else None
+    parsed = None
+    if isinstance(value, str):
+        try:
+            parsed = parse_datetime(value) or datetime.fromisoformat(value.strip())  # also a bare date
+        except ValueError:
+            parsed = None
     if parsed is None:
         return fallback
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt_timezone.utc)
+
+
+IMAGERY_EARLIEST = datetime(1990, 1, 1, tzinfo=dt_timezone.utc)
+IMAGERY_VIEW_SLACK_S = 2 * 86400
+
+
+def imagery_record(raw, viewed_at):
+    """What a capture's pixels showed, from the page's ``viewport.imagery``.
+
+    Returns ``source`` (layer ids joined by '+', e.g. 'bing:Aerial'), ``start`` / ``end``
+    (the acquisition window, or None), ``observed_at`` (its middle, or None) and ``detail``
+    (the cleaned record that is stored). Dates that are missing, reversed, before 1990 or
+    after the view are dropped: the evidence is then dated when the view was taken.
+    """
+    out = {'source': '', 'start': None, 'end': None, 'observed_at': None, 'detail': {}}
+    if not isinstance(raw, dict):
+        return out
+    layers = []
+    for layer in (raw.get('layers') or [])[:8]:
+        if isinstance(layer, dict) and layer.get('id'):
+            row = {'id': str(layer['id'])[:60]}
+            if isinstance(layer.get('alpha'), (int, float)):
+                row['alpha'] = round(float(layer['alpha']), 2)
+            layers.append(row)
+    out['source'] = str(raw.get('source') or '+'.join(row['id'] for row in layers))[:120]
+    detail = {'layers': layers}
+    dates = raw.get('dates') if isinstance(raw.get('dates'), dict) else {}
+    start, end = _parse_time(dates.get('start'), None), _parse_time(dates.get('end'), None)
+    for key in ('zoom', 'points'):
+        if isinstance(dates.get(key), (int, float)):
+            detail[key] = int(dates[key])
+    for key in ('method', 'looked_up_at'):
+        if dates.get(key):
+            detail[key] = str(dates[key])[:40]
+    if 'uniform' in dates:
+        detail['uniform'] = bool(dates['uniform'])
+    if start and end and IMAGERY_EARLIEST <= start <= end and \
+            (end - viewed_at).total_seconds() <= IMAGERY_VIEW_SLACK_S:
+        out.update(start=start, end=end, observed_at=start + (end - start) / 2)
+    elif start or end:
+        detail['rejected_dates'] = [str(dates.get('start'))[:40], str(dates.get('end'))[:40]]
+    out['detail'] = detail
+    return out
 
 
 def _posterior_vector(raw, tax):
@@ -170,6 +225,17 @@ WHERE e.id = latest.entity_id
 """
 
 
+# Sighting count and world-time span from the detections that are still evidence.
+ENTITY_SPAN_SQL = """
+UPDATE sg_entity e SET n_hits = s.n, first_seen = s.first, last_seen = s.last
+FROM (SELECT a.entity_id, count(*) AS n, min(d.observed_at) AS first, max(d.observed_at) AS last
+      FROM sg_association a JOIN sg_detection d ON d.id = a.detection_id
+      WHERE a.entity_id = ANY(%s) AND d.gate = ''
+      GROUP BY a.entity_id) s
+WHERE e.id = s.entity_id
+"""
+
+
 def _update_entities(entities, fields):
     """One ``UPDATE ... FROM (VALUES ...)``; Django's bulk_update builds a CASE per row and field."""
     if not entities:
@@ -214,7 +280,12 @@ def _shared_potential(name, table):
 
 def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_path='',
                        kernel_meta=None, captured_at=None, infer=True):
-    """Store one SceneGraph dict and fold it into the world model."""
+    """Store one SceneGraph dict and fold it into the world model.
+
+    ``at`` is when the view was taken; ``obs`` is when the ground looked like that (the
+    imagery's acquisition date when ``capture_metadata['imagery']`` gives one) and dates
+    every detection and factor.
+    """
     t0 = time.perf_counter()
     if Capture.objects.filter(session_id=session_id).exists():
         return {'status': 'exists', 'session_id': session_id}
@@ -222,6 +293,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
     viewport = sg.get('viewport') or {}
     meta = viewport.get('capture_metadata') or {}
     at = _parse_time(captured_at or meta.get('captured_at'), timezone.now())
+    imagery = imagery_record(meta.get('imagery'), at)
+    obs = imagery['observed_at'] or at
 
     corners = meta.get('world_corners')
     footprint = _shape(corners) if corners else None
@@ -244,7 +317,9 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
     gsd = math.sqrt(footprint_m2 / (image_size[0] * image_size[1])) \
         if image_size and len(image_size) == 2 and image_size[0] > 0 and image_size[1] > 0 else None
     shape = [_metric(shp) for _, shp, _ in dets]
-    gates = ['frame' if footprint_m2 > 0 and area > priors.GATE_FOOTPRINT_FRAC * footprint_m2 else ''
+    min_fragment_m2 = priors.FRAGMENT_MIN_PIXELS * gsd ** 2 if gsd else 0.0
+    gates = ['frame' if footprint_m2 > 0 and area > priors.GATE_FOOTPRINT_FRAC * footprint_m2
+             else 'fragment' if area < min_fragment_m2 else ''
              for area, _, _ in shape]
     live = [di for di in range(len(dets)) if not gates[di]]
 
@@ -260,6 +335,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             camera_alt_m=cam.get('alt'), camera_pose=cam, image_size=image_size, gsd_m=gsd,
             sources=sources, artifact_path=artifact_path or '',
             summary={'per_kernel_claim_counts': fm.get('per_kernel_claim_counts') or {}},
+            imagery_source=imagery['source'], imagery_start=imagery['start'], imagery_end=imagery['end'],
+            imagery=imagery['detail'], observed_at=imagery['observed_at'],
         )
         if cap.camera is not None:
             Pose.objects.create(
@@ -276,7 +353,7 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
         ])
 
         det_rows = Detection.objects.bulk_create([
-            Detection(capture=cap, node_id=str(node.get('id') or ''), observed_at=at, geom=_geos(shp),
+            Detection(capture=cap, node_id=str(node.get('id') or ''), observed_at=obs, geom=_geos(shp),
                       category=tax.name_of(int(np.argmax(post))), posterior=post.tolist(),
                       score=float(post.max()), sources=list(node.get('sources') or []), gate=gate)
             for (node, shp, post), gate in zip(dets, gates)
@@ -326,7 +403,7 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             Entity(taxonomy=tax.name, category=label_of(tax, det_rows[di].posterior),
                    posterior=det_rows[di].posterior,
                    score=det_rows[di].score, p_exists=0.5, geom=det_rows[di].geom,
-                   first_seen=at, last_seen=at, n_hits=1, sources=det_rows[di].sources)
+                   first_seen=obs, last_seen=obs, n_hits=1, sources=det_rows[di].sources)
             for di in new_dis
         ])
         for di, e in zip(new_dis, new_rows):
@@ -338,26 +415,27 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             row, post = det_rows[di], dets[di][2]
             e = by_id[eid]
             assocs.append(Association(entity_id=eid, detection=row, iou=iou, method=method))
-            factors.append(_new_factor('perceptual', [eid], _log_probs(post), at, variables=[cvar(eid)],
+            factors.append(_new_factor('perceptual', [eid], _log_probs(post), obs, variables=[cvar(eid)],
                                        capture=cap, detection=row,
                                        metadata={'score': row.score, 'sources': row.sources}))
             area, _, compact = shape[di]
             geo = priors.geometry_table(tax, area, compact)
             if geo is not None:
-                factors.append(_new_factor('geometry', [eid], geo, at, variables=[cvar(eid)],
+                factors.append(_new_factor('geometry', [eid], geo, obs, variables=[cvar(eid)],
                                            capture=cap, detection=row,
                                            metadata={'area_m2': round(area, 2), 'compactness': round(compact, 3)}))
-            factors.append(_new_factor('hit', [eid], priors.HIT_TABLE, at, variables=[xvar(eid)],
+            factors.append(_new_factor('hit', [eid], priors.HIT_TABLE, obs, variables=[xvar(eid)],
                                        decays=False, capture=cap, detection=row))
             if method != 'new':
                 e.n_hits += 1
-                if at >= e.last_seen:
-                    e.last_seen, e.geom = at, row.geom
-                e.first_seen = min(e.first_seen, at)
+                if obs >= e.last_seen:
+                    e.last_seen, e.geom = obs, row.geom
+                e.first_seen = min(e.first_seen, obs)
                 e.sources = sorted(set(e.sources) | set(row.sources))
 
         # Misses: covered by this footprint, previously seen by a kernel that ran here, not matched
-        # now, and large enough at this capture's resolution to have been seen.
+        # now, and large enough at this capture's resolution to have been seen. How much a miss
+        # weighs is the fitted chance that this look would have found the entity (detection_model).
         min_miss_m2 = priors.MISS_MIN_PIXELS * gsd ** 2 if gsd else 0.0
         missed = []
         for e in cands:
@@ -368,10 +446,17 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                 continue
             if (e.area_m2 if e.area_m2 is not None else _metric(es)[0]) < min_miss_m2:
                 continue
-            factors.append(_new_factor('miss', [e.id], priors.MISS_TABLE, at, variables=[xvar(e.id)],
-                                       decays=False, capture=cap))
-            e.n_misses += 1
             missed.append(e.id)
+        model = detection_model.active(tax.name) if missed else None
+        first_gsd = detection_model.first_gsd(missed) if model else {}
+        for eid in missed:
+            e = by_id[eid]
+            table, why = detection_model.miss_evidence(
+                model, area_m2=e.area_m2 if e.area_m2 is not None else _metric(cand_shp[eid])[0],
+                gsd_m=gsd, first_gsd_m=first_gsd.get(eid), category=e.category)
+            factors.append(_new_factor('miss', [eid], table, obs, variables=[xvar(eid)],
+                                       decays=False, capture=cap, metadata=why))
+            e.n_misses += 1
 
         # Context (adjacency) and containment between this capture's entities, once per pair.
         node_entity = {str(dets[di][0].get('id')): det_entity[di][0] for di in det_entity}
@@ -395,7 +480,7 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                 continue
             have.add(key)
             degree[a], degree[b] = degree.get(a, 0) + 1, degree.get(b, 0) + 1
-            factors.append(_new_factor('context', key[1], ctx, at, variables=[cvar(i) for i in key[1]],
+            factors.append(_new_factor('context', key[1], ctx, obs, variables=[cvar(i) for i in key[1]],
                                        decays=False, capture=cap))
         det_tree = STRtree([shp for _, shp, _ in dets]) if dets else None
         for pi in live:
@@ -412,7 +497,7 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                 if parent == child or key in have:
                     continue
                 have.add(key)
-                factors.append(_new_factor('contains', key[1], inside, at,
+                factors.append(_new_factor('contains', key[1], inside, obs,
                                            variables=[cvar(parent), cvar(child)], decays=False, capture=cap))
 
         Association.objects.bulk_create(assocs)
@@ -427,7 +512,10 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
 
     summary = {
         'status': 'ok', 'capture_id': cap.id, 'n_detections': len(det_rows),
-        'n_gated': len(det_rows) - len(live), 'gsd_m': round(gsd, 3) if gsd else None,
+        'n_gated': len(det_rows) - len(live), 'n_fragments': gates.count('fragment'),
+        'gsd_m': round(gsd, 3) if gsd else None,
+        'observed_at': obs.isoformat(), 'imagery_source': imagery['source'] or None,
+        'imagery_dated': imagery['observed_at'] is not None,
         'n_new_entities': len(new_rows), 'n_matched': len(live) - len(new_rows),
         'n_missed': len(missed), 'n_factors': len(factors),
         'elapsed_ms': int((time.perf_counter() - t0) * 1000), 'bp': bp,
@@ -440,9 +528,13 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
 # Inference
 # ---------------------------------------------------------------------------
 
-def _active_factors(entity_ids, at):
+def _active_factors(entity_ids, at, known=None):
+    """Factors about the world up to ``at`` (world time) that the store stands by at ``known``
+    (record time, default now). The two clocks differ: evidence imaged in 2023 can be recorded,
+    and later withdrawn, in 2026."""
+    known = known or timezone.now()
     return Factor.objects.filter(
-        Q(superseded_at__isnull=True) | Q(superseded_at__gt=at),
+        Q(superseded_at__isnull=True) | Q(superseded_at__gt=known),
         entity_ids__overlap=list(entity_ids), valid__contains=at, observed_at__lte=at,
     )
 
@@ -452,7 +544,13 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
     """Inference over ``entity_ids`` with every factor touching them.
 
     Category: loopy BP over unary + pairwise factors. Existence: exact
-    forward filter along each entity's chain, ending at ``at``.
+    forward filter along each entity's chain.
+
+    Without ``at`` each entity's belief is as last seen: its category evidence is aged to
+    its newest category evidence and its existence chain ends at its newest existence
+    evidence, so nothing decays after the last look. Field readings count in full but are not
+    a look: they do not move that time. With ``at`` (world time) only evidence up to then
+    counts and everything is decayed to then.
 
     Neighbours reached only through a pairwise factor are boundary
     variables: their prior is their stored belief and nothing else.
@@ -462,8 +560,19 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
     ids = set(int(i) for i in entity_ids)
     if not ids:
         return {'n_entities': 0}
-    at = at or timezone.now()
-    factors = list(_active_factors(ids, at))
+    now = timezone.now()
+    last_seen = at is None
+    factors = list(_active_factors(ids, at or now, known=now))
+    newest_c, newest_x = {}, {}
+    if last_seen:
+        for f in factors:
+            # A field reading answers one yes/no question about the surface. It is not a new look
+            # at what the object is, so it does not make the imagery's answer any older.
+            if len(f.entity_ids) == 1 and f.kind != 'field':
+                newest = newest_x if f.variables[0].startswith('x') else newest_c
+                eid = f.entity_ids[0]
+                if eid not in newest or f.observed_at > newest[eid]:
+                    newest[eid] = f.observed_at
     all_ids = ids | {i for f in factors for i in f.entity_ids}
     ents = {e.id: e for e in Entity.objects.filter(id__in=all_ids)}
     if not ents:
@@ -490,7 +599,8 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
                 by_time[f.observed_at] = by_time.get(f.observed_at, 0.0) + table
             continue
         if f.decays:
-            age_h = (at - f.observed_at).total_seconds() / 3600.0
+            ref = at or (newest_c.get(f.entity_ids[0], now) if len(f.entity_ids) == 1 else now)
+            age_h = (ref - f.observed_at).total_seconds() / 3600.0
             table = table * priors.decay_weight(age_h, priors.PERCEPTUAL_HALF_LIFE_H)
         if len(f.entity_ids) == 1:
             unary[index[f.entity_ids[0]]] += table
@@ -510,7 +620,8 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
         post = post_all[index[eid]]
         half_life = priors.existence_half_life_h(tax.name_of(int(np.argmax(post))))
         p_exists = inference.existence_marginal(
-            sorted(existence[eid].items()), at, lambda dt: priors.persistence_table(dt, half_life))
+            sorted(existence[eid].items()), at or newest_x.get(eid, now),
+            lambda dt: priors.persistence_table(dt, half_life))
         beliefs[eid] = {
             'posterior': post, 'category': label_of(tax, post),
             'score': float(post.max()), 'p_exists': p_exists,
@@ -536,7 +647,7 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
         e.score, e.p_exists = b['score'], b['p_exists']
         updated.append(e)
         if moved or cause == 'feedback':
-            snaps.append(BeliefSnapshot(entity=e, at=at, category=e.category, posterior=e.posterior,
+            snaps.append(BeliefSnapshot(entity=e, at=now, category=e.category, posterior=e.posterior,
                                         p_exists=e.p_exists, cause=cause, capture=capture, feedback=feedback))
     _update_entities(updated, ['posterior', 'category', 'score', 'p_exists'])
     BeliefSnapshot.objects.bulk_create(snaps)
@@ -548,7 +659,13 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
 # Feedback, queries
 # ---------------------------------------------------------------------------
 
-def apply_feedback(entity_id, kind, *, category='', user_id=None, note=''):
+def apply_feedback(entity_id, kind, *, category='', user_id=None, note='', observed_at=None):
+    """A person's correction, as evidence dated ``observed_at`` in world time.
+
+    The default is the entity's ``last_seen``: someone judging a label on the map is looking
+    at the imagery the entity was last seen in, and says nothing about the ground since.
+    Pass the time of the look for a correction made on the ground or on newer imagery.
+    """
     entity = Entity.objects.get(id=entity_id)
     tax = taxonomy_by_name(entity.taxonomy)
     if kind not in ('confirm', 'relabel', 'reject'):
@@ -556,19 +673,20 @@ def apply_feedback(entity_id, kind, *, category='', user_id=None, note=''):
     if kind == 'relabel' and category not in tax.categories:
         raise ValueError(f'{category!r} is not a {tax.name} category')
     now = timezone.now()
+    seen = min(observed_at or entity.last_seen, now)
     with transaction.atomic(using=DB):
         old = Feedback.objects.filter(entity=entity, user_id=user_id, superseded_at__isnull=True)
         Factor.objects.filter(feedback__in=old, superseded_at__isnull=True).update(superseded_at=now)
         old.update(superseded_at=now)
         fb = Feedback.objects.create(entity=entity, user_id=user_id, kind=kind,
                                      category=category if kind == 'relabel' else entity.category, note=note)
-        rows = [_new_factor('feedback', [entity.id], priors.feedback_exists_table(kind != 'reject'), now,
+        rows = [_new_factor('feedback', [entity.id], priors.feedback_exists_table(kind != 'reject'), seen,
                             variables=[xvar(entity.id)], decays=False, feedback=fb)]
         if kind != 'reject':
-            rows.append(_new_factor('feedback', [entity.id], priors.feedback_category_table(tax, fb.category), now,
+            rows.append(_new_factor('feedback', [entity.id], priors.feedback_category_table(tax, fb.category), seen,
                                     variables=[cvar(entity.id)], decays=False, feedback=fb))
         Factor.objects.bulk_create(rows)
-        bp = run_local_bp([entity.id], at=now, cause='feedback', feedback=fb)
+        bp = run_local_bp([entity.id], cause='feedback', feedback=fb)
     entity.refresh_from_db()
     return fb, entity, bp
 
@@ -693,22 +811,60 @@ def world_summary(bbox, *, taxonomy=None, limit=20000):
     }
 
 
-def world_changes(bbox, since, until=None, *, taxonomy=None, limit=1000):
-    """Entities first seen in [since, until), and entities missed then that are now believed gone.
+FIRST_VIEW_SQL = """
+SELECT a.entity_id FROM sg_association a
+  JOIN sg_detection d ON d.id = a.detection_id
+  JOIN sg_capture c ON c.id = d.capture_id
+ WHERE a.entity_id = ANY(%s) AND d.gate = ''
+ GROUP BY a.entity_id HAVING min(c.captured_at) >= %s AND min(c.captured_at) < %s
+"""
+
+
+def imagery_dates(captures):
+    """The distinct imagery a set of captures showed: [{source, start, end, n_captures}], dated first."""
+    seen = {}
+    for source, start, end in captures.values_list('imagery_source', 'imagery_start', 'imagery_end'):
+        key = (source or None, start, end)
+        seen[key] = seen.get(key, 0) + 1
+    rows = [{'source': s, 'start': a.isoformat() if a else None, 'end': b.isoformat() if b else None,
+             'n_captures': n} for (s, a, b), n in seen.items()]
+    return sorted(rows, key=lambda r: (r['start'] is None, r['start'] or '', r['source'] or ''))
+
+
+def world_changes(bbox, since, until=None, *, taxonomy=None, limit=1000, basis='imagery'):
+    """Entities first seen in [since, until), and entities missed then that are believed gone.
+
+    ``basis='imagery'`` reads the window in world time, the date the ground was imaged, so
+    looking twice at the same imagery is not a change. ``basis='view'`` reads it by when the
+    views were taken, which compares runs of the detector whatever they looked at.
+    ``imagery`` lists what the captures here showed; with fewer than two dated acquisitions
+    nothing can be said about change on the ground, and ``note`` says so.
 
     Misses count only where the camera could have resolved the object (see ``ingest``)."""
+    if basis not in ('imagery', 'view'):
+        raise ValueError("basis must be 'imagery' or 'view'")
     until = until or timezone.now()
     box = Polygon.from_bbox(bbox)
     live = Entity.objects.filter(geom__intersects=box, retired_at__isnull=True)
+    captures = Capture.objects.filter(footprint__intersects=box)
     if taxonomy:
         live = live.filter(taxonomy=taxonomy)
-    appeared = live.filter(first_seen__gte=since, first_seen__lt=until).order_by('-first_seen')
-    missed_ids = {ids[0] for ids in Factor.objects.filter(
-        kind='miss', superseded_at__isnull=True, observed_at__gte=since, observed_at__lt=until,
-        capture__footprint__intersects=box).values_list('entity_ids', flat=True)}
+        captures = captures.filter(taxonomy=taxonomy)
+    misses = Factor.objects.filter(kind='miss', superseded_at__isnull=True, capture__footprint__intersects=box)
+    if basis == 'view':
+        with connections[DB].cursor() as cur:
+            cur.execute(FIRST_VIEW_SQL, [list(live.values_list('id', flat=True)), since, until])
+            appeared = live.filter(id__in=[r[0] for r in cur.fetchall()]).order_by('-first_seen')
+        misses = misses.filter(capture__captured_at__gte=since, capture__captured_at__lt=until)
+        n_captures = captures.filter(captured_at__gte=since, captured_at__lt=until).count()
+    else:
+        appeared = live.filter(first_seen__gte=since, first_seen__lt=until).order_by('-first_seen')
+        misses = misses.filter(observed_at__gte=since, observed_at__lt=until)
+        n_captures = captures.filter(
+            Q(observed_at__gte=since, observed_at__lt=until)
+            | Q(observed_at__isnull=True, captured_at__gte=since, captured_at__lt=until)).count()
+    missed_ids = {ids[0] for ids in misses.values_list('entity_ids', flat=True)}
     gone = live.filter(id__in=missed_ids, p_exists__lt=0.5).order_by('p_exists')
-    n_captures = Capture.objects.filter(footprint__intersects=box, captured_at__gte=since,
-                                        captured_at__lt=until).count()
 
     def pack(qs):
         rows = list(qs[:limit])
@@ -718,8 +874,55 @@ def world_changes(bbox, since, until=None, *, taxonomy=None, limit=1000):
         return {'n': qs.count(), 'by_category': dict(sorted(counts.items(), key=lambda kv: -kv[1])),
                 'entities': [entity_to_dict(e) for e in rows]}
 
-    return {'since': since.isoformat(), 'until': until.isoformat(), 'n_captures': n_captures,
-            'appeared': pack(appeared), 'gone': pack(gone)}
+    imagery = imagery_dates(captures)
+    dated = [r for r in imagery if r['start']]
+    note = None
+    if basis == 'view':
+        note = ('Compared by when the views were taken: differences are between runs of the detector '
+                'and say nothing about the ground unless the imagery changed too.')
+    elif len(dated) == 1 and len(imagery) == 1:
+        note = (f"Every capture here shows the same imagery ({dated[0]['source']}, acquired "
+                f"{dated[0]['start'][:10]} to {dated[0]['end'][:10]}), so nothing here is change on the ground.")
+    elif len(dated) < 2:
+        note = ('Fewer than two dated imagery acquisitions cover this area; captures without an '
+                'imagery date are placed at the time they were viewed.')
+    return {'since': since.isoformat(), 'until': until.isoformat(), 'basis': basis, 'n_captures': n_captures,
+            'imagery': imagery, 'note': note, 'appeared': pack(appeared), 'gone': pack(gone)}
+
+
+def _bits(p):
+    p = np.asarray(p, dtype=float)
+    p = p[p > 0]
+    return float(-(p * np.log2(p)).sum())
+
+
+def review_queue(bbox, *, taxonomy=None, limit=20, scan=20000):
+    """Entities a person's label would tell the store most about, best first.
+
+    The value of a look is the uncertainty it removes: the entropy of the category
+    posterior plus that of existence, in bits. Entities someone has already judged are
+    left out."""
+    qs = Entity.objects.filter(geom__intersects=Polygon.from_bbox(bbox), retired_at__isnull=True)
+    if taxonomy:
+        qs = qs.filter(taxonomy=taxonomy)
+    judged = set(Feedback.objects.filter(superseded_at__isnull=True, entity__in=qs)
+                 .values_list('entity_id', flat=True))
+    scored = []
+    for eid, post, p_exists in qs.values_list('id', 'posterior', 'p_exists')[:scan]:
+        if eid in judged:
+            continue
+        cat = _bits(post)
+        scored.append((cat + _bits([p_exists, 1 - p_exists]), cat, eid))
+    scored.sort(reverse=True)
+    top = scored[:limit]
+    ents = {e.id: e for e in Entity.objects.filter(id__in=[t[2] for t in top])}
+    out = []
+    for value, cat, eid in top:
+        d = entity_to_dict(ents[eid])
+        d['value_bits'] = round(value, 3)
+        d['category_bits'] = round(cat, 3)
+        out.append(d)
+    return {'n_candidates': len(scored), 'n_judged': len(judged), 'entities': out}
 
 
 def nice_bin(span, target=25):

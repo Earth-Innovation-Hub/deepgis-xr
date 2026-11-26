@@ -1,8 +1,15 @@
 """JSON API over the spatiotemporal scene-graph store.
 
     GET  /webclient/sampler/world/entities?bbox=w,s,e,n[&at=ISO][&taxonomy=][&min_p_exists=]
+         Beliefs as last seen (at each entity's newest evidence), or decayed to ``at``.
     GET  /webclient/sampler/world/entities/<id>
-    POST /webclient/sampler/world/feedback      {entity_id, kind: confirm|relabel|reject, category?, note?}
+         One entity: candidates, sightings with their imagery dates, belief history, feedback,
+         and ``now`` (the belief decayed to this moment). Field readings only for signed-in users.
+    POST /webclient/sampler/world/feedback      {entity_id, kind: confirm|relabel|reject, category?, note?,
+                                                 imagery?: the page's current imagery record, seen?: 'in_person'}
+         Dated by the imagery in view when given, the present for 'in_person', else the entity's last sighting.
+    GET  /webclient/sampler/world/review?bbox=w,s,e,n[&taxonomy=][&limit=20]
+         Entities whose label a person could settle with the most information, best first.
     GET  /webclient/sampler/world/preferences
     POST /webclient/sampler/world/preferences   {key: value, ...}
     GET  /webclient/sampler/world/stats[?taxonomy=]
@@ -16,8 +23,10 @@
          One stored scene graph: its detections (with their world entity) and context / contains links.
     GET  /webclient/sampler/world/summary?bbox=w,s,e,n[&taxonomy=]
          Counts per category, confidence bins, and the best guesses behind the unknown entities.
-    GET  /webclient/sampler/world/changes?bbox=w,s,e,n&since=YYYY-MM[-DD][&until=][&taxonomy=]
-         Entities first seen in the window, and those missed in it that are now believed gone.
+    GET  /webclient/sampler/world/changes?bbox=w,s,e,n&since=YYYY-MM[-DD][&until=][&taxonomy=][&basis=imagery|view]
+         Entities first seen in the window, and those missed in it that are believed gone. The window
+         is read by imagery date (default) or by when the views were taken; ``imagery`` lists what
+         the captures showed and ``note`` says when that cannot show change on the ground.
     POST /webclient/sampler/world/retire        {entity_ids: [...], reason}   superusers
     POST /webclient/sampler/world/restore       {entity_ids: [...]}           superusers
 
@@ -36,8 +45,12 @@ from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
-from . import fusion, priors
-from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, Pose, UserPreference
+from django.utils import timezone
+
+from . import fusion, priors, traits
+from .models import (
+    BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose, UserPreference,
+)
 
 MAX_BBOX_DEG = 0.05
 MAX_CAPTURE_BBOX_DEG = 0.5
@@ -129,8 +142,26 @@ def changes_view(request):
         return _error('since (and until, if given) must be YYYY, YYYY-MM or YYYY-MM-DD')
     if until is not None and until <= since:
         return _error('until must be after since')
+    basis = request.GET.get('basis') or 'imagery'
+    if basis not in ('imagery', 'view'):
+        return _error('basis must be imagery or view')
     return JsonResponse({'status': 'success', **fusion.world_changes(
-        bbox, since, until, taxonomy=request.GET.get('taxonomy') or None)})
+        bbox, since, until, taxonomy=request.GET.get('taxonomy') or None, basis=basis)})
+
+
+@require_GET
+def review_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    bbox, err = _bbox(request)
+    if err:
+        return err
+    try:
+        limit = min(max(int(request.GET.get('limit', 20)), 1), 100)
+    except ValueError:
+        return _error('limit must be an integer')
+    return JsonResponse({'status': 'success', **fusion.review_queue(
+        bbox, taxonomy=request.GET.get('taxonomy') or None, limit=limit)})
 
 
 def _superuser_ids(request):
@@ -180,30 +211,65 @@ def entity_detail_view(request, entity_id):
     e = Entity.objects.filter(id=entity_id).first()
     if e is None:
         return _error('no such entity', 404)
-    return JsonResponse({'status': 'success', **entity_detail(e)})
+    return JsonResponse({'status': 'success', **entity_detail(e, include_field=_user_id(request) is not None)})
 
 
-def entity_detail(e):
-    """One entity with its top candidates, belief history, sightings, feedback and factor counts."""
+def _imagery_dict(cap):
+    if not (cap.imagery_source or cap.imagery_start):
+        return None
+    return {'source': cap.imagery_source or None,
+            'start': cap.imagery_start.isoformat() if cap.imagery_start else None,
+            'end': cap.imagery_end.isoformat() if cap.imagery_end else None}
+
+
+def entity_detail(e, include_field=False):
+    """One entity with its top candidates, belief history, sightings, feedback and factor counts.
+
+    ``entity`` holds the belief as last seen; ``now`` is the same belief decayed to this moment.
+    Field readings show where a robot has been, so they are listed only when ``include_field``
+    (the readings themselves need a sign-in); their effect on the belief is always there.
+    """
     snaps = BeliefSnapshot.objects.filter(entity=e).order_by('at')
     dets = Detection.objects.filter(association__entity=e).select_related('capture').order_by('observed_at')
     tax = fusion.taxonomy_by_name(e.taxonomy)
     ranked = sorted(enumerate(e.posterior), key=lambda kv: -kv[1])[:3]
-    factors = Factor.objects.filter(entity_ids__contains=[e.id]).values('kind').annotate(n=Count('id'))
-    return {
+    factors = Factor.objects.filter(entity_ids__contains=[e.id], superseded_at__isnull=True) \
+        .values('kind').annotate(n=Count('id'))
+    counts = {f['kind']: f['n'] for f in factors}
+    out = {
         'entity': fusion.entity_to_dict(e),
         'candidates': [{'category': tax.name_of(k), 'p': round(float(v), 4)} for k, v in ranked],
         'history': [{'at': s.at.isoformat(), 'category': s.category, 'p_exists': round(s.p_exists, 4),
                      'score': round(max(s.posterior), 4), 'cause': s.cause} for s in snaps],
-        'detections': [{'at': d.observed_at.isoformat(), 'session_id': d.capture.session_id,
+        'detections': [{'at': d.observed_at.isoformat(), 'viewed_at': d.capture.captured_at.isoformat(),
+                        'imagery': _imagery_dict(d.capture), 'session_id': d.capture.session_id,
                         'category': d.category, 'score': round(d.score, 4), 'sources': d.sources,
+                        'gate': d.gate or None,
                         'area_m2': round(d.area_m2, 2) if d.area_m2 is not None else None,
                         'gsd_m': round(d.capture.gsd_m, 3) if d.capture.gsd_m else None} for d in dets],
         'feedback': [{'kind': f.kind, 'category': f.category, 'at': f.created_at.isoformat(),
                       'superseded': f.superseded_at is not None}
                      for f in Feedback.objects.filter(entity=e).order_by('created_at')],
-        'factor_counts': {f['kind']: f['n'] for f in factors},
     }
+    if not e.retired_at:
+        now = fusion.run_local_bp([e.id], at=timezone.now(), write=False).get('beliefs', {}).get(e.id)
+        if now:
+            out['now'] = {'category': now['category'], 'score': round(now['score'], 4),
+                          'p_exists': round(now['p_exists'], 4)}
+    if include_field:
+        links = list(FieldLink.objects.filter(entity=e).order_by('observed_at'))
+        usable = [k for k in links if k.usable]
+        out['field'] = {
+            'n_readings': len(links), 'n_usable': len(usable),
+            'n_green': sum(1 for k in usable if k.signal.get('green')),
+            'first': links[0].observed_at.isoformat() if links else None,
+            'last': links[-1].observed_at.isoformat() if links else None,
+            'vehicles': sorted({k.vehicle_id for k in links}),
+        }
+    else:
+        counts.pop('field', None)
+    out['factor_counts'] = counts
+    return out
 
 
 @csrf_exempt
@@ -219,10 +285,15 @@ def feedback_view(request):
         entity_id = int(data['entity_id'])
     except (ValueError, KeyError, TypeError):
         return _error('entity_id is required')
+    # What the person was looking at dates the correction: the imagery in view when the page
+    # sends it, the present for a judgement made on the ground, else the entity's last sighting.
+    now = timezone.now()
+    seen = now if data.get('seen') == 'in_person' else fusion.imagery_record(data.get('imagery'), now)['observed_at']
     try:
         fb, entity, bp = fusion.apply_feedback(entity_id, str(data.get('kind') or ''),
                                                category=str(data.get('category') or ''),
-                                               user_id=user_id, note=str(data.get('note') or '')[:2000])
+                                               user_id=user_id, note=str(data.get('note') or '')[:2000],
+                                               observed_at=seen)
     except Entity.DoesNotExist:
         return _error('no such entity', 404)
     except ValueError as exc:
@@ -272,7 +343,40 @@ def stats_view(request):
                                 .values_list('kind').annotate(n=Count('id')).order_by()),
         'n_feedback': Feedback.objects.filter(superseded_at__isnull=True).count(),
         'source_reliability': fusion.source_reliability(taxonomy) if taxonomy else None,
+        'detection_models': detection_models(),
+        'imagery': fusion.imagery_dates(Capture.objects.filter(taxonomy=taxonomy) if taxonomy
+                                        else Capture.objects.all()),
     })
+
+
+def detection_models():
+    """The fitted chance of finding an entity again that is in use, per taxonomy."""
+    return {m.taxonomy: {'version': m.version, 'fitted_at': m.fitted_at.isoformat(), 'n_looks': m.n_looks,
+                         'coefficients': m.coefficients, 'log_loss': (m.metrics or {}).get('log_loss')}
+            for m in DetectionModel.objects.filter(active=True)}
+
+
+@require_GET
+def trait_map_view(request):
+    """Per-category statistics of one trait in bbox and its Gaussian-process map for one category."""
+    if not fusion.enabled():
+        return _unavailable()
+    bbox, err = _bbox(request)
+    if err:
+        return err
+    q = request.GET
+    trait = q.get('trait', 'area')
+    if trait not in traits.TRAITS:
+        return _error(f'trait must be one of {", ".join(traits.TRAITS)}')
+    category = q.get('category', '').strip()
+    if category and not re.fullmatch(r'[a-z_]{1,40}', category):
+        return _error('category must be a taxonomy category, e.g. house')
+    try:
+        min_p = min(max(float(q.get('min_p_exists', 0.5)), 0.0), 1.0)
+    except ValueError:
+        return _error('min_p_exists must be a number')
+    return JsonResponse({'status': 'success', **traits.trait_map(
+        bbox, trait=trait, category=category, taxonomy=q.get('taxonomy') or 'urban_v1', min_p_exists=min_p)})
 
 
 @require_GET
@@ -343,6 +447,9 @@ def _capture_dict(cap, categories, pose=None):
     return {
         'session_id': cap.session_id,
         'captured_at': cap.captured_at.isoformat(),
+        # when the ground looked like this: the imagery's date when known, else the view time
+        'observed_at': cap.world_time.isoformat(),
+        'imagery': _imagery_dict(cap),
         'taxonomy': cap.taxonomy,
         'sources': cap.sources,
         'n_detections': sum(categories.values()),
@@ -437,7 +544,7 @@ def capture_detail(cap):
     entity_ids = {d['entity_id'] for d in out if d['entity_id']}
     links = [{'kind': kind, 'entities': ids} for kind, ids in
              Factor.objects.filter(entity_ids__overlap=list(entity_ids), kind__in=('context', 'contains'),
-                                   superseded_at__isnull=True, valid__contains=cap.captured_at)
+                                   superseded_at__isnull=True, valid__contains=cap.world_time)
              .values_list('kind', 'entity_ids') if set(ids) <= entity_ids]
     return {'capture': _capture_dict(cap, cats, _poses([cap]).get(cap.id)),
             'n_skipped': len(dets) - len(out) - n_gated - n_retired, 'n_gated': n_gated,

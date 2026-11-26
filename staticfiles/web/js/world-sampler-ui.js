@@ -1525,7 +1525,9 @@ class WorldSamplerUI {
         let pts = [];
         for (const p of rawRing) {
             if (!p || p.length < 2) continue;
-            const q = [Number(p[0]), Number(p[1])];
+            // On a 1e-7 degree grid (about 1 cm). Cesium's rhumb-line length is zero for an edge whose
+            // latitudes differ by less than that without being equal, and rendering then stops.
+            const q = [Math.round(Number(p[0]) * 1e7) / 1e7, Math.round(Number(p[1]) * 1e7) / 1e7];
             if (!Number.isFinite(q[0]) || !Number.isFinite(q[1])) continue;
             if (pts.length && same(pts[pts.length - 1], q)) continue;
             pts.push(q);
@@ -2403,16 +2405,18 @@ class WorldSamplerUI {
     // Scene graphs are built from a top-down 2D capture only: 3D draws coarser
     // imagery over a wider footprint, and a tilted view breaks the footprint.
     // The HUD buttons switch modes because they also apply each mode's tile settings.
-    async captureViewportIn2D() {
+    // height: camera height in metres for the capture (default: the current one).
+    async captureViewportIn2D(height) {
         const scene = this.viewer.scene;
-        if (scene.mode === Cesium.SceneMode.SCENE2D) return this.captureViewportWithoutOverlays();
+        if (scene.mode === Cesium.SceneMode.SCENE2D && !height) return this.captureViewportWithoutOverlays();
         const camera = this.viewer.camera;
         const mode = scene.mode;
+        const was = camera.positionCartographic.clone();
         const view = {
-            destination: Cesium.Cartesian3.clone(camera.positionWC),
+            destination: Cesium.Cartesian3.fromRadians(was.longitude, was.latitude, was.height),
             orientation: { heading: camera.heading, pitch: camera.pitch, roll: camera.roll },
         };
-        const height = camera.positionCartographic.height;
+        height = height || was.height;
         const centre = new Cesium.Cartesian2(scene.canvas.clientWidth / 2, scene.canvas.clientHeight / 2);
         const ray = camera.getPickRay(centre);
         const ground = ray && scene.globe.pick(ray, scene);
@@ -2421,7 +2425,7 @@ class WorldSamplerUI {
             const btn = document.getElementById(id);
             if (btn) btn.click(); else fallback();
         };
-        switchTo('view2D', () => scene.morphTo2D(0));
+        if (mode !== Cesium.SceneMode.SCENE2D) switchTo('view2D', () => scene.morphTo2D(0));
         try {
             if (target) {
                 camera.setView({ destination: Cesium.Cartesian3.fromRadians(target.longitude, target.latitude, height) });
@@ -2430,7 +2434,7 @@ class WorldSamplerUI {
             return await this.captureViewportWithoutOverlays();
         } finally {
             if (mode === Cesium.SceneMode.SCENE3D) switchTo('view3D', () => scene.morphTo3D(0));
-            else scene.morphToColumbusView(0);
+            else if (mode === Cesium.SceneMode.COLUMBUS_VIEW) scene.morphToColumbusView(0);
             camera.setView(view);
             scene.requestRender();
         }
@@ -3759,13 +3763,18 @@ class WorldSamplerUI {
      * are rendered as polygons coloured by argmax category (with posterior
      * score driving opacity), and the strongest edges as lines between them.
      */
-    async buildSceneGraph() {
+    // opts (the AI pilot's trait_map): kernels ['sam3', ...] and prompts instead of the panel's
+    // boxes, height (m) for the 2D capture, onStatus(msg); it then returns
+    // {sessionId, nNodes, summary, corners, degraded} and throws on failure.
+    async buildSceneGraph(opts = {}) {
         const statusDiv = document.getElementById('sceneGraphStatus');
         const statusText = document.getElementById('sceneGraphStatusText');
         const btn = document.getElementById('buildSceneGraphBtn');
-        if (!btn) return;
+        const fromPilot = Array.isArray(opts.kernels);
+        if (!btn && !fromPilot) return;
 
         const setStatus = (msg, color) => {
+            opts.onStatus?.(msg);
             if (statusDiv) statusDiv.style.display = 'block';
             if (statusText) {
                 statusText.textContent = msg;
@@ -3781,25 +3790,27 @@ class WorldSamplerUI {
             { id: 'sgKernelMrRocks',       kind: 'maskrcnn_rocks', analysis: 'maskrcnn_rocks', label: 'Rocks' },
         ];
         const selectedKernels = kernelChecks.filter((k) => {
+            if (fromPilot) return opts.kernels.includes(k.kind);
             const el = document.getElementById(k.id);
             return el && el.checked;
         });
-        const prompts = (document.getElementById('sgPrompts')?.value || '')
+        const prompts = opts.prompts ? [...opts.prompts] : (document.getElementById('sgPrompts')?.value || '')
             .split(',').map((s) => s.trim()).filter(Boolean);
         if (!prompts.length) {
-            prompts.push('building', 'house', 'tree', 'grass', 'car', 'swimming pool', 'road', 'parking lot', 'solar panel');
+            prompts.push(...WorldSamplerUI.SCENE_GRAPH_PROMPTS);
         }
 
         const gtSources = [];
-        if (document.getElementById('sgGtOsmBuildings')?.checked) gtSources.push('osm_buildings');
-        if (document.getElementById('sgGtOsmRoads')?.checked)     gtSources.push('osm_roads');
+        if (!fromPilot && document.getElementById('sgGtOsmBuildings')?.checked) gtSources.push('osm_buildings');
+        if (!fromPilot && document.getElementById('sgGtOsmRoads')?.checked)     gtSources.push('osm_roads');
 
         if (selectedKernels.length === 0 && gtSources.length === 0) {
             setStatus('Tick at least one model.', '#f59e0b');
+            if (fromPilot) throw new Error('no such model');
             return;
         }
 
-        btn.disabled = true;
+        if (btn) btn.disabled = true;
         try {
             setStatus('Preparing viewport...');
             await this.prepareViewportForAnalysis(statusText);
@@ -3808,7 +3819,7 @@ class WorldSamplerUI {
             await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
             setStatus('Capturing a top-down 2D view...');
-            const viewportData = await this.captureViewportIn2D();
+            const viewportData = await this.captureViewportIn2D(opts.height);
             const corners = viewportData.world_corners;
             if (!corners) {
                 throw new Error('Could not snapshot viewport corners (camera off-globe?).');
@@ -3823,6 +3834,9 @@ class WorldSamplerUI {
             ];
             const canvas = this.viewer.scene.canvas;
             const imageSize = [canvas.width, canvas.height];
+            // What these pixels showed and when that imagery was acquired. The lookup runs
+            // while the models do; the layers are read now, before anything can change them.
+            const imageryPromise = this.captureImagery(cornersArr, imageSize);
 
             const kernelResults = {};
             const degradedKernels = [];
@@ -3890,7 +3904,7 @@ class WorldSamplerUI {
             // OSM road-graph regions: the orchestrator builds a kernelcal
             // CityGraph for this bbox and splices its street-aware adjacency
             // into the scene graph.
-            const useCityGraph = !!document.getElementById('sgUseCityGraph')?.checked;
+            const useCityGraph = !fromPilot && !!document.getElementById('sgUseCityGraph')?.checked;
             const graphMode = 'road_knn';
 
             // Every source has Q_s under urban_v1 (older kernels are lifted),
@@ -3913,6 +3927,7 @@ class WorldSamplerUI {
                 use_city_graph_regions: useCityGraph,
                 graph_mode: graphMode,
             };
+            buildBody.viewport.imagery = await imageryPromise;
             const buildResp = await fetch('/webclient/sampler/scenegraph/build', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3956,6 +3971,12 @@ class WorldSamplerUI {
                 worldTail = ` World model: ${wu.n_matched} matched, ${wu.n_new_entities || 0} new`
                     + `${wu.n_missed ? `, ${wu.n_missed} not seen again` : ''}.`;
             }
+            if (wu.n_matched !== undefined) {
+                // The world model files a capture under its imagery's date when the provider gives one.
+                worldTail += wu.imagery_dated
+                    ? ` Filed under the imagery date, ${String(wu.observed_at).slice(0, 7)}.`
+                    : ' Imagery date unknown, so filed under today.';
+            }
             const degTail = degradedKernels.length
                 ? ` Unavailable: ${degradedKernels.join(', ')}.`
                 : '';
@@ -3970,12 +3991,15 @@ class WorldSamplerUI {
                 degradedKernels.length ? 'warning' : 'success'
             );
             if (this.worldDataSource) this.refreshWorldModel();
+            return { sessionId: this.lastSceneGraphSessionId, nNodes, summary: histStr, corners: cornersArr,
+                degraded: degradedKernels, worldUpdated: wu.status !== 'error' && wu.n_matched !== undefined };
         } catch (err) {
             console.error('[SceneGraph] build failed:', err);
             setStatus(`✗ ${err.message || err}`, '#ef4444');
             this.showNotification(`SceneGraph build failed: ${err.message || err}`, 'error');
+            if (fromPilot) throw err;
         } finally {
-            btn.disabled = false;
+            if (btn) btn.disabled = false;
         }
     }
 
@@ -4180,6 +4204,149 @@ class WorldSamplerUI {
         el.style.color = color || '#94a3b8';
     }
 
+    // ---- Imagery provenance: what a capture's pixels showed, and when that imagery was acquired ----
+
+    // 'bing:Aerial' for Bing Maps (directly or through Cesium ion), else the tile host.
+    // Never a key, a path or a query string.
+    static imageryId(provider) {
+        const inner = provider?._imageryProvider || provider;
+        if (!inner) return 'unknown';
+        let host = '';
+        try {
+            const url = inner.url || inner._resource?.url || '';
+            host = url ? new URL(String(url), window.location.href).hostname : '';
+        } catch (err) {
+            host = '';
+        }
+        if (inner.mapStyle !== undefined && (typeof inner.key === 'string' || /virtualearth\.net$/i.test(host))) {
+            return `bing:${inner.mapStyle}`;
+        }
+        return host ? `host:${host}` : 'unknown';
+    }
+
+    // The layers drawn now, bottom first.
+    imageryLayersInView() {
+        const layers = this.viewer.imageryLayers;
+        const out = [];
+        for (let i = 0; i < layers.length; i++) {
+            const layer = layers.get(i);
+            if (!layer.show || !(layer.alpha > 0)) continue;
+            out.push({
+                id: WorldSamplerUI.imageryId(layer.imageryProvider),
+                alpha: Math.round(layer.alpha * 100) / 100,
+                provider: layer.imageryProvider,
+            });
+        }
+        return out;
+    }
+
+    // '01 Mar 2023 GMT' -> '2023-03-01'
+    static vintageDate(text) {
+        const m = /^(\d{1,2}) ([A-Za-z]{3})[a-z]* (\d{4})/.exec(String(text || '').trim());
+        const month = m ? ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+            .indexOf(m[2].toLowerCase()) : -1;
+        return month < 0 ? null : `${m[3]}-${String(month + 1).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    }
+
+    // Bing publishes the acquisition window of its imagery at a point and zoom. One request per
+    // point, cached. The key goes only to the host Cesium already sends it to; it is never
+    // logged and never sent to DeepGIS.
+    async bingVintage(provider, lat, lon, zoom) {
+        const inner = provider?._imageryProvider || provider;
+        const key = inner?.key || inner?._key;
+        if (!key || !inner.mapStyle) return null;
+        this._vintages = this._vintages || new Map();
+        const tag = `${inner.mapStyle}|${zoom}|${lat.toFixed(3)},${lon.toFixed(3)}`;
+        if (this._vintages.has(tag)) return this._vintages.get(tag);
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 4000);
+        let found = null;
+        try {
+            const resp = await fetch('https://dev.virtualearth.net/REST/v1/Imagery/Metadata/'
+                + `${encodeURIComponent(inner.mapStyle)}/${lat.toFixed(6)},${lon.toFixed(6)}`
+                + `?zl=${zoom}&key=${encodeURIComponent(key)}`, { signal: ctl.signal });
+            const body = resp.ok ? await resp.json() : null;
+            const res = body?.resourceSets?.[0]?.resources?.[0];
+            const start = WorldSamplerUI.vintageDate(res?.vintageStart);
+            const end = WorldSamplerUI.vintageDate(res?.vintageEnd);
+            if (start && end) found = { start, end };
+        } catch (err) {
+            found = null; // offline, blocked or timed out: the capture is stored undated
+        } finally {
+            clearTimeout(timer);
+        }
+        if (found) this._vintages.set(tag, found);
+        return found;
+    }
+
+    // {source, layers, dates?} for a view. `points` are [lon, lat] samples of it and `gsdM` is the
+    // ground size of a pixel. Dates are given only when one opaque Bing layer is all that is
+    // drawn; a blend, or a provider that publishes no dates, leaves the capture undated.
+    // Never throws, so a capture is never held up by it.
+    async describeImagery(points, gsdM) {
+        let record = { source: '', layers: [] };
+        try {
+            const layers = this.imageryLayersInView();
+            record = { source: layers.map((l) => l.id).join('+'), layers: layers.map(({ id, alpha }) => ({ id, alpha })) };
+            const only = layers.length === 1 && layers[0].alpha >= 0.99 && layers[0].id.startsWith('bing:')
+                ? layers[0] : null;
+            const pts = (points || []).filter((p) => p && Number.isFinite(p[0]) && Number.isFinite(p[1]));
+            if (!only || !pts.length || !(gsdM > 0)) return record;
+            const inner = only.provider._imageryProvider || only.provider;
+            const maxLevel = Number.isFinite(inner.maximumLevel) ? inner.maximumLevel : 20;
+            const zoom = Math.min(Math.max(Math.round(
+                Math.log2(156543.03392 * Math.cos(pts[0][1] * Math.PI / 180) / gsdM)), 1), maxLevel);
+            const got = (await Promise.all(pts.map((p) => this.bingVintage(only.provider, p[1], p[0], zoom))))
+                .filter(Boolean);
+            if (!got.length) return record;
+            record.dates = {
+                start: got.map((g) => g.start).sort()[0],
+                end: got.map((g) => g.end).sort().pop(),
+                uniform: got.every((g) => g.start === got[0].start && g.end === got[0].end),
+                zoom,
+                points: got.length,
+                method: 'bing_metadata',
+                looked_up_at: new Date().toISOString(),
+            };
+            return record;
+        } catch (err) {
+            console.warn('[WorldModel] could not describe the imagery in view');
+            return record;
+        }
+    }
+
+    // For a capture: its centre and four points a fifth of the way in from the corners.
+    // `cornersArr` is [NW, NE, SE, SW] as [lon, lat]; `imageSize` is [width, height] in pixels.
+    captureImagery(cornersArr, imageSize) {
+        const c = cornersArr.reduce((s, p) => [s[0] + p[0] / 4, s[1] + p[1] / 4], [0, 0]);
+        const kx = 111320 * Math.cos(c[1] * Math.PI / 180);
+        let twice = 0;
+        for (let i = 0; i < 4; i++) {
+            const a = cornersArr[i];
+            const b = cornersArr[(i + 1) % 4];
+            twice += (a[0] - c[0]) * kx * (b[1] - c[1]) * 111320 - (b[0] - c[0]) * kx * (a[1] - c[1]) * 111320;
+        }
+        const gsd = Math.sqrt(Math.abs(twice / 2) / (imageSize[0] * imageSize[1]));
+        const inner = cornersArr.map((p) => [c[0] + 0.6 * (p[0] - c[0]), c[1] + 0.6 * (p[1] - c[1])]);
+        return this.describeImagery([c, ...inner], gsd);
+    }
+
+    // For a correction: the imagery at the entity, at about the zoom on screen. Null when undated.
+    async feedbackImagery(e) {
+        const ring = (e.geo_polygon || []).slice(0, -1);
+        if (!ring.length) return null;
+        const lon = ring.reduce((s, q) => s + q[0], 0) / ring.length;
+        const lat = ring.reduce((s, q) => s + q[1], 0) / ring.length;
+        const camera = this.viewer.camera;
+        const canvas = this.viewer.scene.canvas;
+        const ground = this.viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat)) || 0;
+        const height = (camera.positionCartographic?.height || 0) - ground;
+        const fov = camera.frustum?.fovy || camera.frustum?.fov || 1;
+        const gsd = height > 0 && canvas.clientHeight > 0 ? 2 * height * Math.tan(fov / 2) / canvas.clientHeight : 0;
+        const record = await this.describeImagery([[lon, lat]], gsd);
+        return record.dates ? record : null;
+    }
+
     worldViewBbox() {
         const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
         if (!rect) {
@@ -4313,10 +4480,12 @@ class WorldSamplerUI {
 
     // Footprints, an opened capture and a world model the pilot turned on; true if anything was shown
     clearStoredSceneGraphs() {
-        const shown = !!(this.captureDataSource || this.storedGraphDataSource || this.changesDataSource || (this._pilotWorldModel && this.worldDataSource));
+        const shown = !!(this.captureDataSource || this.storedGraphDataSource || this.changesDataSource
+            || this.traitMapDataSource || (this._pilotWorldModel && this.worldDataSource));
         this.removeDataSource('captureDataSource');
         this.removeDataSource('storedGraphDataSource');
         this.removeDataSource('changesDataSource');
+        this.removeDataSource('traitMapDataSource');
         if (this._pilotWorldModel) {
             this._pilotWorldModel = false;
             const box = document.getElementById('wmShow');
@@ -4366,6 +4535,55 @@ class WorldSamplerUI {
         return ds.entities.values.length;
     }
 
+    // [lon, lat] of the ground at the centre of the screen, else of the view's bbox
+    viewCentre() {
+        const scene = this.viewer.scene;
+        const ray = this.viewer.camera.getPickRay(new Cesium.Cartesian2(scene.canvas.clientWidth / 2, scene.canvas.clientHeight / 2));
+        const ground = ray && scene.globe.pick(ray, scene);
+        if (ground) {
+            const c = Cesium.Cartographic.fromCartesian(ground);
+            return [Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude)];
+        }
+        const bbox = this.worldViewBbox();
+        return bbox ? [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2] : null;
+    }
+
+    static TRAIT_MAP_COLORS = ['#440154', '#3b528b', '#21918c', '#5ec962', '#fde725'];  // viridis
+
+    // The AI pilot's trait_map: scene_store's GP grid (rows north to south) draped on the ground,
+    // coloured by the predicted value between lo and hi (log scale for areas) and as opaque as
+    // the share of prior variance the data explain, so it fades where nothing was measured.
+    showTraitMap(grid, { lo, hi, log, name }) {
+        this.removeDataSource('traitMapDataSource');
+        const canvas = document.createElement('canvas');
+        canvas.width = grid.nx;
+        canvas.height = grid.ny;
+        const ctx = canvas.getContext('2d');
+        const img = ctx.createImageData(grid.nx, grid.ny);
+        const f = log ? (v) => Math.log10(Math.max(v, 1e-6)) : (v) => v;
+        const a = f(lo), span = f(hi) - a || 1;
+        const stops = WorldSamplerUI.TRAIT_MAP_COLORS.map((css) => Cesium.Color.fromCssColorString(css));
+        grid.value.forEach((v, i) => {
+            const t = Math.min(1, Math.max(0, (f(v) - a) / span)) * (stops.length - 1);
+            const k = Math.min(stops.length - 2, Math.floor(t));
+            const c = Cesium.Color.lerp(stops[k], stops[k + 1], t - k, new Cesium.Color());
+            img.data.set([c.red * 255, c.green * 255, c.blue * 255,
+                255 * 0.85 * Math.pow(grid.explained[i], 0.75)], 4 * i);
+        });
+        ctx.putImageData(img, 0, 0);
+        const ds = new Cesium.CustomDataSource('Trait map');
+        ds.entities.add({
+            name: name || 'Trait map',
+            rectangle: {
+                coordinates: Cesium.Rectangle.fromDegrees(grid.west, grid.south, grid.east, grid.north),
+                material: new Cesium.ImageMaterialProperty({ image: canvas, transparent: true }),
+            },
+        });
+        this.viewer.dataSources.add(ds);
+        this.traitMapDataSource = ds;
+        this.viewer.scene.requestRender();
+    }
+
     removeDataSource(key) {
         if (this[key] && this.viewer.dataSources.contains(this[key])) this.viewer.dataSources.remove(this[key]);
         this[key] = null;
@@ -4408,7 +4626,11 @@ class WorldSamplerUI {
             const kinds = Object.entries(counts).sort((a, b) => b[1] - a[1]);
             const top = kinds.slice(0, 4).map(([k, v]) => `${v} ${k.replace(/_/g, ' ')}`).join(', ');
             const sure = this.worldMinScore ? ` at least ${Math.round(this.worldMinScore * 100)}% sure` : '';
-            this.setWorldStatus(`${shown.length} objects${sure} in view: ${top}${kinds.length > 4 ? ' and more' : ''}.`
+            // While the object under review is selected its line stays: the layer reloads at every camera move.
+            const picked = this.viewer.selectedEntity;
+            const reviewing = !!(picked && this._review?.line && this.reviewDataSource?.entities.contains(picked));
+            this.setWorldStatus(reviewing ? this._review.line
+                : `${shown.length} objects${sure} in view: ${top}${kinds.length > 4 ? ' and more' : ''}.`
                 + `${hidden ? ` ${hidden} view-sized regions hidden.` : ''}`);
         } catch (err) {
             if (seq !== this._worldSeq) return;
@@ -4438,6 +4660,11 @@ class WorldSamplerUI {
                 properties: { world_entity_id: e.id },
             });
         }
+        // Removing a data source clears Cesium's selection. Remember it, so the info box
+        // stays on the same object when the layer reloads.
+        const picked = this.viewer.selectedEntity;
+        const keepId = picked && this.worldDataSource?.entities.contains(picked)
+            ? picked.properties?.world_entity_id?.getValue() : null;
         const ds = new Cesium.GeoJsonDataSource('World model');
         await ds.load({ type: 'FeatureCollection', features });
         ds.entities.values.forEach((entity) => {
@@ -4454,6 +4681,10 @@ class WorldSamplerUI {
         this.worldDataSource = ds;
         this.worldEntities = byId;
         this.viewer.dataSources.add(ds);
+        if (keepId && !this.viewer.selectedEntity) {
+            const again = this.worldShape(keepId);
+            if (again) this.viewer.selectedEntity = again;
+        }
         if (this.selectedWorldEntity) {
             this.selectWorldEntity(byId.get(this.selectedWorldEntity.id) || null);
         }
@@ -4473,21 +4704,124 @@ class WorldSamplerUI {
             const style = document.createElement('style');
             style.textContent = '.deepgis-infobox{position:fixed;top:60px;right:10px;z-index:1600;width:0;height:0}'
                 + '.deepgis-infobox .cesium-infoBox{top:0;right:0;width:380px;max-width:calc(100vw - 20px);'
-                + 'max-height:calc(100vh - 160px)}';
+                + 'max-height:calc(100vh - 160px)}'
+                + '.deepgis-infobox-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 8px;'
+                + 'border-bottom:1px solid #444;font-size:13px;color:#cbd5e1}'
+                + '.deepgis-infobox-actions[hidden]{display:none}'
+                + '.deepgis-infobox-actions .btn{width:auto;margin:0;font-size:12px;padding:2px 8px}'
+                + '.deepgis-infobox-actions select{width:auto;max-width:150px;font-size:12px;padding:2px 24px 2px 6px}'
+                + '.deepgis-infobox-actions a{color:#7dd3fc}';
             document.head.appendChild(style);
             box.classList.add('deepgis-infobox');
             document.body.appendChild(box);
+            this.installWorldActions(box);
         }
         this._worldInfoBox = this.viewer.selectedEntityChanged.addEventListener((entity) => {
+            this.highlightWorldShape(entity);
             const id = entity?.properties?.world_entity_id?.getValue();
             if (id) this.describeWorldEntity(entity, id);
+            else this.showWorldActions(null);
         });
     }
 
+    // Correct / Relabel / Not there, under the info box's title. The buttons live in the page,
+    // not in the info box's frame, which runs no scripts.
+    installWorldActions(box) {
+        const frame = box.querySelector('iframe');
+        if (!frame?.parentElement) return;
+        const bar = document.createElement('div');
+        bar.className = 'deepgis-infobox-actions';
+        bar.hidden = true;
+        frame.parentElement.insertBefore(bar, frame);
+        bar.addEventListener('click', (ev) => {
+            const kind = ev.target.closest('button[data-kind]')?.dataset.kind;
+            const e = this._worldInfoEntity;
+            if (!kind || !e) return;
+            if (kind === 'skip') this.reviewNext();
+            else this.sendWorldFeedback(kind, e, bar.querySelector('select')?.value || '');
+        });
+        this._worldActions = bar;
+    }
+
+    // The buttons for entity `e` (as /world/entities returns it), or none.
+    showWorldActions(e) {
+        const bar = this._worldActions;
+        this._worldInfoEntity = e || null;
+        if (!bar) return;
+        bar.hidden = !e || !!e.retired;
+        if (bar.hidden) {
+            bar.dataset.shows = '';
+            return;
+        }
+        const reviewing = this._review?.currentId === e.id;
+        const shows = `${e.id}:${e.category}:${reviewing}`;
+        if (bar.dataset.shows === shows) return;
+        bar.dataset.shows = shows;
+        bar.textContent = '';
+        if (document.getElementById('aiPanel')?.dataset.signedIn !== '1') {
+            const link = document.createElement('a');
+            link.href = `/label/admin/login/?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+            link.textContent = 'Sign in';
+            bar.append(link, ' to correct this label.');
+            return;
+        }
+        const name = (c) => String(c).replace(/_/g, ' ');
+        const button = (kind, label, look, title) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = `btn btn-sm ${look}`;
+            b.dataset.kind = kind;
+            b.textContent = label;
+            b.title = title;
+            return b;
+        };
+        const select = document.createElement('select');
+        select.className = 'form-select form-select-sm';
+        select.setAttribute('aria-label', 'Relabel as');
+        const guess = e.category === 'unknown' ? e.best_guess?.category : null;
+        const choices = this.worldCategories(e.taxonomy).filter((c) => c !== 'unknown' && c !== e.category);
+        if (guess && choices.includes(guess)) choices.unshift(...choices.splice(choices.indexOf(guess), 1));
+        choices.forEach((c) => select.add(new Option(name(c), c)));
+        // "Correct" has nothing to confirm while the label is unknown.
+        if (e.category !== 'unknown') {
+            bar.append(button('confirm', 'Correct', 'btn-success', `It is ${name(e.category)}`));
+        }
+        bar.append(select, button('relabel', 'Relabel', 'btn-warning', 'It is what the list says'),
+            button('reject', 'Not there', 'btn-danger', 'Nothing is there in the imagery'));
+        if (reviewing) bar.append(button('skip', 'Skip', 'btn-secondary', 'Leave this one and go to the next'));
+    }
+
+    // The clicked shape of a world entity turns yellow until something else is selected.
+    highlightWorldShape(entity) {
+        const was = this._worldHighlight;
+        if (was?.entity.polygon) {
+            was.entity.polygon.material = was.material;
+            was.entity.polygon.outlineColor = was.outlineColor;
+        }
+        this._worldHighlight = null;
+        if (entity?.polygon && entity.properties?.world_entity_id) {
+            this._worldHighlight = { entity, material: entity.polygon.material, outlineColor: entity.polygon.outlineColor };
+            entity.polygon.material = Cesium.Color.YELLOW.withAlpha(0.4);
+            entity.polygon.outlineColor = Cesium.Color.YELLOW;
+        }
+        this.viewer.scene.requestRender();
+    }
+
+    // The world model layer's shape for an entity id, if it is drawn.
+    worldShape(id) {
+        return this.worldDataSource?.entities.values
+            .find((x) => x.properties?.world_entity_id?.getValue() === id) || null;
+    }
+
     async describeWorldEntity(entity, id) {
-        const known = this.worldEntities.get(id);
-        if (known) this.renderWorldInfo(entity, known, null);
-        else entity.description = '<p>Loading...</p>';
+        const known = this.worldEntities?.get(id);
+        if (known) {
+            this.renderWorldInfo(entity, known, null);
+            this.showWorldActions(known);
+        } else {
+            entity.description = '<p>Loading...</p>';
+            this.showWorldActions(null);
+        }
         let detail = this._worldDetails.get(id);
         if (!detail || Date.now() - detail.t > 60000) {
             try {
@@ -4502,6 +4836,7 @@ class WorldSamplerUI {
             }
         }
         this.renderWorldInfo(entity, detail.data.entity, detail.data);
+        if (this.viewer.selectedEntity === entity) this.showWorldActions(detail.data.entity);
         this.viewer.scene.requestRender();
     }
 
@@ -4510,12 +4845,19 @@ class WorldSamplerUI {
         const name = (c) => String(c || '').replace(/_/g, ' ');
         const pct = (p) => `${Math.round(p * 100)}%`;
         const day = (iso) => new Date(iso).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        // Imagery dates are calendar dates, not moments: show them in UTC so they do not slip a day.
+        const date = (iso) => new Date(iso).toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+        const span = (a, b) => (a.slice(0, 10) === b.slice(0, 10) ? date(a) : `${date(a)} to ${date(b)}`);
         const area = (m2) => (m2 == null ? '-' : WorldSamplerUI.formatArea(m2));
         const row = (k, v) => `<tr><th>${k}</th><td>${v}</td></tr>`;
         const guess = e.best_guess;
         const unknown = e.category === 'unknown';
         const title = unknown && guess ? `Unknown (best guess ${name(guess.category)})` : name(e.category);
         entity.name = `${title.charAt(0).toUpperCase()}${title.slice(1)} #${e.id}`;
+
+        // One acquisition window behind every sighting, when that is so.
+        const windows = new Set((d?.detections || []).map((s) => (s.imagery?.start ? `${s.imagery.start}|${s.imagery.end}` : '')));
+        const shared = windows.size === 1 && !windows.has('') ? [...windows][0].split('|') : null;
 
         const rows = [];
         rows.push(row('Category', unknown && guess
@@ -4525,11 +4867,18 @@ class WorldSamplerUI {
             rows.push(row('Candidates', d.candidates.filter((c) => c.p >= 0.01)
                 .map((c) => `${esc(name(c.category))} ${pct(c.p)}`).join(', ')));
         }
-        rows.push(row('Still there', e.retired ? `retired ${day(e.retired.at)}${e.retired.reason ? ` (${esc(e.retired.reason)})` : ''}`
-            : `${pct(e.p_exists)} likely`));
+        if (e.retired) {
+            rows.push(row('Retired', `${day(e.retired.at)}${e.retired.reason ? ` (${esc(e.retired.reason)})` : ''}`));
+        } else {
+            rows.push(row('There when last seen', `${pct(e.p_exists)} likely`));
+            if (d?.now) {
+                rows.push(row('Still there today', `${pct(d.now.p_exists)} likely`
+                    + `${d.now.category !== e.category ? `; by now ${esc(name(d.now.category))}, ${pct(d.now.score)} sure` : ''}`));
+            }
+        }
         rows.push(row('Size', area(e.area_m2)));
-        rows.push(row('Seen', `${e.n_hits}&times;${e.n_misses ? `, missed ${e.n_misses}&times;` : ''}`
-            + `, ${day(e.first_seen)}${e.first_seen.slice(0, 10) === e.last_seen.slice(0, 10) ? '' : ` to ${day(e.last_seen)}`}`));
+        rows.push(row('Seen', `${e.n_hits}&times;${e.n_misses ? `, missed ${e.n_misses}&times;` : ''}, `
+            + `${shared ? `in imagery acquired ${span(shared[0], shared[1])}` : span(e.first_seen, e.last_seen)}`));
         rows.push(row('Models', esc((e.sources || []).join(', ') || 'none')));
         const ring = (e.geo_polygon || []).slice(0, -1);
         if (ring.length) {
@@ -4543,11 +4892,16 @@ class WorldSamplerUI {
             rows.push(row('In this capture', `${esc(name(here))}${s != null ? `, ${pct(s)}` : ''}, ${area(entity.properties.area_m2?.getValue())}`));
         }
         if (d) {
+            const f = d.field;
+            if (f?.n_readings) {
+                rows.push(row('Field readings', `${f.n_readings} aimed at it, ${span(f.first, f.last)}; `
+                    + `${f.n_usable} usable in daylight${f.n_usable ? `, ${f.n_green} read as green vegetation` : ''}`));
+            }
             const fc = Object.entries(d.factor_counts || {}).sort((a, b) => b[1] - a[1]);
             if (fc.length) rows.push(row('Evidence', fc.map(([k, n]) => `${esc(k)} ${n}`).join(', ')));
-            const fb = (d.feedback || []).filter((f) => !f.superseded);
+            const fb = (d.feedback || []).filter((x) => !x.superseded);
             rows.push(row('Feedback', fb.length
-                ? fb.map((f) => `${esc(f.kind)}${f.category ? ` as ${esc(name(f.category))}` : ''} (${day(f.at)})`).join('; ')
+                ? fb.map((x) => `${esc(x.kind)}${x.category ? ` as ${esc(name(x.category))}` : ''} (${day(x.at)})`).join('; ')
                 : 'none yet'));
         }
         let html = '<style>table.cesium-infoBox-defaultTable{font-size:13px;width:100%}'
@@ -4556,17 +4910,18 @@ class WorldSamplerUI {
             + `<table class="cesium-infoBox-defaultTable"><tbody>${rows.join('')}</tbody></table>`;
         if (d?.detections?.length) {
             const recent = d.detections.slice(-8).reverse();
+            const px = (g) => (g ? `${g < 1 ? `${Math.round(g * 100)} cm` : `${g.toFixed(1)} m`}/px` : '-');
             html += `<p style="margin:8px 0 4px">Sightings (${d.detections.length}${d.detections.length > 8 ? ', newest 8' : ''})</p>`
                 + '<table class="cesium-infoBox-defaultTable"><tbody>'
-                + '<tr><th>Date</th><th>Label</th><th>Score</th><th>Area</th><th>Image</th><th>Models</th></tr>'
-                + recent.map((s) => `<tr><td>${day(s.at)}</td><td>${esc(name(s.category))}</td><td>${pct(s.score)}</td>`
-                    + `<td>${area(s.area_m2)}</td><td>${s.gsd_m ? `${s.gsd_m < 1 ? `${Math.round(s.gsd_m * 100)} cm` : `${s.gsd_m.toFixed(1)} m`}/px` : '-'}</td>`
-                    + `<td>${esc((s.sources || []).join(', '))}</td></tr>`).join('')
+                + '<tr><th>Imagery</th><th>Viewed</th><th>Label</th><th>Score</th><th>Area</th><th>Image</th></tr>'
+                + recent.map((s) => `<tr><td>${s.imagery?.start ? span(s.imagery.start, s.imagery.end) : 'undated'}</td>`
+                    + `<td>${day(s.viewed_at || s.at)}</td>`
+                    + `<td>${esc(name(s.category))}${s.gate ? ` <span style="color:#94a3b8">(${esc(s.gate)}, not counted)</span>` : ''}</td>`
+                    + `<td>${pct(s.score)}</td><td>${area(s.area_m2)}</td><td>${px(s.gsd_m)}</td></tr>`).join('')
                 + '</tbody></table>';
         } else if (!d) {
             html += '<p style="margin:8px 0 0;color:#94a3b8">Loading sightings...</p>';
         }
-        html += '<p style="margin:8px 0 0;color:#94a3b8">Correct, relabel or mark it not there from the AI panel (World model).</p>';
         entity.description = html;
     }
 
@@ -4591,7 +4946,7 @@ class WorldSamplerUI {
         box.hidden = !e;
         if (!e) return;
         const name = (c) => c.replace(/_/g, ' ');
-        const day = (iso) => new Date(iso).toLocaleDateString();
+        const day = (iso) => new Date(iso).toLocaleDateString([], { timeZone: 'UTC' });
         const sources = (e.sources || []).join(', ') || 'none';
         text.innerHTML = '';
         const title = document.createElement('strong');
@@ -4602,8 +4957,11 @@ class WorldSamplerUI {
         text.appendChild(title);
         const detail = document.createElement('div');
         detail.style.color = '#94a3b8';
-        detail.textContent = `${Math.round(e.p_exists * 100)}% likely still there. Seen ${e.n_hits}×`
-            + `${e.n_misses ? `, missed ${e.n_misses}×` : ''}, ${day(e.first_seen)} to ${day(e.last_seen)}. Models: ${sources}.`;
+        // The layer shows beliefs as last seen unless a time is chosen in the list.
+        const when = document.getElementById('wmAt')?.value ? 'likely still there' : 'likely there when last seen';
+        detail.textContent = `${Math.round(e.p_exists * 100)}% ${when}. Seen ${e.n_hits}\u00d7`
+            + `${e.n_misses ? `, missed ${e.n_misses}\u00d7` : ''}, imagery of ${day(e.first_seen)}`
+            + `${e.first_seen.slice(0, 10) === e.last_seen.slice(0, 10) ? '' : ` to ${day(e.last_seen)}`}. Models: ${sources}.`;
         text.appendChild(detail);
         const select = document.getElementById('wmRelabelSelect');
         if (select) {
@@ -4614,12 +4972,20 @@ class WorldSamplerUI {
         }
     }
 
-    async sendWorldFeedback(kind) {
-        const e = this.selectedWorldEntity;
-        if (!e) return;
+    // kind: confirm | relabel | reject. From the panel (the entity selected there and its list)
+    // or from the info box (`e` and `category` given).
+    async sendWorldFeedback(kind, e = this.selectedWorldEntity, category = '') {
+        if (!e || this._worldFeedbackBusy) return null;
         const body = { entity_id: e.id, kind };
-        if (kind === 'relabel') body.category = document.getElementById('wmRelabelSelect')?.value || '';
+        if (kind === 'relabel') body.category = category || document.getElementById('wmRelabelSelect')?.value || '';
+        const controls = () => this._worldActions?.querySelectorAll('button, select') || [];
+        this._worldFeedbackBusy = true;
+        controls().forEach((el) => { el.disabled = true; });
         try {
+            // The correction is about the imagery on screen, so it is dated by it. Without a date
+            // the server files it at the entity's last sighting.
+            const imagery = await this.feedbackImagery(e);
+            if (imagery) body.imagery = imagery;
             const resp = await fetch('/webclient/sampler/world/feedback', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -4634,15 +5000,135 @@ class WorldSamplerUI {
                 'success',
             );
             this._worldDetails?.delete(e.id);
-            await this.refreshWorldModel();
-            this.selectWorldEntity(this.worldEntities.get(e.id) || payload.entity);
+            const reviewing = this._review?.currentId === e.id;
+            if (this.worldDataSource) await this.refreshWorldModel();
+            if (this.selectedWorldEntity?.id === e.id) {
+                this.selectWorldEntity(this.worldEntities?.get(e.id) || payload.entity);
+            }
+            if (reviewing) {
+                await this.reviewNext();
+            } else {
+                // A shape outside the world layer (an opened scene graph, a change) is still selected: redraw it.
+                const shown = this.viewer.selectedEntity;
+                if (shown?.properties?.world_entity_id?.getValue() === e.id
+                    && !this.worldDataSource?.entities.contains(shown)) {
+                    this.describeWorldEntity(shown, e.id);
+                }
+            }
+            return payload;
         } catch (err) {
             console.error('[WorldModel] feedback failed:', err);
             this.showNotification(`Feedback failed: ${err.message || err}`, 'error');
+            return null;
+        } finally {
+            this._worldFeedbackBusy = false;
+            controls().forEach((el) => { el.disabled = false; });
         }
     }
 
+    // ---- Review: the object whose label a person could settle with the most information ----
+
+    // Selects the next entity of /world/review. A review keeps to the view it started in, so
+    // flying to a small object does not narrow the queue; "Skip" and a saved answer both move on.
+    async reviewNext() {
+        const view = this.worldViewBbox();
+        const r = this._review;
+        // The same review while the view still touches the area it started in: an object on that
+        // area's edge is flown to, which can put the centre of the view outside it.
+        const same = r && view && Date.now() - r.t < 15 * 60000
+            && view[0] <= r.bbox[2] && view[2] >= r.bbox[0] && view[1] <= r.bbox[3] && view[3] >= r.bbox[1];
+        if (!same) {
+            if (!view || (view[2] - view[0]) * (view[3] - view[1]) > 0.05 * 0.05) {
+                this.setWorldStatus(view ? 'Zoom in to review (view is larger than about 5 km).'
+                    : 'Point the camera at the ground to review.', '#f59e0b');
+                return null;
+            }
+            this._review = { bbox: view, seen: new Set(), t: Date.now(), currentId: null };
+        }
+        const review = this._review;
+        review.t = Date.now();
+        try {
+            const params = new URLSearchParams({ bbox: review.bbox.map((v) => v.toFixed(6)).join(','), limit: '100' });
+            const resp = await fetch(`/webclient/sampler/world/review?${params}`);
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok || payload.status !== 'success') throw new Error(payload.message || `HTTP ${resp.status}`);
+            const next = (payload.entities || []).find((x) => !review.seen.has(x.id));
+            if (!next) {
+                review.currentId = null;
+                this.removeDataSource('reviewDataSource');
+                this.setWorldStatus(payload.n_candidates
+                    ? 'That was the last of the most uncertain objects here. Move the view to review more.'
+                    : 'Nothing left to review in this view.');
+                return null;
+            }
+            review.seen.add(next.id);
+            review.currentId = next.id;
+            await this.showReviewEntity(next);
+            const label = next.category === 'unknown' && next.best_guess
+                ? `unknown, perhaps ${next.best_guess.category.replace(/_/g, ' ')}`
+                : `${next.category.replace(/_/g, ' ')}, ${Math.round(next.score * 100)}% sure`;
+            review.line = `Reviewing #${next.id} (${label}): an answer is worth ${next.value_bits.toFixed(1)} bits. `
+                + `${payload.n_candidates} not yet judged here, ${payload.n_judged} judged.`;
+            this.setWorldStatus(review.line);
+            return next;
+        } catch (err) {
+            console.error('[WorldModel] review failed:', err);
+            this.setWorldStatus(`Review unavailable: ${err.message || err}`, '#ef4444');
+            return null;
+        }
+    }
+
+    // Outlines the entity under review in its own layer (so reloading the world layer does not
+    // drop the selection), brings a small one up to about a fifth of the view, and opens its info box.
+    async showReviewEntity(e) {
+        this.installWorldInfoBox();
+        const ring = this.cleanGeoRing(e.geo_polygon);
+        if (!ring) return;
+        this.removeDataSource('reviewDataSource');
+        const ds = new Cesium.CustomDataSource('Review');
+        const positions = Cesium.Cartesian3.fromDegreesArray(ring.flat());
+        const shape = ds.entities.add({
+            polygon: {
+                hierarchy: new Cesium.PolygonHierarchy(positions),
+                material: Cesium.Color.YELLOW.withAlpha(0.4),
+                outlineColor: Cesium.Color.YELLOW,
+            },
+            properties: { world_entity_id: e.id },
+        });
+        this.styleResultEntity(shape);
+        await this.viewer.dataSources.add(ds);
+        this.reviewDataSource = ds;
+        if (!this.worldEntities) this.worldEntities = new Map();
+        if (!this.worldEntities.has(e.id)) this.worldEntities.set(e.id, e);
+
+        const sphere = Cesium.BoundingSphere.fromPoints(positions);
+        const view = this.worldViewBbox();
+        const lat = ring[0][1];
+        const viewM = view ? Math.min((view[2] - view[0]) * 111320 * Math.cos(lat * Math.PI / 180), (view[3] - view[1]) * 111320) : 0;
+        const inView = view && ring.every((p) => p[0] >= view[0] && p[0] <= view[2] && p[1] >= view[1] && p[1] <= view[3]);
+        // On a wide window the info box covers the right of the map: an object under it is not in view.
+        const box = this.viewer.infoBox?.container.querySelector('.cesium-infoBox')?.getBoundingClientRect();
+        const clearX = window.innerWidth - (box ? box.width + 20 : 0);
+        const at = this.viewer.scene.cartesianToCanvasCoordinates(sphere.center);
+        const covered = !!at && clearX > 0.4 * window.innerWidth
+            && at.x + this.viewer.canvas.getBoundingClientRect().left > clearX;
+        if (!inView || covered || sphere.radius * 2 < viewM / 15) {
+            const camera = this.viewer.camera;
+            await new Promise((resolve) => camera.flyToBoundingSphere(sphere, {
+                duration: 0.8,
+                offset: new Cesium.HeadingPitchRange(camera.heading, camera.pitch, Math.max(sphere.radius * 6, 60)),
+                complete: resolve,
+                cancel: resolve,
+            }));
+        }
+        this.viewer.selectedEntity = shape;
+        this.selectWorldEntity(e);
+        this.viewer.scene.requestRender();
+    }
+
     // ---- Object sizes: area histograms (/webclient/sampler/world/histogram) ----
+
+    static SCENE_GRAPH_PROMPTS = ['building', 'house', 'tree', 'grass', 'car', 'swimming pool', 'road', 'parking lot', 'solar panel'];
 
     // 1, 2 or 5 x 10^k, about `target` bins across `span`; same rule as scene_store.fusion.nice_bin.
     static niceBin(span, target = 25) {
@@ -4828,7 +5314,8 @@ class WorldSamplerUI {
             box.textContent = `No ${label} to measure.`;
             return;
         }
-        const fmt = WorldSamplerUI.formatArea;
+        // hist.log: bins equal on a log scale (scene_store.traits); hist.unit 'p': a 0-1 trait
+        const fmt = hist.unit === 'p' ? (v) => v.toFixed(2) : WorldSamplerUI.formatArea;
         const cols = hist.bins.map((b) => ({ ...b, over: false }));
         if (hist.overflow) cols.push({ lo: hist.bins.length ? hist.bins[hist.bins.length - 1].hi : 0, hi: Infinity, n: hist.overflow, over: true });
         const W = 300, H = 110, left = 22, bottom = 16, top = 4;
@@ -4839,7 +5326,7 @@ class WorldSamplerUI {
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.setAttribute('width', '100%');
         svg.setAttribute('role', 'img');
-        svg.setAttribute('aria-label', `Area histogram of ${hist.n} ${label}`);
+        svg.setAttribute('aria-label', `${hist.unit === 'p' ? 'Histogram' : 'Area histogram'} of ${hist.n} ${label}`);
         const add = (tag, attrs, text) => {
             const el = document.createElementNS(NS, tag);
             Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
@@ -4863,15 +5350,17 @@ class WorldSamplerUI {
         add('text', { ...textAttrs, x: left - 3, y: top + 8, 'text-anchor': 'end' }, String(maxN));
         add('text', { ...textAttrs, x: left - 3, y: H - bottom, 'text-anchor': 'end' }, '0');
         const edge = hist.bins.length ? hist.bins[hist.bins.length - 1].hi : 0;
-        add('text', { ...textAttrs, x: left, y: H - 4 }, '0');
-        add('text', { ...textAttrs, x: left + hist.bins.length * bw / 2, y: H - 4, 'text-anchor': 'middle' }, fmt(edge / 2));
+        const start = hist.log && hist.bins.length ? hist.bins[0].lo : 0;
+        add('text', { ...textAttrs, x: left, y: H - 4 }, hist.log ? fmt(start) : '0');
+        add('text', { ...textAttrs, x: left + hist.bins.length * bw / 2, y: H - 4, 'text-anchor': 'middle' },
+            fmt(hist.log ? Math.sqrt(start * edge) : edge / 2));
         add('text', { ...textAttrs, x: left + hist.bins.length * bw, y: H - 4, 'text-anchor': hist.overflow ? 'middle' : 'end' }, fmt(edge));
         box.appendChild(svg);
         const s = hist.stats;
         const line = document.createElement('div');
         line.style.color = '#94a3b8';
         line.textContent = `${hist.n} ${label}: median ${fmt(s.median)}, middle 80% ${fmt(s.p10)} to ${fmt(s.p90)}, `
-            + `largest ${fmt(s.max)}. Bins of ${fmt(hist.bin_m2)}`
+            + `largest ${fmt(s.max)}. ${hist.log ? 'Bins a quarter of a factor of ten wide (log scale)' : `Bins of ${fmt(hist.bin_m2)}`}`
             + `${hist.overflow ? `; ${hist.overflow} above ${fmt(edge)} in orange` : ''}.`;
         box.appendChild(line);
     }
@@ -4973,6 +5462,7 @@ function initializeSAMButtonHandler(viewer, worldSamplerUI) {
         document.getElementById('wmConfirmBtn')?.addEventListener('click', () => worldSamplerUI.sendWorldFeedback('confirm'));
         document.getElementById('wmRelabelBtn')?.addEventListener('click', () => worldSamplerUI.sendWorldFeedback('relabel'));
         document.getElementById('wmRejectBtn')?.addEventListener('click', () => worldSamplerUI.sendWorldFeedback('reject'));
+        document.getElementById('wmReviewBtn')?.addEventListener('click', () => worldSamplerUI.reviewNext());
 
         document.getElementById('sgShow')?.addEventListener('change', (e) => worldSamplerUI.setSceneGraphViewportVisible(!!e.target.checked));
         document.getElementById('sgShowLinks')?.addEventListener('change', () => {

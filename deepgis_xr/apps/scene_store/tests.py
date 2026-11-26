@@ -2,15 +2,24 @@
 
 import hashlib
 import json
-from datetime import timedelta
+import os
+import tempfile
+from datetime import datetime, timedelta, timezone as dt_timezone
+from io import StringIO
+from unittest import mock
 
 import numpy as np
 from django.contrib.auth import get_user_model
+from django.contrib.gis.geos import Point
+from django.core.management import call_command
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from deepgis_xr.apps.scene_store import fusion, priors
-from deepgis_xr.apps.scene_store.models import Detection, Entity, Factor, Feedback, Pose
+from deepgis_xr.apps.scene_store import detection_model, field_evidence, fusion, priors, traits
+from deepgis_xr.apps.scene_store.models import (
+    Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose,
+)
+from deepgis_xr.apps.web.models import FieldReading
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import URBAN_V1
 from deepgis_xr.db_router import FieldReadingRouter
 
@@ -34,7 +43,17 @@ def _node(nid, category, ring, p=0.8):
             'claims': [{'source_id': 'sam3', 'native_label': category, 'score': p, 'geo_polygon': ring}]}
 
 
-def _scene(at, *, with_car=True, shift_m=0.0):
+def _imagery(start='2023-03-01', end='2023-09-01'):
+    """What the page sends for a view of Bing aerial imagery acquired in that window."""
+    return {'source': 'bing:Aerial', 'layers': [{'id': 'bing:Aerial', 'alpha': 1}],
+            'dates': {'start': start, 'end': end, 'uniform': True, 'zoom': 19, 'points': 5,
+                      'method': 'bing_metadata'}}
+
+
+IMAGED = datetime(2023, 6, 1, tzinfo=dt_timezone.utc)  # the middle of that window
+
+
+def _scene(at, *, with_car=True, shift_m=0.0, imagery=None):
     nodes = [_node('b', 'building', _square(-40 + shift_m, 0, 15)),
              _node('r', 'road', _square(10 + shift_m, 0, 6))]
     if with_car:
@@ -42,7 +61,8 @@ def _scene(at, *, with_car=True, shift_m=0.0):
     return {
         'viewport': {'image_size': [1000, 800], 'capture_metadata': {
             'world_corners': [p[:2] for p in _square(0, 0, 100)[:4]],
-            'camera': {'lon': LON, 'lat': LAT, 'alt': 700}, 'captured_at': at.isoformat()}},
+            'camera': {'lon': LON, 'lat': LAT, 'alt': 700}, 'captured_at': at.isoformat(),
+            'imagery': imagery}},
         'nodes': nodes,
         'edges': [{'source': 'v', 'target': 'r', 'relation': 'adjacent'}] if with_car else [],
         'fusion_metadata': {'per_kernel_claim_counts': {'sam3': len(nodes)}},
@@ -398,7 +418,7 @@ class McpTests(TransactionTestCase):
         self.assertEqual(self._rpc('notifications/initialized', mid=None).status_code, 202)
         tools = {t['name'] for t in self._rpc('tools/list').json()['result']['tools']}
         self.assertEqual(tools, {'world_stats', 'list_scene_graphs', 'get_scene_graph', 'world_summary',
-                                 'find_entities', 'get_entity', 'world_changes', 'area_histogram'})
+                                 'find_entities', 'get_entity', 'world_changes', 'area_histogram', 'trait_map'})
         self.assertEqual(self._rpc('nope').json()['error']['code'], -32601)
         self.assertEqual(self._rpc('tools/call', {'name': 'nope'}).json()['error']['code'], -32602)
 
@@ -422,8 +442,377 @@ class McpTests(TransactionTestCase):
 
         car = self._tool('get_entity', entity_id=found['entities'][1]['id'])
         self.assertEqual((car['entity']['category'], car['n_sightings']), ('vehicle', 2))
+        self.assertIn('p_exists', car['now'])
+        self.assertEqual(car['field_readings']['n_readings'], 0)
+        self.assertIn('imagery', graphs['captures'][0])
         changes = self._tool('world_changes', lat=LAT, lon=LON, since=(self.t1 - timedelta(days=1)).date().isoformat())
         self.assertEqual(changes['appeared']['n'], 3)
+        self.assertEqual((changes['basis'], len(changes['imagery'])), ('imagery', 1))
+        self.assertTrue(self._tool('world_changes', lat=LAT, lon=LON, since='2026', basis='orbit')['isError'])
+        self.assertEqual(self._tool('world_stats')['detection_models'], {})
         self.assertEqual(self._tool('area_histogram', lat=LAT, lon=LON)['n'], 3)
         self.assertEqual(self._tool('world_stats')['n_captures'], 2)
         self.assertTrue(self._tool('find_entities', lat=95, lon=LON)['isError'])
+        tm = self._tool('trait_map', lat=LAT, lon=LON, category='building')
+        self.assertEqual((tm['n_points'], tm['gp'], tm['grid']), (1, None, None))
+        self.assertTrue(self._tool('trait_map', lat=LAT, lon=LON, trait='height')['isError'])
+
+
+class TraitTests(TransactionTestCase):
+    databases = {'default', 'observations'}
+
+    def test_gp_recovers_a_smooth_field(self):
+        rng = np.random.default_rng(1)
+        xy = rng.uniform(-200, 200, size=(150, 2))
+        z = np.sin(xy[:, 0] / 60) + rng.normal(0, 0.1, 150)
+        grid = np.array([[0.0, 0.0], [60 * np.pi / 2, 0.0], [5000.0, 5000.0]])
+        gp = traits.fit_gp(xy, z, grid)
+        self.assertAlmostEqual(gp['mean'][0], 0, delta=0.15)
+        self.assertAlmostEqual(gp['mean'][1], 1, delta=0.15)
+        self.assertGreater(gp['explained'][0], 0.9)
+        self.assertLess(gp['explained'][2], 0.01)  # far from every point: back to the prior
+        self.assertLess(gp['noise_share'], 0.2)
+
+    def test_trait_map_view(self):
+        nodes = [_node(f'h{i}', 'building', _square(-150 + 30 * (i % 10), -60 + 30 * (i // 10), 4 + i % 10))
+                 for i in range(30)]
+        sg = _scene(timezone.now() - timedelta(hours=1))
+        sg['nodes'], sg['edges'] = nodes, []
+        fusion.ingest_scene_graph(sg, session_id='t', taxonomy_name='urban_v1')
+        box = [LON - 0.003, LAT - 0.002, LON + 0.003, LAT + 0.002]
+        r = self.client.get('/webclient/sampler/world/trait_map',
+                            {'bbox': ','.join(map(str, box)), 'category': 'building'}).json()
+        self.assertEqual(r['status'], 'success')
+        b = next(c for c in r['categories'] if c['category'] == 'building')
+        self.assertEqual(b['stats']['n'], r['n_points'])
+        self.assertGreaterEqual(r['n_points'], 25)
+        self.assertTrue(b['hist']['log'])
+        self.assertEqual(sum(x['n'] for x in b['hist']['bins']), b['stats']['n'])
+        g = r['grid']
+        self.assertEqual(len(g['value']), g['nx'] * g['ny'])
+        self.assertTrue(all(0 <= e <= 1 for e in g['explained']))
+        self.assertGreater(r['gp']['lengthscale_m'], 0)
+        lo, hi = r['gp']['value_range']
+        self.assertTrue(b['stats']['min'] <= lo <= hi <= b['stats']['max'])
+        bad = self.client.get('/webclient/sampler/world/trait_map', {'bbox': ','.join(map(str, box)), 'trait': 'x'})
+        self.assertEqual(bad.status_code, 400)
+
+
+class DetectionModelTests(SimpleTestCase):
+    """The fitted chance that a later look finds an entity again."""
+
+    def _rows(self, n=4000):
+        rng = np.random.default_rng(3)
+        rows = []
+        for i in range(n):
+            pixels = float(2 ** rng.uniform(6, 16))
+            ratio = float(rng.choice([0.5, 1.0, 2.0, 4.0]))
+            category = 'house' if i % 2 else 'road'
+            z = np.log2(ratio)
+            s = 0.5 + 0.4 * (np.log2(pixels) - 10) - 2.0 * max(z, 0) - 0.8 * max(-z, 0) \
+                + (0.7 if category == 'house' else -0.7)
+            rows.append((i, i % 40, pixels, ratio, category, bool(rng.random() < 1 / (1 + np.exp(-s)))))
+        return rows
+
+    def test_fit_recovers_the_generating_model(self):
+        c, m = detection_model.fit(self._rows())
+        self.assertAlmostEqual(c['log2_pixels'], 0.4, delta=0.08)
+        self.assertAlmostEqual(c['coarser'], -2.0, delta=0.35)
+        self.assertAlmostEqual(c['finer'], -0.8, delta=0.35)
+        self.assertAlmostEqual(c['category']['house'] - c['category']['road'], 1.4, delta=0.35)
+        self.assertLess(m['log_loss']['fitted'], m['log_loss']['found_rate'])
+        self.assertLess(m['log_loss']['fitted'], m['log_loss']['fixed'])
+        model = detection_model.Fitted(1, c)
+        self.assertGreater(model.p_detect(20000, 1.0, 'house'), model.p_detect(100, 1.0, 'house'))
+        self.assertGreater(model.p_detect(2000, 1.0, 'house'), model.p_detect(2000, 4.0, 'house'))
+        self.assertTrue(priors.P_FALSE_ALARM <= model.p_detect(1, 64.0, 'road') <= priors.P_DETECT_MAX)
+
+    def test_thin_record_is_not_fitted(self):
+        with self.assertRaises(ValueError):
+            detection_model.fit(self._rows(50))
+
+    def test_a_miss_weighs_what_the_look_could_have_found(self):
+        sure, unsure = priors.miss_table(0.95), priors.miss_table(0.1)
+        self.assertLess(sure[1] - sure[0], unsure[1] - unsure[0])  # a miss by a sure look says more
+        self.assertAlmostEqual(unsure[1] - unsure[0], np.log(0.9 / (1 - priors.P_FALSE_ALARM)), places=6)
+        self.assertEqual(priors.miss_table(1.0), priors.miss_table(priors.P_DETECT_MAX))
+        table, why = detection_model.miss_evidence(None, area_m2=9.0, gsd_m=0.2, first_gsd_m=0.2, category='vehicle')
+        self.assertEqual((table, why), (priors.MISS_TABLE, {'p_detect': priors.P_DETECT}))
+
+    def test_registration_weight_is_the_share_of_the_target_inside(self):
+        from shapely.geometry import Polygon as ShPolygon
+        square = ShPolygon(_square(0, 0, 10)[:4])
+        k = 1 / np.cos(np.radians(LAT))
+        self.assertEqual(field_evidence.registration_weight(square, LON, LAT, 2.0), 1.0)
+        self.assertAlmostEqual(field_evidence.registration_weight(square, LON + 10 * M * k, LAT, 2.0), 0.5, delta=0.1)
+        self.assertEqual(field_evidence.registration_weight(square, LON + 40 * M * k, LAT, 2.0), 0.0)
+        self.assertGreater(field_evidence.target_sigma_m(50), field_evidence.target_sigma_m(5))
+
+
+class UpgradeTests(TransactionTestCase):
+    """Fragments, the fitted miss weight, imagery dates, corrections, field readings."""
+
+    databases = {'default', 'observations'}
+
+    def setUp(self):
+        self.t1 = timezone.now() - timedelta(hours=1)
+        self.t2 = self.t1 + timedelta(minutes=20)
+        self.box = (LON - 0.01, LAT - 0.01, LON + 0.01, LAT + 0.01)
+        detection_model.forget()
+        self.addCleanup(detection_model.forget)
+
+    def _ingest(self, name, at, **kw):
+        return fusion.ingest_scene_graph(_scene(at, **kw), session_id=name, taxonomy_name='urban_v1')
+
+    def _entity(self, category):
+        return Entity.objects.get(category=category, retired_at__isnull=True)
+
+    def _with_fragment(self):
+        sg = _scene(self.t1)
+        sg['nodes'].append(_node('tiny', 'vehicle', _square(60, 60, 0.5)))  # 1 m² is 20 pixels at 22 cm
+        return sg
+
+    # -- 1. measured observation model -------------------------------------------------
+
+    def test_fragment_is_stored_but_not_evidence(self):
+        out = fusion.ingest_scene_graph(self._with_fragment(), session_id='s1', taxonomy_name='urban_v1')
+        self.assertEqual((out['n_detections'], out['n_gated'], out['n_fragments'], out['n_new_entities']),
+                         (4, 1, 1, 3))
+        tiny = Detection.objects.get(node_id='tiny')
+        self.assertEqual(tiny.gate, 'fragment')
+        self.assertFalse(Factor.objects.filter(detection=tiny).exists())
+
+    def test_gate_fragments_command_retires_what_only_fragments_held_up(self):
+        with mock.patch.object(priors, 'FRAGMENT_MIN_PIXELS', 0):
+            fusion.ingest_scene_graph(self._with_fragment(), session_id='s1', taxonomy_name='urban_v1')
+        live = Entity.objects.filter(retired_at__isnull=True)
+        self.assertEqual(live.count(), 4)
+        out = StringIO()
+        call_command('gate_fragments', stdout=out)
+        self.assertIn('dry run', out.getvalue())
+        self.assertEqual((Detection.objects.get(node_id='tiny').gate, live.count()), ('', 4))
+        call_command('gate_fragments', '--apply', stdout=out)
+        tiny = Detection.objects.get(node_id='tiny')
+        self.assertEqual((tiny.gate, live.count()), ('fragment', 3))
+        self.assertFalse(Factor.objects.filter(detection=tiny, superseded_at__isnull=True).exists())
+        self.assertIn('fragment', Entity.objects.get(retired_at__isnull=False).retired_reason)
+        self.assertEqual(self._entity('building').n_hits, 1)
+
+    def test_fitted_model_weighs_a_miss(self):
+        coefficients = {'intercept': 0.0, 'log2_pixels': 0.5, 'coarser': -2.0, 'finer': -1.0,
+                        'category': {'vehicle': 1.0}}
+        row = detection_model.store('urban_v1', coefficients, {'n_looks': 500})
+        self._ingest('s1', self.t1)
+        self.assertEqual(self._ingest('s2', self.t2, with_car=False)['n_missed'], 1)
+        miss, car = Factor.objects.get(kind='miss'), self._entity('vehicle')
+        gsd = Capture.objects.get(session_id='s2').gsd_m
+        p = detection_model.Fitted(row.version, coefficients).p_detect(car.area_m2 / gsd ** 2, 1.0, 'vehicle')
+        self.assertTrue(0.3 < p < 0.6)  # a 180-pixel car: found less often than the fixed 0.8 assumed
+        self.assertAlmostEqual(miss.metadata['p_detect'], p, places=3)
+        self.assertEqual(miss.metadata['model'], row.version)
+        np.testing.assert_allclose(miss.log_table, priors.miss_table(p), atol=1e-3)
+        stats = self.client.get('/webclient/sampler/world/stats', {'taxonomy': 'urban_v1'}).json()
+        self.assertEqual(stats['detection_models']['urban_v1']['version'], row.version)
+
+    def test_fit_detection_model_command_reweighs_stored_misses(self):
+        nodes = [_node(f'h{i}', 'building', _square(-80 + 18 * (i % 10), -30 + 30 * (i // 10), 3 + i % 5))
+                 for i in range(30)]
+        for k in range(9):  # the first capture sees all 30; each later one misses a different third
+            sg = _scene(self.t1 + timedelta(minutes=k))
+            sg['nodes'], sg['edges'] = [n for i, n in enumerate(nodes) if k == 0 or (i + k) % 3], []
+            fusion.ingest_scene_graph(sg, session_id=f'k{k}', taxonomy_name='urban_v1')
+        misses = Factor.objects.filter(kind='miss', superseded_at__isnull=True)
+        self.assertEqual(misses.count(), 80)
+        out = StringIO()
+        call_command('fit_detection_model', stdout=out)
+        self.assertFalse(DetectionModel.objects.exists())
+        call_command('fit_detection_model', '--apply', stdout=out)
+        model = DetectionModel.objects.get(active=True)
+        self.assertEqual((model.taxonomy, model.n_looks), ('urban_v1', 240))
+        self.assertEqual(misses.count(), 80)
+        self.assertTrue(all(f.metadata.get('model') == model.version for f in misses))
+        self.assertAlmostEqual(np.mean([f.metadata['p_detect'] for f in misses]), 2 / 3, delta=0.1)
+        self.assertIn('held-out', out.getvalue())
+
+    # -- 3. imagery provenance and time ------------------------------------------------
+
+    def test_imagery_dates_the_evidence(self):
+        out = self._ingest('s1', self.t1, imagery=_imagery())
+        self.assertTrue(out['imagery_dated'])
+        cap = Capture.objects.get(session_id='s1')
+        self.assertEqual((cap.imagery_source, cap.observed_at, cap.imagery['zoom']), ('bing:Aerial', IMAGED, 19))
+        self.assertAlmostEqual((cap.captured_at - self.t1).total_seconds(), 0, delta=1)
+        car = self._entity('vehicle')
+        self.assertEqual((car.first_seen, car.last_seen), (IMAGED, IMAGED))
+        self.assertEqual(set(Factor.objects.values_list('observed_at', flat=True)), {IMAGED})
+        self.assertGreater(car.p_exists, 0.9)  # as last seen: nothing has decayed since the imagery
+
+        # A second look at the same imagery without the car is a detector miss at the same instant.
+        self._ingest('s2', self.t2, with_car=False, imagery=_imagery())
+        car.refresh_from_db()
+        self.assertEqual(car.last_seen, IMAGED)
+        self.assertGreater(car.p_exists, 0.5)
+
+        # Three years on, a parked car says little and a building still says something.
+        bld = self._entity('building')
+        now = fusion.run_local_bp([car.id, bld.id], at=timezone.now(), write=False)['beliefs']
+        self.assertLess(abs(now[car.id]['p_exists'] - 0.5), 0.01)
+        self.assertTrue(0.6 < now[bld.id]['p_exists'] < bld.p_exists)
+
+        recent = fusion.world_changes(self.box, self.t1 - timedelta(days=1))
+        self.assertEqual((recent['basis'], recent['appeared']['n']), ('imagery', 0))
+        self.assertIn('same imagery', recent['note'])
+        self.assertEqual(recent['imagery'][0]['n_captures'], 2)
+        self.assertEqual(fusion.world_changes(self.box, self.t1 - timedelta(days=1), basis='view')['appeared']['n'], 3)
+        in_2023 = fusion.world_changes(self.box, datetime(2023, 1, 1, tzinfo=dt_timezone.utc),
+                                       datetime(2024, 1, 1, tzinfo=dt_timezone.utc))
+        self.assertEqual((in_2023['appeared']['n'], in_2023['n_captures']), (3, 2))
+
+        r = self.client.get(f'/webclient/sampler/world/entities/{car.id}').json()
+        self.assertLess(abs(r['now']['p_exists'] - 0.5), 0.01)
+        self.assertTrue(r['detections'][0]['imagery']['start'].startswith('2023-03-01'))
+        self.assertEqual(r['detections'][0]['viewed_at'][:10], cap.captured_at.isoformat()[:10])
+        caps = self.client.get('/webclient/sampler/world/captures', {'bbox': ','.join(map(str, self.box))}).json()
+        self.assertEqual(caps['captures'][0]['observed_at'], IMAGED.isoformat())
+
+    def test_unusable_imagery_dates_leave_the_view_time(self):
+        late = (self.t1 + timedelta(days=30)).date().isoformat()
+        out = self._ingest('s1', self.t1, imagery=_imagery(end=late))  # "acquired" after it was viewed
+        self.assertFalse(out['imagery_dated'])
+        cap = Capture.objects.get(session_id='s1')
+        self.assertIsNone(cap.observed_at)
+        self.assertEqual(cap.imagery_source, 'bing:Aerial')
+        self.assertIn('rejected_dates', cap.imagery)
+        self.assertEqual(self._entity('vehicle').first_seen, cap.captured_at)
+        self.assertIsNone(fusion.imagery_record(None, self.t1)['observed_at'])
+        reversed_window = {'dates': {'start': '2023-09-01', 'end': '2023-03-01'}}
+        self.assertIsNone(fusion.imagery_record(reversed_window, self.t1)['observed_at'])
+
+    def test_backfill_imagery_command_moves_evidence_to_the_imagery_date(self):
+        self._ingest('s1', self.t1)
+        self._ingest('s2', self.t2, with_car=False)
+        car = self._entity('vehicle')
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as fh:
+            json.dump({name: {'source': 'bing:Aerial', 'start': '2023-03-01', 'end': '2023-09-01', 'zoom': 19,
+                              'uniform': True, 'method': 'backfill'} for name in ('s1', 's2', 'missing')}, fh)
+        self.addCleanup(os.unlink, fh.name)
+        out = StringIO()
+        call_command('backfill_imagery', '--file', fh.name, stdout=out)
+        self.assertIsNone(Capture.objects.get(session_id='s1').observed_at)
+        call_command('backfill_imagery', '--file', fh.name, '--apply', stdout=out)
+        self.assertIn('captures dated: 2', out.getvalue())
+        self.assertEqual(set(Capture.objects.values_list('observed_at', flat=True)), {IMAGED})
+        self.assertEqual(set(Detection.objects.values_list('observed_at', flat=True)), {IMAGED})
+        self.assertEqual({(f.observed_at, f.valid.lower) for f in Factor.objects.all()}, {(IMAGED, IMAGED)})
+        self.assertAlmostEqual((Capture.objects.get(session_id='s1').captured_at - self.t1).total_seconds(), 0, delta=1)
+        was = car.p_exists
+        car.refresh_from_db()
+        self.assertEqual((car.first_seen, car.last_seen), (IMAGED, IMAGED))
+        self.assertGreater(car.p_exists, was)  # the miss no longer comes 20 minutes after the hit
+
+    # -- 2. a truth channel ------------------------------------------------------------
+
+    def test_feedback_is_dated_by_what_the_person_saw(self):
+        self._ingest('s1', self.t1, imagery=_imagery())
+        bld = self._entity('building')
+        fb, _, _ = fusion.apply_feedback(bld.id, 'confirm', user_id=987654)
+        self.assertEqual(set(Factor.objects.filter(feedback=fb).values_list('observed_at', flat=True)), {IMAGED})
+
+        user = get_user_model().objects.create_user('sg_reviewer', password='x')
+        self.client.force_login(user)
+        mine = Factor.objects.filter(kind='feedback', superseded_at__isnull=True, feedback__user_id=user.id)
+
+        def post(**body):
+            return self.client.post('/webclient/sampler/world/feedback', json.dumps({'entity_id': bld.id, **body}),
+                                    content_type='application/json')
+
+        self.assertEqual(post(kind='reject', imagery=_imagery('2025-01-01', '2025-03-01')).status_code, 200)
+        self.assertEqual({t.date().isoformat() for t in mine.values_list('observed_at', flat=True)}, {'2025-01-30'})
+        self.assertEqual(post(kind='reject', seen='in_person').status_code, 200)
+        self.assertTrue(all((timezone.now() - t).total_seconds() < 60 for t in mine.values_list('observed_at', flat=True)))
+        # It stood in the 2023 imagery and someone standing there today says it is gone.
+        bld.refresh_from_db()
+        self.assertLess(bld.p_exists, 0.5)
+        then = fusion.run_local_bp([bld.id], at=IMAGED + timedelta(days=1), write=False)['beliefs'][bld.id]
+        self.assertGreater(then['p_exists'], 0.9)
+
+    def test_review_queue_asks_about_the_least_certain_first(self):
+        sg = _scene(self.t1)
+        sg['nodes'][2] = _node('v', 'vehicle', _square(10, 2, 1.5), p=0.3)
+        fusion.ingest_scene_graph(sg, session_id='s1', taxonomy_name='urban_v1')
+        car = Entity.objects.get(associations__detection__node_id='v')
+        queue = fusion.review_queue(self.box)
+        self.assertEqual((queue['n_candidates'], queue['n_judged'], queue['entities'][0]['id']), (3, 0, car.id))
+        self.assertGreater(queue['entities'][0]['value_bits'], queue['entities'][1]['value_bits'])
+        fusion.apply_feedback(car.id, 'relabel', category='vehicle', user_id=987654)
+        queue = fusion.review_queue(self.box)
+        self.assertEqual((queue['n_candidates'], queue['n_judged']), (2, 1))
+        self.assertNotIn(car.id, [e['id'] for e in queue['entities']])
+        url = '/webclient/sampler/world/review'
+        r = self.client.get(url, {'bbox': ','.join(map(str, self.box)), 'limit': 1})
+        self.assertEqual((r.status_code, len(r.json()['entities'])), (200, 1))
+        self.assertEqual(self.client.get(url).status_code, 400)
+
+    def _reading(self, x_m, y_m, *, index=0.4, when=None, usec=1):
+        k = 1 / np.cos(np.radians(LAT))
+        # 19:30 UTC is half past noon in Tempe: the sun is well up on any day of the year
+        when = when or (self.t1 - timedelta(days=1)).replace(hour=19, minute=30, second=0, microsecond=0)
+        return FieldReading.objects.using('observations').create(
+            vehicle_id='rover', captured_usec=int(when.timestamp() * 1e6) + usec, captured=when,
+            range_m=10.0, range_valid=True, target=Point(LON + x_m * M * k, LAT + y_m * M, srid=4326),
+            spectrum={'footprint': {'diameter_m': 2.0}, 'indices': {'nir_red': index}})
+
+    def test_field_reading_years_after_the_imagery_does_not_age_it(self):
+        self._ingest('s1', self.t1, imagery=_imagery())
+        road = self._entity('road')
+        before = road.score
+        # Bare ground under a "road" label, read three years after the imagery, agrees with it.
+        self.assertEqual(field_evidence.register_reading(self._reading(10, -3, index=-0.2)), {road.id})
+        factor = Factor.objects.get(kind='field', superseded_at__isnull=True)
+        self.assertGreater(factor.observed_at, IMAGED + timedelta(days=365))
+        road.refresh_from_db()
+        self.assertGreater(road.score, before)
+        self.assertEqual(road.last_seen, IMAGED)  # a spectrum is not a sighting
+
+    def test_field_reading_votes_once_a_day_on_the_entity_under_its_target(self):
+        self._ingest('s1', self.t1)
+        bld = self._entity('building')
+        before = bld.score
+        self.assertEqual(field_evidence.register_reading(self._reading(-40, 0)), {bld.id})
+        link = FieldLink.objects.get()
+        self.assertEqual((link.entity_id, link.usable, link.signal['green']), (bld.id, True, True))
+        self.assertGreater(link.weight, 0.95)
+        one = Factor.objects.get(kind='field', superseded_at__isnull=True)
+        self.assertEqual(one.variables, [fusion.cvar(bld.id)])
+        bld.refresh_from_db()
+        self.assertLess(bld.score, before)  # green under a "building" label counts against it
+        after_one, p_exists = bld.score, bld.p_exists
+
+        # Five more readings of the same roof on the same day are still one vote.
+        for i in range(5):
+            field_evidence.register_reading(self._reading(-40 + i, 1, usec=10 + i))
+        many = Factor.objects.get(kind='field', superseded_at__isnull=True)
+        self.assertEqual(many.metadata['n_readings'], 6)
+        np.testing.assert_allclose(many.log_table, one.log_table, atol=1e-6)
+        bld.refresh_from_db()
+        self.assertAlmostEqual(bld.score, after_one, places=4)
+        self.assertAlmostEqual(bld.p_exists, p_exists, places=4)  # a spectrum says nothing about existence
+
+        # At night the index means nothing, and a target off every outline is linked to nothing.
+        night = (self.t1 - timedelta(days=2)).replace(hour=8, minute=0, second=0, microsecond=0)
+        field_evidence.register_reading(self._reading(-40, 0, when=night, usec=99))
+        self.assertFalse(FieldLink.objects.get(observed_at=night).usable)
+        field_evidence.register_reading(self._reading(70, 70, usec=100))
+        self.assertEqual(FieldLink.objects.count(), 7)
+        self.assertEqual(Factor.objects.filter(kind='field', superseded_at__isnull=True).count(), 1)
+        self.assertEqual(field_evidence.register_all()[1], set())  # a second pass changes nothing
+
+        # Where a robot has been is shown to signed-in users only.
+        url = f'/webclient/sampler/world/entities/{bld.id}'
+        r = self.client.get(url).json()
+        self.assertNotIn('field', r)
+        self.assertNotIn('field', r['factor_counts'])
+        self.client.force_login(get_user_model().objects.create_user('sg_field', password='x'))
+        r = self.client.get(url).json()
+        self.assertEqual((r['field']['n_readings'], r['field']['n_usable'], r['field']['n_green']), (7, 6, 6))
+        self.assertEqual(r['factor_counts']['field'], 1)

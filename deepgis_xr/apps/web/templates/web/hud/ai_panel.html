@@ -172,9 +172,9 @@
         <hr class="pw-rule">
         <div class="dl-heading">World model</div>
         <small style="display: block; margin-bottom: 6px; font-size: 0.72rem; color: #64748b;">
-            Objects remembered across scene-graph builds. Opacity is how likely each one is still there; click one to inspect it.
+            Objects remembered across scene-graph builds, dated by the imagery they were seen in. Opacity is how likely each one was there; click one to inspect or correct it.
         </small>
-        <div class="d-flex align-items-center gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
+        <div class="d-flex flex-wrap align-items-center gap-2 mb-2" style="font-size: 0.75rem; color: #cbd5e1;">
             <label class="d-inline-flex align-items-center gap-1 mb-0 text-nowrap flex-shrink-0"><input class="form-check-input m-0" type="checkbox" id="wmShow"> Show in view</label>
             <select class="form-select form-select-sm" id="wmAt" aria-label="Belief at"
                     style="width: auto; font-size: 0.72rem; padding: 2px 24px 2px 6px;">
@@ -185,6 +185,11 @@
             </select>
             <button class="btn btn-secondary btn-sm" id="wmRefreshBtn" type="button" title="Reload for the current view"
                     style="font-size: 0.72rem;"><i class="fas fa-sync-alt"></i></button>
+            {% if user.is_authenticated %}
+            <button class="btn btn-secondary btn-sm text-nowrap" id="wmReviewBtn" type="button"
+                    title="Select the object in view whose label is least certain, so you can correct it"
+                    style="font-size: 0.72rem;">Review next</button>
+            {% endif %}
         </div>
         <div id="wmStatus" style="font-size: 0.72rem; color: #94a3b8;"></div>
         <div id="wmSelected" hidden style="margin-top: 8px; padding: 8px; background: rgba(148, 163, 184, 0.12); border-radius: 4px; font-size: 0.75rem; color: #cbd5e1;">

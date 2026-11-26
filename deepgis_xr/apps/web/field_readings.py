@@ -479,7 +479,51 @@ def _keep(reading):
         schedule_adsb(saved.pk)
     if saved.image_relpath and saved.spectrum:
         schedule_analysis(saved.pk)
+    schedule_evidence(saved.pk)
     return saved
+
+
+_EVIDENCE_QUEUE = deque()
+_EVIDENCE_LOCK = threading.Lock()
+_EVIDENCE_THREAD = None
+_EVIDENCE_LIMIT = 256
+
+
+def _evidence_worker():
+    global _EVIDENCE_THREAD
+    from deepgis_xr.apps.scene_store import field_evidence
+
+    while True:
+        with _EVIDENCE_LOCK:
+            if not _EVIDENCE_QUEUE:
+                _EVIDENCE_THREAD = None
+                return
+            pk = _EVIDENCE_QUEUE.popleft()
+        try:
+            field_evidence.register_reading(pk)
+        except Exception:
+            log.exception("field reading %s was not registered to the world model", pk)
+        finally:
+            close_old_connections()
+
+
+def schedule_evidence(pk):
+    """Register the reading to the world entity under its target, after the post has returned.
+
+    A reading dropped from a full queue is picked up by ``manage.py register_field_readings``.
+    """
+    global _EVIDENCE_THREAD
+    if not enabled() or not pk:
+        return
+    with _EVIDENCE_LOCK:
+        if pk in _EVIDENCE_QUEUE:
+            return
+        while len(_EVIDENCE_QUEUE) >= _EVIDENCE_LIMIT:
+            _EVIDENCE_QUEUE.popleft()
+        _EVIDENCE_QUEUE.append(pk)
+        if _EVIDENCE_THREAD is None or not _EVIDENCE_THREAD.is_alive():
+            _EVIDENCE_THREAD = threading.Thread(target=_evidence_worker, name="field-reading-evidence", daemon=True)
+            _EVIDENCE_THREAD.start()
 
 
 

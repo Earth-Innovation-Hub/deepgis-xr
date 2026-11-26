@@ -49,14 +49,22 @@ from . import robots
 ACTION_TYPES = ("goto", "orbit", "adjust", "takeoff", "land", "look", "stop", "wait",
                 "show_layer", "hide_layer", "place_model", "describe_view", "check_view", "follow_vehicle",
                 "find_objects", "show_scene_graphs", "world_uncertain", "world_confidence", "capture_quality",
-                "world_changes")
+                "world_changes", "trait_map")
 # The two models the lab's GPU server keeps loaded, one per GPU (Gemma 4 is the bridges' default)
 PILOT_MODELS = ("unsloth/gemma-4-26B-A4B-it-GGUF", "qwen3.8:27b")
 # Vehicles report positions on Earth only, and the scene-graph store holds Earth captures only
-WORLD_TYPES = ("show_scene_graphs", "world_uncertain", "world_confidence", "capture_quality", "world_changes")
+WORLD_TYPES = ("show_scene_graphs", "world_uncertain", "world_confidence", "capture_quality", "world_changes",
+               "trait_map")
 EARTH_ONLY_TYPES = ("show_layer", "hide_layer", "follow_vehicle", *WORLD_TYPES)
 # world_changes: a day, month or year
 WORLD_DATE = re.compile(r"\d{4}(?:-\d{2}(?:-\d{2})?)?")
+# trait_map: the urban_v1 categories (world_sampler_api.urban_taxonomy) and the traits scene_store.traits maps
+TRAIT_MAP_CATEGORIES = ("building", "house", "solar_panel", "road", "vehicle", "pavement", "parking_lot", "tree",
+                        "vegetation_other", "bare_ground", "water", "pool", "debris", "unknown")
+TRAIT_MAP_ALIASES = {"home": "house", "car": "vehicle", "truck": "vehicle", "swimming_pool": "pool",
+                     "solar": "solar_panel", "parking": "parking_lot", "vegetation": "vegetation_other",
+                     "grass": "vegetation_other", "lawn": "vegetation_other", "street": "road"}
+TRAIT_MAP_TRAITS = ("area", "confidence", "p_exists")
 DEFAULT_MIN_CONFIDENCE = 0.5
 FOLLOW_VIEWS = ("camera", "chase")
 VEHICLE_NAME = re.compile(r"[a-z0-9_.-]{1,40}")
@@ -149,6 +157,8 @@ PILOT_SCHEMA = {
                     "min_confidence": {"type": "number"},
                     "since": {"type": "string"},
                     "until": {"type": "string"},
+                    "category": {"enum": list(TRAIT_MAP_CATEGORIES)},
+                    "trait": {"enum": list(TRAIT_MAP_TRAITS)},
                     "vehicle": {"type": "string"},
                     "view": {"enum": list(FOLLOW_VIEWS)},
                 },
@@ -170,7 +180,7 @@ ADJUST_FIELDS = ("type", "radius_m", "radius_factor", "alt_m", "alt_factor", "re
                  "speed_mps", "pitch_deg")
 # Fields only adjust, orbit (continuous), check_view (goal), find_objects and the world-model actions carry
 TASK_FIELDS = ("radius_factor", "alt_factor", "continuous", "goal", "objects", "stats", "min_confidence",
-               "since", "until")
+               "since", "until", "category", "trait")
 MOTION_FIELDS = tuple(k for k in FIELD_ORDER if k not in TASK_FIELDS)
 # find_objects: SAM 3 text prompts, as plain nouns ("building, house")
 OBJECT_PROMPT = re.compile(r"[a-z][a-z0-9 '-]{0,39}")
@@ -300,7 +310,7 @@ Actions (all heights are metres ABOVE GROUND):
   - trails: hiking and walking trails (3 km; worldwide, OpenStreetMap)
   - springs: springs and hot springs (5 km; worldwide, OpenStreetMap)
   - mines: mines, mine shafts, adits and quarries (5 km; worldwide, OpenStreetMap)
-  - surface_temp: land surface temperature (how hot the ground is, not the air) as a colour map with the measured range, from the latest clear Landsat thermal image (default: the whole place; worldwide over land, a new image about every 8 days, taken mid-morning). Also for "heat map", "hot spots", "urban heat island" or "thermal" requests.
+  - surface_temp: land surface temperature (how hot the ground is, not the air) as a colour map with the measured range, from the latest clear Landsat thermal image (default: the whole place; worldwide over land, a new image about every 8 days, taken mid-morning). Also for "heat map" of heat or temperature (a heat map of object sizes is trait_map), "hot spots", "urban heat island" or "thermal" requests.
   - ndvi: vegetation greenness (NDVI) as a colour map, with the share of green vegetation and of bare or built ground, from the latest clear Sentinel-2 image (10 m; worldwide over land, a new image every few days). Also for "vegetation", "greenness", "plant health", "how green" or "tree cover" requests.
   - humidity: current relative humidity of the air as a colour map, with dew point, air temperature and wind at the centre (default: the whole place; worldwide, from weather models).
   - air_temp: current air temperature as a colour map, with humidity and wind at the centre (worldwide, from weather models). Use it for "air temperature", "how hot is it", "weather" or "temperature right now"; use surface_temp for the ground, roofs or pavement.
@@ -324,6 +334,7 @@ Actions (all heights are metres ABOVE GROUND):
 - world_confidence: show only world-model objects at least this confident. Fields: min_confidence (0 to 0.95; default 0.5; "very confident" 0.8; 0 shows everything again, for "show all objects"). Use it for "show only confident objects", "hide the unsure ones".
 - capture_quality: list the stored captures in view with how sharp each was: ground sample distance (cm per pixel), the smallest object it could resolve, and how well its camera position is known. No fields. Use it for "how sharp were the captures here?", "how good is the imagery behind the world model?", "what resolution were these scene graphs?".
 - world_changes: show what changed in the world model in view over a time window: objects first seen in it (green) and objects that later captures missed and that are now believed gone (red). Fields: since (YYYY, YYYY-MM or YYYY-MM-DD; "since April" is the latest April on or before the Today line); until (same format, optional, default now). Use it for "what changed here since ...?", "what's new since ...?", "what disappeared ...?".
+- trait_map: map one measured trait of the objects around the point in view as a heat map with its uncertainty. The viewer reuses a SAM 3 scene graph of the spot from the last 30 days or captures one looking straight down from 1,700 ft, lists every category's statistics and histogram in the chat with an assessment of their means and spreads, and draws a Gaussian-process map of the trait for one category, coloured by the predicted value and fading where the data say little. Fields: category (the objects to map: house, building, pool, tree, vehicle, solar_panel, parking_lot, road, ...; "homes" is house, "cars" is vehicle; omit for all objects); trait (area for sizes, how big, footprints, the default; confidence for how sure the detector was; p_exists for how likely the objects still exist). Use it for "show me house sizes around me as a heat map", "map building sizes here", "where are the bigger pools?", "spatial pattern of house sizes". "Around me" and "here" mean the point in view. Put it last, after any goto that sets up the view.
 - follow_vehicle: lock the camera to a live robot that reports its position to DeepGIS, and keep following until stop. Fields: vehicle (the robot's id from the Robots line: its callsign, e.g. "badger" for "the rover"; students' OpenUAV sims are "openuav-<username>"; leave it out only if the user names no robot); view: "camera" to see through the vehicle's own gimbal camera (the default, also for "sync", "what the sim/drone camera sees", "ride along") or "chase" to follow it from behind and above ("chase", "follow behind", "show me the drone").
 
 Rules:
@@ -342,7 +353,7 @@ Rules:
 - Never name, list, count or describe what a layer contains in reply (no faults, zones, fires, flows, species, soils, trails, temperatures, humidity, vegetation, chlorophyll, heights, slopes or datasets); the viewer lists them from its sourced data.
 - The request starts with the drone's telemetry ("Current view") and, for questions about the surroundings, the places OpenStreetMap names around the point in view. Answer where-and-which questions from them in reply with no actions ("what dam are we looking at?", "where are we?", "what lake is that?", "how high are we?", "which way are we facing?"): name the best match nearest the point in view, say it is from the map and the drone's position, and give height, heading or distance from the telemetry when asked. Never name a place that is not listed; if none fits, say so and use describe_view.
 - A question about what is visible or what the scene looks like is a describe_view request. Never describe the view yourself in reply; say you will take a look.
-- Never state counts or sizes of objects in reply before find_objects has measured them; the viewer lists them. A later question about them may be answered from the SAM 3 results earlier in the conversation.
+- Never state counts or sizes of objects in reply before find_objects or trait_map has measured them; the viewer lists them. A later question about them may be answered from the SAM 3 results earlier in the conversation.
 - A request to follow, sync with, ride along with or chase the simulation, the twin, the sim drone or a robot is a follow_vehicle request; its reply only says which robot you will follow.
 - The Robots line lists the robots DeepGIS knows: id, name, platform, airframe and site, whether it is live, and its distance and direction from the point in view. Answer which robots exist, are live or are nearby, where one is, how far it is or what kind it is in reply from that line, nearest first, with no actions unless the user also asks to follow one. Use the robots' names in reply. Never invent a robot, a position or a distance that is not listed; if none is listed, say no robot is reporting.
 - The Models line, when present, lists the 3D models placed on the globe with their distance and direction from the point in view. Answer whether one is nearby, where it is or what it is called from that line with no actions unless the user also asks to fly there or orbit it; use the listed name as place. Never invent a model that is not listed.
@@ -380,6 +391,9 @@ Examples (actions only):
 - "how sharp were the captures here?" -> [{"type": "capture_quality"}]
 - (Today: 2026-11-22) "what changed here since April?" -> [{"type": "world_changes", "since": "2026-04"}]
 - "what's new between March and June 2026?" -> [{"type": "world_changes", "since": "2026-03", "until": "2026-07"}]
+- "show me house sizes around me as a heat map" -> [{"type": "trait_map", "category": "house", "trait": "area"}]
+- "fly to Tempe Marketplace and map building sizes" -> [{"type": "goto", "place": "Tempe Marketplace, Tempe, Arizona", "pitch_deg": -90}, {"type": "trait_map", "category": "building", "trait": "area"}]
+- "how confident are the pool detections around here, as a map?" -> [{"type": "trait_map", "category": "pool", "trait": "confidence"}]
 - "remove all the layers" -> [{"type": "hide_layer"}]
 - "what dam are we looking at?" -> [] (reply names the listed dam nearest the point in view)
 - "orbit this dam" -> [{"type": "orbit"}] ("this", "that" and "here" mean the point in view: leave out place and lat/lon)
@@ -680,6 +694,16 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False, allow_retir
                     act[key] = v.strip()
             if "since" not in act:
                 continue
+        if act["type"] == "trait_map":
+            cat = a.get("category")
+            if isinstance(cat, str) and cat.strip():
+                cat = "_".join(cat.lower().replace("-", " ").split())
+                cat = TRAIT_MAP_ALIASES.get(cat, cat)
+                if cat not in TRAIT_MAP_CATEGORIES and cat.endswith("s"):
+                    cat = TRAIT_MAP_ALIASES.get(cat[:-1], cat[:-1])
+                if cat in TRAIT_MAP_CATEGORIES:
+                    act["category"] = cat
+            act["trait"] = a.get("trait") if a.get("trait") in TRAIT_MAP_TRAITS else "area"
         if act["type"] == "follow_vehicle":
             vehicle = a.get("vehicle")
             if isinstance(vehicle, str) and vehicle.strip():
@@ -714,6 +738,7 @@ def clean_actions(raw, body="earth", control=None, allow_twin=False, allow_retir
                                                     "capture_quality")
                   else ("type", "min_confidence") if act["type"] == "world_confidence"
                   else ("type", "since", "until") if act["type"] == "world_changes"
+                  else ("type", "category", "trait") if act["type"] == "trait_map"
                   else FOLLOW_FIELDS if act["type"] == "follow_vehicle"
                   else ("type", "model", "place", "lat", "lon", "heading_deg") if act["type"] == "place_model"
                   else ADJUST_FIELDS if act["type"] == "adjust" else ("type", "goal") if act["type"] == "check_view"
@@ -1675,6 +1700,102 @@ def pilot_describe(request):
         "model": out.get("model", ""),
         "duration_sec": out.get("duration_sec"),
     })
+
+
+# trait_map: the page posts the statistics scene_store's world/trait_map measured, and the model
+# assesses them. Only known numeric fields reach the prompt; it is written here, not by the page.
+TRAIT_UNITS = {"area": "m²", "confidence": "probability", "p_exists": "probability"}
+TRAIT_STAT_KEYS = ("n", "mean", "sd", "cv", "median", "p10", "p90", "min", "max", "geo_mean", "log10_sd")
+TRAIT_GP_KEYS = ("n", "lengthscale_m", "signal_sd", "noise_sd", "noise_share", "prior_median",
+                 "mean_explained", "map_range")
+TRAIT_CATEGORY = re.compile(r"[a-z_]{1,40}")
+MAX_TRAIT_CATEGORIES = 12
+ASSESS_SCHEMA = {"type": "object", "properties": {"assessment": {"type": "string"}}, "required": ["assessment"]}
+ASSESS_PROMPT = """You are a spatial statistician reading measurements from DeepGIS's world model: objects \
+segmented by SAM 3 from a top-down map capture and fused over time, in one area of about half a kilometre.
+For the trait given, assess each category's mean and spread in 3 to 6 plain sentences: whether the typical \
+value is plausible for that kind of object, what the spread (sd, cv, p10 to p90; for areas the log10 sd, a \
+factor of 10^sd either way) says, likely outliers or mis-segmentations (e.g. a "house" larger than a few \
+thousand m², slivers of a few m²), and how far small samples (n under about 20) can be trusted.
+If a Gaussian-process fit is given: lengthscale_m is how far apart objects still tend to be alike; \
+noise_share near 1 means the trait varies mostly from object to object rather than as a smooth spatial \
+pattern, so the map shows little real structure; mean_explained is how much of the area the data constrain.
+Use only the numbers given. Do not repeat the whole table; quote at most a few numbers. No headings or lists."""
+
+
+def _trait_numbers(src, keys):
+    out = {}
+    for k in keys:
+        v = src.get(k) if isinstance(src, dict) else None
+        if isinstance(v, list) and len(v) == 2 and all(isinstance(x, (int, float)) and not isinstance(x, bool)
+                                                       and math.isfinite(x) for x in v):
+            out[k] = [float(f"{x:.4g}") for x in v]
+        elif isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+            out[k] = int(v) if k == "n" else float(f"{v:.4g}")
+    return out
+
+
+def assess_trait_prompt(data):
+    """The user prompt for one trait_map assessment, or None if the request is malformed."""
+    trait = data.get("trait")
+    if trait not in TRAIT_UNITS:
+        return None
+    target = data.get("category")
+    target = target if isinstance(target, str) and TRAIT_CATEGORY.fullmatch(target) else ""
+    lines = [f"Trait: {trait} ({TRAIT_UNITS[trait]})" + (f"; mapped category: {target}" if target else "")]
+    rows = data.get("categories")
+    for c in (rows if isinstance(rows, list) else [])[:MAX_TRAIT_CATEGORIES]:
+        name = c.get("category") if isinstance(c, dict) else None
+        stats = _trait_numbers(c.get("stats") if isinstance(c, dict) else None, TRAIT_STAT_KEYS)
+        if isinstance(name, str) and TRAIT_CATEGORY.fullmatch(name) and stats.get("n"):
+            lines.append(f"{name}: " + ", ".join(f"{k} {v}" for k, v in stats.items()))
+    if len(lines) == 1:
+        return None
+    gp = _trait_numbers(data.get("gp"), TRAIT_GP_KEYS)
+    if gp:
+        lines.append("Gaussian-process fit of the mapped category (Matern 5/2 + noise on "
+                     + ("log10 area" if trait == "area" else "logit") + "): "
+                     + ", ".join(f"{k} {v}" for k, v in gp.items()))
+    return "\n".join(lines)
+
+
+@require_POST
+def pilot_assess(request):
+    if not request.user.is_authenticated:
+        return JsonResponse({"error": "login_required",
+                             "login_url": "/label/admin/login/"}, status=401)
+    if not settings.DEEPGIS_PILOT_MCP_TOKEN:
+        return JsonResponse({"error": "The AI pilot is not configured on this server."}, status=503)
+    try:
+        data = json.loads(request.body)
+    except ValueError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+    prompt = assess_trait_prompt(data) if isinstance(data, dict) else None
+    if not prompt:
+        return JsonResponse({"error": "trait and categories with statistics are required"}, status=400)
+    if _rate_limited(request.user.pk, "pilot-assess"):
+        return JsonResponse({"error": "Too many requests; wait a minute."}, status=429)
+    timeout = settings.DEEPGIS_PILOT_TIMEOUT_SEC
+    args = {"prompt": prompt, "system_prompt": ASSESS_PROMPT, "json_schema": ASSESS_SCHEMA,
+            "temperature": 0.2, "max_tokens": 600, "timeout_sec": timeout}
+    model = data.get("model")
+    if isinstance(model, str) and model.strip():
+        try:
+            if model.strip() in _model_catalog()["models"]:
+                args["model"] = model.strip()
+        except (requests.RequestException, RuntimeError, ValueError, KeyError):
+            pass
+    try:
+        out = call_mcp_tool("ask_robot_llm", args, timeout + 10)
+    except (requests.RequestException, RuntimeError, ValueError, KeyError) as e:
+        return JsonResponse({"error": f"AI pilot unavailable: {type(e).__name__}"}, status=502)
+    got = out.get("json") if isinstance(out, dict) else None
+    text = got.get("assessment") if isinstance(got, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        return JsonResponse({"error": "The AI pilot returned no assessment."}, status=502)
+    _record_use(request, "assess", out.get("model", ""), out.get("duration_sec"), True)
+    return JsonResponse({"assessment": text.strip()[:1500], "model": out.get("model", ""),
+                         "duration_sec": out.get("duration_sec")})
 
 
 # Gridded sea data for the sea_temp and chlorophyll layers, from NOAA ERDDAP servers,

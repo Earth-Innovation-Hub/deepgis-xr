@@ -256,6 +256,47 @@ Geometry keeps the world model honest about what a camera can see:
   these rules (dry run unless `--apply`; `--misses-only` for just the
   resolution check).
 
+Three more rules tie the beliefs to what was measured:
+- **Two clocks.** A capture records when it was viewed and, separately, when
+  its imagery was acquired. For Bing aerial imagery the page asks the
+  provider for the acquisition window of the tiles on screen and sends it
+  with the build (`viewport.imagery`: `source`, `layers`, `dates`); the
+  middle of the window dates the capture's detections and factors. A stored
+  belief is *as last seen*: nothing decays after an entity's newest
+  evidence, and `at=` (the info box's *Still there today*) decays it to a
+  chosen time. `world/changes` compares imagery dates by default and says so
+  when every capture in the area shows the same imagery, so looking at one
+  image twice is not reported as change. `backfill_imagery --file
+  dates.json` dates captures that were stored without one.
+- **A measured detection model.** How much a miss counts depends on how
+  likely the detector was to find that object: a logistic model of the
+  object's size in pixels, the zoom relative to its first sighting and its
+  category, fitted to the store's own repeat looks and cross-validated by
+  capture (`fit_detection_model`; kept in `sg_detection_model`). On the
+  Tempe captures it halved the held-out log loss of the fixed 0.8 it
+  replaces (0.45 against 0.94). A detection smaller than 64 image pixels is
+  a fragment: stored, never evidence (`gate_fragments` applies that to
+  detections already stored).
+- **Truth from people and from the field.** The info box of a clicked object
+  carries *Correct*, *Relabel* and *Not there* for signed-in users, and
+  *Review next* in the AI panel walks the objects in view whose answer would
+  tell the model most (category plus existence entropy, in bits), flying to
+  each. A correction is dated by the imagery it was made on. A field robot's
+  reading is registered to the entity under its laser target, weighted by
+  the share of the target's position uncertainty that falls inside the
+  outline; its daylight NIR/red index then counts as weak evidence for or
+  against vegetation, one vote per entity, robot and day
+  (`register_field_readings`; new readings register as they arrive). Which
+  entities a robot has read is shown to signed-in users only.
+
+These four commands only report unless `--apply` is given.
+
+The AI pilot's `trait_map` ("show me house sizes around here as a heat map")
+measures one trait (area, confidence or chance of still being there) for
+every category around the point in view, has the lab model assess the means
+and spreads, and drapes a Gaussian-process map of one category that fades
+where the data say little (`scene_store/traits.py`; an exact GP in torch).
+
 ### 🌍 World Sampler: adaptive geospatial sampling
 - Probabilistic location sampling that updates from feedback and rewards
 - Survey mode that cycles through samples with automatic navigation
@@ -765,10 +806,15 @@ deepgis-xr/
 - `GET /webclient/sampler/world/entities/<id>`: one entity's belief history,
   detections, feedback and factor counts.
 - `POST /webclient/sampler/world/feedback`: `{entity_id, kind: confirm |
-  relabel | reject, category?, note?}`; sign-in required.
+  relabel | reject, category?, note?, imagery?, seen?}`; sign-in required.
+  `imagery` is the page's record of the imagery the judgement was made on
+  and dates the correction; `seen: "in_person"` dates it now.
+- `GET /webclient/sampler/world/review?bbox=...[&limit=]`: entities nobody
+  has judged yet, most uncertain first, each with `value_bits`.
 - `GET`/`POST /webclient/sampler/world/preferences`: per-user settings as a
   JSON object (`null` deletes a key); sign-in required.
-- `GET /webclient/sampler/world/stats[?taxonomy=]`: counts, plus per-source
+- `GET /webclient/sampler/world/stats[?taxonomy=]`: counts, the imagery
+  windows of the captures and the fitted detection models, plus per-source
   label agreement with user feedback when a taxonomy is given.
 - `GET /webclient/sampler/world/captures?bbox=west,south,east,north`: stored
   captures (scene graphs) whose footprint meets the box (at most 0.5°
@@ -776,13 +822,19 @@ deepgis-xr/
 - `GET /webclient/sampler/world/captures/<session_id>`: one capture's
   footprint, its entities with their current beliefs, and the context and
   contains links between them that were valid at capture time. Captures
-  carry `gsd_m`, `min_object_m2` (the smallest object a miss counts for)
-  and their current `pose` (source and uncertainty).
+  carry `gsd_m`, `min_object_m2` (the smallest object a miss counts for),
+  their current `pose` (source and uncertainty), `captured_at` (the view),
+  `observed_at` (the imagery date, or the view time when it is unknown) and
+  `imagery`.
 - `GET /webclient/sampler/world/summary?bbox=...`: counts per category,
   confidence bins, and the best guesses behind the *unknown* entities.
-- `GET /webclient/sampler/world/changes?bbox=...&since=YYYY[-MM[-DD]][&until=]`:
+- `GET /webclient/sampler/world/changes?bbox=...&since=YYYY[-MM[-DD]][&until=][&basis=imagery|view]`:
   entities first seen in the window, and those missed in it (by captures
-  that could resolve them) that are now believed gone.
+  that could resolve them) that are now believed gone. The window is in
+  imagery dates unless `basis=view`.
+- `GET /webclient/sampler/world/trait_map?bbox=...[&trait=area|confidence|p_exists][&category=]`:
+  per-category statistics and histograms of one trait, and a
+  Gaussian-process map of one category.
 - `POST /webclient/sampler/world/retire` and `.../restore`:
   `{entity_ids: [...] (up to 50), reason?}`; superusers only, CSRF token
   required. Retiring supersedes the entities' factors; restoring revives them.
@@ -801,14 +853,15 @@ so a city block fits in a model's context.
 
 | Tool | Answers |
 |---|---|
-| `world_stats` | Totals, categories per taxonomy, the low-confidence threshold |
+| `world_stats` | Totals, categories per taxonomy, the low-confidence threshold, imagery dates, the fitted detection model |
 | `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution |
 | `get_scene_graph` | One capture's nodes and their `context` / `contains` links |
 | `world_summary` | Counts per category, confidence spread, what the unknowns probably are |
 | `find_entities` | Objects near a point: category, top candidates, `p_exists`, area, distance; `at=` for a past time |
-| `get_entity` | One object's sightings, image resolution, belief history and feedback |
-| `world_changes` | Objects that appeared, or are believed gone, between two dates |
+| `get_entity` | One object's sightings (imagery date and view time), belief when last seen and today, history, feedback, field readings |
+| `world_changes` | Objects that appeared, or are believed gone, between two imagery dates (`basis: view` for view times) |
 | `area_histogram` | Object sizes in an area |
+| `trait_map` | Per-category statistics of area, confidence or `p_exists`, and a Gaussian-process map of one category |
 
 Client configuration (Cursor `~/.cursor/mcp.json`):
 
@@ -1358,6 +1411,21 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Scene-graph MCP server**: `/api/v1/mcp` lets MCP clients query the world
   model: stored scene graphs and their links, objects near a point, one
   object's evidence, area summaries, changes between dates and object sizes.
+- **Trait maps**: the pilot's `trait_map` lists every category's size (or
+  confidence, or chance of still being there) around the point in view,
+  with the lab model's assessment, and draws a Gaussian-process map of one
+  category; also a `world/trait_map` endpoint and an MCP tool.
+- **Measured detection model**: the weight of a miss comes from a model
+  fitted to the store's own repeat looks (pixel size, zoom ratio, category)
+  in place of a fixed 0.8, and detections under 64 pixels are kept out of
+  the evidence.
+- **Corrections and field evidence**: *Correct*, *Relabel* and *Not there*
+  in the info box, a *Review next* queue ordered by what an answer is
+  worth, and field readings registered to the entity under the laser as
+  weak evidence for or against vegetation.
+- **Imagery dates**: captures carry the imagery's source and acquisition
+  window; evidence is dated by it, beliefs are kept as last seen, and
+  change reports compare imagery dates rather than view times.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

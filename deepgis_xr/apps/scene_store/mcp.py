@@ -22,7 +22,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from . import fusion, priors, views
+from . import fusion, priors, traits, views
 from .models import Capture, Entity, Feedback
 
 log = logging.getLogger(__name__)
@@ -39,8 +39,11 @@ INSTRUCTIONS = (
     "Find where data exists with world_stats or list_scene_graphs (no location = newest anywhere). "
     "world_summary describes an area, find_entities lists its objects, get_entity explains one "
     "object's evidence, world_changes compares dates, get_scene_graph returns one capture's nodes "
-    "and links. confidence = probability of the category; p_exists = probability the object is "
-    "still there. Below the low-confidence threshold the category is 'unknown' and candidates hold "
+    "and links, trait_map gives per-category statistics and a Gaussian-process map of sizes. confidence = probability of the category; p_exists = probability the object was "
+    "there when last seen (pass at= to find_entities, or read get_entity's now, for the belief "
+    "decayed to a date). first_seen and last_seen are imagery dates: each capture records the "
+    "imagery it showed and when that was acquired (observed_at), separately from when the view "
+    "was taken (captured_at). Below the low-confidence threshold the category is 'unknown' and candidates hold "
     "the best guesses. Coordinates are WGS84 [lon, lat] degrees, areas square metres, times UTC."
 )
 
@@ -163,6 +166,8 @@ def world_stats(args):
         'n_feedback': Feedback.objects.filter(superseded_at__isnull=True).count(),
         'taxonomies': taxonomies,
         'low_confidence': priors.LOW_CONFIDENCE,
+        'imagery': fusion.imagery_dates(Capture.objects.all()),
+        'detection_models': views.detection_models(),
     }
 
 
@@ -213,12 +218,14 @@ def get_entity(args):
     e = Entity.objects.filter(id=entity_id).first()
     if e is None:
         raise ToolError(f'no entity {entity_id}')
-    d = views.entity_detail(e)
+    d = views.entity_detail(e, include_field=True)
     n = _int(args, 'max_sightings', 20, 500)
     return {'entity': _entity(d['entity'], polygon=_bool(args, 'include_polygon')),
+            'now': d.get('now'),
             'n_sightings': len(d['detections']), 'sightings': d['detections'][::-1][:n],
             'n_history': len(d['history']), 'history': d['history'][-10:],
-            'feedback': d['feedback'], 'factor_counts': d['factor_counts']}
+            'feedback': d['feedback'], 'field_readings': d.get('field'),
+            'factor_counts': d['factor_counts']}
 
 
 def world_summary(args):
@@ -264,7 +271,10 @@ def world_changes(args):
     if until is not None and until <= since:
         raise ToolError('until must be after since')
     limit = _int(args, 'limit', 25, 200)
-    out = fusion.world_changes(bbox, since, until, taxonomy=_text(args, 'taxonomy'), limit=limit)
+    basis = _text(args, 'basis') or 'imagery'
+    if basis not in ('imagery', 'view'):
+        raise ToolError('basis must be imagery or view')
+    out = fusion.world_changes(bbox, since, until, taxonomy=_text(args, 'taxonomy'), limit=limit, basis=basis)
     origin = [area['lon'], area['lat']]
     for k in ('appeared', 'gone'):
         out[k]['entities'] = [_entity(d, origin) for d in out[k]['entities']]
@@ -282,6 +292,21 @@ def area_histogram(args):
     max_m2 = _float(args, 'max_m2', lo=0.01) if args.get('max_m2') is not None else None
     return {'area': area, 'category': _text(args, 'category'),
             **fusion.area_histogram(rows.values_list('area_m2', flat=True), max_m2=max_m2)}
+
+
+def trait_map(args):
+    bbox, area = _area(args, views.MAX_BBOX_DEG, 250)
+    trait = _text(args, 'trait') or 'area'
+    if trait not in traits.TRAITS:
+        raise ToolError(f'trait must be one of {", ".join(traits.TRAITS)}')
+    cells = _int(args, 'grid_cells', 24, 48) if args.get('grid_cells') is not None else None
+    out = traits.trait_map(bbox, trait=trait, category=_text(args, 'category') or '',
+                           taxonomy=_text(args, 'taxonomy') or 'urban_v1',
+                           min_p_exists=_float(args, 'min_p_exists', 0.5, 0, 1),
+                           grid_cells=cells or traits.GRID_CELLS, with_grid=cells is not None)
+    for c in out['categories']:
+        c['hist'] = {'bins': c['hist']['bins'], 'log': c['hist']['log']}
+    return {'area': area, **out}
 
 
 # ---- tool list ---------------------------------------------------------------------------------
@@ -305,11 +330,15 @@ RADIUS = 'Metres from the point to each side of the square searched'
 
 TOOLS = [
     ('world_stats', 'World model totals',
-     'Totals for the whole store: captures, live entities per category, the category sets, and the '
-     'low-confidence threshold below which an entity is called unknown.',
+     'Totals for the whole store: captures, live entities per category, the category sets, the '
+     'low-confidence threshold below which an entity is called unknown, the imagery the captures '
+     'showed with its acquisition dates, and the fitted chance that a later look finds an object '
+     'again (detection_models: per doubling of pixels, per doubling coarser or finer than the '
+     'first sighting, and per category, in log-odds).',
      {}, [], world_stats),
     ('list_scene_graphs', 'List stored scene graphs',
-     'Stored scene graphs (one per map capture), newest first, with time, category counts, centre, '
+     'Stored scene graphs (one per map capture), newest first, with the time of the view (captured_at), '
+     'the imagery shown and its acquisition dates (imagery, observed_at), category counts, centre, '
      'ground resolution (gsd_m) and the smallest object a miss can count for (min_object_m2). Without '
      'lat/lon, lists the newest anywhere: use this to find where data exists.',
      {'lat': LAT, 'lon': LON, 'radius_m': _num(f'{RADIUS} (default 5000, at most ~25 km)'),
@@ -333,27 +362,33 @@ TOOLS = [
      ['lat', 'lon'], world_summary),
     ('find_entities', 'Find objects in an area',
      'Objects around a point with category, confidence, top three candidates, p_exists, area, centre, '
-     'distance and sighting counts. Use at= to ask what was believed at a past time.',
+     'distance and sighting counts. Beliefs are as last seen; at= gives them for a date instead '
+     '(evidence imaged up to then, decayed to then; today answers "is it still there").',
      {'lat': LAT, 'lon': LON, 'radius_m': _num(f'{RADIUS} (default 200, at most ~2,500; less at high latitudes)'),
       'category': _str("Only this category (e.g. 'pool', 'building', 'unknown')"),
       'min_confidence': _num('Minimum category probability, 0-1'),
       'min_p_exists': _num('Minimum probability the object still exists, 0-1'),
-      'at': _str('Beliefs as of this time (ISO 8601 or YYYY-MM-DD)'),
+      'at': _str('Beliefs for this date (ISO 8601 or YYYY-MM-DD); default: as last seen'),
       'sort': {'type': 'string', 'enum': list(SORTS), 'description': 'Order (default distance)'},
       'limit': _num('At most this many (default 50, max 500)'),
       'taxonomy': TAXONOMY, 'include_polygons': _flag('Include outlines as [lon, lat] rings')},
      ['lat', 'lon'], find_entities),
     ('get_entity', 'Explain one object',
-     "One object's full record: candidates, every sighting (time, capture, label, score, area, image "
-     'ground resolution), belief history, feedback and factor counts.',
+     "One object's full record: candidates, every sighting (imagery date, when it was viewed, capture, "
+     'label, score, area, image ground resolution), the belief as last seen and decayed to now, '
+     'belief history, feedback, field readings a ground robot aimed at it, and factor counts.',
      {'entity_id': _num('Entity id'), 'max_sightings': _num('Newest sightings to include (default 20)'),
       'include_polygon': _flag('Include the outline')},
      ['entity_id'], get_entity),
     ('world_changes', 'What changed in an area',
-     'Objects first seen between two dates, and objects missed then that are now believed gone. Misses '
-     'only count where the capture could resolve the object.',
+     'Objects first seen between two dates, and objects missed then that are believed gone. The dates '
+     'are imagery acquisition dates by default, so two looks at the same imagery are not a change; '
+     "imagery lists what the captures showed and note says when no change on the ground can be read. "
+     "basis='view' compares by when the views were taken instead (detector runs). Misses only count "
+     'where the capture could resolve the object, weighted by the fitted chance of finding it.',
      {'lat': LAT, 'lon': LON, 'radius_m': _num(f'{RADIUS} (default 300, at most ~2,500; less at high latitudes)'),
       'since': _str('YYYY, YYYY-MM or YYYY-MM-DD (UTC)'), 'until': _str('Same format; default now'),
+      'basis': {'type': 'string', 'enum': ['imagery', 'view'], 'description': 'Which clock the dates are on (default imagery)'},
       'limit': _num('Objects listed per side (default 25, max 200)'), 'taxonomy': TAXONOMY},
      ['lat', 'lon', 'since'], world_changes),
     ('area_histogram', 'Object sizes in an area',
@@ -363,6 +398,20 @@ TOOLS = [
       'category': _str('Only this category'), 'min_p_exists': _num('Minimum p_exists, 0-1'),
       'max_m2': _num('Upper edge of the last bin (default: 99th percentile)'), 'taxonomy': TAXONOMY},
      ['lat', 'lon'], area_histogram),
+    ('trait_map', 'Map a trait with a Gaussian process',
+     'Statistics of one trait (area, confidence or p_exists) for every category around a point (n, mean, sd, '
+     'cv, quantiles; for area also the log10 mean and sd, as areas are near log-normal), and a Gaussian '
+     'process fitted to one category over space (exact GP on the GPU, Matern 5/2 + noise, log10 area or '
+     'logit): lengthscale_m (how far sizes stay alike), signal_sd vs noise_sd (spatial pattern vs '
+     'object-to-object scatter), and on request a grid of the predicted median, its sd and the share '
+     'of prior variance explained (0 = no data nearby).',
+     {'lat': LAT, 'lon': LON, 'radius_m': _num(f'{RADIUS} (default 250, at most ~2,500; less at high latitudes)'),
+      'category': _str("Category to map (e.g. 'house'); default all named categories"),
+      'trait': {'type': 'string', 'enum': list(traits.TRAITS), 'description': 'Trait (default area)'},
+      'min_p_exists': _num('Minimum p_exists, 0-1 (default 0.5)'),
+      'grid_cells': _num('Include the map as a grid this many cells across (max 48; default: no grid)'),
+      'taxonomy': _str("Category set (default 'urban_v1')")},
+     ['lat', 'lon'], trait_map),
 ]
 TOOL_FNS = {name: fn for name, *_, fn in TOOLS}
 TOOL_LIST = [{'name': name, 'title': title, 'description': desc,

@@ -8,11 +8,19 @@ Layers, oldest evidence first:
   Factor                                         log-potential tables over entity variables
   BeliefSnapshot                                 the posterior each time inference touched it
   Feedback, UserPreference                       user corrections and settings
+  FieldLink                                      a robot's field reading registered to an entity
+  DetectionModel                                 fitted chance that a later look finds an entity again
 
 Each entity has two variables: ``c<id>`` (category, taxonomy-sized) and
 ``x<id>`` (exists, [absent, present]). Factors store their raw log table;
 time decay is applied when inference runs, so a belief can be recomputed
 for any past instant from the factors valid then.
+
+Two clocks. World time is when the ground was as the evidence shows it: a capture's
+``observed_at`` (its imagery's acquisition date when known, else when the view was taken),
+copied to its detections' and factors' ``observed_at`` and to entities' ``first_seen`` /
+``last_seen``. Record time is when a row was written or withdrawn: ``captured_at`` (the
+view), ``recorded_at``, ``superseded_at``, and a belief snapshot's ``at``.
 
 Every model here lives in the PostGIS ``observations`` database
 (see ``deepgis_xr.db_router``). Users are stored as plain ids because
@@ -42,10 +50,23 @@ class Capture(models.Model):
     sources = ArrayField(models.CharField(max_length=40), default=list, blank=True)
     artifact_path = models.CharField(max_length=300, blank=True, default='')
     summary = models.JSONField(default=dict, blank=True)
+    # What the pixels showed. ``captured_at`` is when the view was taken; ``observed_at`` is when
+    # the ground looked like that (the middle of the imagery's acquisition window) and dates the
+    # capture's evidence. Null until the imagery date is known: the evidence is then dated captured_at.
+    imagery_source = models.CharField(max_length=120, blank=True, default='')  # e.g. 'bing:Aerial'
+    imagery_start = models.DateTimeField(null=True, blank=True)
+    imagery_end = models.DateTimeField(null=True, blank=True)
+    imagery = models.JSONField(default=dict, blank=True)  # layers drawn, zoom asked, how the dates were found
+    observed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'sg_capture'
         indexes = [models.Index(fields=['-captured_at'], name='sg_capture_time_idx')]
+
+    @property
+    def world_time(self):
+        """When the ground was as this capture shows it."""
+        return self.observed_at or self.captured_at
 
 
 class Pose(models.Model):
@@ -109,7 +130,8 @@ class Detection(models.Model):
     posterior = ArrayField(models.FloatField())
     score = models.FloatField()
     sources = ArrayField(models.CharField(max_length=40), default=list, blank=True)
-    gate = models.CharField(max_length=20, blank=True, default='')  # why it is not evidence ('frame'), or ''
+    # why it is not evidence: 'frame' (covers most of the view), 'fragment' (too few pixels), or ''
+    gate = models.CharField(max_length=20, blank=True, default='')
 
     class Meta:
         db_table = 'sg_detection'
@@ -211,6 +233,7 @@ class Factor(models.Model):
         ('contains', 'contains'),      # c,c: parent region contains child (roof -> solar panel)
         ('feedback', 'feedback'),      # c or x: user correction
         ('geometry', 'geometry'),      # c: a detection's ground area and shape against each category
+        ('field', 'field'),            # c: a day of field readings registered to the entity (see field_evidence)
     ]
 
     kind = models.CharField(max_length=20, choices=KINDS)
@@ -250,6 +273,50 @@ class BeliefSnapshot(models.Model):
     class Meta:
         db_table = 'sg_belief_snapshot'
         indexes = [models.Index(fields=['entity', '-at'], name='sg_snapshot_entity_idx')]
+
+
+class DetectionModel(models.Model):
+    """A fitted P(a later look finds an entity again); one active row per taxonomy.
+
+    ``coefficients`` holds ``intercept``, ``log2_pixels``, ``coarser``, ``finer`` and a
+    ``category`` map of offsets (see ``detection_model``). Rows are kept, so a miss factor's
+    ``metadata['model']`` always names the fit that weighed it.
+    """
+
+    taxonomy = models.CharField(max_length=40)
+    version = models.IntegerField()
+    fitted_at = models.DateTimeField(auto_now_add=True)
+    active = models.BooleanField(default=False)
+    coefficients = models.JSONField()
+    n_looks = models.IntegerField()
+    metrics = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'sg_detection_model'
+        constraints = [models.UniqueConstraint(fields=['taxonomy', 'version'], name='sg_detmodel_version')]
+
+
+class FieldLink(models.Model):
+    """One field reading registered to the entity under its laser target.
+
+    ``reading_id`` is a ``web.FieldReading`` id, kept as a plain number like user ids. No
+    position is copied here: where the robot was stays in the readings table, which only
+    signed-in users can query.
+    """
+
+    reading_id = models.BigIntegerField(unique=True)
+    entity = models.ForeignKey(Entity, on_delete=models.CASCADE, related_name='field_links')
+    vehicle_id = models.CharField(max_length=40)
+    observed_at = models.DateTimeField()
+    weight = models.FloatField()  # share of the target's position uncertainty that falls on the entity
+    range_m = models.FloatField(null=True, blank=True)
+    usable = models.BooleanField(default=False)  # daylight and an index: it counts as evidence
+    signal = models.JSONField(default=dict, blank=True)  # {'nir_red': ..., 'green': ..., 'sun_deg': ...}
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sg_field_link'
+        indexes = [models.Index(fields=['entity', 'observed_at'], name='sg_field_link_entity_idx')]
 
 
 class UserPreference(models.Model):

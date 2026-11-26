@@ -67,6 +67,7 @@ urlpatterns = [
     path('label/api/pilot/create-twin/', views.pilot_create_twin, name='pilot_create_twin'),
     path('label/api/pilot/create-twin/<str:job_id>/', views.pilot_create_twin_status, name='pilot_create_twin_status'),  # superusers: a confirmed create_twin (views/create_twin.py)
     path('label/api/pilot/describe/', views.pilot_describe, name='pilot_describe'),  # describe_view: one canvas frame to the lab's vision model
+    path('label/api/pilot/assess/', views.pilot_assess, name='pilot_assess'),  # trait_map: the lab model assesses measured statistics
     path('label/api/pilot/ocean/', views.pilot_ocean, name='pilot_ocean'),  # NOAA ERDDAP relay for the sea layers
     path('label/api/pilot/topo/', views.pilot_topo, name='pilot_topo'),  # OpenTopography lidar stored in data/topo
     path('label/api/pilot/feature/', views.pilot_feature, name='pilot_feature'),  # the polygon at a point in a vector MBTiles layer (views/features.py)

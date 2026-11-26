@@ -67,7 +67,7 @@ from .rock_label import (
     rock_dataset_list, rock_category_list,
 )
 from .models_3d import get_3d_model, list_stl_models
-from .pilot import pilot_chat, pilot_describe, pilot_models, pilot_ocean, pilot_robot_command, pilot_topo
+from .pilot import pilot_assess, pilot_chat, pilot_describe, pilot_models, pilot_ocean, pilot_robot_command, pilot_topo
 from .features import pilot_feature
 from .vehicles import (vehicle_frame, vehicle_frame_image, vehicle_pose, vehicle_product, vehicle_product_json,
                        vehicles_live, vehicles_nearby)
@@ -113,6 +113,7 @@ __all__ = [
     "check_auth_status", "ajax_phone_login", "ajax_logout",
     "pilot_chat",
     "pilot_models",
+    "pilot_assess",
     "pilot_describe",
     "pilot_ocean",
     "pilot_robot_command",

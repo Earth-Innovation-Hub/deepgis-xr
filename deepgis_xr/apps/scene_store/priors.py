@@ -13,6 +13,10 @@ ASSOC_IOU = 0.3
 ASSOC_CENTROID_M = 2.0      # small objects (cars) whose masks jitter between captures
 MISS_COVERAGE = 0.9         # footprint must cover this much of an entity to count a miss
 MISS_MIN_PIXELS = 64        # an entity smaller than this many ground pixels could not have been seen
+# A region smaller than this many pixels of its own capture is a fragment: stored, never evidence.
+# The same size below which a miss is not counted, so what cannot be missed cannot be a hit either.
+# (Stored urban_v1 entities were found again in 9% of the later looks where they were this small.)
+FRAGMENT_MIN_PIXELS = MISS_MIN_PIXELS
 
 # Below this top posterior an entity is labelled unknown (its posterior keeps the best guess).
 # Stored beliefs cluster at 0.10-0.20 (unlabelled OSM and plain SAM regions, near uniform over
@@ -50,8 +54,11 @@ ROAD_BLOB_COMPACTNESS = 0.35
 ROAD_BLOB_PENALTY = -3.0
 
 # Existence sensor model: P(detected | present), P(detected | absent).
+# P_DETECT is the fallback for a taxonomy with no fitted detection model (see detection_model.py):
+# a miss then weighs the same whatever the object's size and the zoom of the look.
 P_DETECT = 0.8
 P_FALSE_ALARM = 0.05
+P_DETECT_MAX = 0.98         # a fitted probability is kept inside [P_FALSE_ALARM, P_DETECT_MAX]
 
 # Half-lives in hours. Perceptual (category) evidence is down-weighted by
 # age at inference time; existence half-lives set how fast the existence
@@ -72,6 +79,29 @@ DEFAULT_EXISTENCE_HALF_LIFE_H = 5 * YEAR
 # User feedback: how sure a correction is, and how many observations it outweighs.
 FEEDBACK_P = 0.98
 FEEDBACK_STRENGTH = 4.0
+
+# Field readings: a ground robot's spectrometer, aimed with a laser, registered to the entity
+# under the laser target. The target's position is uncertain by the robot's position and by
+# its aim (range x heading error), plus the patch the spectrometer averages.
+FIELD_POSITION_SIGMA_M = 2.5
+FIELD_HEADING_SIGMA_DEG = 5.0
+FIELD_MAX_RANGE_M = 60.0
+FIELD_MIN_WEIGHT = 0.25     # least share of the target's uncertainty that must fall on the entity
+FIELD_MIN_SUN_DEG = 10.0    # the index needs daylight
+# The NIR/red index is a ratio of raw counts, not reflectance, so it is used as one yes/no
+# question: is the patch green vegetation? Above this value the robot's own notes call it green
+# (in daylight its readings sit near -0.2 on built surfaces and near +0.6 on grass).
+FIELD_GREEN_INDEX = 0.14
+# P(green | category). Daylight readings on stored entities (Nov 2026): 20 of 26 green on
+# vegetation_other, 8 of 112 on house and building, 0 of 12 on tree (a side view of a canopy
+# or trunk), so tree is left near neutral. Categories not listed use FIELD_P_GREEN_OTHER.
+FIELD_P_GREEN = {
+    'vegetation_other': 0.75,
+    'tree': 0.4,
+    'building': 0.1, 'house': 0.1, 'solar_panel': 0.1, 'road': 0.1, 'vehicle': 0.1,
+    'pavement': 0.1, 'parking_lot': 0.1, 'pool': 0.1, 'water': 0.1,
+}
+FIELD_P_GREEN_OTHER = 0.25
 
 # Adjacency co-occurrence (symmetric), log-potential added when both hold.
 CONTEXT_BETA = 0.5
@@ -164,6 +194,23 @@ def geometry_table(taxonomy, area_m2, compactness=None):
 
 HIT_TABLE = [math.log(P_FALSE_ALARM), math.log(P_DETECT)]
 MISS_TABLE = [math.log(1 - P_FALSE_ALARM), math.log(1 - P_DETECT)]
+
+
+def miss_table(p_detect):
+    """log P(not detected | absent, present) for a look that finds a present object with ``p_detect``.
+
+    At ``p_detect`` = P_FALSE_ALARM the look says nothing; it never counts for the object."""
+    p = min(max(float(p_detect), P_FALSE_ALARM), P_DETECT_MAX)
+    return [math.log(1 - P_FALSE_ALARM), math.log(1 - p)]
+
+
+def field_green_table(taxonomy, green):
+    """log P(the patch reads green, or not | category) for one field reading."""
+    t = np.empty(taxonomy.n)
+    for i, cat in enumerate(taxonomy.categories):
+        p = FIELD_P_GREEN.get(cat, FIELD_P_GREEN_OTHER)
+        t[i] = math.log(p if green else 1 - p)
+    return t
 
 
 def feedback_category_table(taxonomy, category):

@@ -140,6 +140,38 @@ def _sanitize_json_floats(obj: Any) -> Any:
     return obj
 
 
+def _imagery_in(raw: Any) -> Optional[Dict[str, Any]]:
+    """What the page says its pixels showed: the layers drawn and, when the provider
+    publishes them, the dates the imagery was acquired. Only these fields are kept, so
+    nothing else the page holds (a provider key, say) can ride along into the artifact.
+    """
+    if not isinstance(raw, dict):
+        return None
+    layers = []
+    for layer in (raw.get('layers') if isinstance(raw.get('layers'), list) else [])[:8]:
+        if isinstance(layer, dict) and isinstance(layer.get('id'), str):
+            row: Dict[str, Any] = {'id': layer['id'][:60]}
+            if isinstance(layer.get('alpha'), (int, float)) and math.isfinite(layer['alpha']):
+                row['alpha'] = float(layer['alpha'])
+            layers.append(row)
+    out: Dict[str, Any] = {'layers': layers}
+    if isinstance(raw.get('source'), str):
+        out['source'] = raw['source'][:120]
+    dates = raw.get('dates')
+    if isinstance(dates, dict):
+        kept: Dict[str, Any] = {}
+        for key in ('start', 'end', 'method', 'looked_up_at'):
+            if isinstance(dates.get(key), str):
+                kept[key] = dates[key][:40]
+        for key in ('zoom', 'points'):
+            if isinstance(dates.get(key), (int, float)) and math.isfinite(dates[key]):
+                kept[key] = int(dates[key])
+        if isinstance(dates.get('uniform'), bool):
+            kept['uniform'] = dates['uniform']
+        out['dates'] = kept
+    return out
+
+
 def _safe_lat_str(lat: float) -> str:
     return f"lat{lat:.6f}".replace('.', 'p').replace('-', 'n')
 
@@ -434,6 +466,8 @@ def build_scenegraph_view(request):
             'image_path': viewport_in.get('image_path') or '',
             'captured_at': viewport_in.get('captured_at')
                            or timezone.now().isoformat(),
+            # The world model dates this capture's evidence by the imagery, not the view.
+            'imagery': _imagery_in(viewport_in.get('imagery')),
         },
     )
 
