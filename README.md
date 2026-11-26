@@ -969,7 +969,7 @@ so a city block fits in a model's context.
 | Tool | Answers |
 |---|---|
 | `world_stats` | Totals, categories per taxonomy, the low-confidence threshold, imagery dates, the fitted detection model, the remote-sensing record per source, captures due a re-capture |
-| `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution |
+| `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution; `include_footprints` adds each outline |
 | `get_scene_graph` | One capture's nodes and their `context` / `contains` links |
 | `world_summary` | Counts per category, confidence spread, what the unknowns probably are |
 | `find_entities` | Objects near a point: category, top candidates, `p_exists`, area, distance; `at=` for a past time |
@@ -978,6 +978,10 @@ so a city block fits in a model's context.
 | `world_changes` | Objects that appeared, or are believed gone, between two imagery dates (`basis: view` for view times) |
 | `area_histogram` | Object sizes in an area |
 | `trait_map` | Per-category statistics of area, confidence or `p_exists`, and a Gaussian-process map of one category |
+| `field_readings` | The ground survey as counts per day: spectra, ranges, targets, image-note words. No position |
+| `entity_looks` | The captures whose footprint covers one object, and whether each found it or counted a miss |
+| `belief_history` | An object's stored belief after each capture or correction |
+| `entity_beliefs` | Every live object's belief, in pages, so a whole taxonomy can be read |
 
 Client configuration (Cursor `~/.cursor/mcp.json`):
 
@@ -1559,6 +1563,10 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Fused map of a zone**: `/world-model/zones/az/tempe` always shows the
   latest map of the zone's objects with its legends, as a page, a PDF and
   an image; `render_zone_maps` draws it again whenever the store changes.
+- **MCP for the read-only gaps**: `field_readings`, `entity_looks`,
+  `belief_history` and `entity_beliefs` answer the survey, the misses,
+  the belief history and the full object list. `field_readings` returns
+  no position.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

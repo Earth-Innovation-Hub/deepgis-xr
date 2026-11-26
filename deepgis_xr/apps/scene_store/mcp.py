@@ -13,17 +13,21 @@ import hmac
 import json
 import logging
 import math
-from datetime import timezone as dt_timezone
+from datetime import timedelta, timezone as dt_timezone
 
 from django.conf import settings
+from django.contrib.gis.db.models.functions import PointOnSurface
 from django.contrib.gis.geos import Polygon
+from django.db import connections
 from django.db.models import Count, Max, Min
 from django.http import HttpResponse, JsonResponse
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
+from deepgis_xr.apps.web.models import FieldReading
+
 from . import assess, fusion, imagery_watch, layers, priors, traits, views
-from .models import Capture, Entity, Feedback
+from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, FieldLink
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +44,12 @@ INSTRUCTIONS = (
     "world_summary describes an area, find_entities lists its objects, get_entity explains one "
     "object's evidence, world_changes compares dates, get_scene_graph returns one capture's nodes "
     "and links, trait_map gives per-category statistics and a Gaussian-process map of sizes, "
-    "assess_point answers what is at one point and on how much evidence. Captures of the same "
+    "assess_point answers what is at one point and on how much evidence. "
+    "field_readings summarises the ground robot's survey (counts and spectra, never where it was), "
+    "entity_looks lists the captures that covered one object and whether each found it, "
+    "belief_history is that object's stored belief after each capture, and entity_beliefs pages "
+    "through every live object's belief. Capture footprints are list_scene_graphs with "
+    "include_footprints. Captures of the same "
     "imagery are one look and count once, however many there are (get_entity's support). "
     "confidence = probability of the category; p_exists = probability the object was "
     "there when last seen (pass at= to find_entities, or read get_entity's now, for the belief "
@@ -314,6 +323,185 @@ def area_histogram(args):
             **fusion.area_histogram(rows.values_list('area_m2', flat=True), max_m2=max_m2)}
 
 
+NOTE_GROUPS = (('hedge or shrub', ('hedge', 'shrub')), ('paved', ('paved', 'pavement')),
+               ('wall or fence', ('wall', 'fence')), ('roof or house', ('roof', 'house')),
+               ('tree', ('tree',)), ('grass', ('grass',)), ('vehicle', ('vehicle', 'car')),
+               ('pool', ('pool',)), ('road', ('road',)))
+
+DAY_SQL = """
+SELECT (captured AT TIME ZONE 'America/Phoenix')::date,
+       count(*), count(camera), count(target), count(*) FILTER (WHERE range_valid),
+       count(*) FILTER (WHERE jsonb_typeof(spectrum->'indices'->'nir_red') = 'number'),
+       count(*) FILTER (WHERE jsonb_typeof(spectrum->'indices'->'nir_red') = 'number'
+                        AND (spectrum->'indices'->>'nir_red')::float > %s),
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (spectrum->'indices'->>'nir_red')::float)
+         FILTER (WHERE jsonb_typeof(spectrum->'indices'->'nir_red') = 'number'),
+       percentile_cont(0.5) WITHIN GROUP (ORDER BY (spectrum->>'integration_ms')::float)
+         FILTER (WHERE jsonb_typeof(spectrum->'integration_ms') = 'number'),
+       count(*) FILTER (WHERE jsonb_typeof(spectrum->'clipped_pct') = 'number'
+                        AND (spectrum->>'clipped_pct')::float > 0)
+  FROM field_readings
+ WHERE (%s IS NULL OR captured >= %s) AND (%s IS NULL OR captured < %s)
+ GROUP BY 1 ORDER BY 1
+"""
+SOURCE_SQL = """
+SELECT coalesce(spectrum->'acquisition'->>'source', ''), count(*)
+  FROM field_readings
+ WHERE (%s IS NULL OR captured >= %s) AND (%s IS NULL OR captured < %s)
+ GROUP BY 1 ORDER BY 2 DESC
+"""
+
+
+def _round(v, n=3):
+    return None if v is None else round(float(v), n)
+
+
+def _reading_window(args):
+    """(since, until) as aware datetimes, until exclusive. Both optional."""
+    since, until = _time(args, 'since'), _time(args, 'until')
+    if until and len(_text(args, 'until') or '') == 10:
+        until += timedelta(days=1)
+    if since and until and until <= since:
+        raise ToolError('until must be after since')
+    return since, until
+
+
+def field_readings(args):
+    """The ground survey as counts. Camera and target coordinates are never selected."""
+    since, until = _reading_window(args)
+    bounds = (since, since, until, until)
+    with connections[FieldReading.objects.db].cursor() as cur:
+        cur.execute(DAY_SQL, [priors.FIELD_GREEN_INDEX, *bounds])
+        days = cur.fetchall()
+        cur.execute(SOURCE_SQL, bounds)
+        sources = cur.fetchall()
+    by_day = []
+    for day, n, n_pos, n_target, n_range, n_index, n_green, nir, integ, n_clip in days:
+        by_day.append({
+            'day': day.isoformat(), 'n': n, 'n_with_position': n_pos, 'n_with_target': n_target,
+            'n_with_range': n_range, 'n_with_index': n_index,
+            'green_share': _round(n_green / n_index) if n_index else None,
+            'nir_red_median': _round(nir), 'integration_ms_median': _round(integ, 0),
+            'clipping_share': _round(n_clip / n_index) if n_index else None,
+        })
+    notes = {name: 0 for name, _ in NOTE_GROUPS}
+    n_notes = 0
+    qs = FieldReading.objects.all()
+    if since:
+        qs = qs.filter(captured__gte=since)
+    if until:
+        qs = qs.filter(captured__lt=until)
+    for analysis in qs.values_list('analysis', flat=True).iterator(chunk_size=500):
+        text = analysis.get('image') if isinstance(analysis, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            continue
+        n_notes += 1
+        low = text.lower()
+        for name, words in NOTE_GROUPS:
+            if any(w in low for w in words):
+                notes[name] += 1
+    links = FieldLink.objects.all()
+    if since:
+        links = links.filter(observed_at__gte=since)
+    if until:
+        links = links.filter(observed_at__lt=until)
+    linked = {}
+    for category, n in links.values_list('entity__category').annotate(n=Count('id')).order_by():
+        linked[category] = n
+    totals = {k: sum(d[k] for d in by_day) for k in ('n', 'n_with_position', 'n_with_target', 'n_with_range',
+                                                     'n_with_index')}
+    return {
+        'n_readings': totals.get('n', 0), 'n_with_position': totals.get('n_with_position', 0),
+        'n_with_target': totals.get('n_with_target', 0), 'n_with_range': totals.get('n_with_range', 0),
+        'n_with_index': totals.get('n_with_index', 0), 'n_image_notes': n_notes,
+        'n_registered': sum(linked.values()),
+        'green_rule': f'nir_red > {priors.FIELD_GREEN_INDEX}',
+        'by_day': by_day, 'acquisition': {name or 'unknown': n for name, n in sources},
+        'image_notes': notes, 'registered_by_category': dict(sorted(linked.items(), key=lambda kv: -kv[1])),
+        'positions': 'not returned; camera and target coordinates stay in the readings table',
+    }
+
+
+def entity_looks(args):
+    """Every capture whose footprint covers an object, and whether that capture found it."""
+    e = Entity.objects.filter(id=int(_float(args, 'entity_id', lo=1))).first()
+    if e is None:
+        raise ToolError(f"no entity {args.get('entity_id')}")
+    caps = list(Capture.objects.filter(taxonomy=e.taxonomy, footprint__covers=e.geom.envelope)
+                .order_by('captured_at'))
+    found = set(Detection.objects.filter(association__entity=e, capture__in=caps)
+                .values_list('capture_id', flat=True))
+    missed = set(Factor.objects.filter(kind='miss', entity_ids__contains=[e.id], superseded_at__isnull=True,
+                                       capture__in=caps).values_list('capture_id', flat=True))
+    rows = []
+    for c in caps:
+        pixels = (e.area_m2 / c.gsd_m ** 2) if e.area_m2 and c.gsd_m else None
+        rows.append({
+            'session_id': c.session_id, 'captured_at': c.captured_at.isoformat(),
+            'imagery': views._imagery_dict(c), 'gsd_m': round(c.gsd_m, 3) if c.gsd_m else None,
+            'pixels': round(pixels) if pixels is not None else None,
+            'resolvable': pixels is not None and pixels >= priors.MISS_MIN_PIXELS,
+            'found': c.id in found, 'missed': c.id in missed,
+        })
+    return {'entity_id': e.id, 'category': e.category, 'n_captures': len(rows),
+            'n_found': sum(r['found'] for r in rows), 'n_missed': sum(r['missed'] for r in rows),
+            'captures': rows}
+
+
+def belief_history(args):
+    """The stored belief after each thing that changed it, oldest first, one page at a time."""
+    e = Entity.objects.filter(id=int(_float(args, 'entity_id', lo=1))).first()
+    if e is None:
+        raise ToolError(f"no entity {args.get('entity_id')}")
+    qs = BeliefSnapshot.objects.filter(entity=e).select_related('capture').order_by('at', 'id')
+    n = qs.count()
+    after = int(_float(args, 'after_id', 0, lo=0))
+    if after:
+        qs = qs.filter(id__gt=after)
+    limit = _int(args, 'limit', 50, 200)
+    rows = list(qs[:limit])
+    more = bool(rows) and BeliefSnapshot.objects.filter(entity=e, id__gt=rows[-1].id).exists()
+    return {'entity_id': e.id, 'n': n, 'n_returned': len(rows),
+            'next_after_id': rows[-1].id if more else None,
+            'history': [{'id': s.id, 'at': s.at.isoformat(), 'category': s.category,
+                         'p_exists': round(s.p_exists, 4), 'score': round(max(s.posterior), 4),
+                         'cause': s.cause, 'session_id': s.capture.session_id if s.capture_id else None}
+                        for s in rows]}
+
+
+def entity_beliefs(args):
+    """Live objects and their beliefs, in id order, so a whole taxonomy can be read a page at a time."""
+    taxonomy = _text(args, 'taxonomy')
+    after = int(_float(args, 'after_id', 0, lo=0))
+    limit = _int(args, 'limit', 200, 500)
+    qs = Entity.objects.filter(retired_at__isnull=True)
+    if taxonomy:
+        try:
+            fusion.taxonomy_by_name(taxonomy)
+        except Exception:
+            raise ToolError(f'unknown taxonomy {taxonomy}')
+        qs = qs.filter(taxonomy=taxonomy)
+    n = qs.count()
+    rows = list(qs.filter(id__gt=after).annotate(pt=PointOnSurface('geom')).order_by('id').defer('geom')[:limit])
+    ents = []
+    for e in rows:
+        pt = e.pt
+        post = e.posterior or []
+        ranked = sorted(enumerate(post), key=lambda kv: -kv[1])[:3]
+        tax = fusion.taxonomy_by_name(e.taxonomy)
+        ents.append({
+            'id': e.id, 'taxonomy': e.taxonomy, 'category': e.category, 'confidence': round(e.score, 4),
+            'candidates': [{'category': tax.name_of(i), 'p': round(float(p), 4)} for i, p in ranked],
+            'p_exists': round(e.p_exists, 4),
+            'area_m2': round(e.area_m2, 2) if e.area_m2 is not None else None,
+            'centre': [round(pt.x, 6), round(pt.y, 6)] if pt else None,
+            'n_hits': e.n_hits, 'n_misses': e.n_misses,
+            'first_seen': e.first_seen.isoformat(), 'last_seen': e.last_seen.isoformat(),
+        })
+    return {'taxonomy': taxonomy, 'n_entities': n, 'n_returned': len(ents),
+            'next_after_id': ents[-1]['id'] if len(ents) == limit else None, 'entities': ents}
+
+
 def trait_map(args):
     bbox, area = _area(args, views.MAX_BBOX_DEG, 250)
     trait = _text(args, 'trait') or 'area'
@@ -463,6 +651,33 @@ TOOLS = [
       'grid_cells': _num('Include the map as a grid this many cells across (max 48; default: no grid)'),
       'taxonomy': _str("Category set (default 'urban_v1')")},
      ['lat', 'lon'], trait_map),
+    ('field_readings', 'Summarise the ground survey',
+     'What the ground robot recorded, as counts: readings per local day, how many have a position, a '
+     'spectrum, a laser range or a laser target, the median NIR/red index, the share that reads as green '
+     'vegetation, the median integration time and the share with clipping, where the exposure settings '
+     'came from, and how often fixed words appear in the image notes. registered_by_category counts the '
+     'readings the store has linked to a world object. No coordinate, heading or image is returned.',
+     {'since': _str('Readings from this time on (ISO 8601 or YYYY-MM-DD)'),
+      'until': _str('Readings up to the end of this date')},
+     [], field_readings),
+    ('entity_looks', 'Which captures covered an object',
+     'Every capture whose footprint covers an object, whether the object was large enough to resolve '
+     'there, whether the capture found it, and whether the store counted a miss. This is the list behind '
+     "an object's found and missed counts.",
+     {'entity_id': _num('Entity id')}, ['entity_id'], entity_looks),
+    ('belief_history', 'Belief after each change',
+     "An object's stored belief after each capture or correction, oldest first: category, confidence, "
+     'p_exists, what caused the row, and the capture. Pass after_id from next_after_id for the next page.',
+     {'entity_id': _num('Entity id'), 'after_id': _num('Return rows after this snapshot id'),
+      'limit': _num('At most this many (default 50, max 200)')},
+     ['entity_id'], belief_history),
+    ('entity_beliefs', 'Page through every object',
+     'Live objects and their beliefs in id order: category, top candidates, p_exists, area, centre, '
+     'hits and misses. A page is at most 500, and next_after_id asks for the next one, so a whole '
+     'taxonomy can be read. Capture footprints are list_scene_graphs with include_footprints.',
+     {'taxonomy': TAXONOMY, 'after_id': _num('Return objects with a higher id'),
+      'limit': _num('At most this many (default 200, max 500)')},
+     [], entity_beliefs),
 ]
 TOOL_FNS = {name: fn for name, *_, fn in TOOLS}
 TOOL_LIST = [{'name': name, 'title': title, 'description': desc,

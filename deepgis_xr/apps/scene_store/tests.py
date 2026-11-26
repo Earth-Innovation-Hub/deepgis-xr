@@ -473,7 +473,8 @@ class McpTests(TransactionTestCase):
         tools = {t['name'] for t in self._rpc('tools/list').json()['result']['tools']}
         self.assertEqual(tools, {'world_stats', 'list_scene_graphs', 'get_scene_graph', 'world_summary',
                                  'find_entities', 'get_entity', 'world_changes', 'area_histogram', 'trait_map',
-                                 'assess_point'})
+                                 'assess_point', 'field_readings', 'entity_looks', 'belief_history',
+                                 'entity_beliefs'})
         self.assertEqual(self._rpc('nope').json()['error']['code'], -32601)
         self.assertEqual(self._rpc('tools/call', {'name': 'nope'}).json()['error']['code'], -32602)
 
@@ -523,6 +524,58 @@ class McpTests(TransactionTestCase):
         tm = self._tool('trait_map', lat=LAT, lon=LON, category='building')
         self.assertEqual((tm['n_points'], tm['gp'], tm['grid']), (1, None, None))
         self.assertTrue(self._tool('trait_map', lat=LAT, lon=LON, trait='height')['isError'])
+
+    def test_the_queries_that_needed_sql(self):
+        bld = Entity.objects.get(category='building')
+        sg = _scene(self.t1 + timedelta(minutes=40))
+        sg['nodes'] = [n for n in sg['nodes'] if n['id'] != 'b']
+        fusion.ingest_scene_graph(sg, session_id='s3', taxonomy_name='urban_v1')
+
+        looks = self._tool('entity_looks', entity_id=bld.id)
+        by = {c['session_id']: c for c in looks['captures']}
+        self.assertEqual((by['s1']['found'], by['s2']['found'], by['s3']['found']), (True, True, False))
+        self.assertGreater(by['s1']['pixels'], priors.MISS_MIN_PIXELS)
+        self.assertTrue(self._tool('entity_looks', entity_id=10 ** 9)['isError'])
+
+        hist = self._tool('belief_history', entity_id=bld.id, limit=1)
+        self.assertEqual((hist['n_returned'], hist['history'][0]['cause'] != ''), (1, True))
+        self.assertGreater(hist['n'], 1)
+        rest = self._tool('belief_history', entity_id=bld.id, after_id=hist['next_after_id'])
+        self.assertNotIn(hist['history'][0]['id'], [r['id'] for r in rest['history']])
+        self.assertEqual(hist['n_returned'] + rest['n_returned'], hist['n'])
+
+        page = self._tool('entity_beliefs', taxonomy='urban_v1', limit=2)
+        self.assertEqual((page['n_returned'], page['next_after_id']), (2, page['entities'][-1]['id']))
+        self.assertGreaterEqual(page['n_entities'], 3)
+        nxt = self._tool('entity_beliefs', taxonomy='urban_v1', after_id=page['next_after_id'])
+        self.assertFalse({e['id'] for e in page['entities']} & {e['id'] for e in nxt['entities']})
+        self.assertTrue(self._tool('entity_beliefs', taxonomy='nope')['isError'])
+
+        FieldReading.objects.create(
+            vehicle_id='rv', captured_usec=1, captured=self.t1,
+            spectrum={'indices': {'nir_red': 0.3}, 'integration_ms': 100, 'clipped_pct': 0,
+                      'acquisition': {'source': 'default'}},
+            analysis={'image': 'a hedge beside the house'})
+        survey = self._tool('field_readings', since=self.t1.date().isoformat(), until=self.t1.date().isoformat())
+        self.assertEqual((survey['n_readings'], survey['n_with_position'], survey['n_with_index']), (1, 0, 1))
+        self.assertEqual(survey['by_day'][0]['nir_red_median'], 0.3)
+        self.assertEqual(survey['by_day'][0]['green_share'], 1.0)
+        self.assertEqual((survey['image_notes']['hedge or shrub'], survey['image_notes']['roof or house']), (1, 1))
+        self.assertEqual(survey['acquisition'].get('default'), 1)
+
+        def names(obj):
+            found = set()
+            if isinstance(obj, dict):
+                found.update(obj)
+                for v in obj.values():
+                    found |= names(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    found |= names(v)
+            return found
+
+        self.assertTrue(names(survey).isdisjoint(
+            {'camera', 'target', 'heading_deg', 'lat', 'lon', 'vehicle_id', 'image'}))
 
 
 class TraitTests(TransactionTestCase):
