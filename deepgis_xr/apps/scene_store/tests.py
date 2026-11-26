@@ -15,9 +15,10 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from deepgis_xr.apps.scene_store import detection_model, field_evidence, fusion, priors, traits
+from deepgis_xr.apps.scene_store import detection_model, field_evidence, fusion, layers, priors, traits
 from deepgis_xr.apps.scene_store.models import (
-    Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose,
+    BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, ImageryCheck,
+    LayerSample, LayerScene, Pose,
 )
 from deepgis_xr.apps.web.models import FieldReading
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import URBAN_V1
@@ -397,6 +398,7 @@ class McpTests(TransactionTestCase):
         self.t1 = timezone.now() - timedelta(hours=1)
         fusion.ingest_scene_graph(_scene(self.t1), session_id='s1', taxonomy_name='urban_v1')
         fusion.ingest_scene_graph(_scene(self.t1 + timedelta(minutes=20)), session_id='s2', taxonomy_name='urban_v1')
+        layers._stats_cache.clear()
 
     def _rpc(self, method, params=None, token='secret', mid=1):
         msg = {'jsonrpc': '2.0', 'method': method, 'params': params or {}}
@@ -444,6 +446,9 @@ class McpTests(TransactionTestCase):
         self.assertEqual((car['entity']['category'], car['n_sightings']), ('vehicle', 2))
         self.assertIn('p_exists', car['now'])
         self.assertEqual(car['field_readings']['n_readings'], 0)
+        self.assertEqual(car['layers'], [])
+        stats = self._tool('world_stats')
+        self.assertEqual((stats['layers'], stats['imagery_checks']['n_to_recapture']), ([], 0))
         self.assertIn('imagery', graphs['captures'][0])
         changes = self._tool('world_changes', lat=LAT, lon=LON, since=(self.t1 - timedelta(days=1)).date().isoformat())
         self.assertEqual(changes['appeared']['n'], 3)
@@ -816,3 +821,194 @@ class UpgradeTests(TransactionTestCase):
         r = self.client.get(url).json()
         self.assertEqual((r['field']['n_readings'], r['field']['n_usable'], r['field']['n_green']), (7, 6, 6))
         self.assertEqual(r['factor_counts']['field'], 1)
+
+
+def _centre(ring):
+    return [sum(p[0] for p in ring[:4]) / 4, sum(p[1] for p in ring[:4]) / 4]
+
+
+def _pass(item_id, when):
+    """A catalogue entry for a satellite pass that covers the test scene."""
+    from shapely.geometry import box
+    return {'source': 'sentinel-2-l2a', 'layer': 'ndvi', 'item_id': item_id, 'observed_at': when, 'gsd_m': 10.0,
+            'look': f's2:{when:%Y-%m-%d}', 'geometry': box(LON - 0.1, LAT - 0.1, LON + 0.1, LAT + 0.1),
+            'cloud_cover': 3.0, 'metadata': {'bands': ['green', 'red', 'nir', 'swir16'], 'assets': {}}}
+
+
+def _green_roofs(cand, bounds_ll, tokens):
+    """What a pass reads: 10 m pixels in UTM 12N, vegetation exactly under the two 30 m squares."""
+    from affine import Affine
+    from pyproj import Transformer
+
+    tf = Transformer.from_crs(4326, 32612, always_xy=True)
+    xa, ya = tf.transform(bounds_ll[0], bounds_ll[1])
+    xb, yb = tf.transform(bounds_ll[2], bounds_ll[3])
+    west, north = np.floor(min(xa, xb) / 10) * 10 - 60, np.ceil(max(ya, yb) / 10) * 10 + 60
+    cols, rows = int((max(xa, xb) - west) // 10) + 7, int((north - min(ya, yb)) // 10) + 7
+    xs, ys = west + 10 * (np.arange(cols) + 0.5), north - 10 * (np.arange(rows) + 0.5)
+    green = np.zeros((rows, cols), dtype=bool)
+    for ring in (_square(-40, 0, 15), _square(60, 60, 15)):
+        cx, cy = tf.transform(*_centre(ring))
+        green |= (np.abs(xs[None, :] - cx) <= 15) & (np.abs(ys[:, None] - cy) <= 15)
+    red, nir = np.where(green, 0.05, 0.20), np.where(green, 0.45, 0.25)
+    flat = np.full((rows, cols), 0.1)
+    return [(layers.Grid(32612, Affine(10, 0, west, 0, -10, north), (rows, cols)), [flat, red, nir, flat],
+             np.ones((rows, cols), dtype=bool))]
+
+
+class FootprintTests(SimpleTestCase):
+    """How much of a pixel's signal is an entity's."""
+
+    def setUp(self):
+        from affine import Affine
+        from shapely.geometry import box
+        self.grid = layers.Grid(32612, Affine(10, 0, 0, 0, -10, 200), (20, 20))
+        self.big, self.tiny = box(50, 50, 80, 80), box(121, 121, 124, 124)   # 3 x 3 pixels; a tenth of a pixel
+        self.values = np.full((20, 20), 0.1)
+        self.values[12:15, 5:8] = 0.9   # rows count down from y = 200: the big square's nine pixels
+
+    def test_sharp_sensor_sees_whole_pixels(self):
+        fp = layers.coverage([self.big, self.tiny], self.grid, 0.0)
+        means, clear, purity, n_px = layers.measure(fp, [self.values], np.ones((20, 20), dtype=bool))
+        np.testing.assert_allclose([means[0, 0], purity[0], n_px[0], clear[0]], [0.9, 1.0, 9.0, 1.0], atol=1e-9)
+        self.assertAlmostEqual(purity[1], 0.09, delta=0.04)   # one pixel, about nine hundredths of it the object
+        self.assertAlmostEqual(means[1, 0], 0.1, places=6)
+
+    def test_blur_mixes_in_the_surroundings_and_says_so(self):
+        fp = layers.coverage([self.big, self.tiny], self.grid, 6.0)
+        self.assertAlmostEqual(fp.totals[0], 9.0, delta=0.5)   # blurring moves weight; only faint pixels are dropped
+        means, clear, purity, _ = layers.measure(fp, [self.values], np.ones((20, 20), dtype=bool))
+        self.assertTrue(0.5 < means[0, 0] < 0.85)
+        self.assertTrue(layers.MIN_PURITY < purity[0] < 0.9)
+        self.assertAlmostEqual(clear[0], 1.0, places=9)
+        self.assertFalse(purity[1] >= layers.MIN_PURITY)     # too faint to say anything about
+        # Cloud over the western third of the square: about two thirds of its weight is left.
+        cloud = np.ones((20, 20), dtype=bool)
+        cloud[:, :6] = False
+        _, clear, _, _ = layers.measure(fp, [self.values], cloud)
+        self.assertTrue(0.55 < clear[0] < 0.8)
+        stats, clear, purity, _ = layers.measure_quantiles(fp, self.values, np.ones((20, 20), dtype=bool))
+        self.assertAlmostEqual(stats[0, 1], 0.9, places=6)   # the median sits inside the square
+        self.assertLess(stats[0, 0], 0.9)                    # the lower quartile is the blurred rim
+        fp = layers.coverage([self.big], layers.Grid(32612, self.grid.transform, (10, 20)), 6.0)
+        self.assertEqual(fp.weights.nnz, 0)                  # the square lies below a grid of only ten rows
+        self.assertAlmostEqual(fp.totals[0], 9.0, delta=0.5)
+
+
+class LayerTests(TransactionTestCase):
+    """Remote-sensing samples on entities, and the basemap re-check."""
+
+    databases = {'default', 'observations'}
+
+    def setUp(self):
+        self.t1 = timezone.now() - timedelta(hours=1)
+        self.passes = [('T12SVC_a', IMAGED + timedelta(days=2, hours=18)),
+                       ('T12SVB_a', IMAGED + timedelta(days=2, hours=18, seconds=14)),   # the same pass, next tile
+                       ('T12SVC_b', IMAGED + timedelta(days=400, hours=18))]
+        for name, value in (('sentinel2_candidates', lambda *a, **k: [_pass(i, t) for i, t in self.passes]),
+                            ('naip_candidates', lambda *a, **k: []), ('lidar_candidates', lambda: [])):
+            patch = mock.patch.object(layers, name, side_effect=value)
+            patch.start()
+            self.addCleanup(patch.stop)
+        patch = mock.patch.dict(layers.READERS, {'sentinel-2-l2a': _green_roofs})
+        patch.start()
+        self.addCleanup(patch.stop)
+        layers._stats_cache.clear()
+
+    def _watch(self, *args):
+        out = StringIO()
+        call_command('watch_layers', '--json', *args, stdout=out)
+        return json.loads(out.getvalue())['sources']['sentinel2']
+
+    def test_passes_are_sampled_once_and_change_no_belief(self):
+        fusion.ingest_scene_graph(_scene(self.t1, imagery=_imagery()), session_id='s1', taxonomy_name='urban_v1')
+        bld = Entity.objects.get(category='building')
+        before = (list(bld.posterior), bld.p_exists, Factor.objects.count(), BeliefSnapshot.objects.count())
+
+        dry = self._watch()
+        self.assertEqual((dry['scenes_to_read'], dry['scenes_read'], LayerScene.objects.count()), (2, 1, 0))
+        rep = self._watch('--apply')
+        self.assertEqual((rep['scenes_new'], rep['scenes_read'], rep['failed']), (2, 2, 0))
+        # one scene per look: the second tile of the first pass shows the same pixels
+        self.assertEqual(sorted(LayerScene.objects.values_list('item_id', flat=True)), ['T12SVB_a', 'T12SVC_b'])
+        mine = LayerSample.objects.filter(entity=bld)
+        self.assertEqual(mine.count(), 2)
+        s = mine.first()
+        self.assertTrue(0.4 < s.value < 0.8)                 # 0.8 on the roof, 0.11 around it
+        self.assertTrue(layers.MIN_PURITY < s.purity < 0.9)
+        self.assertEqual((round(s.clear, 3), len(s.bands)), (1.0, 4))
+        # a 3 m car under 10 m pixels is its surroundings: nothing is stored for it
+        self.assertFalse(LayerSample.objects.filter(entity__category='vehicle').exists())
+        bld.refresh_from_db()
+        self.assertEqual((list(bld.posterior), bld.p_exists, Factor.objects.count(), BeliefSnapshot.objects.count()),
+                         before)
+
+        again = self._watch('--apply')
+        self.assertEqual((again['scenes_to_read'], again['samples']), (0, 0))
+
+        # A second capture adds a building: only it is read from the scenes already known.
+        sg = _scene(self.t1 + timedelta(minutes=20), imagery=_imagery())
+        sg['nodes'].append(_node('b2', 'building', _square(60, 60, 15)))
+        fusion.ingest_scene_graph(sg, session_id='s2', taxonomy_name='urban_v1')
+        more = self._watch('--apply')
+        self.assertEqual((more['scenes_to_read'], more['entities_to_sample'], more['samples']), (2, 2, 2))
+        self.assertEqual(LayerSample.objects.filter(entity=bld).count(), 2)
+
+        d = self.client.get(f'/webclient/sampler/world/entities/{bld.id}').json()
+        row, = d['layers']
+        self.assertEqual((row['source'], row['layer'], row['n'], row['series_step']), ('sentinel-2-l2a', 'ndvi', 2, 'sample'))
+        self.assertEqual([p[0] for p in row['series']], ['2023-06-03', '2024-07-05'])
+        self.assertEqual(row['at_last_seen']['n'], 1)        # one pass within a month of the imagery date
+        self.assertEqual(row['latest']['value'], row['series'][-1][1])
+        stats = self.client.get('/webclient/sampler/world/stats').json()['layers']
+        self.assertEqual((stats[0]['n_scenes'], stats[0]['n_entities']), (2, LayerSample.objects.values('entity').distinct().count()))
+
+    def test_a_pass_that_cannot_be_read_is_tried_again(self):
+        fusion.ingest_scene_graph(_scene(self.t1, imagery=_imagery()), session_id='s1', taxonomy_name='urban_v1')
+
+        def offline(cand, bounds_ll, tokens):
+            raise OSError('connection reset')
+
+        with mock.patch.dict(layers.READERS, {'sentinel-2-l2a': offline}):
+            rep = self._watch('--apply')
+        self.assertEqual((rep['failed'], rep['samples'], LayerSample.objects.count()), (2, 0, 0))
+        self.assertTrue(all('not read' in s.metadata['note'] for s in LayerScene.objects.all()))
+        rep = self._watch('--apply')
+        self.assertEqual((rep['failed'], rep['scenes_read']), (0, 2))
+        self.assertTrue(LayerSample.objects.exists())
+        self.assertFalse(any('note' in s.metadata for s in LayerScene.objects.all()))
+
+    def test_basemap_that_moved_on_flags_the_capture_until_it_is_redone(self):
+        fusion.ingest_scene_graph(_scene(self.t1, imagery=_imagery()), session_id='s1', taxonomy_name='urban_v1')
+        url = '/webclient/sampler/world/imagery_checks'
+        box = {'bbox': f'{LON - 0.01},{LAT - 0.01},{LON + 0.01},{LAT + 0.01}'}
+
+        def post(session_id, imagery):
+            return self.client.post(url, json.dumps({'checks': [{'session_id': session_id, 'imagery': imagery}]}),
+                                    content_type='application/json')
+
+        # The look-up needs the key a page holds: only a signed-in page is asked for it.
+        self.assertEqual(self.client.get(url, box).json()['due'], [])
+        self.assertEqual(post('s1', _imagery()).status_code, 401)
+        self.client.force_login(get_user_model().objects.create_user('sg_watch', password='x'))
+        due, = self.client.get(url, box).json()['due']
+        self.assertEqual((due['session_id'], len(due['corners']), due['image_size'], due['start'], due['end']),
+                         ('s1', 4, [1000, 800], '2023-03-01', '2023-09-01'))
+
+        self.assertEqual(post('s1', {'source': 'host:tiles.example', 'layers': []}).json()['recorded'], 0)
+        r = post('s1', _imagery()).json()
+        self.assertEqual((r['recorded'], r['flags']), (1, []))
+        self.assertEqual(self.client.get(url, box).json()['due'], [])   # looked up moments ago
+
+        r = post('s1', _imagery('2025-01-01', '2025-03-01')).json()
+        self.assertEqual([(f['session_id'], f['now']['end']) for f in r['flags']], [('s1', '2025-03-01')])
+        chk = ImageryCheck.objects.order_by('-id').first()
+        self.assertEqual((chk.changed, chk.newer), (True, True))
+        stats = self.client.get('/webclient/sampler/world/stats').json()['imagery_checks']
+        self.assertEqual((stats['n_dated_captures'], stats['n_checked_recently'], stats['n_to_recapture']), (1, 1, 1))
+        cap = Capture.objects.get(session_id='s1')
+        self.assertEqual(cap.imagery_end.date().isoformat(), '2023-09-01')   # the stored evidence keeps its date
+
+        fusion.ingest_scene_graph(_scene(timezone.now(), imagery=_imagery('2025-01-01', '2025-03-01')),
+                                  session_id='s2', taxonomy_name='urban_v1')
+        self.assertEqual(self.client.get(url, box).json()['flags'], [])

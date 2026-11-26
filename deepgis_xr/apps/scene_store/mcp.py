@@ -22,7 +22,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from . import fusion, priors, traits, views
+from . import fusion, imagery_watch, layers, priors, traits, views
 from .models import Capture, Entity, Feedback
 
 log = logging.getLogger(__name__)
@@ -43,7 +43,9 @@ INSTRUCTIONS = (
     "there when last seen (pass at= to find_entities, or read get_entity's now, for the belief "
     "decayed to a date). first_seen and last_seen are imagery dates: each capture records the "
     "imagery it showed and when that was acquired (observed_at), separately from when the view "
-    "was taken (captured_at). Below the low-confidence threshold the category is 'unknown' and candidates hold "
+    "was taken (captured_at). get_entity's layers hold what Sentinel-2 passes, NAIP aerial "
+    "photographs and a lidar survey measured over the object (NDVI series, height): a record "
+    "with its own dates, not part of the beliefs. Below the low-confidence threshold the category is 'unknown' and candidates hold "
     "the best guesses. Coordinates are WGS84 [lon, lat] degrees, areas square metres, times UTC."
 )
 
@@ -168,6 +170,8 @@ def world_stats(args):
         'low_confidence': priors.LOW_CONFIDENCE,
         'imagery': fusion.imagery_dates(Capture.objects.all()),
         'detection_models': views.detection_models(),
+        'layers': layers.layer_stats(),
+        'imagery_checks': imagery_watch.summary(),
     }
 
 
@@ -225,7 +229,7 @@ def get_entity(args):
             'n_sightings': len(d['detections']), 'sightings': d['detections'][::-1][:n],
             'n_history': len(d['history']), 'history': d['history'][-10:],
             'feedback': d['feedback'], 'field_readings': d.get('field'),
-            'factor_counts': d['factor_counts']}
+            'factor_counts': d['factor_counts'], 'layers': d['layers']}
 
 
 def world_summary(args):
@@ -334,7 +338,10 @@ TOOLS = [
      'low-confidence threshold below which an entity is called unknown, the imagery the captures '
      'showed with its acquisition dates, and the fitted chance that a later look finds an object '
      'again (detection_models: per doubling of pixels, per doubling coarser or finer than the '
-     'first sighting, and per category, in log-odds).',
+     'first sighting, and per category, in log-odds). layers lists the remote-sensing record per '
+     'source (scenes, dates, samples, entities sampled); imagery_checks says how recently the '
+     "basemap's dates were looked up again and which captures show imagery the provider has since "
+     'replaced (to_recapture).',
      {}, [], world_stats),
     ('list_scene_graphs', 'List stored scene graphs',
      'Stored scene graphs (one per map capture), newest first, with the time of the view (captured_at), '
@@ -376,7 +383,14 @@ TOOLS = [
     ('get_entity', 'Explain one object',
      "One object's full record: candidates, every sighting (imagery date, when it was viewed, capture, "
      'label, score, area, image ground resolution), the belief as last seen and decayed to now, '
-     'belief history, feedback, field readings a ground robot aimed at it, and factor counts.',
+     'belief history, feedback, field readings a ground robot aimed at it, and factor counts. '
+     'layers is the remote-sensing record over the object, one row per source: number of samples, '
+     'first and last date, latest value, the value around the imagery date (at_last_seen), min / '
+     'median / max, a series (monthly medians [month, value, n] when long) and purity, the share '
+     'of the sampled signal that comes from inside the outline (the rest is its surroundings). '
+     'Sentinel-2 NDVI is from surface reflectance; NAIP NDVI is from uncalibrated photograph '
+     'numbers; lidar height is metres above ground (value = median, p90 = top). Objects too '
+     'small for a sensor have no row for it. None of this is in the beliefs.',
      {'entity_id': _num('Entity id'), 'max_sightings': _num('Newest sightings to include (default 20)'),
       'include_polygon': _flag('Include the outline')},
      ['entity_id'], get_entity),

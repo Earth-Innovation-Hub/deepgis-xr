@@ -4315,6 +4315,57 @@ class WorldSamplerUI {
         }
     }
 
+    // Has the basemap moved on since the captures in view were built? The server lists the
+    // captures due a look-up; this page repeats the look-up it made when each was built and
+    // sends back only the dates. At most once every five minutes; the server asks signed-in
+    // pages only.
+    async recheckImagery(bbox) {
+        const now = Date.now();
+        if (this._imageryBusy || now - (this._imageryCheckedAt || 0) < 300000) return;
+        this._imageryBusy = true;
+        this._imageryCheckedAt = now;
+        try {
+            const url = '/webclient/sampler/world/imagery_checks';
+            const resp = await fetch(`${url}?bbox=${bbox.map((v) => v.toFixed(6)).join(',')}`);
+            const payload = await resp.json().catch(() => ({}));
+            if (!resp.ok || payload.status !== 'success') return;
+            let flags = payload.flags || [];
+            const checks = [];
+            for (const cap of payload.due || []) {
+                const imagery = await this.captureImagery(cap.corners, cap.image_size);
+                if (imagery.dates && imagery.source === cap.source) checks.push({ session_id: cap.session_id, imagery });
+            }
+            if (checks.length) {
+                const post = await fetch(url, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ checks }),
+                });
+                const done = await post.json().catch(() => ({}));
+                if (post.ok && done.status === 'success') {
+                    const had = new Set(flags.map((f) => f.session_id));
+                    flags = flags.concat((done.flags || []).filter((f) => !had.has(f.session_id)));
+                }
+            }
+            const before = (this._imageryFlags || []).length;
+            this._imageryFlags = flags;
+            if (flags.length !== before && this.worldDataSource) this.refreshWorldModel();
+        } catch (err) {
+            console.warn('[WorldModel] imagery re-check failed');
+        } finally {
+            this._imageryBusy = false;
+        }
+    }
+
+    // A sentence for the status line when captures in view were built on imagery the basemap has since replaced.
+    imageryNote(bbox) {
+        const stale = (this._imageryFlags || []).filter((f) => f.centre[0] >= bbox[0] && f.centre[0] <= bbox[2]
+            && f.centre[1] >= bbox[1] && f.centre[1] <= bbox[3]);
+        if (!stale.length) return '';
+        const month = (iso) => new Date(iso).toLocaleDateString([], { year: 'numeric', month: 'short', timeZone: 'UTC' });
+        const f = stale[0];
+        return ` The basemap now shows imagery from ${month(f.now.start)} to ${month(f.now.end)}; `
+            + `${stale.length} scene graph${stale.length > 1 ? 's here were' : ' here was'} built on `
+            + `${month(f.stored.start)} to ${month(f.stored.end)}. Build a new one to update the world model.`;
+    }
     // For a capture: its centre and four points a fifth of the way in from the corners.
     // `cornersArr` is [NW, NE, SE, SW] as [lon, lat]; `imageSize` is [width, height] in pixels.
     captureImagery(cornersArr, imageSize) {
@@ -4615,6 +4666,7 @@ class WorldSamplerUI {
                 throw new Error(payload.message || `HTTP ${resp.status}`);
             }
             const viewArea = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]);
+            this.recheckImagery(bbox);
             const shown = await this.renderWorldEntities(payload.entities || [], viewArea);
             const hidden = (payload.entities || []).length - shown.length;
             if (!shown.length && !hidden) {
@@ -4631,7 +4683,7 @@ class WorldSamplerUI {
             const reviewing = !!(picked && this._review?.line && this.reviewDataSource?.entities.contains(picked));
             this.setWorldStatus(reviewing ? this._review.line
                 : `${shown.length} objects${sure} in view: ${top}${kinds.length > 4 ? ' and more' : ''}.`
-                + `${hidden ? ` ${hidden} view-sized regions hidden.` : ''}`);
+                + `${hidden ? ` ${hidden} view-sized regions hidden.` : ''}${this.imageryNote(bbox)}`);
         } catch (err) {
             if (seq !== this._worldSeq) return;
             console.error('[WorldModel] load failed:', err);
@@ -4840,6 +4892,27 @@ class WorldSamplerUI {
         this.viewer.scene.requestRender();
     }
 
+    // A small chart of [date, value] points. Plain SVG: the info box runs no scripts.
+    static sparkline(series, width = 196, height = 34) {
+        const pts = (series || []).filter((p) => Number.isFinite(p[1]) && Number.isFinite(Date.parse(p[0])));
+        if (pts.length < 3) return '';
+        const t = pts.map((p) => Date.parse(p[0]));
+        const span = Math.max(t[t.length - 1] - t[0], 1);
+        const lo = Math.min(...pts.map((p) => p[1]));
+        const hi = Math.max(...pts.map((p) => p[1]));
+        const x = (ms) => 2 + (width - 4) * (ms - t[0]) / span;
+        const y = (v) => height - 3 - (height - 14) * (v - lo) / Math.max(hi - lo, 1e-6);
+        const line = pts.map((p, i) => `${x(t[i]).toFixed(1)},${y(p[1]).toFixed(1)}`).join(' ');
+        let years = '';
+        for (let yr = new Date(t[0]).getUTCFullYear() + 1; Date.UTC(yr, 0, 1) <= t[t.length - 1]; yr++) {
+            const at = x(Date.UTC(yr, 0, 1)).toFixed(1);
+            years += `<line x1="${at}" y1="0" x2="${at}" y2="${height}" stroke="#475569" stroke-width="1"/>`
+                + `<text x="${(Number(at) + 3).toFixed(1)}" y="9" fill="#94a3b8" font-size="9">${yr}</text>`;
+        }
+        return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block;margin-top:4px" `
+            + `role="img" aria-label="values from ${lo.toFixed(2)} to ${hi.toFixed(2)}">${years}`
+            + `<polyline points="${line}" fill="none" stroke="#4ade80" stroke-width="1.5"/></svg>`;
+    }
     renderWorldInfo(entity, e, d) {
         const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
         const name = (c) => String(c || '').replace(/_/g, ' ');
@@ -4896,6 +4969,26 @@ class WorldSamplerUI {
             if (f?.n_readings) {
                 rows.push(row('Field readings', `${f.n_readings} aimed at it, ${span(f.first, f.last)}; `
                     + `${f.n_usable} usable in daylight${f.n_usable ? `, ${f.n_green} read as green vegetation` : ''}`));
+            }
+            // What satellites, aerial photographs and lidar recorded over it. A record: not in the beliefs above.
+            (d.layers || []).forEach((L) => {
+                const own = `about ${pct(L.purity)} of the signal is this object`;
+                if (L.layer === 'height') {
+                    const when = L.window ? span(L.window[0], L.window[1]) : date(L.latest.at);
+                    rows.push(row('Height', `${L.latest.value.toFixed(1)} m above ground`
+                        + `${L.latest.p90 != null ? `, ${L.latest.p90.toFixed(1)} m at the top` : ''}; lidar flown ${when}; ${own}`));
+                } else if (L.source === 'naip') {
+                    rows.push(row('Aerial photo', `NDVI ${L.series.map((p) => `${p[1].toFixed(2)} on ${date(p[0])}`).join(', ')}`
+                        + `; NAIP photograph, uncalibrated: compare objects within one date; ${own}`));
+                } else {
+                    const then = L.at_last_seen ? `; ${L.at_last_seen.value.toFixed(2)} when the imagery was taken` : '';
+                    rows.push(row('Greenness', `NDVI ${L.latest.value.toFixed(2)} on ${date(L.latest.at)}${then}; `
+                        + `${L.min.toFixed(2)} to ${L.max.toFixed(2)} over ${L.n} clear ${esc(L.label)} passes since ${date(L.first)}; ${own}`
+                        + WorldSamplerUI.sparkline(L.series)));
+                }
+            });
+            if (d.layers && !d.layers.length) {
+                rows.push(row('Remote sensing', 'nothing recorded: too small for the satellite and aerial pixels, or not sampled yet'));
             }
             const fc = Object.entries(d.factor_counts || {}).sort((a, b) => b[1] - a[1]);
             if (fc.length) rows.push(row('Evidence', fc.map(([k, n]) => `${esc(k)} ${n}`).join(', ')));

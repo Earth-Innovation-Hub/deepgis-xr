@@ -4,7 +4,13 @@
          Beliefs as last seen (at each entity's newest evidence), or decayed to ``at``.
     GET  /webclient/sampler/world/entities/<id>
          One entity: candidates, sightings with their imagery dates, belief history, feedback,
-         and ``now`` (the belief decayed to this moment). Field readings only for signed-in users.
+         ``now`` (the belief decayed to this moment) and ``layers`` (what satellite passes, aerial
+         photographs and lidar recorded over it). Field readings only for signed-in users.
+    GET  /webclient/sampler/world/imagery_checks?bbox=w,s,e,n
+         ``flags``: captures whose basemap imagery has since been replaced by a later acquisition.
+         For a signed-in page also ``due``: captures to look up again (see ``imagery_watch``).
+    POST /webclient/sampler/world/imagery_checks  {checks: [{session_id, imagery: the page's record}]}
+         The dates the provider serves now for those captures. Signed-in users.
     POST /webclient/sampler/world/feedback      {entity_id, kind: confirm|relabel|reject, category?, note?,
                                                  imagery?: the page's current imagery record, seen?: 'in_person'}
          Dated by the imagery in view when given, the present for 'in_person', else the entity's last sighting.
@@ -47,7 +53,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from django.utils import timezone
 
-from . import fusion, priors, traits
+from . import fusion, imagery_watch, layers, priors, traits
 from .models import (
     BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose, UserPreference,
 )
@@ -56,6 +62,7 @@ MAX_BBOX_DEG = 0.05
 MAX_CAPTURE_BBOX_DEG = 0.5
 MAX_CAPTURE_DETECTIONS = 3000
 MAX_RETIRE_IDS = 50
+MAX_IMAGERY_CHECKS = 20
 DAY = re.compile(r'(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?')
 
 
@@ -250,6 +257,8 @@ def entity_detail(e, include_field=False):
         'feedback': [{'kind': f.kind, 'category': f.category, 'at': f.created_at.isoformat(),
                       'superseded': f.superseded_at is not None}
                      for f in Feedback.objects.filter(entity=e).order_by('created_at')],
+        # what remote sensors recorded over it; a record, none of it is in the belief
+        'layers': layers.entity_layers(e),
     }
     if not e.retired_at:
         now = fusion.run_local_bp([e.id], at=timezone.now(), write=False).get('beliefs', {}).get(e.id)
@@ -346,7 +355,42 @@ def stats_view(request):
         'detection_models': detection_models(),
         'imagery': fusion.imagery_dates(Capture.objects.filter(taxonomy=taxonomy) if taxonomy
                                         else Capture.objects.all()),
+        'layers': layers.layer_stats(),
+        'imagery_checks': imagery_watch.summary(taxonomy),
     })
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def imagery_checks_view(request):
+    """Which captures' basemap imagery to look up again, and what the look-ups found."""
+    if not fusion.enabled():
+        return _unavailable()
+    user_id = _user_id(request)
+    if request.method == 'GET':
+        bbox, err = _bbox(request, MAX_CAPTURE_BBOX_DEG)
+        if err:
+            return err
+        return JsonResponse({'status': 'success', 'flags': imagery_watch.flags(bbox),
+                             'due': imagery_watch.due(bbox) if user_id is not None else []})
+    if user_id is None:
+        return _error('sign in to report imagery dates', 401)
+    try:
+        checks = json.loads(request.body or b'{}').get('checks')
+    except (ValueError, AttributeError):
+        checks = None
+    if not isinstance(checks, list) or not 0 < len(checks) <= MAX_IMAGERY_CHECKS:
+        return _error(f'checks must be a list of 1 to {MAX_IMAGERY_CHECKS} look-ups')
+    ids = [str(c.get('session_id') or '')[:120] for c in checks if isinstance(c, dict)]
+    caps = {c.session_id: c for c in Capture.objects.filter(session_id__in=ids)}
+    recorded = 0
+    for c in checks:
+        cap = caps.get(str(c.get('session_id') or '')[:120]) if isinstance(c, dict) else None
+        if cap is not None and imagery_watch.record(cap, c.get('imagery'), user_id) is not None:
+            recorded += 1
+    wanted = {c.session_id for c in caps.values()}
+    return JsonResponse({'status': 'success', 'recorded': recorded,
+                         'flags': [f for f in imagery_watch.flags() if f['session_id'] in wanted]})
 
 
 def detection_models():

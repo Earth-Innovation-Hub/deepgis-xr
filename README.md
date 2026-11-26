@@ -291,6 +291,45 @@ Three more rules tie the beliefs to what was measured:
 
 These four commands only report unless `--apply` is given.
 
+**Remote sensing over each object.** The pilot's map layers are drawn in the
+browser and kept nowhere. `scene_store/layers.py` keeps the same kind of data
+per object: every Sentinel-2 pass, NAIP aerial photograph and lidar survey
+over a capture area is stored as a scene with its own acquisition time, and
+sampled onto each entity it can resolve.
+
+- **A sample knows how much of it is the object.** A 10 m pixel over a
+  house is mostly the yard. The outline is drawn on the scene's pixel grid
+  and blurred by the sensor's point spread and by the uncertainty of where
+  the outline sits, so each pixel has the share of its signal that comes
+  from inside. The sample is the mean weighted by that share, `purity` is
+  the share for the sample as a whole, and `clear` is how much of the object
+  was free of cloud. Samples under a quarter pure are not stored, so an
+  object too small for a sensor has no series from it (about 2,700 of 7,100
+  objects in Tempe are large enough for Sentinel-2; nearly all are for the
+  aerial photograph and lidar).
+- **Sources.** Sentinel-2 surface reflectance at 10 m gives an NDVI series
+  from the date of the basemap imagery to today. NAIP at 0.3 to 0.6 m (read
+  at 1.2 m) gives an NDVI every two years from uncalibrated photograph
+  numbers, comparable between objects of one date only. Height above ground
+  at 1 m comes from the public USGS 3DEP point cloud: `plan_lidar_height`
+  writes one PDAL pipeline per 1 km tile and `watch_layers` samples the
+  tiles (median and 90th percentile height per object).
+- **A record, not evidence.** No factor is written and no belief changes.
+  The series is shown in the object's info box and returned by the API and
+  the MCP server, so that the chance of each value given each category can
+  be measured from corrected objects before any of it is allowed to vote.
+- **Every day.** `python manage.py watch_layers --apply` looks for scenes
+  newer than the last one, samples them, and fills in objects added since a
+  scene was sampled. Run it from the host's cron; without `--apply` it
+  reads one scene per source and stores nothing.
+- **Has the basemap moved on?** The provider replaces its imagery without
+  notice. A signed-in page is asked which captures in view have not been
+  looked up for a week, repeats the look-up it made when each was built and
+  sends back only the dates; the provider key stays in the page. A capture
+  whose imagery has been replaced by a later acquisition is flagged in the
+  page's status line, in `world/stats` and in the daily report until a new
+  capture of the newer imagery covers it. Stored evidence keeps its date.
+
 The AI pilot's `trait_map` ("show me house sizes around here as a heat map")
 measures one trait (area, confidence or chance of still being there) for
 every category around the point in view, has the lab model assess the means
@@ -811,6 +850,11 @@ deepgis-xr/
   and dates the correction; `seen: "in_person"` dates it now.
 - `GET /webclient/sampler/world/review?bbox=...[&limit=]`: entities nobody
   has judged yet, most uncertain first, each with `value_bits`.
+- `GET /webclient/sampler/world/imagery_checks?bbox=...`: `flags`, the
+  captures whose basemap imagery has since been replaced by a later
+  acquisition; for a signed-in page also `due`, the captures to look up
+  again. `POST` with `{checks: [{session_id, imagery}]}` (sign-in required)
+  records what the provider serves now.
 - `GET`/`POST /webclient/sampler/world/preferences`: per-user settings as a
   JSON object (`null` deletes a key); sign-in required.
 - `GET /webclient/sampler/world/stats[?taxonomy=]`: counts, the imagery
@@ -853,12 +897,12 @@ so a city block fits in a model's context.
 
 | Tool | Answers |
 |---|---|
-| `world_stats` | Totals, categories per taxonomy, the low-confidence threshold, imagery dates, the fitted detection model |
+| `world_stats` | Totals, categories per taxonomy, the low-confidence threshold, imagery dates, the fitted detection model, the remote-sensing record per source, captures due a re-capture |
 | `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution |
 | `get_scene_graph` | One capture's nodes and their `context` / `contains` links |
 | `world_summary` | Counts per category, confidence spread, what the unknowns probably are |
 | `find_entities` | Objects near a point: category, top candidates, `p_exists`, area, distance; `at=` for a past time |
-| `get_entity` | One object's sightings (imagery date and view time), belief when last seen and today, history, feedback, field readings |
+| `get_entity` | One object's sightings (imagery date and view time), belief when last seen and today, history, feedback, field readings, and `layers`: its Sentinel-2 and NAIP NDVI series and lidar height with their purity |
 | `world_changes` | Objects that appeared, or are believed gone, between two imagery dates (`basis: view` for view times) |
 | `area_histogram` | Object sizes in an area |
 | `trait_map` | Per-category statistics of area, confidence or `p_exists`, and a Gaussian-process map of one category |
@@ -1426,6 +1470,14 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Imagery dates**: captures carry the imagery's source and acquisition
   window; evidence is dated by it, beliefs are kept as last seen, and
   change reports compare imagery dates rather than view times.
+- **Remote sensing per object**: Sentinel-2 passes, NAIP photographs and a
+  lidar survey are stored as dated scenes and sampled onto every object
+  they can resolve, each sample with the share of its signal that is the
+  object. A daily `watch_layers` run adds new passes; the series is in the
+  info box, the API and the MCP server, and is not yet evidence.
+- **Basemap re-check**: pages look up again what imagery the provider
+  serves where captures were built, and captures on replaced imagery are
+  flagged for re-capture.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

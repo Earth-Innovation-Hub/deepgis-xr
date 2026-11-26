@@ -10,6 +10,9 @@ Layers, oldest evidence first:
   Feedback, UserPreference                       user corrections and settings
   FieldLink                                      a robot's field reading registered to an entity
   DetectionModel                                 fitted chance that a later look finds an entity again
+  LayerScene -> LayerSample <- Entity            what a satellite pass, aerial photograph or lidar survey
+                                                 measured over an entity: a record, not a factor
+  ImageryCheck                                   what the basemap provider serves now where a capture was taken
 
 Each entity has two variables: ``c<id>`` (category, taxonomy-sized) and
 ``x<id>`` (exists, [absent, present]). Factors store their raw log table;
@@ -317,6 +320,81 @@ class FieldLink(models.Model):
     class Meta:
         db_table = 'sg_field_link'
         indexes = [models.Index(fields=['entity', 'observed_at'], name='sg_field_link_entity_idx')]
+
+
+class LayerScene(models.Model):
+    """One look by one remote sensor that entities were sampled from: a satellite pass, an
+    aerial photograph, a lidar survey.
+
+    ``observed_at`` is when the sensor looked (the middle of ``window_start`` .. ``window_end``
+    for a survey flown over several days). ``sampled_through`` is the highest entity id that
+    had been considered when the scene was last sampled, so entities added later are filled in.
+    """
+
+    source = models.CharField(max_length=40)    # 'sentinel-2-l2a', 'naip', 'usgs-3dep-lidar'
+    item_id = models.CharField(max_length=160)  # the provider's id for the scene
+    layer = models.CharField(max_length=24)     # what a sample's value is: 'ndvi', 'height'
+    observed_at = models.DateTimeField()
+    window_start = models.DateTimeField(null=True, blank=True)
+    window_end = models.DateTimeField(null=True, blank=True)
+    gsd_m = models.FloatField()
+    footprint = gis.PolygonField(srid=4326)
+    cloud_cover = models.FloatField(null=True, blank=True)  # percent of the whole scene
+    sampled_through = models.BigIntegerField(default=0)
+    n_samples = models.IntegerField(default=0)
+    metadata = models.JSONField(default=dict, blank=True)   # platform, band order, where the pixels are kept
+    recorded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sg_layer_scene'
+        constraints = [models.UniqueConstraint(fields=['source', 'item_id'], name='sg_layer_scene_item')]
+        indexes = [models.Index(fields=['source', 'observed_at'], name='sg_layer_scene_time_idx')]
+
+
+class LayerSample(models.Model):
+    """What one scene measured over one entity. A record, not evidence: no factor is made of it.
+
+    ``value`` is the layer's quantity over the pixels the entity covers, each weighted by the
+    share of its signal that comes from inside the outline. ``purity`` is that share for the
+    sample as a whole (1 = only pixels wholly inside), ``clear`` the share of the entity's
+    weight on usable pixels (inside the image, not cloud), ``n_pixels`` the weight in pixels,
+    and ``bands`` the weighted band values in the order of ``scene.metadata['bands']``.
+    """
+
+    entity = models.ForeignKey(Entity, on_delete=models.CASCADE, related_name='layer_samples')
+    scene = models.ForeignKey(LayerScene, on_delete=models.CASCADE, related_name='samples')
+    value = models.FloatField()
+    purity = models.FloatField()
+    clear = models.FloatField()
+    n_pixels = models.FloatField()
+    bands = ArrayField(models.FloatField(), default=list, blank=True)
+
+    class Meta:
+        db_table = 'sg_layer_sample'
+        constraints = [models.UniqueConstraint(fields=['entity', 'scene'], name='sg_layer_sample_once')]
+
+
+class ImageryCheck(models.Model):
+    """A later look-up of what the basemap provider serves where a capture was taken.
+
+    The look-up is made by a signed-in page, the same way and at the same zoom as when the
+    capture was built, and only the dates are sent here. ``newer`` is set when the provider now
+    serves imagery acquired after the capture's: the capture's area is due a re-capture.
+    """
+
+    capture = models.ForeignKey(Capture, on_delete=models.CASCADE, related_name='imagery_checks')
+    checked_at = models.DateTimeField(auto_now_add=True)
+    user_id = models.IntegerField(null=True, blank=True)
+    source = models.CharField(max_length=120, blank=True, default='')
+    start = models.DateTimeField(null=True, blank=True)
+    end = models.DateTimeField(null=True, blank=True)
+    changed = models.BooleanField(default=False)  # the acquisition window differs from the capture's
+    newer = models.BooleanField(default=False)    # and ends later
+    detail = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'sg_imagery_check'
+        indexes = [models.Index(fields=['capture', '-checked_at'], name='sg_imagery_check_idx')]
 
 
 class UserPreference(models.Model):
