@@ -10,6 +10,7 @@ is superseded, not deleted). Then beliefs are re-inferred. Without --apply every
 rolled back and only reported. --keep-misses stores the fit and leaves stored misses alone.
 """
 
+import json
 import time
 from collections import Counter
 
@@ -39,7 +40,8 @@ SELECT f.id, f.entity_ids[1], f.capture_id, f.observed_at, e.area_m2, c.gsd_m,
                    JOIN sg_capture c1 ON c1.id = d.capture_id
                   WHERE a.entity_id = e.id AND d.gate = ''
                   ORDER BY c1.captured_at, d.id LIMIT 1),
-                e.category)
+                e.category),
+       f.metadata
   FROM sg_factor f
   JOIN sg_capture c ON c.id = f.capture_id
   JOIN sg_entity e ON e.id = f.entity_ids[1]
@@ -115,9 +117,13 @@ class Command(BaseCommand):
             cur.execute(MISSES_SQL, [taxonomy])
             rows = cur.fetchall()
         factors, touched, ps = [], set(), []
-        for fid, eid, cap_id, observed_at, area, gsd, first_gsd, category in rows:
+        for fid, eid, cap_id, observed_at, area, gsd, first_gsd, category, old in rows:
             table, why = detection_model.miss_evidence(
                 model, area_m2=area, gsd_m=gsd, first_gsd_m=first_gsd, category=category)
+            if isinstance(old, str):
+                old = json.loads(old)
+            if (old or {}).get('retro'):  # a miss a later find put on this capture stays marked as one
+                why = dict(why, retro=True, found_by=old.get('found_by'))
             factors.append(fusion._new_factor('miss', [eid], table, observed_at, variables=[fusion.xvar(eid)],
                                               decays=False, capture_id=cap_id, metadata=why))
             touched.add(eid)

@@ -18,11 +18,11 @@ from django.utils import timezone
 from django.core.management.base import CommandError
 
 from deepgis_xr.apps.scene_store import (
-    assess, detection_model, field_evidence, fusion, layers, looks, priors, traits, zone_views, zonemap,
+    assess, detection_model, field_evidence, fusion, layers, looks, priors, sampler, traits, zone_views, zonemap,
 )
 from deepgis_xr.apps.scene_store.models import (
     BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, ImageryCheck,
-    LayerSample, LayerScene, Pose, Zone,
+    LayerSample, LayerScene, Pose, SamplerPull, Zone,
 )
 from deepgis_xr.apps.web.models import FieldReading
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import URBAN_V1
@@ -330,6 +330,63 @@ class FusionTests(TransactionTestCase):
         self.assertAlmostEqual(out['gsd_m'], 2.24, delta=0.05)
         self.assertEqual(self._ingest('s3', self.t3, with_car=False)['n_missed'], 1)
 
+    def test_object_found_where_an_earlier_capture_looked_inherits_its_miss(self):
+        first = self._ingest('s1', self.t1, with_car=False, imagery=_imagery())['reward']
+        self.assertEqual((first['by_cause']['new_ground']['n'], first['share_new_ground']), (2, 1.0))
+        self.assertEqual((first['bits'], first['bits_reread']), (first['bits_new'], 0.0))
+        self.assertAlmostEqual(first['ground_ha']['new'], 4.0, delta=0.05)
+        second = self._ingest('s2', self.t2, imagery=_imagery())
+        car = self._entity('vehicle')
+        s1, s2 = (Capture.objects.get(session_id=s) for s in ('s1', 's2'))
+        # The car is new, but s1 covered it at a zoom that resolves it: s1 looked and missed.
+        miss = Factor.objects.get(kind='miss')
+        self.assertEqual((miss.capture_id, miss.entity_ids, miss.observed_at), (s1.id, [car.id], IMAGED))
+        self.assertEqual((miss.metadata['retro'], miss.metadata['found_by']), (True, s2.id))
+        self.assertEqual(Factor.objects.get(kind='hit', entity_ids=[car.id]).metadata['cause'], 're_found')
+        self.assertEqual((second['n_retro_misses'], second['n_missed'], car.n_misses), (1, 0, 1))
+        # Found once and missed once on one image, whichever capture came first.
+        absent, present = looks.exists_message([priors.HIT_TABLE, priors.MISS_TABLE])
+        self.assertAlmostEqual(car.p_exists, 1 / (1 + np.exp(absent - present)), places=3)
+        once = looks.exists_message([priors.HIT_TABLE])
+        self.assertLess(car.p_exists, 1 / (1 + np.exp(once[0] - once[1])) - 0.1)
+        look = fusion.support(car)['looks'][0]
+        self.assertEqual((look['n_captures'], look['n_found'], look['n_missed']), (2, 1, 1))
+        then = fusion.run_local_bp([car.id], write=False, through_capture=s1.id)['beliefs'][car.id]
+        self.assertAlmostEqual(then['p_exists'], 0.5, places=6)  # before s2 the store held nothing on it
+        bld = self._entity('building')
+        replay = fusion.run_local_bp([car.id, bld.id], write=False, through_capture=s2.id)['beliefs']
+        self.assertAlmostEqual(replay[car.id]['p_exists'], car.p_exists, places=6)
+        first_look = fusion.run_local_bp([bld.id], write=False, through_capture=s1.id)['beliefs'][bld.id]
+        self.assertTrue(0.85 < first_look['p_exists'] <= replay[bld.id]['p_exists'])
+        with self.assertRaises(ValueError):
+            fusion.run_local_bp([car.id], through_capture=s1.id)
+
+        reward = second['reward']
+        self.assertEqual({c: r['n'] for c, r in reward['by_cause'].items()}, {'re_found': 1, 'relook_same': 2})
+        self.assertEqual((reward['n_first_sightings'], reward['share_new_ground']), (1, 0.0))
+        found = reward['by_cause']['re_found']
+        self.assertGreater(found['bits'], 0.5)
+        # s1 had the fixed 0.8 chance of finding the car, so 0.8 of what the car told is a second try.
+        self.assertEqual(found['expected_before'], 0.8)
+        self.assertAlmostEqual(reward['bits_new'], 0.2 * found['bits'], delta=0.02)
+        self.assertAlmostEqual(reward['bits_reread'], reward['bits'] - reward['bits_new'], delta=0.02)
+        self.assertAlmostEqual(reward['ground_ha']['same'], 4.0, delta=0.05)
+        bbox = f'{LON - 0.002},{LAT - 0.002},{LON + 0.002},{LAT + 0.002}'
+        caps = self.client.get('/webclient/sampler/world/captures', {'bbox': bbox}).json()['captures']
+        self.assertEqual(caps[0]['reward']['by_cause']['re_found']['n'], 1)
+
+    def test_finer_capture_reads_pixels_the_store_had_not(self):
+        self._ingest('s1', self.t1)
+        fine = _scene(self.t2)
+        fine['viewport']['image_size'] = [4000, 3200]  # 5.6 cm pixels over the same ground
+        fine['nodes'].append(_node('m', 'vehicle', _square(60, 60, 0.75)))  # 45 pixels at 22 cm, 720 here
+        out = fusion.ingest_scene_graph(fine, session_id='s2', taxonomy_name='urban_v1')
+        reward = out['reward']
+        self.assertEqual({c: r['n'] for c, r in reward['by_cause'].items()}, {'newly_resolvable': 1, 'relook_finer': 3})
+        self.assertEqual((out['n_retro_misses'], reward['bits_reread']), (0, 0.0))
+        self.assertAlmostEqual(reward['ground_ha']['finer'], 4.0, delta=0.05)
+        self.assertFalse(Factor.objects.filter(kind='miss').exists())
+
     def test_capture_pose_is_recorded_with_uncertainty(self):
         self._ingest('s1', self.t1)
         pose = Pose.objects.get()
@@ -474,7 +531,7 @@ class McpTests(TransactionTestCase):
         self.assertEqual(tools, {'world_stats', 'list_scene_graphs', 'get_scene_graph', 'world_summary',
                                  'find_entities', 'get_entity', 'world_changes', 'area_histogram', 'trait_map',
                                  'assess_point', 'field_readings', 'entity_looks', 'belief_history',
-                                 'entity_beliefs'})
+                                 'entity_beliefs', 'next_view', 'sampler_pulls'})
         self.assertEqual(self._rpc('nope').json()['error']['code'], -32601)
         self.assertEqual(self._rpc('tools/call', {'name': 'nope'}).json()['error']['code'], -32602)
 
@@ -576,6 +633,108 @@ class McpTests(TransactionTestCase):
 
         self.assertTrue(names(survey).isdisjoint(
             {'camera', 'target', 'heading_deg', 'lat', 'lon', 'vehicle_id', 'image'}))
+
+    def test_rewards_and_the_next_view(self):
+        graphs = self._tool('list_scene_graphs')
+        first, again = graphs['captures'][1]['reward'], graphs['captures'][0]['reward']
+        self.assertEqual((first['by_cause']['new_ground']['n'], again['by_cause']['relook_same']['n']), (3, 3))
+        self.assertEqual(first['bits_new'], first['bits'])
+        nxt = self._tool('next_view', policy='greedy', lat=LAT, lon=LON, radius_m=500)
+        self.assertEqual((nxt['policy'], nxt['predicted']['share']['new']), ('greedy', 1.0))
+        self.assertNotIn('pull_id', nxt)
+        self.assertEqual(len(nxt['model']['by_band']), 5)
+        self.assertFalse(SamplerPull.objects.exists())
+        self.assertTrue(self._tool('next_view', policy='annealing')['isError'])
+        self.assertEqual(self._tool('sampler_pulls')['n'], 0)
+
+
+class SamplerTests(TransactionTestCase):
+    databases = {'default', 'observations'}
+
+    def setUp(self):
+        self.t1 = timezone.now() - timedelta(hours=1)
+        self.box = [LON - 0.006, LAT - 0.005, LON + 0.006, LAT + 0.005]  # about 1.1 km square
+
+    def _post(self, url, body):
+        return self.client.post(f'/webclient/sampler/world/{url}', json.dumps(body), content_type='application/json')
+
+    def test_grid_gives_the_share_of_a_footprint_already_covered(self):
+        from shapely.geometry import Polygon as ShPolygon
+        grid = sampler.Grid(self.box)
+        self.assertEqual((grid.nx, grid.ny), (11, 11))
+        lon, lat = grid.centre(5, 5)
+        self.assertAlmostEqual(lon, LON, places=6)
+        self.assertAlmostEqual(lat, LAT, places=6)
+        mask = grid.raster([ShPolygon(_square(0, 0, 100))])  # a 200 m square at the centre
+        # 20 m cells: a 200 m edge lands on 9 to 11 cell centres, so the area is good to a fifth
+        self.assertAlmostEqual(mask.sum() * sampler.FINE_M ** 2, 200 * 200, delta=8500)
+        self.assertAlmostEqual(float(grid.window_share(mask, 200, 200)[5, 5]), 1.0, delta=0.25)
+        self.assertAlmostEqual(float(grid.window_share(mask, 400, 400)[5, 5]), 0.25, delta=0.08)
+        self.assertEqual(float(grid.window_share(mask, 200, 200)[0, 0]), 0.0)
+        self.assertEqual([sampler.band_of(g) for g in (0.1, 0.15, 0.2, 0.3, 0.5, 2.0)], [0, 1, 1, 2, 3, 4])
+
+    def test_yields_are_fitted_per_band_and_shrunk_to_the_all_band_fit(self):
+        rng = np.random.default_rng(0)
+        rows = []
+        for i in range(60):  # only two of the five bands have captures
+            share = rng.dirichlet([1, 1, 1])
+            rows.append({'band': i % 2, 'share': list(share),
+                         'bits_new': float((300 if i % 2 == 0 else 150) * share[0] + 60 * share[1])})
+        mean, cov, info = sampler.fit_yields(rows)
+        new = [b['new'] for b in info['by_band']]
+        self.assertAlmostEqual(new[0], 300, delta=40)
+        self.assertAlmostEqual(new[1], 150, delta=40)
+        self.assertAlmostEqual(new[4], info['pooled']['new'], delta=1)  # no captures: the all-band fit
+        self.assertGreater(cov[12, 12], 4 * cov[0, 0])                 # and much less sure of it
+        self.assertEqual((info['n_captures'], info['by_band'][0]['n'], info['by_band'][4]['n']), (60, 30, 0))
+
+    def test_a_proposal_is_stored_and_answered_by_its_capture(self):
+        fusion.ingest_scene_graph(_scene(self.t1), session_id='s1', taxonomy_name='urban_v1')
+        ask = {'policy': 'greedy', 'bbox': self.box, 'image_size': [1000, 800], 'run': 't'}
+        self.assertEqual(self._post('next_view', dict(ask, policy='annealing')).status_code, 400)
+        self.assertEqual(self._post('next_view', dict(ask, bbox=[0, 0, 1, 1])).status_code, 400)
+        r = self._post('next_view', ask).json()
+        pull = SamplerPull.objects.get(id=r['pull_id'])
+        self.assertEqual((pull.policy, pull.run, pull.band, pull.capture_id, pull.realised),
+                         ('greedy', 't', r['band'], None, None))
+        # With one capture in the box the best view is wholly on ground it did not cover.
+        self.assertEqual((r['predicted']['share']['new'], r['gsd_m']), (1.0, sampler.BAND_GSD[r['band']]))
+        self.assertGreater(r['predicted']['bits_new'], 0)
+        preview = self.client.get('/webclient/sampler/world/next_view',
+                                  {'policy': 'thompson', 'bbox': ','.join(map(str, self.box)), 'seed': 3}).json()
+        self.assertEqual((preview['status'], 'pull_id' in preview, SamplerPull.objects.count()), ('success', False, 1))
+
+        # s1 was stored before the proposal and does not cover it: it cannot answer.
+        self.assertEqual(self._post('pulls', {'pull_id': pull.id, 'session_id': 's1'}).status_code, 400)
+        self.assertEqual(self._post('pulls', {'pull_id': 10 ** 9, 'session_id': 's1'}).status_code, 404)
+        cx = (r['lon'] - LON) * 111320 * np.cos(np.radians(LAT))
+        cy = (r['lat'] - LAT) * 111320
+        sg = _scene(self.t1 + timedelta(minutes=30))
+        sg['viewport']['capture_metadata']['world_corners'] = [p[:2] for p in _square(cx, cy, 100)[:4]]
+        sg['nodes'] = [_node('b', 'building', _square(cx - 40, cy, 15)), _node('r', 'road', _square(cx + 10, cy, 6))]
+        sg['edges'] = []
+        out = fusion.ingest_scene_graph(sg, session_id='s2', taxonomy_name='urban_v1')
+        got = self._post('pulls', {'pull_id': pull.id, 'session_id': 's2'}).json()['pull']
+        self.assertEqual((got['session_id'], got['realised']['bits_new'], got['realised']['n']),
+                         ('s2', out['reward']['bits_new'], {'new_ground': 2}))
+        self.assertEqual(got['realised']['share_new_ground'], 1.0)
+        # A second report changes nothing, and a capture answers one proposal only.
+        self.assertEqual(self._post('pulls', {'pull_id': pull.id, 'session_id': 's1'}).json()['pull']['session_id'], 's2')
+        other = sampler.propose('urban_v1', policy='uniform', bbox=self.box, image_size=[1000, 800], seed=5)
+        self.assertEqual(self._post('pulls', {'pull_id': other['pull_id'], 'session_id': 's2'}).status_code, 400)
+        failed = self._post('pulls', {'pull_id': other['pull_id'], 'error': 'model unavailable'}).json()['pull']
+        self.assertEqual((failed['session_id'], failed['realised']), (None, {'error': 'model unavailable'}))
+
+        listing = self.client.get('/webclient/sampler/world/pulls', {'run': 't'}).json()
+        row = listing['by_policy']['greedy']
+        self.assertEqual((listing['n'], row['n_proposed'], row['n_captured']), (1, 1, 1))
+        self.assertEqual((row['realised_bits_new'], row['share_new_ground'], row['share_re_found']),
+                         (round(out['reward']['bits_new'], 1), 1.0, 0.0))
+        self.assertEqual(row['predicted_bits_new'], r['predicted']['bits_new'])
+        self.assertEqual(self.client.get('/webclient/sampler/world/pulls').json()['by_policy']['uniform']['n_captured'], 0)
+        # Thompson draws differ from call to call; a seed fixes one.
+        a, b = (sampler.propose('urban_v1', bbox=self.box, seed=7, record=False) for _ in range(2))
+        self.assertEqual((a['cell'], a['band']), (b['cell'], b['band']))
 
 
 class TraitTests(TransactionTestCase):
@@ -753,6 +912,56 @@ class UpgradeTests(TransactionTestCase):
         self.assertTrue(all(f.metadata.get('model') == model.version for f in misses))
         self.assertAlmostEqual(np.mean([f.metadata['p_detect'] for f in misses]), 2 / 3, delta=0.1)
         self.assertIn('held-out', out.getvalue())
+
+    def test_backfill_causes_command_fills_in_what_ingest_now_records(self):
+        self._ingest('s1', self.t1, with_car=False, imagery=_imagery())
+        self._ingest('s2', self.t2, imagery=_imagery())
+        car = self._entity('vehicle')
+        recorded = car.p_exists
+        # As the store was before causes: no tags, no rewards, no misses on earlier captures.
+        Factor.objects.filter(kind='miss').delete()
+        Factor.objects.filter(kind='hit').update(metadata={})
+        for cap in Capture.objects.all():
+            cap.summary['ingest'].pop('reward')
+            cap.save()
+        Entity.objects.filter(id=car.id).update(n_misses=0)
+        fusion.run_local_bp([car.id])
+        car.refresh_from_db()
+        self.assertGreater(car.p_exists, 0.85)
+
+        out = StringIO()
+        call_command('backfill_causes', stdout=out)
+        self.assertIn('dry run', out.getvalue())
+        self.assertFalse(Factor.objects.filter(kind='miss').exists())
+        self.assertNotIn('reward', Capture.objects.get(session_id='s2').summary['ingest'])
+        call_command('backfill_causes', '--apply', stdout=out)
+        car.refresh_from_db()
+        s1, s2 = (Capture.objects.get(session_id=s) for s in ('s1', 's2'))
+        miss = Factor.objects.get(kind='miss')
+        self.assertEqual((miss.capture_id, miss.metadata['found_by'], car.n_misses), (s1.id, s2.id, 1))
+        self.assertAlmostEqual(car.p_exists, recorded, places=6)
+        self.assertTrue(BeliefSnapshot.objects.filter(cause='retro_miss', entity=car).exists())
+        self.assertEqual(sorted(Factor.objects.filter(kind='hit', capture=s2).values_list('metadata__cause', flat=True)),
+                         ['re_found', 'relook_same', 'relook_same'])
+        reward = s2.summary['ingest']['reward']
+        self.assertTrue(reward['replayed'])
+        self.assertEqual({c: r['n'] for c, r in reward['by_cause'].items()}, {'re_found': 1, 'relook_same': 2})
+        self.assertGreater(reward['by_cause']['re_found']['bits'], 0.5)
+        self.assertEqual((reward['n_retro_misses'], reward['by_cause']['re_found']['expected_before']), (1, 0.8))
+        first = s1.summary['ingest']['reward']
+        self.assertEqual(first['by_cause']['new_ground']['n'], 2)
+        self.assertGreater(first['bits_new'], 1.0)
+        call_command('backfill_causes', '--apply', stdout=out)  # again: nothing to add
+        self.assertEqual(Factor.objects.filter(kind='miss').count(), 1)
+        self.assertEqual(Entity.objects.get(id=car.id).n_misses, 1)
+
+        # A new fit re-weighs the miss and keeps it marked as the earlier capture's.
+        with mock.patch.object(detection_model, 'looks', return_value=[
+                (i, i % 7 + 1, 300.0 + i, 1.0, 'vehicle', i % 3 > 0) for i in range(300)]):
+            call_command('fit_detection_model', '--apply', stdout=out)
+        miss = Factor.objects.get(kind='miss', superseded_at__isnull=True)
+        self.assertEqual((miss.metadata['retro'], miss.metadata['found_by'], miss.capture_id), (True, s2.id, s1.id))
+        self.assertIn('model', miss.metadata)
 
     # -- 3. imagery provenance and time ------------------------------------------------
 

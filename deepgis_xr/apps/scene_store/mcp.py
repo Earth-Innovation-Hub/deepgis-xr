@@ -26,7 +26,7 @@ from django.views.decorators.csrf import csrf_exempt
 
 from deepgis_xr.apps.web.models import FieldReading
 
-from . import assess, fusion, imagery_watch, layers, priors, traits, views
+from . import assess, fusion, imagery_watch, layers, priors, sampler, traits, views
 from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, FieldLink
 
 log = logging.getLogger(__name__)
@@ -49,7 +49,9 @@ INSTRUCTIONS = (
     "entity_looks lists the captures that covered one object and whether each found it, "
     "belief_history is that object's stored belief after each capture, and entity_beliefs pages "
     "through every live object's belief. Capture footprints are list_scene_graphs with "
-    "include_footprints. Captures of the same "
+    "include_footprints. Each capture carries its reward: the bits it added, split by whether its "
+    "pixels were new to the store. next_view says where a sampling policy would look next and "
+    "sampler_pulls what earlier proposals expected and returned. Captures of the same "
     "imagery are one look and count once, however many there are (get_entity's support). "
     "confidence = probability of the category; p_exists = probability the object was "
     "there when last seen (pass at= to find_entities, or read get_entity's now, for the belief "
@@ -517,6 +519,25 @@ def trait_map(args):
     return {'area': area, **out}
 
 
+def next_view(args):
+    """Where a sampling policy would look next, without storing a proposal."""
+    bbox = None
+    if args.get('lat') is not None or args.get('lon') is not None:
+        bbox = list(_area(args, sampler.MAX_BBOX_DEG, 2000)[0])
+    taxonomy = _text(args, 'taxonomy') or 'urban_v1'
+    try:
+        out = sampler.propose(taxonomy, policy=_text(args, 'policy') or 'thompson', bbox=bbox, record=False)
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    out['model'] = sampler.model_summary(taxonomy)
+    return out
+
+
+def sampler_pulls(args):
+    return sampler.pulls(_text(args, 'taxonomy') or 'urban_v1', run=_text(args, 'run'),
+                         limit=_int(args, 'limit', 50, 500))
+
+
 # ---- tool list ---------------------------------------------------------------------------------
 
 def _num(desc):
@@ -550,7 +571,12 @@ TOOLS = [
     ('list_scene_graphs', 'List stored scene graphs',
      'Stored scene graphs (one per map capture), newest first, with the time of the view (captured_at), '
      'the imagery shown and its acquisition dates (imagery, observed_at), category counts, centre, '
-     'ground resolution (gsd_m) and the smallest object a miss can count for (min_object_m2). Without '
+     'ground resolution (gsd_m) and the smallest object a miss can count for (min_object_m2). reward is '
+     'what the capture told the store in bits of category entropy removed, by why each object was in '
+     'it: on new_ground, newly_resolvable (too small at every earlier zoom), re_found (on pixels an '
+     'earlier capture resolved and found nothing in), a relook at a finer or the same zoom, or '
+     'missed. bits_new leaves out what a second try at already-read pixels gave (bits_reread); '
+     'ground_ha splits the footprint the same way. Without '
      'lat/lon, lists the newest anywhere: use this to find where data exists.',
      {'lat': LAT, 'lon': LON, 'radius_m': _num(f'{RADIUS} (default 5000, at most ~25 km)'),
       'taxonomy': TAXONOMY, 'limit': _num('At most this many (default 10, max 100)'),
@@ -678,6 +704,27 @@ TOOLS = [
      {'taxonomy': TAXONOMY, 'after_id': _num('Return objects with a higher id'),
       'limit': _num('At most this many (default 200, max 500)')},
      [], entity_beliefs),
+    ('next_view', 'Where to look next',
+     'The view a sampling policy would capture next: a 100 m cell and a zoom band (gsd_m), with the '
+     'category information it expects that earlier captures could not have given (predicted.bits_new), '
+     "the shares of its footprint on ground never covered, covered only at a coarser zoom, and already "
+     'read at this zoom (predicted.share), and how captures near it did against expectation '
+     '(predicted.place). model holds the fitted yield of a capture per zoom band and ground class. '
+     'thompson draws from the posterior, so repeated calls differ; greedy takes the best expected '
+     'view; uniform is a random cell and band. Nothing is stored. Without lat/lon the area is the '
+     'box around the stored captures.',
+     {'policy': {'type': 'string', 'enum': list(sampler.POLICIES), 'description': 'Default thompson'},
+      'lat': LAT, 'lon': LON, 'radius_m': _num(f'{RADIUS} (default 2000, at most ~6 km)'),
+      'taxonomy': _str("Category set (default 'urban_v1')")},
+     [], next_view),
+    ('sampler_pulls', 'Proposed views and what they returned',
+     'Views the sampling policies proposed, newest first, each with what it expected (predicted) and '
+     "what its capture returned (realised, from the capture's reward). by_policy compares the "
+     'policies: mean predicted and realised bits_new per capture, the error between them, and the '
+     'share of first sightings that were on new ground or were re-found on pixels already read.',
+     {'run': _str('Only the proposals of this experiment label'), 'taxonomy': _str("Category set (default 'urban_v1')"),
+      'limit': _num('At most this many (default 50, max 500)')},
+     [], sampler_pulls),
 ]
 TOOL_FNS = {name: fn for name, *_, fn in TOOLS}
 TOOL_LIST = [{'name': name, 'title': title, 'description': desc,

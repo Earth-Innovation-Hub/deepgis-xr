@@ -17,6 +17,9 @@ MISS_MIN_PIXELS = 64        # an entity smaller than this many ground pixels cou
 # The same size below which a miss is not counted, so what cannot be missed cannot be a hit either.
 # (Stored urban_v1 entities were found again in 9% of the later looks where they were this small.)
 FRAGMENT_MIN_PIXELS = MISS_MIN_PIXELS
+# A capture whose pixels are under this fraction of the finest earlier look's reads pixels the
+# store had not read. Coarser than that it re-reads what an earlier capture already resolved.
+RELOOK_FINER_RATIO = 0.8
 
 # Below this top posterior an entity is labelled unknown (its posterior keeps the best guess).
 # Stored beliefs cluster at 0.10-0.20 (unlabelled OSM and plain SAM regions, near uniform over

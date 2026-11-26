@@ -288,8 +288,22 @@ Three more rules tie the beliefs to what was measured:
   against vegetation, one vote per entity, robot and day
   (`register_field_readings`; new readings register as they arrive). Which
   entities a robot has read is shown to signed-in users only.
+- **Evidence that does not depend on the order captures arrive.** A miss
+  used to be recorded only when a capture failed to re-find an object the
+  store already had. An object first found on ground that an earlier capture
+  had already resolved now also carries that earlier capture's miss,
+  weighted by the fitted chance that capture would have found it, so
+  "looked, then found" and "found, then looked" leave the same evidence.
+  Every detection is tagged with why it is there: `new_ground`,
+  `newly_resolvable` (covered before, too coarse to resolve it), `re_found`
+  (covered and resolvable before, not found), `relook_finer` or
+  `relook_same`. `backfill_causes` applies both to captures already stored.
+  On the Tempe captures 2,853 of 7,108 first sightings were re-found. Their
+  P(exists) starts at a median 0.888 against the 0.892 of new ground: the
+  fitted model gives the earlier, mostly coarser looks a median 10% chance
+  of a find, so their misses weigh little.
 
-These four commands only report unless `--apply` is given.
+These five commands only report unless `--apply` is given.
 
 **Looks: the captures of one image count once.** The basemap serves one
 imagery vintage however often it is viewed, and a detector run again on the
@@ -331,6 +345,41 @@ the answer; the result is a category distribution plus `no_object`, the
 chance that nothing stored accounts for the point. `looked_at` tells
 "captured and found empty" from "never captured", and `at=` decays the
 beliefs to a date.
+
+**What a capture was worth, and which to take next.** Every capture's
+record carries a `reward` (`world/captures`, MCP `list_scene_graphs`): the
+category entropy it removed, in bits, split by cause. `bits_new` is the part
+that came from pixels the store had not read: new ground, newly resolvable
+objects, finer re-looks, and a re-found object's bits scaled by the chance
+that no earlier look would have found it. `bits_reread` is the rest. The
+record also has the hectares of the footprint that were new, finer or the
+same as before, and the share of first sightings that were on new ground.
+
+`scene_store/sampler.py` turns those rewards into a choice. The arms are
+100 m cells crossed with five ground-sample-distance bands (0.12 to 1 m).
+An arm's expected `bits_new` is a per-band yield for new, finer and
+already-read ground (Bayesian linear regression on the stored rewards,
+shrunk to the all-band fit), times the shares of the arm's footprint in
+each class, times a smoothed factor for how nearby captures did against
+that expectation. `POST world/next_view` draws the yields and the place
+factors from their posteriors and returns the best arm (Thompson sampling;
+`policy=uniform` picks a random arm, `greedy` the posterior mean). The
+proposal is stored with its prediction, and `POST world/pulls` attaches the
+capture that answered it, so predicted and realised sit side by side
+(`GET world/pulls`, MCP `sampler_pulls`). `hud/sampler-loop.js` runs the
+loop on the search page with the map in 2D:
+`samplerLoop.run({n: 30, policies: ['thompson', 'uniform'], run: 'label'})`
+in the console. The page has to be on screen; a hidden tab stops drawing
+frames and the capture waits on them.
+
+On its first run over Tempe (30 captures per policy, taking turns) the
+sampler's captures returned 220 new bits each against 238 predicted and
+were 99.8% new ground. Captures at a random cell and band returned 90
+against 84 predicted; 58% of their first sightings were new ground and 27%
+re-found. Across all 60, predicted and realised correlate at 0.78. The
+sampler stayed in the 0.2 m band throughout: the gain came from knowing
+what is already covered and which zoom pays, and its misses were places
+with few objects, which the place factor does not yet foresee.
 
 **The latest fused map of a zone, to download.** A *zone* is a named area
 (`python manage.py add_zone az/tempe --name "Tempe, Arizona" --census-place
@@ -928,7 +977,8 @@ deepgis-xr/
   label agreement with user feedback when a taxonomy is given.
 - `GET /webclient/sampler/world/captures?bbox=west,south,east,north`: stored
   captures (scene graphs) whose footprint meets the box (at most 0.5°
-  square), newest first. Optional `taxonomy`, `limit`.
+  square), newest first, each with its `reward`. Optional `taxonomy`,
+  `limit`.
 - `GET /webclient/sampler/world/captures/<session_id>`: one capture's
   footprint, its entities with their current beliefs, and the context and
   contains links between them that were valid at capture time. Captures
@@ -948,6 +998,16 @@ deepgis-xr/
 - `POST /webclient/sampler/world/retire` and `.../restore`:
   `{entity_ids: [...] (up to 50), reason?}`; superusers only, CSRF token
   required. Retiring supersedes the entities' factors; restoring revives them.
+- `GET|POST /webclient/sampler/world/next_view` with `taxonomy`, `policy`
+  (`thompson`, `uniform` or `greedy`), `bbox`, `image_size`, `run`, `seed`,
+  all optional: the view a sampling policy would capture next (centre,
+  ground sample distance, footprint) and the `bits_new` it expects. `GET`
+  only shows it; `POST` stores the proposal and returns its `pull_id`.
+- `GET /webclient/sampler/world/pulls[?taxonomy=][&run=]`: stored proposals
+  with what each expected and returned, a comparison per policy and the
+  fitted yields. `POST {pull_id, session_id}` attaches the capture that
+  answered a proposal (it must be newer than the proposal and cover its
+  centre); `{pull_id, error}` records that there was none.
 - `GET /world-model/zones/<slug>`: the page of a zone's latest fused map;
   `<slug>.pdf`, `.png` and `.jpg` are the map itself (`?download=1` saves it
   under a dated name) and `<slug>.json` its numbers, with `latest` saying
@@ -969,7 +1029,7 @@ so a city block fits in a model's context.
 | Tool | Answers |
 |---|---|
 | `world_stats` | Totals, categories per taxonomy, the low-confidence threshold, imagery dates, the fitted detection model, the remote-sensing record per source, captures due a re-capture |
-| `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution; `include_footprints` adds each outline |
+| `list_scene_graphs` | Stored captures near a point (or the newest anywhere), with resolution and `reward` (the bits each removed, by cause); `include_footprints` adds each outline |
 | `get_scene_graph` | One capture's nodes and their `context` / `contains` links |
 | `world_summary` | Counts per category, confidence spread, what the unknowns probably are |
 | `find_entities` | Objects near a point: category, top candidates, `p_exists`, area, distance; `at=` for a past time |
@@ -982,6 +1042,8 @@ so a city block fits in a model's context.
 | `entity_looks` | The captures whose footprint covers one object, and whether each found it or counted a miss |
 | `belief_history` | An object's stored belief after each capture or correction |
 | `entity_beliefs` | Every live object's belief, in pages, so a whole taxonomy can be read |
+| `next_view` | The view a sampling policy would capture next and the bits it expects (a preview; nothing is stored) |
+| `sampler_pulls` | Stored sampling proposals: predicted against realised bits per capture, compared per policy |
 
 Client configuration (Cursor `~/.cursor/mcp.json`):
 
@@ -1567,6 +1629,13 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   `belief_history` and `entity_beliefs` answer the survey, the misses,
   the belief history and the full object list. `field_readings` returns
   no position.
+- **Causes and rewards**: every detection is tagged new ground, newly
+  resolvable, re-found or re-look; an object found where an earlier capture
+  had looked inherits that capture's miss; each capture stores the bits it
+  removed. `backfill_causes` applied it to the stored captures.
+- **Sampling loop**: `world/next_view` proposes the next capture by Thompson
+  sampling over 100 m cells and zoom bands, `world/pulls` keeps predicted
+  against realised, and `samplerLoop.run()` runs it on the search page.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

@@ -19,6 +19,8 @@ urlpatterns = [
     path('webclient/sampler/world/imagery_checks', views.imagery_checks_view, name='world_imagery_checks'),
     path('webclient/sampler/world/retire', views.retire_view, name='world_retire'),
     path('webclient/sampler/world/restore', views.restore_view, name='world_restore'),
+    path('webclient/sampler/world/next_view', views.next_view_view, name='world_next_view'),
+    path('webclient/sampler/world/pulls', views.pulls_view, name='world_pulls'),
     path('api/v1/mcp', mcp.mcp_view, name='scene_mcp'),
     re_path(r'^world-model/?$', zone_views.zones_view, name='world_zones'),
     re_path(r'^world-model/zones/(?P<slug>[a-z0-9-]+(?:/[a-z0-9-]+)*)(?:\.(?P<ext>pdf|png|jpg|json))?/?$',

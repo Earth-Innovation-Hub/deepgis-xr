@@ -21,6 +21,13 @@ evidence at the same instant instead of pretending time has passed, and
 that evidence is pooled: the captures of one image are one look and send
 an entity one message, through what the image shows (see ``looks``).
 
+Evidence does not depend on the order captures arrive. A capture that covers a known entity
+and does not find it writes a miss. A capture that finds a new object where an earlier capture
+looked and found nothing writes that earlier capture's miss too (``first_sighting``), so an
+object the detector found on its second try starts lower than one found on ground never read.
+Every capture also records why each of its objects was in it and what that told the store
+(``capture_reward``, kept in ``Capture.summary['ingest']['reward']``).
+
 ``run_local_bp`` without ``at`` gives each entity's belief as last seen:
 at its own newest evidence, with no decay after it. That is what entities
 cache. With ``at`` it is the time-travel query: only factors observed and
@@ -44,6 +51,7 @@ from shapely import STRtree
 from shapely import wkb as shapely_wkb
 from shapely.affinity import scale as shapely_scale
 from shapely.geometry import Polygon as ShPolygon
+from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import taxonomy_by_name
@@ -277,6 +285,147 @@ def _shared_potential(name, table):
 
 
 # ---------------------------------------------------------------------------
+# What a capture's pixels had already been read for
+# ---------------------------------------------------------------------------
+
+# Why an object is in a capture. The first three are first sightings: on ground no earlier
+# capture covered, on covered ground where it was too small to see at any earlier zoom, or on
+# pixels an earlier capture resolved and found nothing in. The next two are detections merged
+# into a known entity, at a finer zoom than any look before or not. 'missed' is a known entity
+# the capture covered and did not find.
+CAUSES = ('new_ground', 'newly_resolvable', 're_found', 'relook_finer', 'relook_same', 'missed')
+# Causes that read pixels the store had not read at that resolution. The rest re-read pixels an
+# earlier capture resolved: what they add is what the detector does on a second try.
+NEW_PIXELS = ('new_ground', 'newly_resolvable', 'relook_finer')
+FIRST_SIGHTINGS = ('new_ground', 'newly_resolvable', 're_found')
+
+FINEST_LOOK_SQL = """
+SELECT f.entity_ids[1], min(c.gsd_m)
+  FROM sg_factor f JOIN sg_capture c ON c.id = f.capture_id
+ WHERE f.kind IN ('hit', 'miss') AND f.superseded_at IS NULL AND f.entity_ids && %s::bigint[]
+   AND f.capture_id < %s AND c.gsd_m IS NOT NULL
+ GROUP BY 1
+"""
+
+
+class EarlierCapture:
+    """A capture the store already held whose footprint meets a newer one."""
+
+    __slots__ = ('id', 'shape', 'gsd', 'sources', 'at')
+
+    def __init__(self, cap):
+        self.id, self.shape, self.gsd = cap.id, _from_geos(cap.footprint), cap.gsd_m
+        self.sources, self.at = set(cap.sources), cap.world_time
+
+
+def earlier_captures(cap):
+    """Captures stored before ``cap`` (record order) whose footprint meets its footprint."""
+    return [EarlierCapture(c) for c in
+            Capture.objects.filter(taxonomy=cap.taxonomy, id__lt=cap.id, footprint__intersects=cap.footprint)
+            .only('id', 'footprint', 'gsd_m', 'sources', 'observed_at', 'captured_at').order_by('id')]
+
+
+def first_sighting(shp, area_m2, sources, earlier):
+    """(cause, the earlier captures that resolved these pixels) for a detection of a new object.
+
+    The test is the one a miss uses, the other way round in time: a capture run with one of the
+    detection's kernels covered it (``MISS_COVERAGE``) and it was large enough there to be seen
+    (``MISS_MIN_PIXELS``). Those captures looked at the object and did not find it."""
+    covered, resolved = False, []
+    for q in earlier:
+        if not q.sources & sources:
+            continue
+        if not q.shape.contains(shp) and q.shape.intersection(shp).area < priors.MISS_COVERAGE * shp.area:
+            continue
+        covered = True
+        if not q.gsd or area_m2 >= priors.MISS_MIN_PIXELS * q.gsd ** 2:
+            resolved.append(q)
+    return ('re_found' if resolved else 'newly_resolvable' if covered else 'new_ground'), resolved
+
+
+def finest_looks(entity_ids, before_capture_id):
+    """{entity id: smallest pixel size (m) of a capture stored before that one that found or missed it}."""
+    if not entity_ids:
+        return {}
+    with connections[DB].cursor() as cur:
+        cur.execute(FINEST_LOOK_SQL, [list(entity_ids), before_capture_id])
+        return dict(cur.fetchall())
+
+
+def relook_cause(gsd, finest):
+    return 'relook_finer' if gsd and finest and gsd < priors.RELOOK_FINER_RATIO * finest else 'relook_same'
+
+
+def ground_read(footprint, gsd, sources, earlier):
+    """Hectares of a footprint by what the store had read there: ``new`` (no earlier capture),
+    ``finer`` (only captures too coarse for this one to be a repeat of) and ``same``."""
+    total = _metric(footprint)[0] / 1e4
+    cover = [q for q in earlier if q.sources & set(sources)]
+    if not cover or footprint.area <= 0:
+        return {'new': round(total, 3), 'finer': 0.0, 'same': 0.0}
+    seen = unary_union([q.shape for q in cover]).intersection(footprint)
+    repeat = [q.shape for q in cover
+              if not (gsd and q.gsd and gsd < priors.RELOOK_FINER_RATIO * q.gsd)]
+    same = unary_union(repeat).intersection(footprint).area if repeat else 0.0
+    k = total / footprint.area
+    return {'new': round((footprint.area - seen.area) * k, 3), 'finer': round((seen.area - same) * k, 3),
+            'same': round(same * k, 3)}
+
+
+def seen_before(p_detects):
+    """Chance that at least one of the earlier looks would have found an object that was there."""
+    return 1.0 - float(np.prod([1.0 - p for p in p_detects])) if p_detects else 0.0
+
+
+def capture_reward(n_categories, causes, before, after, *, second_try=None, ground_ha=None, n_retro_misses=0):
+    """What one capture told the store, in bits of entropy removed, by why each object was in it.
+
+    ``causes`` is {entity id: cause}; ``before`` and ``after`` are {entity id: (posterior,
+    p_exists)}. An object with no belief before is taken as uniform over the categories and
+    even on existence. ``second_try`` is {re-found entity id: chance an earlier look would have
+    found it} (``seen_before`` over the misses it was given).
+
+    ``bits`` is the category information. ``bits_new`` is the part earlier captures could not
+    be expected to deliver, which is what a sampler should be paid for: everything from new
+    ground, from objects too small to see before and from finer re-looks, and of a re-found
+    object the share ``1 - second_try``. ``bits_reread`` is the rest: what the detector gave on
+    another try at pixels the store had already read.
+    """
+    rows = {c: {'n': 0, 'bits': 0.0, 'exists_bits': 0.0} for c in CAUSES}
+    top = math.log2(n_categories)
+    again_bits, again_n = 0.0, 0.0
+    for eid, cause in causes.items():
+        if eid not in after:
+            continue
+        post, p = after[eid]
+        was = before.get(eid)
+        r = rows[cause]
+        gain = (_bits(was[0]) if was else top) - _bits(post)
+        r['n'] += 1
+        r['bits'] += gain
+        r['exists_bits'] += (_bits([was[1], 1 - was[1]]) if was else 1.0) - _bits([p, 1 - p])
+        if cause == 're_found':
+            share = (second_try or {}).get(eid, 0.0)
+            again_bits += share * gain
+            again_n += share
+    total = sum(r['bits'] for r in rows.values())
+    new = sum(rows[c]['bits'] for c in NEW_PIXELS) + rows['re_found']['bits'] - again_bits
+    first = sum(rows[c]['n'] for c in FIRST_SIGHTINGS)
+    by_cause = {c: {'n': r['n'], 'bits': round(r['bits'], 2), 'exists_bits': round(r['exists_bits'], 2)}
+                for c, r in rows.items() if r['n']}
+    if 're_found' in by_cause:
+        # of the re-found objects, how many an earlier look should have found, and their bits
+        by_cause['re_found'].update(expected_before=round(again_n, 2), second_try_bits=round(again_bits, 2))
+    return {
+        'bits': round(total, 2), 'bits_new': round(new, 2), 'bits_reread': round(total - new, 2),
+        'exists_bits': round(sum(r['exists_bits'] for r in rows.values()), 2),
+        'by_cause': by_cause, 'n_first_sightings': first,
+        'share_new_ground': round(rows['new_ground']['n'] / first, 3) if first else None,
+        'n_retro_misses': n_retro_misses, 'ground_ha': ground_ha,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Ingest
 # ---------------------------------------------------------------------------
 
@@ -400,22 +549,31 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             used.add(eid)
 
         by_id = {e.id: e for e in cands}
+        before = {e.id: (list(e.posterior), e.p_exists) for e in cands}
         new_dis = [di for di in live if di not in det_entity]
+        # A new object on pixels an earlier capture resolved was looked at before and not found.
+        earlier = earlier_captures(cap)
+        sighting = {di: first_sighting(dets[di][1], shape[di][0], set(det_rows[di].sources), earlier)
+                    for di in new_dis}
+        finest = finest_looks([eid for eid, _, _ in det_entity.values()], cap.id)
         new_rows = Entity.objects.bulk_create([
             Entity(taxonomy=tax.name, category=label_of(tax, det_rows[di].posterior),
                    posterior=det_rows[di].posterior,
                    score=det_rows[di].score, p_exists=0.5, geom=det_rows[di].geom,
-                   first_seen=obs, last_seen=obs, n_hits=1, sources=det_rows[di].sources)
+                   first_seen=obs, last_seen=obs, n_hits=1, n_misses=len(sighting[di][1]),
+                   sources=det_rows[di].sources)
             for di in new_dis
         ])
         for di, e in zip(new_dis, new_rows):
             det_entity[di] = (e.id, None, 'new')
             by_id[e.id] = e
 
-        factors, assocs = [], []
+        model = detection_model.active(tax.name)
+        factors, assocs, causes, second_try, n_retro = [], [], {}, {}, 0
         for di, (eid, iou, method) in det_entity.items():
             row, post = det_rows[di], dets[di][2]
             e = by_id[eid]
+            causes[eid] = sighting[di][0] if method == 'new' else relook_cause(gsd, finest.get(eid))
             assocs.append(Association(entity_id=eid, detection=row, iou=iou, method=method))
             factors.append(_new_factor('perceptual', [eid], _log_probs(post), obs, variables=[cvar(eid)],
                                        capture=cap, detection=row,
@@ -427,8 +585,22 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                                            capture=cap, detection=row,
                                            metadata={'area_m2': round(area, 2), 'compactness': round(compact, 3)}))
             factors.append(_new_factor('hit', [eid], priors.HIT_TABLE, obs, variables=[xvar(eid)],
-                                       decays=False, capture=cap, detection=row))
-            if method != 'new':
+                                       decays=False, capture=cap, detection=row,
+                                       metadata={'cause': causes[eid]}))
+            if method == 'new':
+                # The miss belongs to the capture that looked and is dated when it looked, so it is
+                # pooled with that capture's look, exactly as if this entity had been known then.
+                chances = []
+                for q in sighting[di][1]:
+                    table, why = detection_model.miss_evidence(
+                        model, area_m2=area, gsd_m=q.gsd, first_gsd_m=gsd, category=row.category)
+                    factors.append(_new_factor('miss', [eid], table, q.at, variables=[xvar(eid)], decays=False,
+                                               capture_id=q.id, metadata=dict(why, retro=True, found_by=cap.id)))
+                    chances.append(why['p_detect'])
+                if chances:
+                    second_try[eid] = seen_before(chances)
+                    n_retro += len(chances)
+            else:
                 e.n_hits += 1
                 if obs >= e.last_seen:
                     e.last_seen, e.geom = obs, row.geom
@@ -449,10 +621,10 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
             if (e.area_m2 if e.area_m2 is not None else _metric(es)[0]) < min_miss_m2:
                 continue
             missed.append(e.id)
-        model = detection_model.active(tax.name) if missed else None
         first_gsd = detection_model.first_gsd(missed) if model else {}
         for eid in missed:
             e = by_id[eid]
+            causes[eid] = 'missed'
             table, why = detection_model.miss_evidence(
                 model, area_m2=e.area_m2 if e.area_m2 is not None else _metric(cand_shp[eid])[0],
                 gsd_m=gsd, first_gsd_m=first_gsd.get(eid), category=e.category)
@@ -511,6 +683,12 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
                          ['n_hits', 'n_misses', 'last_seen', 'first_seen', 'geom', 'sources'])
 
         bp = run_local_bp(touched | set(missed), cause='capture', capture=cap) if infer else None
+        reward = None
+        if infer:
+            after = {eid: (post, p) for eid, post, p in
+                     Entity.objects.filter(id__in=list(causes)).values_list('id', 'posterior', 'p_exists')}
+            reward = capture_reward(tax.n, causes, before, after, second_try=second_try, n_retro_misses=n_retro,
+                                    ground_ha=ground_read(footprint, gsd, sources, earlier))
 
     summary = {
         'status': 'ok', 'capture_id': cap.id, 'n_detections': len(det_rows),
@@ -519,8 +697,8 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
         'observed_at': obs.isoformat(), 'imagery_source': imagery['source'] or None,
         'imagery_dated': imagery['observed_at'] is not None,
         'n_new_entities': len(new_rows), 'n_matched': len(live) - len(new_rows),
-        'n_missed': len(missed), 'n_factors': len(factors),
-        'elapsed_ms': int((time.perf_counter() - t0) * 1000), 'bp': bp,
+        'n_missed': len(missed), 'n_retro_misses': n_retro, 'n_factors': len(factors),
+        'elapsed_ms': int((time.perf_counter() - t0) * 1000), 'bp': bp, 'reward': reward,
     }
     Capture.objects.filter(id=cap.id).update(summary=dict(cap.summary, ingest=summary))
     return summary
@@ -530,19 +708,26 @@ def ingest_scene_graph(sg, *, session_id, taxonomy_name, user_id=None, artifact_
 # Inference
 # ---------------------------------------------------------------------------
 
-def _active_factors(entity_ids, at, known=None):
+def _active_factors(entity_ids, at, known=None, through_capture=None):
     """Factors about the world up to ``at`` (world time) that the store stands by at ``known``
     (record time, default now). The two clocks differ: evidence imaged in 2023 can be recorded,
-    and later withdrawn, in 2026."""
+    and later withdrawn, in 2026.
+
+    ``through_capture`` keeps only what the store held once that capture had been ingested: the
+    evidence of captures up to it, less the misses that a later capture's find put on them."""
     known = known or timezone.now()
-    return Factor.objects.filter(
+    qs = Factor.objects.filter(
         Q(superseded_at__isnull=True) | Q(superseded_at__gt=known),
         entity_ids__overlap=list(entity_ids), valid__contains=at, observed_at__lte=at,
     )
+    if through_capture is not None:
+        qs = qs.filter(Q(capture_id__isnull=True) | Q(capture_id__lte=through_capture)) \
+               .filter(Q(metadata__found_by__isnull=True) | Q(metadata__found_by__lte=through_capture))
+    return qs
 
 
 def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback=None, write=True,
-                 max_iter=30, damping=0.5, tol=1e-4, pool_looks=True):
+                 max_iter=30, damping=0.5, tol=1e-4, pool_looks=True, through_capture=None):
     """Inference over ``entity_ids`` with every factor touching them.
 
     Category: loopy BP over unary + pairwise factors. Existence: exact
@@ -561,15 +746,19 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
 
     Neighbours reached only through a pairwise factor are boundary
     variables: their prior is their stored belief and nothing else.
+    ``through_capture`` (with ``write=False``) recomputes from the captures up to that one only,
+    in the order they were stored: the belief the store would have held then under today's rules.
     Returns diagnostics, plus ``beliefs`` when ``write`` is False.
     """
     t0 = time.perf_counter()
     ids = set(int(i) for i in entity_ids)
     if not ids:
         return {'n_entities': 0}
+    if through_capture is not None and write:
+        raise ValueError('through_capture is a read-only replay: pass write=False')
     now = timezone.now()
     last_seen = at is None
-    factors = list(_active_factors(ids, at or now, known=now))
+    factors = list(_active_factors(ids, at or now, known=now, through_capture=through_capture))
     newest_c, newest_x = {}, {}
     if last_seen:
         for f in factors:

@@ -39,8 +39,17 @@
          the captures showed and ``note`` says when that cannot show change on the ground.
     POST /webclient/sampler/world/retire        {entity_ids: [...], reason}   superusers
     POST /webclient/sampler/world/restore       {entity_ids: [...]}           superusers
+    GET  /webclient/sampler/world/next_view[?policy=thompson|uniform|greedy][&bbox=w,s,e,n][&image_size=w,h]
+         The view a sampling policy would capture next (a 100 m cell and a zoom band) and the
+         new information it expects from it, in bits (see ``sampler``).
+    POST /webclient/sampler/world/next_view     {policy?, bbox?, image_size?, run?}
+         The same, stored as a proposal: the response carries its ``pull_id``.
+    POST /webclient/sampler/world/pulls         {pull_id, session_id | error}
+         The capture a proposal led to. It must be newer than the proposal and cover its centre.
+    GET  /webclient/sampler/world/pulls[?run=][&limit=200]
+         Proposals with what they expected and what came back, compared per policy.
 
-Reads are public; feedback and preferences need a signed-in user.
+Reads are public; feedback and preferences need a signed-in user. Proposals, like captures, do not.
 """
 
 import re
@@ -57,9 +66,10 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from django.utils import timezone
 
-from . import assess, fusion, imagery_watch, layers, priors, traits
+from . import assess, fusion, imagery_watch, layers, priors, sampler, traits
 from .models import (
-    BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose, UserPreference,
+    BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose, SamplerPull,
+    UserPreference,
 )
 
 MAX_BBOX_DEG = 0.05
@@ -539,6 +549,8 @@ def _capture_dict(cap, categories, pose=None):
         'min_object_m2': round(priors.MISS_MIN_PIXELS * gsd ** 2, 1) if gsd else None,
         'pose': {'source': pose.source, 'sigma_h_m': pose.sigma_h_m, 'sigma_v_m': pose.sigma_v_m,
                  'pitch_deg': pose.pitch_deg} if pose else None,
+        # what the capture told the store, in bits, by why each object was in it (fusion.capture_reward)
+        'reward': (cap.summary.get('ingest') or {}).get('reward'),
     }
 
 
@@ -626,3 +638,62 @@ def capture_detail(cap):
     return {'capture': _capture_dict(cap, cats, _poses([cap]).get(cap.id)),
             'n_skipped': len(dets) - len(out) - n_gated - n_retired, 'n_gated': n_gated,
             'n_retired': n_retired, 'detections': out, 'links': links}
+
+
+def _sampler_args(data):
+    """Keyword arguments for ``sampler.propose`` from a request's fields; raises ValueError."""
+    bbox = data.get('bbox')
+    if isinstance(bbox, str):
+        bbox = [float(v) for v in bbox.split(',')] if bbox else None
+    if bbox is not None and (not isinstance(bbox, list) or len(bbox) != 4):
+        raise ValueError('bbox must be west,south,east,north')
+    size = data.get('image_size')
+    if isinstance(size, str):
+        size = [int(v) for v in size.split(',')] if size else None
+    seed = data.get('seed')
+    return {'policy': str(data.get('policy') or 'thompson'), 'bbox': bbox, 'image_size': size,
+            'run': str(data.get('run') or '')[:40], 'seed': int(seed) if seed not in (None, '') else None}
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def next_view_view(request):
+    """The view a sampling policy would capture next. GET shows it; POST also stores the proposal."""
+    if not fusion.enabled():
+        return _unavailable()
+    try:
+        data = request.GET if request.method == 'GET' else json.loads(request.body or b'{}')
+        if not hasattr(data, 'get'):
+            raise ValueError('body must be a JSON object')
+        out = sampler.propose(str(data.get('taxonomy') or 'urban_v1'), record=request.method == 'POST',
+                              user_id=_user_id(request), **_sampler_args(data))
+    except (ValueError, TypeError) as exc:
+        return _error(str(exc))
+    return JsonResponse({'status': 'success', **out})
+
+
+@csrf_exempt
+@require_http_methods(['GET', 'POST'])
+def pulls_view(request):
+    """GET: stored proposals with what they expected and returned. POST: attach a proposal's capture."""
+    if not fusion.enabled():
+        return _unavailable()
+    if request.method == 'GET':
+        try:
+            limit = min(max(int(request.GET.get('limit', 200)), 1), 1000)
+        except ValueError:
+            return _error('limit must be an integer')
+        taxonomy = request.GET.get('taxonomy') or 'urban_v1'
+        return JsonResponse({'status': 'success', 'model': sampler.model_summary(taxonomy),
+                             **sampler.pulls(taxonomy, run=request.GET.get('run') or None, limit=limit)})
+    try:
+        data = json.loads(request.body or b'{}')
+        pull = sampler.report(int(data['pull_id']), str(data.get('session_id') or '')[:120] or None,
+                              error=data.get('error'))
+    except (KeyError, TypeError, AttributeError):
+        return _error('pull_id is required')
+    except SamplerPull.DoesNotExist:
+        return _error('no such proposal', 404)
+    except ValueError as exc:
+        return _error(str(exc))
+    return JsonResponse({'status': 'success', 'pull': pull})

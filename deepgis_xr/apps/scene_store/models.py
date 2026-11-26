@@ -14,6 +14,7 @@ Layers, oldest evidence first:
                                                  measured over an entity: a record, not a factor
   ImageryCheck                                   what the basemap provider serves now where a capture was taken
   Zone                                           a named area whose fused map is kept drawn
+  SamplerPull -> Capture                         a view a sampling policy proposed, and what it returned
 
 Each entity has two variables: ``c<id>`` (category, taxonomy-sized) and
 ``x<id>`` (exists, [absent, present]). Factors store their raw log table;
@@ -415,6 +416,32 @@ class Zone(models.Model):
     class Meta:
         db_table = 'sg_zone'
         ordering = ['slug']
+
+
+class SamplerPull(models.Model):
+    """One view a sampling policy proposed: what it expected, and what the capture returned.
+
+    An arm is a 100 m cell and a zoom band (see ``sampler``). ``predicted`` holds the expected
+    ``bits_new`` and the shares of the footprint on new, coarsely read and already read ground;
+    ``realised`` is filled from the capture's reward when the capture is reported back.
+    """
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    policy = models.CharField(max_length=20)             # 'thompson', 'uniform', 'greedy'
+    run = models.CharField(max_length=40, blank=True, default='')  # label of the experiment it belongs to
+    taxonomy = models.CharField(max_length=40)
+    centre = gis.PointField(srid=4326)
+    band = models.IntegerField()
+    gsd_m = models.FloatField()                          # the ground pixel size asked for
+    image_size = ArrayField(models.IntegerField(), size=2)
+    predicted = models.JSONField(default=dict, blank=True)
+    capture = models.OneToOneField(Capture, on_delete=models.SET_NULL, null=True, blank=True, related_name='pull')
+    realised = models.JSONField(null=True, blank=True)
+    user_id = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'sg_sampler_pull'
+        indexes = [models.Index(fields=['taxonomy', 'run', '-id'], name='sg_pull_run_idx')]
 
 
 class UserPreference(models.Model):
