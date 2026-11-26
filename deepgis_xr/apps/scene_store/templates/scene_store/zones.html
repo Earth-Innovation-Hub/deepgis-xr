@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World model | DeepGIS</title>
+<meta name="description" content="The latest fused maps of the DeepGIS world model, one for each zone.">
+<style>
+  :root { --ink: #1f2937; --soft: #6b7280; --line: #d1d5db; --wash: #f3f4f6; --link: #1d4ed8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #fff; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 48px; }
+  a { color: var(--link); }
+  .crumb { font-size: 14px; color: var(--soft); margin: 0 0 6px; }
+  .crumb a { color: var(--soft); }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; }
+  .lead { color: var(--soft); margin: 0 0 24px; max-width: 760px; }
+  .zones { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 22px; }
+  .zones a { display: block; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; text-decoration: none; color: var(--ink); }
+  .zones a:hover, .zones a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  .zones img { display: block; width: 100%; height: auto; background: var(--wash); border-bottom: 1px solid var(--line); }
+  .zones div { padding: 12px 14px 14px; }
+  .zones h2 { font-size: 19px; margin: 0 0 4px; }
+  .zones p { margin: 0; font-size: 14px; color: var(--soft); }
+</style>
+</head>
+<body>
+<main>
+  <p class="crumb"><a href="/">DeepGIS</a></p>
+  <h1>World model</h1>
+  <p class="lead">The latest fused map of each zone: every object the store holds, laid on the ground with how sure it is,
+    as a page to read here or download as a PDF or an image. A map is drawn again whenever its zone's content changes.</p>
+{% if zones %}
+  <ul class="zones">
+  {% for zone in zones %}
+    <li><a href="{{ zone.url }}">
+      {% if zone.has_map %}<img src="{{ zone.preview }}" width="1800" height="1165" alt="">{% endif %}
+      <div>
+        <h2>{{ zone.name }}</h2>
+        {% if zone.has_map %}<p>{{ zone.n_objects }} objects on {{ zone.viewed_km2 }} km² viewed ({{ zone.viewed_share }} of the zone). Drawn {{ zone.drawn }}.</p>
+        {% else %}<p>The first map is still being drawn.</p>{% endif %}
+      </div>
+    </a></li>
+  {% endfor %}
+  </ul>
+{% else %}
+  <p>No zone has been named yet.</p>
+{% endif %}
+</main>
+</body>
+</html>

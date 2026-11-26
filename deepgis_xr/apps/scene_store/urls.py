@@ -1,6 +1,6 @@
-from django.urls import path
+from django.urls import path, re_path
 
-from . import mcp, views
+from . import mcp, views, zone_views
 
 urlpatterns = [
     path('webclient/sampler/world/entities', views.entities_view, name='world_entities'),
@@ -20,4 +20,7 @@ urlpatterns = [
     path('webclient/sampler/world/retire', views.retire_view, name='world_retire'),
     path('webclient/sampler/world/restore', views.restore_view, name='world_restore'),
     path('api/v1/mcp', mcp.mcp_view, name='scene_mcp'),
+    re_path(r'^world-model/?$', zone_views.zones_view, name='world_zones'),
+    re_path(r'^world-model/zones/(?P<slug>[a-z0-9-]+(?:/[a-z0-9-]+)*)(?:\.(?P<ext>pdf|png|jpg|json))?/?$',
+            zone_views.zone_view, name='world_zone'),
 ]

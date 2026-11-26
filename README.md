@@ -332,6 +332,25 @@ chance that nothing stored accounts for the point. `looked_at` tells
 "captured and found empty" from "never captured", and `at=` decays the
 beliefs to a date.
 
+**The latest fused map of a zone, to download.** A *zone* is a named area
+(`python manage.py add_zone az/tempe --name "Tempe, Arizona" --census-place
+0473000`, or `--bbox=`, or `--geojson`). Its map is the point assessment
+worked out for every 2 m cell (`scene_store/zonemap.py`): a cell takes the
+colour of its most likely category, stronger the likelier a stored object
+accounts for it, over a public aerial photograph of about the imagery's
+date (NAIP; the basemap the objects were found on is not redistributed).
+One page carries the map; a legend with the objects, hectares and label
+confidence of each category; what the map rests on (captures, distinct
+images, corrections); and three small maps of the evidence: how sure the
+label is, how often and how finely the ground was viewed. Ground that was
+viewed and holds no object is drawn apart from ground no capture has looked
+at. `/world-model/zones/<slug>` shows the page, with `.pdf`, `.png`, `.jpg`
+and `.json` beside it, and `/world-model/` lists the zones.
+`python manage.py render_zone_maps` draws a zone again only when its
+entities, captures or corrections have changed, so running it every few
+minutes keeps the published map the latest; no web request draws anything.
+The files are kept under `<OBSERVATIONS_ROOT>/maps/zones/<slug>/`.
+
 **Remote sensing over each object.** The pilot's map layers are drawn in the
 browser and kept nowhere. `scene_store/layers.py` keeps the same kind of data
 per object: every Sentinel-2 pass, NAIP aerial photograph and lidar survey
@@ -673,7 +692,7 @@ deepgis-xr/
 │   │   ├── core/                     # core models, admin, image processing
 │   │   ├── ml/                       # ML helpers (admin training)
 │   │   ├── scene_store/              # world model: PostGIS factor graph,
-│   │   │                             # fusion, inference, world API
+│   │   │                             # fusion, inference, world API, zone maps
 │   │   ├── tile_catalog/             # Site→Dataset→Timestep→Product registry
 │   │   │   └── management/commands/  # seed_tile_catalog, validate_tile_catalog
 │   │   └── web/                      # main web app
@@ -929,6 +948,11 @@ deepgis-xr/
 - `POST /webclient/sampler/world/retire` and `.../restore`:
   `{entity_ids: [...] (up to 50), reason?}`; superusers only, CSRF token
   required. Retiring supersedes the entities' factors; restoring revives them.
+- `GET /world-model/zones/<slug>`: the page of a zone's latest fused map;
+  `<slug>.pdf`, `.png` and `.jpg` are the map itself (`?download=1` saves it
+  under a dated name) and `<slug>.json` its numbers, with `latest` saying
+  whether the store has changed since it was drawn. `GET /world-model/`
+  lists the zones. Public, read-only.
 
 Without `OBSERVATIONS_DATABASE_URL` the world endpoints return 503 and builds
 skip the world model.
@@ -1532,6 +1556,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
   it to the stored beliefs.
 - **Point assessment**: `world/assess` and the MCP tool `assess_point`
   compose the objects over a point into one answer with its support.
+- **Fused map of a zone**: `/world-model/zones/az/tempe` always shows the
+  latest map of the zone's objects with its legends, as a page, a PDF and
+  an image; `render_zone_maps` draws it again whenever the store changes.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

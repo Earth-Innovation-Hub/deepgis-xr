@@ -13,6 +13,7 @@ Layers, oldest evidence first:
   LayerScene -> LayerSample <- Entity            what a satellite pass, aerial photograph or lidar survey
                                                  measured over an entity: a record, not a factor
   ImageryCheck                                   what the basemap provider serves now where a capture was taken
+  Zone                                           a named area whose fused map is kept drawn
 
 Each entity has two variables: ``c<id>`` (category, taxonomy-sized) and
 ``x<id>`` (exists, [absent, present]). Factors store their raw log table;
@@ -395,6 +396,25 @@ class ImageryCheck(models.Model):
     class Meta:
         db_table = 'sg_imagery_check'
         indexes = [models.Index(fields=['capture', '-checked_at'], name='sg_imagery_check_idx')]
+
+
+class Zone(models.Model):
+    """A named area whose fused map is kept drawn: a city, a field site.
+
+    ``slug`` is its path under /world-model/zones/ ('az/tempe'). ``area`` selects the entities
+    and captures the map is made from; ``source`` says where that outline came from.
+    """
+
+    slug = models.CharField(max_length=80, unique=True)
+    name = models.CharField(max_length=120)
+    taxonomy = models.CharField(max_length=40, default='urban_v1')
+    area = gis.MultiPolygonField(srid=4326)
+    source = models.CharField(max_length=200, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'sg_zone'
+        ordering = ['slug']
 
 
 class UserPreference(models.Model):

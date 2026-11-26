@@ -15,10 +15,14 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from deepgis_xr.apps.scene_store import detection_model, field_evidence, fusion, layers, looks, priors, traits
+from django.core.management.base import CommandError
+
+from deepgis_xr.apps.scene_store import (
+    assess, detection_model, field_evidence, fusion, layers, looks, priors, traits, zone_views, zonemap,
+)
 from deepgis_xr.apps.scene_store.models import (
     BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, ImageryCheck,
-    LayerSample, LayerScene, Pose,
+    LayerSample, LayerScene, Pose, Zone,
 )
 from deepgis_xr.apps.web.models import FieldReading
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import URBAN_V1
@@ -1176,3 +1180,155 @@ class LayerTests(TransactionTestCase):
         fusion.ingest_scene_graph(_scene(timezone.now(), imagery=_imagery('2025-01-01', '2025-03-01')),
                                   session_id='s2', taxonomy_name='urban_v1')
         self.assertEqual(self.client.get(url, box).json()['flags'], [])
+
+
+class ZoneMapTests(TransactionTestCase):
+    """The fused map of a zone: the point assessment on a grid, drawn, kept current and served."""
+
+    databases = {'default', 'observations'}
+
+    def setUp(self):
+        self.t1 = timezone.now() - timedelta(hours=1)
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        root = override_settings(OBSERVATIONS_ROOT=self.dir.name)
+        root.enable()
+        self.addCleanup(root.disable)
+        zone_views._latest.clear()
+        call_command('add_zone', 'test/site', '--name', 'Test site',
+                     f'--bbox={LON - 0.01},{LAT - 0.01},{LON + 0.01},{LAT + 0.01}', stdout=StringIO())
+        self.zone = Zone.objects.get(slug='test/site')
+        self.base = '/world-model/zones/test/site'
+
+    def _ingest(self, name, at, **kw):
+        return fusion.ingest_scene_graph(_scene(at, imagery=_imagery(), **kw), session_id=name, taxonomy_name='urban_v1')
+
+    def _draw(self, *args):
+        out = StringIO()
+        call_command('render_zone_maps', '--no-backdrop', '--json', *args, stdout=out)
+        return json.loads(out.getvalue())['drawn'] if out.getvalue().strip() else []
+
+    def test_every_cell_is_the_point_assessment(self):
+        from pyproj import Transformer
+
+        self._ingest('s1', self.t1)
+        ents = list(Entity.objects.filter(retired_at__isnull=True))
+        feet = [fusion._from_geos(c.footprint) for c in Capture.objects.all()]
+        grid = zonemap.frame(self.zone, feet)
+        self.assertEqual((grid.epsg, grid.pixel_m), (32612, 2.0))
+        fused = zonemap.fuse(ents, grid, URBAN_V1)
+        count, finest = zonemap.looked_at([zonemap._project(g, grid.epsg) for g in feet],
+                                          [c.gsd_m for c in Capture.objects.all()], grid)
+        to_xy = Transformer.from_crs(4326, grid.epsg, always_xy=True)
+        k = 1 / np.cos(np.radians(LAT))
+
+        def both(x_m, y_m):
+            lon, lat = LON + x_m * M * k, LAT + y_m * M
+            col, row = ~grid.transform * to_xy.transform(lon, lat)
+            return (int(row), int(col)), assess.assess_point(lon, lat)
+
+        cell, point = both(-40, 0)   # the middle of the building
+        bld = Entity.objects.get(category='building')
+        self.assertEqual(URBAN_V1.name_of(int(fused.label[cell])), point['fused']['category'])
+        self.assertAlmostEqual(float(fused.obj[cell]), 1 - point['fused']['no_object'], delta=0.02)
+        self.assertAlmostEqual(float(fused.conf[cell]), max(bld.posterior), delta=0.02)
+        self.assertEqual(ents[int(fused.owner[cell])].id, bld.id)
+        cell, point = both(10, 2)    # the car: under the imagery's 2.5 m it is mostly the road it stands on
+        self.assertEqual((URBAN_V1.name_of(int(fused.label[cell])), point['fused']['category']), ('road', 'road'))
+        self.assertAlmostEqual(float(fused.obj[cell]), 1 - point['fused']['no_object'], delta=0.08)
+        cell, point = both(60, -60)  # looked at, nothing stored
+        self.assertEqual((int(fused.label[cell]), int(fused.owner[cell]), int(count[cell])), (-1, -1, 1))
+        self.assertLess(float(fused.obj[cell]), zonemap.SHOW_MIN)
+        self.assertAlmostEqual(float(finest[cell]), Capture.objects.get().gsd_m, places=4)
+        cell, point = both(180, 0)   # in the frame, beyond the capture
+        self.assertEqual((int(count[cell]), point['looked_at']['n_captures']), (0, 0))
+        self.assertTrue(np.isinf(finest[cell]))
+        # an object believed gone leaves the ground to what lies under it
+        Entity.objects.filter(id=bld.id).update(p_exists=0.02)
+        gone = zonemap.fuse(list(Entity.objects.filter(retired_at__isnull=True)), grid, URBAN_V1)
+        cell, _ = both(-40, 0)
+        self.assertEqual(int(gone.label[cell]), -1)
+
+    def test_map_is_drawn_when_the_store_changes_and_served(self):
+        # a zone with no map yet says so, and has nothing to download
+        page = self.client.get(self.base)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'still being drawn')
+        self.assertEqual(self.client.get(self.base + '.pdf').status_code, 404)
+        self.assertEqual(self.client.get(self.base + '.json').json()['status'], 'pending')
+
+        self._ingest('s1', self.t1)
+        drawn, = self._draw()
+        self.assertEqual((drawn['zone'], drawn['why'], drawn['objects'], drawn['captures'], drawn['photograph']),
+                         ('test/site', 'no map yet', 3, 1, False))
+        root = zonemap.zone_root(self.zone)
+        self.assertEqual(root, os.path.join(self.dir.name, 'maps', 'zones', 'test', 'site'))
+        for kind, magic in (('pdf', b'%PDF'), ('png', b'\x89PNG'), ('jpg', b'\xff\xd8')):
+            with open(zonemap.file_path(self.zone, kind), 'rb') as fh:
+                self.assertEqual(fh.read(len(magic)), magic)
+        self.assertEqual(self._draw(), [])                        # nothing changed: nothing is drawn
+        self.assertEqual(zonemap.due(self.zone), '')              # no photograph, but drawn moments ago
+        with mock.patch.object(zonemap, 'RETRY_BACKDROP_S', 0):
+            self.assertIn('photograph', zonemap.due(self.zone))
+            self.assertEqual(zonemap.due(self.zone, with_backdrop=False), '')
+
+        info = self.client.get(self.base + '.json').json()
+        self.assertEqual((info['status'], info['latest'], info['beliefs'], info['backdrop']),
+                         ('success', True, 'as last seen', None))
+        self.assertEqual((info['objects']['n'], info['looked_at']['n_captures'], info['looked_at']['n_looks']), (3, 1, 1))
+        self.assertEqual({r['category']: r['n'] for r in info['objects']['by_category']},
+                         {'building': 1, 'road': 1, 'vehicle': 1})
+        area = {r['category']: r['area_ha'] for r in info['objects']['by_category']}
+        self.assertAlmostEqual(area['building'], 0.09 * Entity.objects.get(category='building').p_exists, delta=0.012)
+        self.assertAlmostEqual(info['ground']['viewed_ha'], 4.0, delta=0.15)   # one 200 m capture
+        self.assertAlmostEqual(info['ground']['viewed_ha'] + info['ground']['never_viewed_ha'],
+                               info['ground']['frame_ha'], delta=0.11)
+        self.assertEqual(info['links']['pdf'], self.base + '.pdf')
+        self.assertIn('Bing Aerial, 1 Mar to 1 Sep 2023', info['headline'])
+
+        page = self.client.get(self.base)
+        self.assertContains(page, 'World model: Test site')
+        self.assertContains(page, self.base + '.pdf?download=1')
+        self.assertNotContains(page, 'store has changed')
+        self.assertContains(self.client.get('/world-model/'), 'Test site')
+        self.assertEqual(self.client.get('/world-model/zones/no/where').status_code, 404)
+        self.assertEqual(self.client.get(self.base + '.exe').status_code, 404)
+        self.assertEqual(self.client.post(self.base).status_code, 405)
+
+        pdf = self.client.get(self.base + '.pdf')
+        self.assertEqual((pdf.status_code, pdf['Content-Type'], pdf['Cache-Control']), (200, 'application/pdf', 'no-cache'))
+        self.assertEqual(b''.join(pdf.streaming_content)[:4], b'%PDF')
+        self.assertTrue(pdf['Content-Disposition'].startswith('inline; filename="deepgis-world-model-test-site-'))
+        saved = self.client.get(self.base + '.png', {'download': 1})
+        self.assertTrue(saved['Content-Disposition'].startswith('attachment; filename="deepgis-world-model-test-site-'))
+        saved.close()
+        again = self.client.get(self.base + '.pdf', HTTP_IF_NONE_MATCH=pdf['ETag'])
+        self.assertEqual((again.status_code, again['ETag']), (304, pdf['ETag']))
+
+        # The store changes: the page says the map is behind until the next run draws it again.
+        sg = _scene(self.t1 + timedelta(minutes=20), imagery=_imagery())
+        sg['nodes'].append(_node('b2', 'building', _square(60, 60, 15)))
+        fusion.ingest_scene_graph(sg, session_id='s2', taxonomy_name='urban_v1')
+        zone_views._latest.clear()
+        self.assertFalse(self.client.get(self.base + '.json').json()['latest'])
+        self.assertContains(self.client.get(self.base), 'store has changed')
+        drawn, = self._draw()
+        self.assertEqual((drawn['why'], drawn['objects'], drawn['captures']), ('the store changed', 4, 2))
+        zone_views._latest.clear()
+        info = self.client.get(self.base + '.json').json()
+        self.assertEqual((info['latest'], info['looked_at']['n_looks'], info['state']), (True, 1, drawn['state']))
+        self.assertNotEqual(self.client.get(self.base + '.pdf')['ETag'], pdf['ETag'])
+
+    def test_zones_are_named_once(self):
+        with self.assertRaises(CommandError):
+            call_command('add_zone', 'test/site', '--name', 'Again', '--bbox=0,0,1,1', stdout=StringIO())
+        with self.assertRaises(CommandError):
+            call_command('add_zone', 'Test Site', '--name', 'Bad slug', '--bbox=0,0,1,1', stdout=StringIO())
+        with self.assertRaises(CommandError):
+            call_command('add_zone', 'test/two', '--name', 'Two outlines', '--bbox=0,0,1,1', '--census-place', '0473000',
+                         stdout=StringIO())
+        call_command('add_zone', 'test/site', '--name', 'Renamed', f'--bbox={LON - 0.02},{LAT - 0.01},{LON + 0.01},{LAT + 0.01}',
+                     '--replace', stdout=StringIO())
+        zone = Zone.objects.get(slug='test/site')
+        self.assertEqual((zone.name, zone.area.geom_type, Zone.objects.count()), ('Renamed', 'MultiPolygon', 1))
+        self.assertNotEqual(zonemap.fingerprint(zone), zonemap.fingerprint(self.zone))

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World model: {{ zone.name }} | DeepGIS</title>
+<meta name="description" content="{% if zone.has_map %}{{ zone.headline }}{% else %}The fused world-model map of {{ zone.name }}.{% endif %}">
+<meta property="og:title" content="DeepGIS world model: {{ zone.name }}">
+{% if zone.has_map %}<meta property="og:image" content="{{ image_url }}">{% endif %}
+<style>
+  :root { --ink: #1f2937; --soft: #6b7280; --line: #d1d5db; --wash: #f3f4f6; --link: #1d4ed8; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #fff; }
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 20px 48px; }
+  a { color: var(--link); }
+  .crumb { font-size: 14px; color: var(--soft); margin: 0 0 6px; }
+  .crumb a { color: var(--soft); }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 0 0 10px; }
+  .lead { color: var(--soft); margin: 0 0 18px; }
+  .notice { border: 1px solid #f59e0b; background: #fffbeb; border-radius: 6px; padding: 10px 14px; margin: 0 0 18px; }
+  .get { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 18px; }
+  .get a { display: inline-block; padding: 9px 16px; border: 1px solid var(--ink); border-radius: 6px; text-decoration: none;
+           color: var(--ink); font-weight: 600; }
+  .get a.main { background: var(--ink); color: #fff; }
+  .get a span { font-weight: 400; opacity: .75; margin-left: 6px; }
+  .get a:hover, .get a:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  .sheet { display: block; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--wash); }
+  .sheet img { display: block; width: 100%; height: auto; }
+  .hint { font-size: 14px; color: var(--soft); margin: 8px 0 30px; }
+  .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } h1 { font-size: 25px; } }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th { font-size: 13px; font-weight: 400; color: var(--soft); text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 4px 8px; text-align: right; }
+  th:first-child, td:first-child { text-align: left; padding-left: 0; }
+  tr.other td { border-top: 1px solid var(--line); }
+  .chip { display: inline-block; width: 22px; height: 12px; border: 1px solid var(--ink); margin-right: 10px; vertical-align: -1px; }
+  ul { margin: 0 0 22px; padding-left: 20px; }
+  li { margin-bottom: 6px; }
+  footer { margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 13px; color: var(--soft); }
+  footer p { margin: 0 0 6px; }
+</style>
+</head>
+<body>
+<main>
+  <p class="crumb"><a href="/">DeepGIS</a> / <a href="/world-model/">World model</a></p>
+  <h1>World model: {{ zone.name }}</h1>
+{% if zone.has_map %}
+  <p class="lead">{{ zone.headline }}</p>
+  {% if not latest %}
+  <p class="notice">The store has changed since this map was drawn. A new one is drawn within about ten minutes; reload the page then.</p>
+  {% endif %}
+  <p class="get">
+    {% for d in downloads %}<a href="{{ d.url }}"{% if forloop.first %} class="main"{% endif %}>{{ d.label }}{% if d.note %}<span>{{ d.note }}</span>{% endif %}</a>{% endfor %}
+  </p>
+  <a class="sheet" href="{{ base }}.png"><img src="{{ zone.preview }}" width="1800" height="1165"
+     alt="Map of {{ zone.name }}: the ground coloured by the category of the object believed to be there, with its legend and three small maps of how sure the label is, how often the ground was viewed and how fine the best view was."></a>
+  <p class="hint">Select the map to open it at full size. Drawn {{ zone.drawn }}. This address always shows the latest map.</p>
+
+  <div class="cols">
+    <section>
+      <h2>What is on the ground</h2>
+      <table>
+        <thead><tr><th scope="col">Category</th><th scope="col">Objects</th><th scope="col">Hectares</th><th scope="col">Sure of label</th></tr></thead>
+        <tbody>
+        {% for row in rows %}
+          <tr><td><span class="chip" style="background: {{ row.colour }}"></span>{{ row.name }}</td><td>{{ row.n }}</td><td>{{ row.area }}</td><td>{{ row.sure }}</td></tr>
+        {% endfor %}
+          <tr class="other"><td><span class="chip" style="background: {% if has_photo %}#cdcdcd{% else %}#f7f7f7{% endif %}"></span>viewed, no object stored</td><td></td><td>{{ no_object_ha }}</td><td></td></tr>
+          <tr><td><span class="chip" style="background: #e9ecf1"></span>never viewed (in this frame)</td><td></td><td>{{ never_viewed_ha }}</td><td></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section>
+      <h2>What this rests on</h2>
+      <ul>{% for line in facts %}<li>{{ line }}</li>{% endfor %}</ul>
+      <h2>How to read it</h2>
+      <ul>{% for line in reading %}<li>{{ line }}</li>{% endfor %}</ul>
+    </section>
+  </div>
+{% else %}
+  <p class="notice">The first map of this zone is still being drawn. Reload the page in a few minutes.</p>
+{% endif %}
+  <footer>
+    {% if zone.has_map %}<p>{{ footer }}</p>{% endif %}
+    {% if source %}<p>Zone outline: {{ source }}.</p>{% endif %}
+    <p>The same objects, live and one at a time: <a href="/label/3d/search/">the DeepGIS map</a>.
+       For one point: <code>/webclient/sampler/world/assess?lon=&amp;lat=</code>.</p>
+  </footer>
+</main>
+</body>
+</html>
