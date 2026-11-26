@@ -4990,8 +4990,36 @@ class WorldSamplerUI {
             if (d.layers && !d.layers.length) {
                 rows.push(row('Remote sensing', 'nothing recorded: too small for the satellite and aerial pixels, or not sampled yet'));
             }
-            const fc = Object.entries(d.factor_counts || {}).sort((a, b) => b[1] - a[1]);
-            if (fc.length) rows.push(row('Evidence', fc.map(([k, n]) => `${esc(k)} ${n}`).join(', ')));
+            // What the belief rests on. The captures of one image are one look and count once,
+            // however many there are; only another image, a correction or a field reading adds.
+            const sup = d.support;
+            if (sup?.looks) {
+                const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+                const lines = sup.looks.slice(0, 3).map((k) => {
+                    const what = k.identified
+                        ? `${esc(String(k.source || 'imagery').replace(/^bing:/, 'Bing '))} of ${span(k.start, k.end)}`
+                        : `a view dated ${date(k.observed_at)}, imagery not identified`;
+                    const seen = `found ${k.n_found}&times;${k.n_missed ? `, missed ${k.n_missed}&times;` : ''}`
+                        + `${k.n_found + k.n_missed > 1 ? ', counted once' : ''}`;
+                    const says = [k.exists ? `${pct(k.exists.p)} there` : '',
+                        k.category ? `${esc(name(k.category.category))} ${pct(k.category.p)}` : ''].filter(Boolean).join(', ');
+                    return `${what}: ${seen}${says ? `; alone it says ${says}` : ''}`;
+                });
+                if (sup.looks.length > 3) lines.push(`and ${count(sup.looks.length - 3, 'earlier look', 'earlier looks')}`);
+                const o = sup.other || {};
+                const links = (o.context || 0) + (o.contains || 0);
+                const extra = [
+                    o.feedback ? count(o.feedback, 'correction', 'corrections') : '',
+                    o.field ? `field readings on ${count(o.field, 'day', 'days')}` : '',
+                    links ? count(links, 'link to a neighbour', 'links to neighbours') : '',
+                ].filter(Boolean);
+                if (extra.length) lines.push(`also ${extra.join(', ')}`);
+                rows.push(row('Evidence', `${count(sup.n_looks, 'independent look', 'independent looks')}`
+                    + `${lines.length ? `<br>${lines.join('<br>')}` : ''}`));
+            } else {
+                const fc = Object.entries(d.factor_counts || {}).sort((a, b) => b[1] - a[1]);
+                if (fc.length) rows.push(row('Evidence', fc.map(([k, n]) => `${esc(k)} ${n}`).join(', ')));
+            }
             const fb = (d.feedback || []).filter((x) => !x.superseded);
             rows.push(row('Feedback', fb.length
                 ? fb.map((x) => `${esc(x.kind)}${x.category ? ` as ${esc(name(x.category))}` : ''} (${day(x.at)})`).join('; ')

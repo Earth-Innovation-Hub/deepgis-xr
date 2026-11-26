@@ -22,7 +22,7 @@ from django.http import HttpResponse, JsonResponse
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 
-from . import fusion, imagery_watch, layers, priors, traits, views
+from . import assess, fusion, imagery_watch, layers, priors, traits, views
 from .models import Capture, Entity, Feedback
 
 log = logging.getLogger(__name__)
@@ -39,7 +39,10 @@ INSTRUCTIONS = (
     "Find where data exists with world_stats or list_scene_graphs (no location = newest anywhere). "
     "world_summary describes an area, find_entities lists its objects, get_entity explains one "
     "object's evidence, world_changes compares dates, get_scene_graph returns one capture's nodes "
-    "and links, trait_map gives per-category statistics and a Gaussian-process map of sizes. confidence = probability of the category; p_exists = probability the object was "
+    "and links, trait_map gives per-category statistics and a Gaussian-process map of sizes, "
+    "assess_point answers what is at one point and on how much evidence. Captures of the same "
+    "imagery are one look and count once, however many there are (get_entity's support). "
+    "confidence = probability of the category; p_exists = probability the object was "
     "there when last seen (pass at= to find_entities, or read get_entity's now, for the belief "
     "decayed to a date). first_seen and last_seen are imagery dates: each capture records the "
     "imagery it showed and when that was acquired (observed_at), separately from when the view "
@@ -229,7 +232,20 @@ def get_entity(args):
             'n_sightings': len(d['detections']), 'sightings': d['detections'][::-1][:n],
             'n_history': len(d['history']), 'history': d['history'][-10:],
             'feedback': d['feedback'], 'field_readings': d.get('field'),
-            'factor_counts': d['factor_counts'], 'layers': d['layers']}
+            'factor_counts': d['factor_counts'], 'support': d['support'], 'layers': d['layers']}
+
+
+def assess_point(args):
+    lat = _float(args, 'lat', lo=-89.9, hi=89.9)
+    lon = _float(args, 'lon', lo=-180, hi=180)
+    sigma = _float(args, 'sigma_m', lo=assess.MIN_SIGMA_M, hi=assess.MAX_SIGMA_M) \
+        if args.get('sigma_m') is not None else None
+    taxonomy = _text(args, 'taxonomy') or 'urban_v1'
+    try:
+        fusion.taxonomy_by_name(taxonomy)
+    except Exception:
+        raise ToolError(f'unknown taxonomy {taxonomy}')
+    return assess.assess_point(lon, lat, at=_time(args, 'at'), taxonomy=taxonomy, sigma_m=sigma)
 
 
 def world_summary(args):
@@ -384,6 +400,11 @@ TOOLS = [
      "One object's full record: candidates, every sighting (imagery date, when it was viewed, capture, "
      'label, score, area, image ground resolution), the belief as last seen and decayed to now, '
      'belief history, feedback, field readings a ground robot aimed at it, and factor counts. '
+     'support lists the looks the belief rests on, one per image: how many captures showed it, '
+     'how often the object was found and missed, and what that image says on its own (exists.p, '
+     'category). Captures of one image share its mistakes and count once: one_look_p_exists is '
+     'the range a single image can give, and only another image, a correction or a field reading '
+     'moves the belief beyond it. '
      'layers is the remote-sensing record over the object, one row per source: number of samples, '
      'first and last date, latest value, the value around the imagery date (at_last_seen), min / '
      'median / max, a series (monthly medians [month, value, n] when long) and purity, the share '
@@ -394,6 +415,22 @@ TOOLS = [
      {'entity_id': _num('Entity id'), 'max_sightings': _num('Newest sightings to include (default 20)'),
       'include_polygon': _flag('Include the outline')},
      ['entity_id'], get_entity),
+    ('assess_point', 'What is at a point',
+     'The fused assessment at one point: what is there and on how much evidence. Stored objects '
+     'that cover the point are composed front to back, smallest on top: each counts by weight (the '
+     "share of the point's position uncertainty inside its outline) times p_exists, giving its "
+     'share of the answer. fused is the resulting category distribution (candidates) and '
+     'no_object, the chance that no stored object accounts for the point; fused.category is null '
+     'when that is the likeliest. looked_at says how many captures and distinct images cover the '
+     'point, so "nothing found" can be told from "never looked". Each object lists its support '
+     '(independent looks, times found and missed, corrections). remote_sensing holds the latest '
+     'satellite, aerial and lidar values over the object with the largest share; they are a '
+     'record, not part of the beliefs. Beliefs are as last seen unless at is given.',
+     {'lat': LAT, 'lon': LON,
+      'at': _str('Beliefs for this date (ISO 8601 or YYYY-MM-DD); today answers what is likely still there'),
+      'sigma_m': _num('How well the point is located, metres 1-sigma (default 2.5, the imagery registration)'),
+      'taxonomy': _str("Category set (default 'urban_v1')")},
+     ['lat', 'lon'], assess_point),
     ('world_changes', 'What changed in an area',
      'Objects first seen between two dates, and objects missed then that are believed gone. The dates '
      'are imagery acquisition dates by default, so two looks at the same imagery are not a change; '

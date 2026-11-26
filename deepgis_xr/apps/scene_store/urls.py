@@ -15,6 +15,7 @@ urlpatterns = [
     path('webclient/sampler/world/summary', views.summary_view, name='world_summary'),
     path('webclient/sampler/world/changes', views.changes_view, name='world_changes'),
     path('webclient/sampler/world/review', views.review_view, name='world_review'),
+    path('webclient/sampler/world/assess', views.assess_view, name='world_assess'),
     path('webclient/sampler/world/imagery_checks', views.imagery_checks_view, name='world_imagery_checks'),
     path('webclient/sampler/world/retire', views.retire_view, name='world_retire'),
     path('webclient/sampler/world/restore', views.restore_view, name='world_restore'),

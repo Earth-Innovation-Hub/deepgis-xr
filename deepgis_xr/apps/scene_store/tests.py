@@ -15,7 +15,7 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 
-from deepgis_xr.apps.scene_store import detection_model, field_evidence, fusion, layers, priors, traits
+from deepgis_xr.apps.scene_store import detection_model, field_evidence, fusion, layers, looks, priors, traits
 from deepgis_xr.apps.scene_store.models import (
     BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, ImageryCheck,
     LayerSample, LayerScene, Pose,
@@ -116,6 +116,54 @@ class GeometryPriorTests(SimpleTestCase):
         self.assertEqual(thin_road[r], 0.0)
 
 
+class LookTests(SimpleTestCase):
+    @staticmethod
+    def _p(tables):
+        absent, present = looks.exists_message(tables)
+        return 1 / (1 + np.exp(absent - present))
+
+    @staticmethod
+    def _reading(category, p):
+        post = np.full(URBAN_V1.n, (1 - p) / (URBAN_V1.n - 1))
+        post[URBAN_V1.index_of(category)] = p
+        return np.log(post)
+
+    def test_one_image_can_only_prove_so_much(self):
+        low, high = looks.exists_limits()
+        one, two, six = (self._p([priors.HIT_TABLE] * n) for n in (1, 2, 6))
+        self.assertTrue(0.85 < one < two < six < high < 0.96)
+        self.assertAlmostEqual(six, high, places=4)
+        # Even a single detection is doubted twice: by the detector, and by the image.
+        self.assertLess(one, priors.P_DETECT / (priors.P_DETECT + priors.P_FALSE_ALARM))
+        self.assertAlmostEqual(self._p([priors.miss_table(0.98)] * 6), low, places=3)
+        # Found twice and missed once at a zoom that finds half: the image shows it.
+        self.assertGreater(self._p([priors.HIT_TABLE, priors.HIT_TABLE, priors.miss_table(0.5)]), 0.93)
+        # Two different images multiply.
+        both = looks.exists_message([priors.HIT_TABLE]) * 2
+        self.assertGreater(1 / (1 + np.exp(both[0] - both[1])), high)
+
+    def test_agreeing_readings_are_one_reading(self):
+        house, building = self._reading('house', 0.4), self._reading('building', 0.4)
+        np.testing.assert_allclose(looks.category_message([house]), house)
+        np.testing.assert_allclose(looks.category_message([house] * 4), house, atol=1e-9)
+        # Readings that differ in strength but not in what they name: their mean, once.
+        strong = self._reading('house', 0.6)
+        np.testing.assert_allclose(looks.category_message([house, strong]), (house + strong) / 2, atol=1e-9)
+
+        def post(readings):
+            m = looks.category_message(readings)
+            p = np.exp(m - m.max())
+            return p / p.sum()
+
+        h, b = URBAN_V1.index_of('house'), URBAN_V1.index_of('building')
+        split = post([house, building])  # one reading each way: the image is ambiguous
+        self.assertAlmostEqual(split[h], split[b], places=9)
+        self.assertLess(split[h], 0.4)
+        self.assertGreater(split[h] + split[b], 0.4)
+        outvoted = post([house, house, building])  # the odd one out is a misreading
+        self.assertAlmostEqual(outvoted[h], 0.4, delta=0.01)
+
+
 class FusionTests(TransactionTestCase):
     databases = {'default', 'observations'}
 
@@ -162,7 +210,7 @@ class FusionTests(TransactionTestCase):
         self._ingest('s3', self.t3, with_car=False)
         car = self._entity('vehicle')
         then = fusion.run_local_bp([car.id], at=self.t1 + timedelta(minutes=1), write=False)
-        self.assertGreater(then['beliefs'][car.id]['p_exists'], 0.9)
+        self.assertGreater(then['beliefs'][car.id]['p_exists'], 0.85)  # one detection on one image
         self.assertLess(car.p_exists, 0.5)
 
     def test_vehicle_evidence_fades_faster_than_building_evidence(self):
@@ -420,7 +468,8 @@ class McpTests(TransactionTestCase):
         self.assertEqual(self._rpc('notifications/initialized', mid=None).status_code, 202)
         tools = {t['name'] for t in self._rpc('tools/list').json()['result']['tools']}
         self.assertEqual(tools, {'world_stats', 'list_scene_graphs', 'get_scene_graph', 'world_summary',
-                                 'find_entities', 'get_entity', 'world_changes', 'area_histogram', 'trait_map'})
+                                 'find_entities', 'get_entity', 'world_changes', 'area_histogram', 'trait_map',
+                                 'assess_point'})
         self.assertEqual(self._rpc('nope').json()['error']['code'], -32601)
         self.assertEqual(self._rpc('tools/call', {'name': 'nope'}).json()['error']['code'], -32602)
 
@@ -447,6 +496,15 @@ class McpTests(TransactionTestCase):
         self.assertIn('p_exists', car['now'])
         self.assertEqual(car['field_readings']['n_readings'], 0)
         self.assertEqual(car['layers'], [])
+        # two captures whose imagery is not identified are two looks
+        self.assertEqual((car['support']['n_looks'], [k['identified'] for k in car['support']['looks']]),
+                         (2, [False, False]))
+        here = self._tool('assess_point', lat=LAT, lon=LON - 40 * M / np.cos(np.radians(LAT)))
+        self.assertEqual((here['fused']['category'], here['looked_at']['n_captures'], here['looked_at']['n_looks']),
+                         ('building', 2, 2))
+        self.assertEqual(here['objects'][0]['support']['n_found'], 2)
+        self.assertTrue(self._tool('assess_point', lat=LAT)['isError'])
+        self.assertTrue(self._tool('assess_point', lat=LAT, lon=LON, taxonomy='nope')['isError'])
         stats = self._tool('world_stats')
         self.assertEqual((stats['layers'], stats['imagery_checks']['n_to_recapture']), ([], 0))
         self.assertIn('imagery', graphs['captures'][0])
@@ -650,7 +708,7 @@ class UpgradeTests(TransactionTestCase):
         car = self._entity('vehicle')
         self.assertEqual((car.first_seen, car.last_seen), (IMAGED, IMAGED))
         self.assertEqual(set(Factor.objects.values_list('observed_at', flat=True)), {IMAGED})
-        self.assertGreater(car.p_exists, 0.9)  # as last seen: nothing has decayed since the imagery
+        self.assertGreater(car.p_exists, 0.85)  # as last seen: nothing has decayed since the imagery
 
         # A second look at the same imagery without the car is a detector miss at the same instant.
         self._ingest('s2', self.t2, with_car=False, imagery=_imagery())
@@ -821,6 +879,112 @@ class UpgradeTests(TransactionTestCase):
         r = self.client.get(url).json()
         self.assertEqual((r['field']['n_readings'], r['field']['n_usable'], r['field']['n_green']), (7, 6, 6))
         self.assertEqual(r['factor_counts']['field'], 1)
+        self.assertEqual(r['support']['other']['field'], 1)
+        self.client.logout()
+        self.assertNotIn('field', self.client.get(url).json()['support']['other'])
+
+    # -- looks: the captures of one image count once -----------------------------------
+
+    def test_captures_of_one_image_are_one_look(self):
+        self._ingest('s1', self.t1, imagery=_imagery())
+        bld = self._entity('building')
+        first = (list(bld.posterior), bld.score, bld.p_exists)
+        for k in range(2, 6):
+            self._ingest(f's{k}', self.t1 + timedelta(minutes=k), imagery=_imagery())
+        bld.refresh_from_db()
+        low, high = looks.exists_limits()
+        self.assertEqual((bld.n_hits, Factor.objects.filter(kind='hit', entity_ids=[bld.id]).count()), (5, 5))
+        # Five detections of the same pixels read the same thing: the category is where it was,
+        # and existence has gone as far as one image can take it and no further.
+        np.testing.assert_allclose(bld.posterior, first[0], atol=1e-6)
+        self.assertTrue(first[2] < bld.p_exists < high)
+        self.assertAlmostEqual(bld.p_exists, high, places=2)
+        before = fusion.run_local_bp([bld.id], write=False, pool_looks=False)['beliefs'][bld.id]
+        self.assertGreater(before['p_exists'], 0.999)  # what counting each of them used to give
+        self.assertGreater(before['score'], bld.score + 0.01)
+
+        s = fusion.support(bld)
+        self.assertEqual((s['n_looks'], s['looks'][0]['n_captures'], s['looks'][0]['n_found']), (1, 5, 5))
+        self.assertEqual((s['looks'][0]['category']['category'], s['looks'][0]['category']['n_agree']), ('building', 5))
+        self.assertAlmostEqual(s['looks'][0]['exists']['p'], bld.p_exists, places=3)
+
+        # A different image is a new look, and that does add.
+        self._ingest('s9', self.t2, imagery=_imagery('2025-01-01', '2025-03-01'))
+        bld.refresh_from_db()
+        self.assertGreater(bld.p_exists, high)
+        self.assertGreater(bld.score, first[1])
+        r = self.client.get(f'/webclient/sampler/world/entities/{bld.id}').json()
+        self.assertEqual([(k['n_captures'], k['start'][:10]) for k in r['support']['looks']],
+                         [(1, '2025-01-01'), (5, '2023-03-01')])
+        self.assertEqual(r['support']['one_look_p_exists'], [round(low, 3), round(high, 3)])
+
+    def test_rerun_beliefs_command_applies_the_look_rule_to_stored_beliefs(self):
+        for k in range(1, 4):
+            self._ingest(f's{k}', self.t1 + timedelta(minutes=k), imagery=_imagery())
+        bld = self._entity('building')
+        pooled = bld.p_exists
+        # As the store was before looks: every detection its own observation.
+        fusion.run_local_bp(list(Entity.objects.values_list('id', flat=True)), pool_looks=False)
+        bld.refresh_from_db()
+        self.assertGreater(bld.p_exists, 0.99)
+        out = StringIO()
+        call_command('rerun_beliefs', stdout=out)
+        bld.refresh_from_db()
+        self.assertIn('dry run', out.getvalue())
+        self.assertGreater(bld.p_exists, 0.99)
+        snapshots = BeliefSnapshot.objects.count()
+        call_command('rerun_beliefs', '--apply', stdout=out)
+        bld.refresh_from_db()
+        self.assertAlmostEqual(bld.p_exists, pooled, places=6)
+        self.assertEqual(BeliefSnapshot.objects.filter(cause='looks').count(), BeliefSnapshot.objects.count() - snapshots)
+        self.assertTrue(BeliefSnapshot.objects.filter(cause='looks', entity=bld).exists())
+        self.assertEqual(Factor.objects.filter(superseded_at__isnull=False).count(), 0)
+
+    def test_point_assessment_composes_the_objects_over_the_point(self):
+        self._ingest('s1', self.t1, imagery=_imagery())
+        k = 1 / np.cos(np.radians(LAT))
+        url = '/webclient/sampler/world/assess'
+
+        def at_m(x, y, **q):
+            return self.client.get(url, {'lon': LON + x * M * k, 'lat': LAT + y * M, **q}).json()
+
+        bld, car, road = (self._entity(c) for c in ('building', 'vehicle', 'road'))
+        r = at_m(-40, 0)  # the middle of the 30 m building
+        top = r['objects'][0]
+        self.assertEqual((r['fused']['category'], top['id'], len(r['objects'])), ('building', bld.id, 1))
+        self.assertEqual((r['looked_at']['n_captures'], r['looked_at']['n_looks'], r['beliefs']), (1, 1, 'as last seen'))
+        self.assertGreater(top['weight'], 0.95)
+        self.assertAlmostEqual(top['share'], top['weight'] * bld.p_exists, places=3)
+        self.assertAlmostEqual(r['fused']['no_object'], 1 - top['share'], places=3)
+        self.assertEqual(top['support'], {'n_looks': 1, 'n_found': 1, 'n_missed': 0, 'n_corrections': 0})
+        self.assertIn('one image', r['note'])
+
+        # A well located point on the car is the car; located only to the imagery's 2.5 m it is
+        # mostly the road the car stands on. The car, being smaller, lies on top either way.
+        sharp = at_m(10, 2, sigma_m=0.5)
+        self.assertEqual((sharp['fused']['category'], [o['id'] for o in sharp['objects']]), ('vehicle', [car.id, road.id]))
+        loose = at_m(10, 2)
+        self.assertEqual((loose['fused']['category'], [o['id'] for o in loose['objects']]), ('road', [road.id, car.id]))
+        self.assertTrue(0.1 < loose['objects'][1]['weight'] < 0.35)
+        for got in (sharp, loose):
+            self.assertAlmostEqual(sum(o['share'] for o in got['objects']) + got['fused']['no_object'], 1, places=3)
+        # Three years on the car has probably left and the road has not.
+        today = at_m(10, 2, sigma_m=0.5, at=timezone.now().date().isoformat())
+        by_id = {o['id']: o for o in today['objects']}
+        self.assertEqual(today['beliefs'], 'decayed to at')
+        self.assertLess(abs(by_id[car.id]['p_exists'] - 0.5), 0.01)
+        self.assertGreater(by_id[road.id]['share'], [o for o in sharp['objects'] if o['id'] == road.id][0]['share'])
+
+        # Looked at and found empty is not the same as never looked at.
+        empty = at_m(60, -60)
+        self.assertEqual((empty['fused']['category'], empty['fused']['no_object'], empty['objects']), (None, 1.0, []))
+        self.assertEqual(empty['looked_at']['n_captures'], 1)
+        self.assertIn('no object was found', empty['note'])
+        away = at_m(500, 0)
+        self.assertEqual((away['looked_at']['n_captures'], away['fused']['no_object']), (0, 1.0))
+        self.assertIn('No capture covers', away['note'])
+        self.assertEqual(self.client.get(url, {'lon': 'east', 'lat': LAT}).status_code, 400)
+        self.assertEqual(self.client.get(url, {'lon': LON, 'lat': LAT, 'taxonomy': 'nope'}).status_code, 400)
 
 
 def _centre(ring):

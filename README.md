@@ -291,6 +291,47 @@ Three more rules tie the beliefs to what was measured:
 
 These four commands only report unless `--apply` is given.
 
+**Looks: the captures of one image count once.** The basemap serves one
+imagery vintage however often it is viewed, and a detector run again on the
+same pixels repeats its own mistakes: on the Tempe captures, repeated
+detections of one object named the same top category in 95% of pairs.
+Multiplying them in as separate observations made beliefs surer with every
+capture and no new information. `scene_store/looks.py` puts one hidden
+variable per object and image between the two:
+
+    world (exists, category)  --  what the image shows  --  detection 1, 2, ...
+
+- Detections are evidence about the image; only the image is evidence about
+  the world, and one image can be trusted only so far (two hand-set numbers
+  in `priors.py`: it shows an object that is not there 5% of the time and
+  hides one that is there 10%). The hidden variable is summed out at
+  inference time, so each look sends the object one message. More captures
+  of one image raise P(exists) toward 0.947 and no further; a second image,
+  a correction or a field reading is what moves it beyond. A single
+  detection is doubted twice, by the detector and by the image, and gives
+  0.89.
+- For the category, detections that agree are one reading, not their
+  product; detections that disagree become a mixture weighted by how many
+  back each reading.
+- Stored factors are untouched: the grouping comes from each factor's
+  capture and its imagery record. A capture whose imagery is not identified
+  is a look of its own. `python manage.py rerun_beliefs` recomputes stored
+  beliefs when the rule changes (dry run unless `--apply`; it also reports
+  what counting every detection would give).
+- An object's `support` (API, MCP, the info box's *Evidence* row) lists its
+  looks: captures, times found and missed, and what that image says alone.
+
+**A fused assessment at any point.** `world/assess?lon=&lat=` (MCP
+`assess_point`) answers "what is here, and on how much evidence" for a point
+rather than an object. Each stored object covers the point by the share of
+the point's position uncertainty inside its outline (2.5 m by default; a
+robot passes its own) times its P(exists). Objects are composed front to
+back, smallest on top, as an aerial view shows them, giving each a share of
+the answer; the result is a category distribution plus `no_object`, the
+chance that nothing stored accounts for the point. `looked_at` tells
+"captured and found empty" from "never captured", and `at=` decays the
+beliefs to a date.
+
 **Remote sensing over each object.** The pilot's map layers are drawn in the
 browser and kept nowhere. `scene_store/layers.py` keeps the same kind of data
 per object: every Sentinel-2 pass, NAIP aerial photograph and lidar survey
@@ -843,13 +884,19 @@ deepgis-xr/
   zone) recomputes beliefs for that instant, `taxonomy`, `min_p_exists`,
   `min_score` (only entities at least that sure of their category).
 - `GET /webclient/sampler/world/entities/<id>`: one entity's belief history,
-  detections, feedback and factor counts.
+  detections, feedback, factor counts and `support` (the looks the belief
+  rests on).
 - `POST /webclient/sampler/world/feedback`: `{entity_id, kind: confirm |
   relabel | reject, category?, note?, imagery?, seen?}`; sign-in required.
   `imagery` is the page's record of the imagery the judgement was made on
   and dates the correction; `seen: "in_person"` dates it now.
 - `GET /webclient/sampler/world/review?bbox=...[&limit=]`: entities nobody
   has judged yet, most uncertain first, each with `value_bits`.
+- `GET /webclient/sampler/world/assess?lon=&lat=[&at=][&sigma_m=][&taxonomy=]`:
+  the fused assessment at a point: `fused` (category, candidates,
+  `no_object`), the `objects` composed with their weight, share and
+  support, `looked_at` (captures and distinct images covering the point)
+  and the latest remote-sensing values over the main object.
 - `GET /webclient/sampler/world/imagery_checks?bbox=...`: `flags`, the
   captures whose basemap imagery has since been replaced by a later
   acquisition; for a signed-in page also `due`, the captures to look up
@@ -902,7 +949,8 @@ so a city block fits in a model's context.
 | `get_scene_graph` | One capture's nodes and their `context` / `contains` links |
 | `world_summary` | Counts per category, confidence spread, what the unknowns probably are |
 | `find_entities` | Objects near a point: category, top candidates, `p_exists`, area, distance; `at=` for a past time |
-| `get_entity` | One object's sightings (imagery date and view time), belief when last seen and today, history, feedback, field readings, and `layers`: its Sentinel-2 and NAIP NDVI series and lidar height with their purity |
+| `get_entity` | One object's sightings (imagery date and view time), belief when last seen and today, history, feedback, field readings, `layers` (its Sentinel-2 and NAIP NDVI series and lidar height with their purity) and `support` (the independent looks behind the belief) |
+| `assess_point` | What is at one point: the category distribution composed from the objects covering it, the chance that none does, what was looked at there |
 | `world_changes` | Objects that appeared, or are believed gone, between two imagery dates (`basis: view` for view times) |
 | `area_histogram` | Object sizes in an area |
 | `trait_map` | Per-category statistics of area, confidence or `p_exists`, and a Gaussian-process map of one category |
@@ -1478,6 +1526,12 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Basemap re-check**: pages look up again what imagery the provider
   serves where captures were built, and captures on replaced imagery are
   flagged for re-capture.
+- **Looks**: captures of the same imagery are one look and send an object
+  one message through a hidden "what this image shows" variable, so
+  repeating a capture no longer adds confidence; `rerun_beliefs` applied
+  it to the stored beliefs.
+- **Point assessment**: `world/assess` and the MCP tool `assess_point`
+  compose the objects over a point into one answer with its support.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

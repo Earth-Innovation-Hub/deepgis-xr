@@ -17,7 +17,9 @@ stored, so late-arriving captures and as-of queries need no rewiring.
 Evidence is dated in world time: a capture's factors carry the date its
 imagery was acquired when the page reports one, not the moment the view
 was taken. Looking again at the same imagery therefore adds detector
-evidence at the same instant instead of pretending time has passed.
+evidence at the same instant instead of pretending time has passed, and
+that evidence is pooled: the captures of one image are one look and send
+an entity one message, through what the image shows (see ``looks``).
 
 ``run_local_bp`` without ``at`` gives each entity's belief as last seen:
 at its own newest evidence, with no decay after it. That is what entities
@@ -46,7 +48,7 @@ from shapely.validation import make_valid
 
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import taxonomy_by_name
 
-from . import detection_model, inference, priors
+from . import detection_model, inference, looks, priors
 from .models import (
     Association, BeliefSnapshot, Capture, Claim, Detection, Entity, Factor, Feedback, KernelRun, Pose, Potential,
 )
@@ -540,11 +542,16 @@ def _active_factors(entity_ids, at, known=None):
 
 
 def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback=None, write=True,
-                 max_iter=30, damping=0.5, tol=1e-4):
+                 max_iter=30, damping=0.5, tol=1e-4, pool_looks=True):
     """Inference over ``entity_ids`` with every factor touching them.
 
     Category: loopy BP over unary + pairwise factors. Existence: exact
     forward filter along each entity's chain.
+
+    Detections are pooled by look first (``looks``): the captures of one image send an entity
+    one message through what that image shows, instead of one each. ``pool_looks=False``
+    multiplies every detection in as its own observation, the rule before looks, for
+    comparison only.
 
     Without ``at`` each entity's belief is as last seen: its category evidence is aged to
     its newest category evidence and its existence chain ends at its newest existence
@@ -589,10 +596,13 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
               for p in Potential.objects.filter(id__in={f.potential_id for f in factors if f.potential_id})}
     existence = {eid: {} for eid in ids}
     pa, pb, ptables = [], [], []
+    pool = looks.Pool(looks.keys(f.capture_id for f in factors) if pool_looks else {})
     for f in factors:
         if any(i not in ents for i in f.entity_ids):
             continue
         table = shared[f.potential_id] if f.potential_id else np.asarray(f.log_table, dtype=float)
+        if pool.add(f, table):
+            continue
         if f.variables[0].startswith('x'):
             if f.entity_ids[0] in existence:
                 by_time = existence[f.entity_ids[0]]
@@ -608,6 +618,14 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
             pa.append(index[f.entity_ids[0]])
             pb.append(index[f.entity_ids[1]])
             ptables.append(table)
+    # One message per look: its hits and misses on the existence chain at the look's date, its
+    # detections' readings on the category, aged like any other perceptual evidence.
+    for eid, _, seen, message, _ in pool.exists_messages():
+        by_time = existence[eid]
+        by_time[seen] = by_time.get(seen, 0.0) + message
+    for eid, _, seen, message, _ in pool.category_messages():
+        age_h = ((at or newest_c.get(eid, now)) - seen).total_seconds() / 3600.0
+        unary[index[eid]] += message * priors.decay_weight(age_h, priors.PERCEPTUAL_HALF_LIFE_H)
 
     post_all, n_iter, converged, delta = inference.category_bp(
         unary, pa, pb, np.asarray(ptables).reshape(len(ptables), tax.n, tax.n),
@@ -653,6 +671,79 @@ def run_local_bp(entity_ids, *, at=None, cause='refresh', capture=None, feedback
     BeliefSnapshot.objects.bulk_create(snaps)
     out['n_snapshots'] = len(snaps)
     return out
+
+
+def _sig(v, digits=3):
+    return float(f'{float(v):.{digits}g}')
+
+
+def support_many(entities, include_field=False):
+    """{entity id: what its belief rests on}.
+
+    ``looks`` has one row per image the entity was captured on, newest first: how many captures
+    showed it, how often it was found and missed, and what that look says on its own from an
+    even prior (``exists``, ``category``). However many captures a look has, it counts once.
+    ``other`` counts the evidence that is not a look: people's corrections, days of field
+    readings, links to neighbours."""
+    ents = {e.id: e for e in entities}
+    if not ents:
+        return {}
+    factors = list(Factor.objects.filter(entity_ids__overlap=list(ents), superseded_at__isnull=True))
+    caps = {c.id: c for c in Capture.objects.filter(id__in={f.capture_id for f in factors if f.capture_id})
+            .only('id', 'imagery_source', 'imagery_start', 'imagery_end', 'captured_at')}
+    look_of = {cid: looks.key_of(cid, c.imagery_source, c.imagery_start, c.imagery_end) for cid, c in caps.items()}
+    first_cap = {}
+    for cid in sorted(caps):
+        first_cap.setdefault(look_of[cid], caps[cid])
+    pool = looks.Pool(look_of)
+    out = {eid: {'looks': {}, 'other': {}} for eid in ents}
+    corrections = set()
+    for f in factors:
+        if f.log_table is not None and pool.add(f, f.log_table):
+            continue
+        if f.kind == 'field' and not include_field:
+            continue
+        if f.kind == 'feedback':  # one correction can hold two factors, on existence and on category
+            if f.feedback_id in corrections:
+                continue
+            corrections.add(f.feedback_id)
+        for eid in f.entity_ids:
+            if eid in out:
+                out[eid]['other'][f.kind] = out[eid]['other'].get(f.kind, 0) + 1
+
+    def row(eid, look, seen):
+        cap = first_cap[look]
+        dated = not look.startswith('capture:')
+        return out[eid]['looks'].setdefault(look, {
+            'source': cap.imagery_source or None, 'identified': dated,
+            'start': cap.imagery_start.isoformat() if dated else None,
+            'end': cap.imagery_end.isoformat() if dated else None,
+            'observed_at': seen.isoformat(), 'n_captures': 0, 'n_found': 0, 'n_missed': 0})
+
+    for eid, look, seen, message, members in pool.exists_messages():
+        r = row(eid, look, seen)
+        odds = math.exp(float(message[1] - message[0]))
+        r.update(n_captures=len({m[3] for m in members}), n_found=sum(m[2] == 'hit' for m in members),
+                 n_missed=sum(m[2] == 'miss' for m in members),
+                 exists={'p': round(odds / (1 + odds), 4), 'odds': _sig(odds)})
+    for eid, look, seen, message, readings in pool.category_messages():
+        tax = taxonomy_by_name(ents[eid].taxonomy)
+        post = np.exp(message - message.max())
+        post /= post.sum()
+        best = int(np.argmax(post))
+        row(eid, look, seen)['category'] = {
+            'category': tax.name_of(best), 'p': round(float(post[best]), 4), 'n_readings': len(readings),
+            'n_agree': sum(int(np.argmax(t)) == best for t in readings)}
+    lo, hi = looks.exists_limits()
+    for eid, s in out.items():
+        s['looks'] = sorted(s['looks'].values(), key=lambda r: r['observed_at'], reverse=True)
+        s['n_looks'] = len(s['looks'])
+        s['one_look_p_exists'] = [round(lo, 3), round(hi, 3)]
+    return out
+
+
+def support(entity, include_field=False):
+    return support_many([entity], include_field)[entity.id]
 
 
 # ---------------------------------------------------------------------------

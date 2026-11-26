@@ -6,6 +6,10 @@
          One entity: candidates, sightings with their imagery dates, belief history, feedback,
          ``now`` (the belief decayed to this moment) and ``layers`` (what satellite passes, aerial
          photographs and lidar recorded over it). Field readings only for signed-in users.
+         ``support`` lists the looks the belief rests on: the captures of one image count once.
+    GET  /webclient/sampler/world/assess?lon=&lat=[&at=ISO|YYYY-MM-DD][&sigma_m=2.5][&taxonomy=urban_v1]
+         The fused assessment at a point: the category distribution composed from the objects
+         that cover it, the chance that no stored object does, and what was looked at there.
     GET  /webclient/sampler/world/imagery_checks?bbox=w,s,e,n
          ``flags``: captures whose basemap imagery has since been replaced by a later acquisition.
          For a signed-in page also ``due``: captures to look up again (see ``imagery_watch``).
@@ -53,7 +57,7 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from django.utils import timezone
 
-from . import fusion, imagery_watch, layers, priors, traits
+from . import assess, fusion, imagery_watch, layers, priors, traits
 from .models import (
     BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, Pose, UserPreference,
 )
@@ -154,6 +158,33 @@ def changes_view(request):
         return _error('basis must be imagery or view')
     return JsonResponse({'status': 'success', **fusion.world_changes(
         bbox, since, until, taxonomy=request.GET.get('taxonomy') or None, basis=basis)})
+
+
+@require_GET
+def assess_view(request):
+    if not fusion.enabled():
+        return _unavailable()
+    try:
+        lon, lat = float(request.GET.get('lon', '')), float(request.GET.get('lat', ''))
+        sigma = float(request.GET['sigma_m']) if request.GET.get('sigma_m') else None
+    except ValueError:
+        return _error('lon and lat are required numbers; sigma_m, if given, is metres')
+    if not (-180 <= lon <= 180 and -89.9 <= lat <= 89.9) or (sigma is not None and not sigma > 0):
+        return _error('lon must be within 180, lat within 89.9, sigma_m positive')
+    at = None
+    if request.GET.get('at'):
+        at = parse_datetime(request.GET['at']) or _day(request.GET['at'])
+        if at is None:
+            return _error('at must be an ISO 8601 time or YYYY-MM-DD')
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=dt_timezone.utc)
+    taxonomy = request.GET.get('taxonomy') or 'urban_v1'
+    try:
+        fusion.taxonomy_by_name(taxonomy)
+    except Exception:
+        return _error('unknown taxonomy')
+    return JsonResponse({'status': 'success',
+                         **assess.assess_point(lon, lat, at=at, taxonomy=taxonomy, sigma_m=sigma)})
 
 
 @require_GET
@@ -259,6 +290,8 @@ def entity_detail(e, include_field=False):
                      for f in Feedback.objects.filter(entity=e).order_by('created_at')],
         # what remote sensors recorded over it; a record, none of it is in the belief
         'layers': layers.entity_layers(e),
+        # the looks behind the belief; field readings are counted only for those who may see them
+        'support': fusion.support(e, include_field=include_field),
     }
     if not e.retired_at:
         now = fusion.run_local_bp([e.id], at=timezone.now(), write=False).get('beliefs', {}).get(e.id)

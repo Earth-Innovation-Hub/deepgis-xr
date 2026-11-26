@@ -60,6 +60,17 @@ P_DETECT = 0.8
 P_FALSE_ALARM = 0.05
 P_DETECT_MAX = 0.98         # a fitted probability is kept inside [P_FALSE_ALARM, P_DETECT_MAX]
 
+# Looks (see looks.py). Captures of one image are not independent: they share the image's
+# mistakes. Between the world and a look's detections sits what the image shows, and these say
+# how far one image can be trusted about the world. Both are hand-set: with a single imagery
+# vintage in the store there is nothing to fit them to.
+LOOK_SHOWS_IF_ABSENT = 0.05     # P(the image shows an object here | none is there)
+LOOK_HIDES_IF_PRESENT = 0.10    # P(the image does not show it | it is there)
+# Chance that one detection reads the image's category differently from what the image shows.
+# Measured: repeated detections of one object on one image name the same top category in 95% of
+# 1,148 pairs (Tempe, Nov 2026), which is (1 - e)^2 for e = 0.026.
+LOOK_REREAD_ERROR = 0.03
+
 # Half-lives in hours. Perceptual (category) evidence is down-weighted by
 # age at inference time; existence half-lives set how fast the existence
 # chain forgets toward 0.5 between observations.
