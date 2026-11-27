@@ -18,7 +18,8 @@ from django.utils import timezone
 from django.core.management.base import CommandError
 
 from deepgis_xr.apps.scene_store import (
-    assess, detection_model, field_evidence, fusion, layers, looks, priors, sampler, traits, zone_views, zonemap,
+    assess, contents, detection_model, field_evidence, fusion, layers, looks, priors, sampler, traits, zone_views,
+    zonemap,
 )
 from deepgis_xr.apps.scene_store.models import (
     BeliefSnapshot, Capture, Detection, DetectionModel, Entity, Factor, Feedback, FieldLink, ImageryCheck,
@@ -508,6 +509,9 @@ class McpTests(TransactionTestCase):
         fusion.ingest_scene_graph(_scene(self.t1), session_id='s1', taxonomy_name='urban_v1')
         fusion.ingest_scene_graph(_scene(self.t1 + timedelta(minutes=20)), session_id='s2', taxonomy_name='urban_v1')
         layers._stats_cache.clear()
+        patch = mock.patch.object(contents, 'available', return_value=[])   # the live content model covers the scene
+        patch.start()
+        self.addCleanup(patch.stop)
 
     def _rpc(self, method, params=None, token='secret', mid=1):
         msg = {'jsonrpc': '2.0', 'method': method, 'params': params or {}}
@@ -654,6 +658,11 @@ class SamplerTests(TransactionTestCase):
     def setUp(self):
         self.t1 = timezone.now() - timedelta(hours=1)
         self.box = [LON - 0.006, LAT - 0.005, LON + 0.006, LAT + 0.005]  # about 1.1 km square
+        self.dir = tempfile.TemporaryDirectory()    # no content model: the live one covers LON, LAT
+        self.addCleanup(self.dir.cleanup)
+        root = override_settings(OBSERVATIONS_ROOT=self.dir.name)
+        root.enable()
+        self.addCleanup(root.disable)
 
     def _post(self, url, body):
         return self.client.post(f'/webclient/sampler/world/{url}', json.dumps(body), content_type='application/json')
@@ -735,6 +744,66 @@ class SamplerTests(TransactionTestCase):
         # Thompson draws differ from call to call; a seed fixes one.
         a, b = (sampler.propose('urban_v1', bbox=self.box, seed=7, record=False) for _ in range(2))
         self.assertEqual((a['cell'], a['band']), (b['cell'], b['band']))
+
+
+class ContentsTests(TransactionTestCase):
+    """What a capture should find before anyone looks: covariates, the fitted model, the sampler's use."""
+
+    databases = {'default', 'observations'}
+
+    def setUp(self):
+        self.t1 = timezone.now() - timedelta(hours=1)
+        self.box = [LON - 0.006, LAT - 0.005, LON + 0.006, LAT + 0.005]
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        root = override_settings(OBSERVATIONS_ROOT=self.dir.name)
+        root.enable()
+        self.addCleanup(root.disable)
+        for cache in (contents._cache, contents._maps_cache, contents._ratio_cache):
+            cache.clear()
+
+    def _capture(self, name, cx, cy, n_vehicles, minutes):
+        sg = _scene(self.t1 + timedelta(minutes=minutes))
+        sg['viewport']['capture_metadata']['world_corners'] = [p[:2] for p in _square(cx, cy, 100)[:4]]
+        sg['nodes'] = [_node(f'v{i}', 'vehicle', _square(cx - 70 + 20 * (i % 8), cy - 60 + 30 * (i // 8), 2))
+                       for i in range(n_vehicles)]
+        sg['edges'] = []
+        return fusion.ingest_scene_graph(sg, session_id=name, taxonomy_name='urban_v1')
+
+    def test_a_fitted_model_steers_the_sampler_to_ground_like_where_objects_were_found(self):
+        grid = sampler.Grid(self.box)
+        x, _ = grid.centres_m()
+        east = (x > grid.nx * sampler.CELL_M / 2).astype(float)       # buildings only in the east half
+        os.makedirs(contents.folder())
+        np.savez_compressed(os.path.join(contents.folder(), 'test.npz'), bbox=np.array(self.box),
+                            names=np.array(['osm_buildings', 's2_ndvi']),
+                            values=np.stack([20 * east, np.full_like(east, 0.1)]).astype(np.float32),
+                            meta=json.dumps({'bbox': self.box}))
+        for i, cy in enumerate((-300, 0, 300)):
+            self._capture(f'e{i}', 300, cy, 14, 2 * i)
+            self._capture(f'w{i}', -300, cy, 1, 2 * i + 1)
+        with self.assertRaises(CommandError):
+            call_command('fit_area_contents', '--name', 'nowhere', stdout=StringIO())
+        out = StringIO()
+        call_command('fit_area_contents', '--name', 'test', stdout=out)
+        self.assertIn('dry run', out.getvalue())
+        self.assertIsNone(contents.load_model('test', 'urban_v1'))
+        self.assertIsNone(sampler.propose('urban_v1', policy='greedy', bbox=self.box, record=False)['predicted']['content'])
+
+        call_command('fit_area_contents', '--name', 'test', '--apply', stdout=StringIO())
+        model = contents.load_model('test', 'urban_v1')
+        self.assertEqual((model['categories'], model['n_captures']), (['vehicle'], 6))
+        self.assertLess(model['cv_deviance_per_row']['model'], model['cv_deviance_per_row']['band_only'])
+        ids = dict(Capture.objects.values_list('session_id', 'id'))
+        ratio = {s: model['capture_ratio'][str(i)] for s, i in ids.items()}
+        self.assertGreater(min(ratio[f'e{i}'] for i in range(3)), 3 * max(ratio[f'w{i}'] for i in range(3)))
+
+        r = sampler.propose('urban_v1', policy='greedy', bbox=self.box, record=False)
+        self.assertGreater(r['lon'], LON)                       # new ground on the side that had objects
+        self.assertGreater(r['predicted']['content'], 1.0)
+        self.assertEqual(r['predicted']['content_model']['name'], 'test')
+        self.assertAlmostEqual(sum(r['predicted']['share'].values()), 1.0, places=2)  # ground shares unscaled
+        self.assertEqual(sampler.model_summary('urban_v1')['contents'][0]['n_captures'], 6)
 
 
 class TraitTests(TransactionTestCase):

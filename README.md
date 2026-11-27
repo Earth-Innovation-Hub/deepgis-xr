@@ -381,6 +381,31 @@ sampler stayed in the 0.2 m band throughout: the gain came from knowing
 what is already covered and which zoom pays, and its misses were places
 with few objects, which the place factor does not yet foresee.
 
+**What ground nobody has captured is likely to hold.** `scene_store/contents.py`
+predicts, per 100 m cell and zoom band, how many objects of each category a
+capture would find, from covariates that cover ground before any capture
+does: Sentinel-2 bands and indices, lidar heights and cover, and
+OpenStreetMap building, road and land-use counts. `build_area_covariates
+--name tempe --bbox w,s,e,n` reads them once onto the grid; `fit_area_contents
+--name tempe --taxonomy urban_v1` fits a ridge Poisson model per category
+(zoom band, covariates, covariates by zoom, each capture weighted alike,
+the ridge chosen by leaving whole captures out) and only reports unless
+`--apply` is given. The sampler multiplies an arm's expected bits by the
+arm's predicted objects over the area's median at that band, held at the
+richest view any capture at that band gave, and fits its yields against
+what the model said of each stored capture without seeing it.
+
+Over Tempe the covariates cut the held-out deviance by 30% against the zoom
+band alone (houses, pools and buildings most; roads and trees little).
+Fitted only on the captures before the sampler's first run and replayed on
+its 60 captures, predicted against realised bits correlates at 0.85 with
+the content factor and 0.77 without; on the sampler's own captures, which
+the place factor ranked poorly, 0.71 against 0.39. It still predicts about
+20 bits low on average. Counts at neighbouring cells, the Markov-field
+term one would reach for first, made the predictions worse: new ground has
+no captured neighbours, and next to captured ground its fitted weights
+were unstable, even with each capture's own cells left out.
+
 **The latest fused map of a zone, to download.** A *zone* is a named area
 (`python manage.py add_zone az/tempe --name "Tempe, Arizona" --census-place
 0473000`, or `--bbox=`, or `--geojson`). Its map is the point assessment
@@ -1636,6 +1661,9 @@ arrays on purpose. Multi-line YAML scalars silently dropped the gunicorn flags.
 - **Sampling loop**: `world/next_view` proposes the next capture by Thompson
   sampling over 100 m cells and zoom bands, `world/pulls` keeps predicted
   against realised, and `samplerLoop.run()` runs it on the search page.
+- **Area contents**: per-cell expected objects from Sentinel-2, lidar and
+  OpenStreetMap (`build_area_covariates`, `fit_area_contents`) steer the
+  sampler to ground like where objects were found.
 
 ### November 2026: digital twins, sims and field readings
 - **Create a digital twin** (superusers): ask the AI pilot to "create a digital

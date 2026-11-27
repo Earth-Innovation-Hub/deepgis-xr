@@ -8,7 +8,7 @@ pixels already read are recorded and not paid.
 
 What a capture returns is modelled from the captures already stored:
 
-    E[bits_new] = place(cell) * sum over k of yield[band, k] * share of the footprint in class k
+    E[bits_new] = place(cell) * content(cell, band) * sum over k of yield[band, k] * share in class k
 
 The classes are those of ``fusion.ground_read``: ground no capture has covered, ground covered
 only at a coarser zoom, and ground already read at this zoom. ``yield`` is the bits a capture
@@ -17,6 +17,12 @@ because detections per capture are nearly flat across zoom. The yields have a no
 posterior from a linear regression on the stored captures, with every band shrunk toward the
 all-band fit. ``place`` is how much captures near the cell returned against what the yields
 predicted, smoothed over ``PLACE_LENGTH_M`` and shrunk toward 1 where there are few.
+``content`` is what ``contents`` expects a capture of that footprint and zoom to detect,
+against the band's mean, where a fitted model covers the area (1 elsewhere); the yields are
+then fitted with each stored capture's own content factor, as the model would have predicted
+it without that capture. On a replay of the first Tempe run it raised the correlation of
+predicted with realised bits from 0.39 to 0.70 on the sampler's own captures; it predicts too
+low by about a fifth.
 
 Thompson sampling draws the yields and the place field from their posteriors and takes the arm
 with the largest draw. ``uniform`` takes a cell and a band at random and is the baseline;
@@ -32,7 +38,7 @@ from django.contrib.gis.geos import Point
 from django.db import connections
 from scipy.ndimage import uniform_filter
 
-from . import fusion, priors
+from . import contents, fusion, priors
 from .models import Capture, SamplerPull
 
 DB = fusion.DB
@@ -218,9 +224,14 @@ def propose(taxonomy, *, policy='thompson', bbox=None, image_size=None, sources=
     rng = np.random.default_rng(seed)
     grid = Grid(bbox)
     rows = records(taxonomy)
-    mean, cov, info = fit_yields(rows)
     n_b, n_k = len(BAND_GSD), len(CLASSES)
-    share = shares(grid, rows, image_size, sources)
+    ground = shares(grid, rows, image_size, sources)
+    share = ground
+    content = contents.for_sampler(taxonomy, grid, image_size)
+    if content:
+        rows = [dict(r, share=[v * content['ratio'](r) for v in r['share']]) if r['share'] else r for r in rows]
+        share = ground * content['maps'][:, None].astype(np.float32)
+    mean, cov, info = fit_yields(rows)
     place_mean, place_sd = place_field(grid, rows, mean)
     expected = np.einsum('bk,bkyx->byx', np.clip(mean, 0.0, None).reshape(n_b, n_k), share) * np.exp(place_mean)
 
@@ -245,8 +256,10 @@ def propose(taxonomy, *, policy='thompson', bbox=None, image_size=None, sources=
     predicted = {
         'bits_new': round(float(expected[b, iy, ix]), 1),
         'draw': round(draw, 1) if draw is not None else None,
-        'share': {k: round(float(share[b, j, iy, ix]), 3) for j, k in enumerate(CLASSES)},
+        'share': {k: round(float(ground[b, j, iy, ix]), 3) for j, k in enumerate(CLASSES)},
         'place': round(float(math.exp(place_mean[iy, ix])), 3),
+        'content': round(float(content['maps'][b, iy, ix]), 3) if content else None,
+        'content_model': {'name': content['name'], 'fitted_at': content['fitted_at']} if content else None,
         'yield': {k: round(float(mean[b * n_k + j]), 1) for j, k in enumerate(CLASSES)},
         'n_captures': info['n_captures'],
     }
@@ -264,8 +277,8 @@ def propose(taxonomy, *, policy='thompson', bbox=None, image_size=None, sources=
 
 
 def model_summary(taxonomy):
-    """The fitted yields, for display."""
-    return fit_yields(records(taxonomy))[2]
+    """The fitted yields (before any content factor), and the content models, for display."""
+    return dict(fit_yields(records(taxonomy))[2], contents=contents.summary(taxonomy))
 
 
 def report(pull_id, session_id=None, error=None):
