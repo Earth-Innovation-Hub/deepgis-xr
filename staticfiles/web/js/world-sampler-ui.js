@@ -1555,6 +1555,18 @@ class WorldSamplerUI {
                 }
             }
         }
+        // Cesium's worker measures each edge after a round trip through Cartesian coordinates. Along a
+        // parallel, an edge of a few cm can come back with zero rhumb-line length, and rendering then stops.
+        const ell = Cesium.Ellipsoid.WGS84;
+        const carto = (p) => ell.cartesianToCartographic(Cesium.Cartesian3.fromDegrees(p[0], p[1]));
+        const zeroEdge = (a, b) => Math.abs(a[1] - b[1]) < 1e-6
+            && !(new Cesium.EllipsoidRhumbLine(carto(a), carto(b), ell).surfaceDistance > 0);
+        for (let i = 0; i < pts.length && pts.length >= 3; i++) {
+            if (zeroEdge(pts[i], pts[(i + 1) % pts.length])) {
+                pts.splice((i + 1) % pts.length, 1);
+                i--;
+            }
+        }
         if (pts.length < 3) return null;
 
         let area2 = 0;
