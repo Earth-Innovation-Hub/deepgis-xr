@@ -116,6 +116,20 @@ FIELD_P_GREEN = {
     'pavement': 0.1, 'parking_lot': 0.1, 'pool': 0.1, 'water': 0.1,
 }
 FIELD_P_GREEN_OTHER = 0.25
+# Laser hit height (EKF-aimed readings only). A return from more than FIELD_ELEVATED_M above
+# the ground under the rover hit something standing. P(elevated | category) for the entity the
+# target registers to; ground categories keep some chance for poles, signs, parked cars and
+# walls just outside an outline. Categories not listed use FIELD_P_ELEVATED_OTHER.
+FIELD_ELEVATED_M = 0.5
+FIELD_P_ELEVATED = {
+    'building': 0.9, 'house': 0.9, 'solar_panel': 0.8, 'vehicle': 0.85, 'tree': 0.9,
+    'vegetation_other': 0.5, 'debris': 0.4, 'parking_lot': 0.3,
+    'road': 0.2, 'pavement': 0.2, 'bare_ground': 0.2, 'pool': 0.2, 'water': 0.15,
+}
+FIELD_P_ELEVATED_OTHER = 0.5
+# A hit this far (or two sigma, if more) above the entity's lidar 90th-percentile height cannot
+# be on it: the link stays, the height says nothing about the entity.
+FIELD_LIDAR_SLACK_M = 1.5
 
 # Adjacency co-occurrence (symmetric), log-potential added when both hold.
 CONTEXT_BETA = 0.5
@@ -216,6 +230,15 @@ def miss_table(p_detect):
     At ``p_detect`` = P_FALSE_ALARM the look says nothing; it never counts for the object."""
     p = min(max(float(p_detect), P_FALSE_ALARM), P_DETECT_MAX)
     return [math.log(1 - P_FALSE_ALARM), math.log(1 - p)]
+
+
+def field_height_table(taxonomy, p_elevated):
+    """log P(this hit height | category), the hit being elevated with probability ``p_elevated``."""
+    t = np.empty(taxonomy.n)
+    for i, cat in enumerate(taxonomy.categories):
+        p = FIELD_P_ELEVATED.get(cat, FIELD_P_ELEVATED_OTHER)
+        t[i] = math.log(p_elevated * p + (1 - p_elevated) * (1 - p))
+    return t
 
 
 def field_green_table(taxonomy, green):

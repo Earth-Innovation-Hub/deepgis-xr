@@ -2136,6 +2136,9 @@ class FieldReadingAdmin(admin.ModelAdmin):
         'image_note',
         'combined_note',
         'spectrum_pretty',
+        'fcu_pose_line',
+        'fcu_pose_pretty',
+        'aim_line',
     )
     fieldsets = (
         ('Capture', {
@@ -2152,6 +2155,7 @@ class FieldReadingAdmin(admin.ModelAdmin):
                 'camera_where',
                 ('alt_amsl', 'heading_deg'),
                 ('pitch_deg', 'speed_mps'),
+                'fcu_pose_line',
             ),
         }),
         ('Laser', {
@@ -2160,6 +2164,7 @@ class FieldReadingAdmin(admin.ModelAdmin):
                 ('range_min_m', 'range_max_m'),
                 'target_where',
                 'target_up_m',
+                'aim_line',
             ),
         }),
         ('Sky', {
@@ -2173,6 +2178,10 @@ class FieldReadingAdmin(admin.ModelAdmin):
         }),
         ('Spectrum JSON', {
             'fields': ('spectrum_pretty',),
+            'classes': ('collapse',),
+        }),
+        ('FCU pose JSON', {
+            'fields': ('fcu_pose_pretty',),
             'classes': ('collapse',),
         }),
     )
@@ -2321,6 +2330,50 @@ class FieldReadingAdmin(admin.ModelAdmin):
         ) if url else ''
         plot = mark_safe('<div class="reading-spectrum">%s</div>' % svg) if svg else ''
         return mark_safe(_READING_PAIR_STYLE + '<div class="reading-pair">%s%s</div>' % (image, plot))
+
+    @admin.display(description='EKF attitude')
+    def fcu_pose_line(self, obj):
+        fcu = obj.fcu_pose if isinstance(obj.fcu_pose, dict) else None
+        if not fcu:
+            return '—'
+        parts = []
+        rpy = fcu.get('rpy_deg')
+        cov = fcu.get('pose_cov') or []
+        if isinstance(rpy, list) and len(rpy) == 3 and all(isinstance(v, (int, float)) for v in rpy):
+            # roll, pitch and yaw variances sit at 15, 18 and 20 of the upper triangle
+            sigmas = [cov[i] if len(cov) == 21 else None for i in (15, 18, 20)]
+            for name, angle, var in zip(('roll', 'pitch', 'yaw'), rpy, sigmas):
+                if isinstance(var, (int, float)) and var >= 0:
+                    parts.append('%s %.1f° ± %.2f°' % (name, angle, math.degrees(math.sqrt(var))))
+                else:
+                    parts.append('%s %.1f°' % (name, angle))
+        ekf = fcu.get('ekf') or {}
+        if isinstance(ekf.get('pos_h_acc_m'), (int, float)):
+            parts.append('horizontal accuracy %.2f m' % ekf['pos_h_acc_m'])
+        if isinstance(fcu.get('dt_s'), (int, float)):
+            parts.append('%+.0f ms from the frame' % (fcu['dt_s'] * 1000))
+        return format_html('{}', ', '.join(parts) if parts else '—')
+
+    @admin.display(description='aim')
+    def aim_line(self, obj):
+        a = obj.aim if isinstance(obj.aim, dict) else None
+        if not a:
+            return '—'
+        parts = ['by the EKF' if a.get('source') == 'ekf' else 'by the heading']
+        if isinstance(a.get('azimuth_deg'), (int, float)) and isinstance(a.get('elevation_deg'), (int, float)):
+            parts.append('%.1f° from north, %+.1f° up' % (a['azimuth_deg'], a['elevation_deg']))
+        if isinstance(a.get('sigma_m'), (int, float)):
+            parts.append('target ± %.1f m' % a['sigma_m'])
+        if isinstance(a.get('hit_height_m'), (int, float)):
+            parts.append('hit %.2f ± %.2f m above the ground' % (a['hit_height_m'], a.get('sigma_up_m') or 0))
+        return format_html('{}', ', '.join(parts))
+
+    @admin.display(description='FCU pose')
+    def fcu_pose_pretty(self, obj):
+        if not obj.fcu_pose:
+            return '—'
+        return format_html("<pre style='max-height:480px; overflow:auto'>{}</pre>",
+                           json.dumps(obj.fcu_pose, indent=2))
 
     @admin.display(description='spectrum')
     def spectrum_pretty(self, obj):

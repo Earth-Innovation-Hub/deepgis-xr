@@ -182,6 +182,67 @@ def clean_pose(data):
     return pose
 
 
+# fcu_pose lists and their lengths; None in a list is a value the flight controller did not know
+FCU_VECTORS = {"q": 4, "rpy_deg": 3, "pos_m": 3, "vel_mps": 3, "rates_rps": 3, "pose_cov": 21, "vel_cov": 21}
+FCU_INTS = ("t_boot_us", "frame_id", "child_frame_id", "reset", "estimator", "quality")
+
+
+def _int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _fcu_list(v, n):
+    if not isinstance(v, list) or len(v) != n or not all(x is None or _finite(x) for x in v):
+        return None
+    return [None if x is None else float(x) for x in v]
+
+
+def clean_fcu_pose(data):
+    """The flight controller's EKF pose sent with a frame, or None without a unit quaternion."""
+    if not isinstance(data, dict):
+        return None
+    q = _fcu_list(data.get("q"), 4)
+    if q is None or None in q or abs(math.sqrt(sum(c * c for c in q)) - 1.0) > 0.01:
+        return None
+    out = {}
+    for field, n in FCU_VECTORS.items():
+        v = _fcu_list(data.get(field), n)
+        if v is not None:
+            out[field] = v
+    for field in FCU_INTS:
+        if _int(data.get(field)):
+            out[field] = data[field]
+    if _finite(data.get("dt_s")) and abs(data["dt_s"]) <= 5:
+        out["dt_s"] = float(data["dt_s"])
+    src = data.get("src")
+    if isinstance(src, str) and src.strip():
+        out["src"] = src.strip()[:40]
+    ekf = data.get("ekf")
+    if isinstance(ekf, dict):
+        e = {"flags": ekf["flags"]} if _int(ekf.get("flags")) else {}
+        for field in ("pos_h_acc_m", "pos_v_acc_m"):
+            if _finite(ekf.get(field)):
+                e[field] = float(ekf[field])
+        ratios = _fcu_list(ekf.get("ratios"), 6)
+        if ratios is not None:
+            e["ratios"] = ratios
+        if e:
+            out["ekf"] = e
+    mount = data.get("mount")
+    if isinstance(mount, dict):
+        m = {k: float(mount[k]) for k in ("pitch_deg", "hfov_deg", "height_m") if _finite(mount.get(k))}
+        if m:
+            out["mount"] = m
+    gps = data.get("gps")
+    if isinstance(gps, dict):
+        g = {k: float(gps[k]) for k in ("h_var_m2", "v_var_m2") if _finite(gps.get(k)) and gps[k] >= 0}
+        if _int(gps.get("cov_type")):
+            g["cov_type"] = gps["cov_type"]
+        if g:
+            out["gps"] = g
+    return out
+
+
 def _json_object(raw):
     try:
         data = json.loads(raw or b"{}")
@@ -286,7 +347,7 @@ def vehicle_frame(request):
     info["seq"] = (live.get(f"frame_info:{vid}") or {}).get("seq", 0) + 1
     live.set(f"frame:{vid}", bytes(request.body), FRAME_TTL_SEC)
     live.set(f"frame_info:{vid}", info, FRAME_TTL_SEC)
-    field_readings.remember_frame(vid, info, request.body)
+    field_readings.remember_frame(vid, info, request.body, clean_fcu_pose(meta.get("fcu_pose")))
     return JsonResponse({"ok": True, "seq": info["seq"]})
 
 

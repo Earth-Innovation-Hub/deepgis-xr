@@ -10,6 +10,10 @@ uncertainty, an isotropic Gaussian, that falls inside the entity's outline. A re
 linked to the smallest entity holding at least half of it, else to the one holding most,
 if that is at least ``priors.FIELD_MIN_WEIGHT``.
 
+When the readings table aimed the target with the flight controller's EKF, it stored that
+reading's own 1-sigma ground error (GPS accuracy and attitude) in ``aim``; that replaces the
+fixed position and heading errors.
+
 Evidence. The NIR/red index is a ratio of raw counts, not reflectance, so it answers one
 question only: does the patch read as green vegetation? Daylight readings with the index
 are usable (the instrument leaves the index out when its bands clipped). The usable readings of one vehicle on one entity in one day are views of the
@@ -17,6 +21,12 @@ same patch through the same instrument, not independent looks, so together they 
 one: the day's factor is the weight-averaged log-likelihood table, scaled down when the
 weights sum to less than one reading. It is a ``field`` factor on the category; existence
 is left alone, and so is the source-reliability refit, which counts people's corrections.
+
+Height. An EKF-aimed reading also knows how high above the ground under the rover the laser
+hit. A hit well above the ground means the entity has something standing there (a wall, a
+car, a canopy). That is a second, separate day factor (``metadata.signal = 'height'``), at
+any sun, unless the hit is higher than the entity's lidar height allows, in which case the
+beam was on something else and the height is left out.
 
 Nothing here copies a position out of the readings table.
 """
@@ -34,7 +44,7 @@ from django.utils import timezone
 from deepgis_xr.apps.web.world_sampler_api.urban_taxonomy import taxonomy_by_name
 
 from . import fusion, priors
-from .models import Entity, Factor, FieldLink
+from .models import Entity, Factor, FieldLink, LayerSample
 
 log = logging.getLogger(__name__)
 
@@ -43,12 +53,51 @@ TAXONOMY = 'urban_v1'
 RINGS, SPOKES = 6, 12
 M_PER_DEG = 111320.0
 RULE = f'nir_red>{priors.FIELD_GREEN_INDEX}'
+HEIGHT_RULE = f'hit>{priors.FIELD_ELEVATED_M}m'
 
 
 def target_sigma_m(range_m, patch_m=None):
     """1-sigma position error of the laser target on the ground, metres."""
     aim = (range_m or 0.0) * math.radians(priors.FIELD_HEADING_SIGMA_DEG)
     return math.sqrt(priors.FIELD_POSITION_SIGMA_M ** 2 + aim ** 2 + ((patch_m or 0.0) / 4.0) ** 2)
+
+
+def reading_sigma_m(reading, patch_m=None):
+    """The reading's own target error when its aim carries one, else the fixed assumption."""
+    aim = reading.aim if isinstance(getattr(reading, 'aim', None), dict) else {}
+    sigma = aim.get('sigma_m')
+    if isinstance(sigma, (int, float)) and math.isfinite(sigma) and sigma > 0:
+        return math.sqrt(sigma ** 2 + ((patch_m or 0.0) / 4.0) ** 2)
+    return target_sigma_m(reading.range_m, patch_m)
+
+
+def lidar_p90_m(entity):
+    """The latest lidar 90th-percentile height above ground over the entity, or None."""
+    s = (LayerSample.objects.filter(entity=entity, scene__layer='height').select_related('scene')
+         .order_by('-scene__observed_at').first())
+    if s is None:
+        return None
+    names = (s.scene.metadata or {}).get('bands') or []
+    if 'p90' in names and len(s.bands) == len(names):
+        return float(s.bands[names.index('p90')])
+    return float(s.value)
+
+
+def height_signal(reading, entity):
+    """{'hit_height_m', 'p_elevated', 'lidar_p90_m', 'height_ok'} for an EKF-aimed hit, else {}."""
+    aim = reading.aim if isinstance(getattr(reading, 'aim', None), dict) else {}
+    h, s = aim.get('hit_height_m'), aim.get('sigma_up_m')
+    if not (isinstance(h, (int, float)) and isinstance(s, (int, float)) and s > 0):
+        return {}
+    p = 0.5 * (1.0 + math.erf((h - priors.FIELD_ELEVATED_M) / (s * math.sqrt(2.0))))
+    out = {'hit_height_m': round(float(h), 2), 'p_elevated': round(p, 4)}
+    p90 = lidar_p90_m(entity)
+    ok = True
+    if p90 is not None:
+        out['lidar_p90_m'] = round(p90, 2)
+        ok = h - p90 <= max(priors.FIELD_LIDAR_SLACK_M, 2.0 * s)
+    out['height_ok'] = ok
+    return out
 
 
 def _sample(lon, lat, sigma_m):
@@ -113,24 +162,41 @@ def _day_span(when):
 
 
 def refresh_day(entity_id, vehicle_id, when):
-    """Rebuild the one ``field`` factor for an entity, a vehicle and the UTC day of ``when``.
+    """Rebuild the ``field`` factors (green, height) for an entity, a vehicle and the UTC day of ``when``.
 
     Returns True when the stored evidence changed."""
+    green = _refresh_signal(entity_id, vehicle_id, when, 'green')
+    height = _refresh_signal(entity_id, vehicle_id, when, 'height')
+    return green or height
+
+
+def _refresh_signal(entity_id, vehicle_id, when, signal):
     start, end = _day_span(when)
     day = start.date().isoformat()
-    links = list(FieldLink.objects.filter(entity_id=entity_id, vehicle_id=vehicle_id, usable=True,
-                                          observed_at__gte=start, observed_at__lt=end))
-    live = list(Factor.objects.filter(kind='field', entity_ids=[entity_id], superseded_at__isnull=True,
-                                      metadata__vehicle=vehicle_id, metadata__day=day))
+    links = FieldLink.objects.filter(entity_id=entity_id, vehicle_id=vehicle_id,
+                                     observed_at__gte=start, observed_at__lt=end)
+    if signal == 'green':
+        links = list(links.filter(usable=True))
+    else:
+        links = [k for k in links if 'p_elevated' in k.signal and k.signal.get('height_ok')]
+    live = [f for f in Factor.objects.filter(kind='field', entity_ids=[entity_id], superseded_at__isnull=True,
+                                             metadata__vehicle=vehicle_id, metadata__day=day)
+            if (f.metadata or {}).get('signal', 'green') == signal]
     table, meta = None, None
     if links:
         entity = Entity.objects.get(id=entity_id)
         tax = taxonomy_by_name(entity.taxonomy)
         total = sum(k.weight for k in links)
-        table = sum(k.weight * priors.field_green_table(tax, bool(k.signal.get('green'))) for k in links)
+        if signal == 'green':
+            table = sum(k.weight * priors.field_green_table(tax, bool(k.signal.get('green'))) for k in links)
+            meta = {'vehicle': vehicle_id, 'day': day, 'n_readings': len(links), 'weight': round(total, 3),
+                    'n_green': sum(1 for k in links if k.signal.get('green')), 'rule': RULE}
+        else:
+            table = sum(k.weight * priors.field_height_table(tax, k.signal['p_elevated']) for k in links)
+            meta = {'vehicle': vehicle_id, 'day': day, 'signal': 'height', 'n_readings': len(links),
+                    'weight': round(total, 3), 'n_elevated': sum(1 for k in links if k.signal['p_elevated'] > 0.5),
+                    'rule': HEIGHT_RULE}
         table = table / max(total, 1.0)
-        meta = {'vehicle': vehicle_id, 'day': day, 'n_readings': len(links), 'weight': round(total, 3),
-                'n_green': sum(1 for k in links if k.signal.get('green')), 'rule': RULE}
     if len(live) == 1 and table is not None and live[0].metadata == meta and \
             np.allclose(np.asarray(live[0].log_table, dtype=float), table, atol=1e-9):
         return False
@@ -166,7 +232,7 @@ def register_reading(reading, *, infer=True):
             foot = spec.get('footprint') if isinstance(spec.get('footprint'), dict) else {}
             patch = foot.get('diameter_m') if isinstance(foot.get('diameter_m'), (int, float)) else None
             entity, weight = entity_under(reading.target.x, reading.target.y,
-                                          target_sigma_m(reading.range_m, patch))
+                                          reading_sigma_m(reading, patch))
         if entity is None:
             if old is not None:
                 old.delete()
@@ -174,6 +240,7 @@ def register_reading(reading, *, infer=True):
                     changed.add(old.entity_id)
         else:
             signal, usable = signal_of(reading)
+            signal.update(height_signal(reading, entity))
             fields = {'entity': entity, 'vehicle_id': reading.vehicle_id, 'observed_at': reading.captured,
                       'weight': round(weight, 4), 'range_m': reading.range_m, 'usable': usable, 'signal': signal}
             moved = old is not None and (old.entity_id != entity.id or old.vehicle_id != reading.vehicle_id
@@ -215,6 +282,8 @@ def register_all(*, vehicle_id=None, infer=True):
         'usable as evidence (daylight, index present)': links.filter(usable=True).count(),
         'entities with a registered reading': links.values('entity_id').distinct().count(),
         'field factors live': Factor.objects.filter(kind='field', superseded_at__isnull=True).count(),
+        'of which height': Factor.objects.filter(kind='field', superseded_at__isnull=True,
+                                                 metadata__signal='height').count(),
         'entities whose evidence changed': len(changed),
         'entities re-inferred': n_bp,
     }, changed

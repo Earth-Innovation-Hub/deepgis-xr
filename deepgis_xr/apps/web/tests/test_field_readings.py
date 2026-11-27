@@ -30,6 +30,90 @@ class FieldReadingTests(SimpleTestCase):
     def test_no_heading_has_no_target(self):
         self.assertIsNone(destination(33.0, -112.0, float("nan"), 0, 4.5))
 
+    def test_fcu_pose_keeps_quaternion_rates_and_covariance(self):
+        from deepgis_xr.apps.web.views.vehicles import clean_fcu_pose
+
+        cov = [None] * 21
+        cov[0], cov[15], cov[20] = 7.3e-05, 1.5e-05, 4.7e-04
+        fcu = clean_fcu_pose({
+            "src": "px4_odometry", "dt_s": -0.012, "t_boot_us": 828975503, "reset": 17,
+            "q": [-0.2327, 0.0289, 0.0206, -0.9719], "rates_rps": [0.0013, 0.0018, 0.0013],
+            "pose_cov": cov, "vel_cov": [0.0007] + [None] * 20,
+            "ekf": {"flags": 831, "pos_h_acc_m": 4.2, "ratios": [0.1] * 6},
+            "mount": {"pitch_deg": 0.0, "hfov_deg": 0.0}, "extra": "dropped",
+        })
+        self.assertEqual(fcu["q"], [-0.2327, 0.0289, 0.0206, -0.9719])
+        self.assertEqual(fcu["pose_cov"][15], 1.5e-05)
+        self.assertIsNone(fcu["pose_cov"][1])
+        self.assertEqual(fcu["ekf"]["flags"], 831)
+        self.assertEqual(fcu["reset"], 17)
+        self.assertNotIn("extra", fcu)
+
+    def test_ekf_aim_includes_the_rovers_pitch_and_yaw(self):
+        from deepgis_xr.apps.web.field_readings import ekf_aim
+
+        cov = [None] * 21
+        cov[18], cov[20] = 1.4e-05, 4.7e-04
+        # the parked rover on 2026-11-27: roll -3.1, pitch +2.7, yaw 153.6 degrees
+        fcu = {"q": [-0.2271648, 0.02923518, 0.02070377, -0.9731973], "dt_s": -0.016,
+               "pose_cov": cov, "ekf": {"flags": 1189}}
+        a = ekf_aim(fcu, 0.0)
+        self.assertEqual(a["source"], "ekf")
+        self.assertAlmostEqual(a["azimuth_deg"], 153.6, delta=0.2)
+        self.assertAlmostEqual(a["elevation_deg"], 2.7, delta=0.2)
+        self.assertAlmostEqual(a["sigma_deg"], math.hypot(math.degrees(math.sqrt(4.7e-04)), 2.0), places=2)
+        # a camera tilted 10 degrees down on the same rover points 10 degrees lower
+        self.assertAlmostEqual(ekf_aim(fcu, -10.0)["elevation_deg"], 2.7 - 10.0, delta=0.3)
+
+    def test_ekf_aim_refuses_a_stale_or_unaligned_estimate(self):
+        from deepgis_xr.apps.web.field_readings import ekf_aim
+
+        cov = [None] * 21
+        cov[20] = 4.7e-04
+        good = {"q": [1.0, 0.0, 0.0, 0.0], "dt_s": 0.0, "pose_cov": cov, "ekf": {"flags": 1}}
+        self.assertAlmostEqual(ekf_aim(good)["azimuth_deg"], 0.0, places=6)
+        self.assertIsNone(ekf_aim({**good, "dt_s": 0.5}))
+        self.assertIsNone(ekf_aim({**good, "ekf": {"flags": 0}}))
+        self.assertIsNone(ekf_aim({**good, "pose_cov": [None] * 21}))
+        wide = [None] * 21
+        wide[20] = math.radians(20) ** 2
+        self.assertIsNone(ekf_aim({**good, "pose_cov": wide}))
+
+    def test_target_uses_the_ekf_and_records_the_hit_height(self):
+        from django.contrib.gis.geos import Point
+
+        from deepgis_xr.apps.web.field_readings import _place
+        from deepgis_xr.apps.web.models import FieldReading
+
+        cov = [None] * 21
+        cov[18], cov[20] = 1e-05, 1e-04
+        fcu = {"q": [1.0, 0.0, 0.0, 0.0], "dt_s": 0.0, "pose_cov": cov,
+               "mount": {"pitch_deg": 0.0, "height_m": 1.5}, "gps": {"h_var_m2": 16.0}}
+        r = FieldReading(vehicle_id="v", captured_usec=1, camera=Point(-112.0, 33.0, srid=4326),
+                         range_m=10.0, range_valid=True, pitch_deg=0.0, heading_deg=90.0, fcu_pose=fcu)
+        _place(r)
+        self.assertEqual(r.aim["source"], "ekf")
+        self.assertAlmostEqual(r.target.x, -112.0, places=7)   # north by the EKF, not east by the heading
+        self.assertGreater(r.target.y, 33.0)
+        self.assertAlmostEqual(r.aim["hit_height_m"], 1.5, places=3)
+        self.assertAlmostEqual(r.aim["gps_sigma_m"], 4.0, places=3)
+        self.assertGreater(r.aim["sigma_m"], 4.0)
+        r.fcu_pose = None
+        _place(r)
+        self.assertEqual(r.aim["source"], "heading")
+        self.assertNotIn("hit_height_m", r.aim)
+        self.assertGreater(r.target.x, -112.0)
+
+    def test_fcu_pose_needs_a_unit_quaternion_and_drops_bad_lists(self):
+        from deepgis_xr.apps.web.views.vehicles import clean_fcu_pose
+
+        self.assertIsNone(clean_fcu_pose({"q": [1, 1, 0, 0]}))
+        self.assertIsNone(clean_fcu_pose({"q": [1, None, 0, 0]}))
+        self.assertIsNone(clean_fcu_pose("not a dict"))
+        fcu = clean_fcu_pose({"q": [1, 0, 0, 0], "pose_cov": [0.1] * 20, "rates_rps": [0, "x", 0]})
+        self.assertNotIn("pose_cov", fcu)
+        self.assertNotIn("rates_rps", fcu)
+
 
     def test_field_readings_are_in_the_existing_admin(self):
         from django.contrib import admin

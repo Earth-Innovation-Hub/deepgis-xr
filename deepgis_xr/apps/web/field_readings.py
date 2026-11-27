@@ -5,8 +5,12 @@ posts, keyed by the capture time the vehicle already sends, in the observations
 database. A missing database or a write error never fails the live post.
 
 The target is the end of the laser ray: ``range`` metres from the camera along
-its heading, with pitch measured up from the horizon. Heading 0 is north.
-Without a heading the reading is kept and the target is left empty.
+its axis, with elevation measured up from the horizon. Azimuth 0 is north.
+The axis comes from the flight controller's EKF attitude when the reading carries
+a usable one, else from the stored heading and mount pitch; ``aim`` records which,
+with the target's 1-sigma ground error and, with the EKF, the hit's height above
+the ground under the rover. Without either the reading is kept and the target is
+left empty.
 """
 
 import base64
@@ -34,6 +38,13 @@ log = logging.getLogger(__name__)
 
 EARTH_R_M = 6371000.0
 QUERY_LIMIT = 500
+EKF_MAX_DT_S = 0.25          # an EKF sample further from the frame than this is not its pose
+EKF_ATTITUDE_OK = 1          # ESTIMATOR_STATUS flag: attitude estimate good
+EKF_MAX_YAW_SIGMA_DEG = 10.0
+MOUNT_SIGMA_DEG = 2.0        # camera parallel to the controller by design, not yet calibrated
+HEADING_SIGMA_DEG = 5.0      # compass or course over ground, as field_evidence assumed before
+GPS_SIGMA_M = 2.5            # when the reading carries no GPS accuracy
+CAMERA_HEIGHT_SIGMA_M = 0.1  # mount height above flat ground, and the ground not being flat
 _field_yes = set()
 
 
@@ -72,11 +83,11 @@ def destination(lat, lon, heading_deg, pitch_deg, range_m):
     return lat + dlat, lon + dlon, up
 
 
-def remember_frame(vid, info, jpeg):
+def remember_frame(vid, info, jpeg, fcu_pose=None):
     if not enabled():
         return
     try:
-        _remember_frame(vid, info, jpeg)
+        _remember_frame(vid, info, jpeg, fcu_pose)
     except Exception:
         log.exception("field reading frame for %s was not stored", vid)
 
@@ -110,21 +121,93 @@ def _point(lon, lat):
     return Point(float(lon), float(lat), srid=4326)
 
 
+def _variance(cov, i):
+    v = cov[i] if isinstance(cov, list) and len(cov) == 21 else None
+    return float(v) if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0 else None
+
+
+def ekf_aim(fcu, mount_pitch_deg=None):
+    """Where the camera axis points by the flight controller's EKF, or None when it cannot be trusted.
+
+    ``fcu`` is a reading's ``fcu_pose``. The axis is the body's forward axis pitched up by the
+    mount, rotated into north-east-down by the EKF quaternion, so roll and the rover's own
+    pitch are included. Its uncertainty is the EKF's yaw (or pitch, if larger) variance plus
+    the uncalibrated camera-to-controller alignment.
+    """
+    if not isinstance(fcu, dict):
+        return None
+    q = fcu.get("q")
+    if not (isinstance(q, list) and len(q) == 4 and all(isinstance(c, (int, float)) for c in q)):
+        return None
+    dt = fcu.get("dt_s")
+    if not isinstance(dt, (int, float)) or abs(dt) > EKF_MAX_DT_S:
+        return None
+    flags = (fcu.get("ekf") or {}).get("flags")
+    if isinstance(flags, int) and not flags & EKF_ATTITUDE_OK:
+        return None
+    var_yaw = _variance(fcu.get("pose_cov"), 20)
+    var_pitch = _variance(fcu.get("pose_cov"), 18)
+    if var_yaw is None or math.degrees(math.sqrt(var_yaw)) > EKF_MAX_YAW_SIGMA_DEG:
+        return None
+    w, x, y, z = q
+    mp = math.radians(mount_pitch_deg if isinstance(mount_pitch_deg, (int, float)) else 0.0)
+    fwd, down = math.cos(mp), -math.sin(mp)
+    n = (1 - 2 * (y * y + z * z)) * fwd + 2 * (x * z + w * y) * down
+    e = 2 * (x * y + w * z) * fwd + 2 * (y * z - w * x) * down
+    d = 2 * (x * z - w * y) * fwd + (1 - 2 * (x * x + y * y)) * down
+    mount = math.radians(MOUNT_SIGMA_DEG) ** 2
+    return {
+        "source": "ekf",
+        "azimuth_deg": round(math.degrees(math.atan2(e, n)) % 360.0, 3),
+        "elevation_deg": round(math.degrees(math.atan2(-d, math.hypot(n, e))), 3),
+        "sigma_deg": round(math.degrees(math.sqrt(max(var_yaw, var_pitch or 0.0) + mount)), 3),
+        "sigma_elev_deg": round(math.degrees(math.sqrt((var_pitch if var_pitch is not None else var_yaw) + mount)), 3),
+    }
+
+
+def aim(reading):
+    """The camera axis for a reading: the EKF's when it is usable, else the stored heading."""
+    a = ekf_aim(reading.fcu_pose, reading.pitch_deg)
+    if a is None and reading.heading_deg is not None:
+        a = {"source": "heading", "azimuth_deg": reading.heading_deg,
+             "elevation_deg": reading.pitch_deg if reading.pitch_deg is not None else 0.0,
+             "sigma_deg": HEADING_SIGMA_DEG}
+    return a
+
+
+def _gps_sigma_m(reading):
+    gps = (reading.fcu_pose or {}).get("gps") if isinstance(reading.fcu_pose, dict) else None
+    var = (gps or {}).get("h_var_m2")
+    if isinstance(var, (int, float)) and math.isfinite(var) and var > 0:
+        return math.sqrt(var)
+    return GPS_SIGMA_M
+
+
 def _place(reading):
-    """Fill the target from the camera pose and the laser, or clear it."""
+    """Fill the target and its aim from the camera pose and the laser, or clear them."""
     reading.target = None
     reading.target_up_m = None
-    if not reading.range_valid or reading.range_m is None or reading.camera is None:
+    a = aim(reading)
+    reading.aim = a
+    if a is None or not reading.range_valid or reading.range_m is None or reading.camera is None:
         return
-    if reading.heading_deg is None:
-        return
-    landed = destination(reading.camera.y, reading.camera.x, reading.heading_deg,
-                         reading.pitch_deg, reading.range_m)
+    landed = destination(reading.camera.y, reading.camera.x, a["azimuth_deg"],
+                         a["elevation_deg"], reading.range_m)
     if landed is None:
         return
     lat, lon, up = landed
     reading.target = _point(lon, lat)
     reading.target_up_m = up
+    gps = _gps_sigma_m(reading)
+    elev = math.radians(a["elevation_deg"])
+    across = reading.range_m * math.cos(elev) * math.radians(a["sigma_deg"])
+    a["gps_sigma_m"] = round(gps, 3)
+    a["sigma_m"] = round(math.sqrt(gps ** 2 + across ** 2), 3)
+    height = ((reading.fcu_pose or {}).get("mount") or {}).get("height_m") if a["source"] == "ekf" else None
+    if isinstance(height, (int, float)) and math.isfinite(height):
+        along = reading.range_m * math.cos(elev) * math.radians(a.get("sigma_elev_deg", a["sigma_deg"]))
+        a["hit_height_m"] = round(height + up, 3)
+        a["sigma_up_m"] = round(math.sqrt(CAMERA_HEIGHT_SIGMA_M ** 2 + along ** 2), 3)
 
 
 def _save(reading):
@@ -132,7 +215,7 @@ def _save(reading):
 
     fields = ("captured", "alt_amsl", "heading_deg", "pitch_deg", "speed_mps", "camera",
               "range_m", "range_min_m", "range_max_m", "range_valid", "target", "target_up_m",
-              "image_relpath", "image_bytes", "width", "height", "spectrum")
+              "image_relpath", "image_bytes", "width", "height", "spectrum", "fcu_pose")
     for _attempt in (1, 2):
         try:
             with transaction.atomic(using="observations"):
@@ -150,13 +233,13 @@ def _save(reading):
                     setattr(current, name, getattr(reading, name))
                 _place(current)
                 # target can be cleared; analysis is written by another thread, so it is not in this list
-                current.save(using="observations", update_fields=changed + ["target", "target_up_m"])
+                current.save(using="observations", update_fields=changed + ["target", "target_up_m", "aim"])
                 return current
         except IntegrityError:
             continue
 
 
-def _remember_frame(vid, info, jpeg):
+def _remember_frame(vid, info, jpeg, fcu_pose=None):
     from .models import FieldReading
 
     if not _is_field(vid):
@@ -172,7 +255,7 @@ def _remember_frame(vid, info, jpeg):
         pitch_deg=pose.get("gimbal_pitch_deg"), speed_mps=pose.get("speed_mps"),
         camera=_point(pose.get("lon"), pose.get("lat")),
         image_relpath=rel.as_posix(), image_bytes=len(jpeg),
-        width=(info or {}).get("w"), height=(info or {}).get("h"))
+        width=(info or {}).get("w"), height=(info or {}).get("h"), fcu_pose=fcu_pose)
     # keep a spectrum and laser already stored for this capture
     prior = (FieldReading.objects.using("observations")
              .filter(vehicle_id=vid, captured_usec=usec).first())

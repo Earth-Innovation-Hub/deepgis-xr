@@ -1218,6 +1218,37 @@ class UpgradeTests(TransactionTestCase):
         self.client.logout()
         self.assertNotIn('field', self.client.get(url).json()['support']['other'])
 
+    def test_ekf_aimed_hit_above_ground_is_a_height_vote_unless_lidar_says_too_high(self):
+        from django.contrib.gis.geos import Polygon
+
+        self._ingest('s1', self.t1)
+        bld = self._entity('building')
+        reading = self._reading(-40, 0)
+        reading.aim = {'source': 'ekf', 'sigma_m': 1.0, 'hit_height_m': 2.0, 'sigma_up_m': 0.2}
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link = FieldLink.objects.get()
+        self.assertEqual(link.entity_id, bld.id)
+        self.assertGreater(link.signal['p_elevated'], 0.99)
+        live = Factor.objects.filter(kind='field', superseded_at__isnull=True)
+        self.assertEqual(sorted(f.metadata.get('signal', 'green') for f in live), ['green', 'height'])
+        table = np.asarray(live.get(metadata__signal='height').log_table)
+        self.assertGreater(table[URBAN_V1.index_of('building')], table[URBAN_V1.index_of('road')])
+        self.assertEqual(field_evidence.register_all()[1], set())  # a second pass changes nothing
+
+        # A lidar survey that puts the whole building under half a metre: the 2 m hit was on something else.
+        area = Polygon.from_bbox((LON - 0.01, LAT - 0.01, LON + 0.01, LAT + 0.01))
+        area.srid = 4326
+        scene = LayerScene.objects.create(source='usgs-3dep-lidar', item_id='p', layer='height', observed_at=IMAGED,
+                                          gsd_m=1.0, footprint=area, metadata={'bands': ['median', 'p90']})
+        LayerSample.objects.create(entity=bld, scene=scene, value=0.2, purity=1.0, clear=1.0, n_pixels=50,
+                                   bands=[0.2, 0.4])
+        field_evidence.register_reading(reading)
+        self.assertFalse(FieldLink.objects.get().signal['height_ok'])
+        self.assertFalse(Factor.objects.filter(kind='field', superseded_at__isnull=True,
+                                               metadata__signal='height').exists())
+        self.assertEqual(Factor.objects.filter(kind='field', superseded_at__isnull=True).count(), 1)
+
     # -- looks: the captures of one image count once -----------------------------------
 
     def test_captures_of_one_image_are_one_look(self):

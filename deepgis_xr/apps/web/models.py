@@ -447,6 +447,23 @@ class FieldReading(gis_models.Model):
     analysis = models.JSONField(null=True, blank=True)
     sky = models.JSONField(null=True, blank=True)
     adsb = models.JSONField(null=True, blank=True)
+    fcu_pose = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            "The flight controller's EKF pose nearest the frame, in PX4's frames: local NED "
+            "position and velocity, NED-to-FRD quaternion [w, x, y, z], body rates, and the "
+            "21-element upper-triangle pose and velocity covariances (null = unknown). Body "
+            "pose, not the camera's; mount holds the camera parameters used."
+        ),
+    )
+    aim = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            "How the target was placed: source (ekf or heading), azimuth and elevation of the "
+            "camera axis, its 1-sigma, the target's 1-sigma ground error, and with the EKF the "
+            "laser hit's height above the ground under the rover."
+        ),
+    )
 
     class Meta:
         db_table = "field_readings"
