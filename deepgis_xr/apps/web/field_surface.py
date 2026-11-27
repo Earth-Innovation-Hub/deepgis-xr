@@ -22,7 +22,9 @@ import io
 import logging
 import math
 import os
+import tempfile
 import threading
+import time
 from collections import OrderedDict
 from datetime import timedelta
 from pathlib import Path
@@ -35,7 +37,12 @@ log = logging.getLogger(__name__)
 MODEL = "sam3"
 CLASSES = ("fence", "wall", "hedge", "grass", "tree", "house", "pavement", "gravel", "car", "sky")
 MIN_CONFIDENCE = 0.35
-REQUEST_TIMEOUT_S = 120
+REQUEST_TIMEOUT_S = 180   # a segmentation takes 24 to 41 s; one given up on is still running there
+MIN_HOST_FREE_MB = 16000  # host memory left, below which no segmentation is asked for
+COOLDOWN_S = 900.0        # pause after a request that did not come back
+_TURN = os.path.join(tempfile.gettempdir(), "field_surface.turn")          # lock file: whose turn it is
+_COOLDOWN = os.path.join(tempfile.gettempdir(), "field_surface.cooldown")  # touched when a request fails
+refused = None            # why the last segment() asked for nothing or got nothing
 CANVAS_W = 160
 DEFAULT_FRAC_W = 0.2      # a 14 degree cone in a 61 degree wide image
 MIN_SHARE = 0.5
@@ -118,28 +125,82 @@ def label_patch(detections, patch, aspect=0.75):
     return out
 
 
-def segment(jpeg):
-    """SAM 3 detections for a keyframe: (detections, inference ms), or None when the service
-    is not configured or did not answer."""
+def host_free_mb():
+    """Memory the host can still give out, MB, or None where that cannot be read."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _cooling_s():
+    """Seconds left of the pause that follows a request which did not come back."""
+    try:
+        return max(0.0, COOLDOWN_S - (time.time() - os.path.getmtime(_COOLDOWN)))
+    except OSError:
+        return 0.0
+
+
+def segment(jpeg, *, wait=False):
+    """SAM 3 detections for a keyframe: (detections, inference ms), or None, with the reason
+    in ``refused``.
+
+    The service loads the model for each request and holds about 8 GB while it works. On
+    2026-11-27 it reached 73 GB and took the host's memory while a backfill and the live
+    worker were both sending it keyframes and timed-out requests were still running there.
+    So: one request at a time across every process (a file lock; ``wait`` queues for it,
+    otherwise a busy service is a refusal), none while the host is short of memory, and a
+    pause after any request that did not come back, since the service is still working on it.
+    """
+    global refused
+    import fcntl
+
     import requests
 
+    refused = None
     api = (getattr(settings, "ULTRALYTICS_API_URL", None) or "").strip()
     if not api:
+        refused = "no segmentation service is configured"
         return None
-    try:
-        response = requests.post(
-            f"{api.rstrip('/')}/api/predict",
-            files={"file": ("keyframe.jpg", io.BytesIO(jpeg), "image/jpeg")},
-            data={"model": MODEL, "classes": ",".join(CLASSES), "confidence": MIN_CONFIDENCE},
-            timeout=REQUEST_TIMEOUT_S)
-        body = response.json()
-    except (requests.exceptions.RequestException, ValueError) as err:
-        log.warning("keyframe segmentation failed: %s", err)
-        return None
-    if response.status_code != 200 or not body.get("success"):
-        log.warning("keyframe segmentation refused: %s", str(body.get("error") or response.status_code)[:200])
-        return None
-    return body.get("detections") or [], body.get("inference_ms")
+    with open(_TURN, "a") as turn:
+        try:
+            fcntl.flock(turn, fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            refused = "another segmentation is running"
+            return None
+        try:
+            left = _cooling_s()
+            if left > 0:
+                refused = f"a request did not come back; pausing {left:.0f} s more"
+                return None
+            free = host_free_mb()
+            if free is not None and free < MIN_HOST_FREE_MB:
+                refused = f"the host has {free} MB of memory left"
+                return None
+            try:
+                response = requests.post(
+                    f"{api.rstrip('/')}/api/predict",
+                    files={"file": ("keyframe.jpg", io.BytesIO(jpeg), "image/jpeg")},
+                    data={"model": MODEL, "classes": ",".join(CLASSES), "confidence": MIN_CONFIDENCE},
+                    timeout=REQUEST_TIMEOUT_S)
+                body = response.json()
+            except (requests.exceptions.RequestException, ValueError) as err:
+                Path(_COOLDOWN).touch()
+                refused = f"the segmentation service did not answer ({type(err).__name__})"
+                log.warning("keyframe segmentation failed: %s", err)
+                return None
+            if response.status_code != 200 or not body.get("success"):
+                Path(_COOLDOWN).touch()
+                refused = f"the segmentation service refused ({str(body.get('error') or response.status_code)[:120]})"
+                log.warning("keyframe segmentation refused: %s", refused)
+                return None
+            return body.get("detections") or [], body.get("inference_ms")
+        finally:
+            fcntl.flock(turn, fcntl.LOCK_UN)
 
 
 def _aim(reading):
@@ -226,11 +287,12 @@ def _jpeg(reading):
     return path.read_bytes()
 
 
-def surface_for(reading, *, copy=True, segment_new=True):
+def surface_for(reading, *, copy=True, segment_new=True, wait=False):
     """The surface record for a reading, or None when it has no keyframe or the service is down.
 
     ``copy=False`` segments the keyframe even when the same view already has a label;
-    ``segment_new=False`` only copies, and returns None for a view not seen before."""
+    ``segment_new=False`` only copies, and returns None for a view not seen before;
+    ``wait`` queues behind a segmentation already running instead of giving up."""
     patch = patch_of(reading)
     jpeg = _jpeg(reading)
     if jpeg is None:
@@ -241,7 +303,7 @@ def surface_for(reading, *, copy=True, segment_new=True):
         return {**kept, "patch": list(patch), "model": earlier.surface.get("model", MODEL), "from": earlier.pk}
     if not segment_new:
         return None
-    got = segment(jpeg)
+    got = segment(jpeg, wait=wait)
     if got is None:
         return None
     detections, ms = got
@@ -253,11 +315,12 @@ def surface_for(reading, *, copy=True, segment_new=True):
     return out
 
 
-def write_surface(pk, *, force=False, segment_new=True):
+def write_surface(pk, *, force=False, segment_new=True, wait=False):
     """Label one stored reading. Returns the surface record written, or None.
 
     ``force`` segments the keyframe again whatever label it or its neighbours already have;
-    ``segment_new=False`` only copies the label of a view already segmented."""
+    ``segment_new=False`` only copies the label of a view already segmented; ``wait`` queues
+    behind a segmentation already running."""
     from .models import FieldReading
 
     reading = FieldReading.objects.using("observations").filter(pk=pk).first()
@@ -265,7 +328,7 @@ def write_surface(pk, *, force=False, segment_new=True):
         return None
     if isinstance(reading.surface, dict) and not force:
         return None
-    surface = surface_for(reading, copy=not force, segment_new=segment_new)
+    surface = surface_for(reading, copy=not force, segment_new=segment_new, wait=wait)
     if surface is None:
         return None
     FieldReading.objects.using("observations").filter(pk=pk).update(surface=surface)

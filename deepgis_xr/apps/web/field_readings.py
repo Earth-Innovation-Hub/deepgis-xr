@@ -658,9 +658,9 @@ def _surface_worker():
             # a view already segmented is copied at once; a new one waits its turn on the GPU
             rested = time.monotonic() - _SURFACE_LAST >= _SURFACE_MIN_GAP_S
             surface = field_surface.write_surface(pk, segment_new=rested)
+            if rested and (surface is None or "from" not in surface):
+                _SURFACE_LAST = time.monotonic()  # a segmentation was asked for, whether or not it came back
             if surface is not None:
-                if "from" not in surface:
-                    _SURFACE_LAST = time.monotonic()
                 schedule_evidence(pk)  # the label changes what the reading may vote on
         except Exception:
             log.exception("field reading %s surface was not labelled", pk)
@@ -676,6 +676,12 @@ def schedule_surface(pk):
     inside that minute with a view not seen before, is labelled by
     ``manage.py label_field_surfaces``."""
     global _SURFACE_THREAD
+    # Off unless FIELD_SURFACE_LABELS is set. On 2026-11-27 the segmentation service took the
+    # host's memory while this worker and a backfill were both sending it keyframes
+    # (field_surface.segment now takes turns and backs off); stored readings are labelled by
+    # the command either way.
+    if not getattr(settings, "FIELD_SURFACE_LABELS", False):
+        return
     if not enabled() or not pk or not (getattr(settings, "ULTRALYTICS_API_URL", None) or "").strip():
         return
     with _SURFACE_LOCK:

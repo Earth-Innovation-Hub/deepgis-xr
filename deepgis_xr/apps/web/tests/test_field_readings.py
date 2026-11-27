@@ -50,6 +50,56 @@ class FieldSurfaceTests(SimpleTestCase):
         Row.spectrum = {"footprint": {"u": 7}}
         self.assertEqual(patch_of(Row()), (0.5, 0.5, DEFAULT_FRAC_W))
 
+    def test_segmentation_takes_turns_and_backs_off(self):
+        import fcntl
+
+        import requests
+
+        from deepgis_xr.apps.web import field_surface
+
+        with tempfile.TemporaryDirectory() as tmp, override_settings(ULTRALYTICS_API_URL="http://sam.test"), \
+                mock.patch.object(field_surface, "_TURN", str(Path(tmp, "turn"))), \
+                mock.patch.object(field_surface, "_COOLDOWN", str(Path(tmp, "cooldown"))), \
+                mock.patch.object(field_surface, "host_free_mb", return_value=64000) as free, \
+                mock.patch("requests.post") as post:
+            post.return_value.status_code = 200
+            post.return_value.json.return_value = {"success": True, "detections": [{"class_name": "grass"}],
+                                                   "inference_ms": 9}
+            self.assertEqual(field_surface.segment(b"x"), ([{"class_name": "grass"}], 9))
+            self.assertIsNone(field_surface.refused)
+            # a host short of memory is not asked for more
+            free.return_value = 2000
+            self.assertIsNone(field_surface.segment(b"x"))
+            self.assertIn("memory", field_surface.refused)
+            free.return_value = 64000
+            # one at a time: a second caller is turned away unless it asked to wait
+            with open(field_surface._TURN, "a") as held:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                self.assertIsNone(field_surface.segment(b"x"))
+                self.assertIn("another", field_surface.refused)
+            self.assertEqual(post.call_count, 1)
+            # a request that does not come back is still running there: pause before the next
+            post.side_effect = requests.exceptions.ReadTimeout()
+            self.assertIsNone(field_surface.segment(b"x"))
+            self.assertIn("did not answer", field_surface.refused)
+            post.side_effect = None
+            self.assertIsNone(field_surface.segment(b"x"))
+            self.assertIn("pausing", field_surface.refused)
+            self.assertEqual(post.call_count, 2)
+        with override_settings(ULTRALYTICS_API_URL=""):
+            self.assertIsNone(field_surface.segment(b"x"))
+            self.assertIn("configured", field_surface.refused)
+
+    def test_live_labelling_is_off_unless_asked_for(self):
+        from deepgis_xr.apps.web import field_readings
+
+        with mock.patch.object(field_readings, "enabled", return_value=True), \
+                override_settings(ULTRALYTICS_API_URL="http://sam.test", FIELD_SURFACE_LABELS=False), \
+                mock.patch.object(field_readings.threading, "Thread") as thread:
+            field_readings.schedule_surface(1)
+            thread.assert_not_called()
+            self.assertEqual(len(field_readings._SURFACE_QUEUE), 0)
+
     def test_reference_panel_mark_is_kept_on_the_spectrum(self):
         from deepgis_xr.apps.web.views.vehicles import clean_spectrum
 

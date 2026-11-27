@@ -341,6 +341,10 @@ SAM_API_URL = os.environ.get('SAM_API_URL', None)
 # YOLO26, YOLOE-26 and SAM 3 (services/ultralytics-api).
 # Example: ULTRALYTICS_API_URL=http://ultralytics-api:5000
 ULTRALYTICS_API_URL = os.environ.get('ULTRALYTICS_API_URL', None)
+# Label each field reading's keyframe as it arrives (web/field_readings.schedule_surface): the
+# segmentation service gets up to a keyframe a minute while a rover is on the move. Off unless
+# FIELD_SURFACE_LABELS=1; manage.py label_field_surfaces labels stored readings either way.
+FIELD_SURFACE_LABELS = os.environ.get('FIELD_SURFACE_LABELS', '') == '1'
 
 # Unified MaskRCNN API — single Flask container that serves the full model
 # registry across all eight families (rocks, house, hypolith, litter,

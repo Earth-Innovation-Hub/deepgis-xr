@@ -1,9 +1,9 @@
 """Label what stored field readings' keyframes show under the spectrometer's patch.
 
-New readings are labelled as they arrive (field_readings.schedule_surface). This fills in
-the ones stored before that, and any dropped from its queue, newest first. A standing
-rover's repeated views are segmented once and copied. A segmentation takes the GPU service
-some tens of seconds.
+Fills in ``FieldReading.surface`` for stored readings, newest first. A standing rover's
+repeated views are segmented once and copied. A segmentation holds the GPU service for some
+tens of seconds and about 8 GB; ``field_surface.segment`` sends one at a time. This command
+stops by itself when the service stops answering or the host's free memory falls.
 
     manage.py label_field_surfaces                    # count what is left to do
     manage.py label_field_surfaces --apply            # label, then re-register the labelled readings
@@ -15,6 +15,9 @@ from django.core.management.base import BaseCommand
 from deepgis_xr.apps.scene_store import field_evidence, fusion
 from deepgis_xr.apps.web import field_surface
 from deepgis_xr.apps.web.models import FieldReading
+
+STOP_AFTER_REFUSALS = 3        # in a row
+STOP_AFTER_MEMORY_DROP_MB = 12000
 
 
 class Command(BaseCommand):
@@ -47,20 +50,34 @@ class Command(BaseCommand):
         if opts['redo']:
             # start from no labels, so a repeated view is again segmented once and copied
             FieldReading.objects.using('observations').filter(pk__in=ids).update(surface=None)
-        counts, copied, failed, changed = {}, 0, 0, set()
+        free_at_start = field_surface.host_free_mb()
+        counts, copied, failed, refusals, changed, stopped = {}, 0, 0, 0, set(), ''
         for i, pk in enumerate(ids, 1):
-            surface = field_surface.write_surface(pk)
+            field_surface.refused = None
+            surface = field_surface.write_surface(pk, wait=True)
             if surface is None:
                 failed += 1
+                refusals = refusals + 1 if field_surface.refused else 0
             else:
+                refusals = 0
                 counts[surface['label']] = counts.get(surface['label'], 0) + 1
                 copied += 1 if surface.get('from') else 0
                 changed |= field_evidence.register_reading(pk, infer=False)
             if i % 25 == 0:
                 self.stdout.write(f'  {i}/{len(ids)}: {copied} copied, {failed} not labelled')
+            free = field_surface.host_free_mb()
+            if refusals >= STOP_AFTER_REFUSALS:
+                stopped = f'stopped at {i}/{len(ids)}: {field_surface.refused}'
+            elif free is not None and free_at_start is not None and free_at_start - free > STOP_AFTER_MEMORY_DROP_MB:
+                stopped = (f'stopped at {i}/{len(ids)}: the host has {free_at_start - free} MB less free memory '
+                           f'than when this started')
+            if stopped:
+                break
         n_bp = fusion._bp_by_taxonomy(changed, cause='field') if changed else 0
         self.stdout.write(f'labelled {sum(counts.values())} ({copied} copied from an earlier look), '
                           f'{failed} not labelled')
         for label, n in sorted(counts.items(), key=lambda kv: -kv[1]):
             self.stdout.write(f'  {label}: {n}')
         self.stdout.write(f'entities whose evidence changed: {len(changed)}, re-inferred: {n_bp}')
+        if stopped:
+            self.stdout.write(stopped)
