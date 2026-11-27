@@ -61,6 +61,7 @@ urlpatterns = [
     path('api/training/datasets/add-label/', views.add_label_to_dataset, name='add_label_to_dataset'),
     
     # AI pilot chat for the DeepGIS Search viewer (views/pilot.py)
+    path('label/api/manuscripts/build/', views.manuscript_build, name='manuscript_build'),  # superusers: build a manuscript on the lab TeX service
     path('label/api/pilot/', views.pilot_chat, name='pilot_chat'),
     path('label/api/pilot/models/', views.pilot_models, name='pilot_models'),
     path('label/api/pilot/robot-command/', views.pilot_robot_command, name='pilot_robot_command'),  # superusers: a confirmed robot_command to the lab's command server

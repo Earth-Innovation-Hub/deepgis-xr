@@ -76,6 +76,7 @@ from .sims import sims_control, sims_list
 from .create_twin import pilot_create_twin, pilot_create_twin_status
 from .llm_access import llm_access, llm_exchange, llm_gate
 from .llm_chat import llm_chat, llm_chat_models
+from .latex_build import manuscript_build
 from .planet import label_planet_viewer
 from .pages import (
     BaseView,
@@ -136,5 +137,6 @@ __all__ = [
     "llm_gate",
     "llm_chat",
     "llm_chat_models",
+    "manuscript_build",
     "label_planet_viewer",
 ]

@@ -258,6 +258,11 @@ DEEPGIS_TWIN_BUILDER_TOKEN = os.environ.get('DEEPGIS_TWIN_BUILDER_TOKEN', '')
 DEEPGIS_TWIN_JOBS_DIR = os.environ.get('DEEPGIS_TWIN_JOBS_DIR', '')
 DEEPGIS_TWIN_BUILDER_STUB_FAIL = os.environ.get('DEEPGIS_TWIN_BUILDER_STUB_FAIL', '') == '1'
 
+# Superuser manuscript builds (views/latex_build.py). The builder address and
+# token live only in .env. When either is empty the endpoint says it is not configured.
+DEEPGIS_LATEX_BUILD_URL = os.environ.get('DEEPGIS_LATEX_BUILD_URL', '').strip()
+DEEPGIS_LATEX_BUILD_TOKEN = os.environ.get('DEEPGIS_LATEX_BUILD_TOKEN', '').strip()
+
 # Live vehicle poses for the pilot's follow_vehicle (views/vehicles.py).
 # "vehicle_id:sha256hex,..."; each publisher holds its own token, the server only the hash.
 VEHICLE_POSE_TOKENS = os.environ.get('VEHICLE_POSE_TOKENS', '')
