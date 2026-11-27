@@ -131,6 +131,44 @@ FIELD_P_ELEVATED_OTHER = 0.5
 # be on it: the link stays, the height says nothing about the entity.
 FIELD_LIDAR_SLACK_M = 1.5
 
+# Which view the rover had of the entity (field_evidence.view_of). The map is drawn from above
+# and the rover looks along the ground, so a reading counts only when both can be seeing the
+# same thing. The hit is called elevated or on the ground only when its height says so with
+# this probability; the lidar height raster then says where near the target such a hit can be.
+FIELD_HIT_SURE = 0.9
+FIELD_HEIGHT_TOL_M = 0.5      # lidar may be this far (or two sigma, if more) below an elevated hit
+FIELD_GROUND_TOP_M = 1.0      # lidar above this over a ground hit: the map shows a canopy or cover instead
+FIELD_MIN_COMPATIBLE = 0.15   # least share of the target's uncertainty where the lidar allows the hit
+# With the sun this close to the camera axis it is in or beside the frame: the target is seen
+# against it, in its own shadow, and stray light reaches the spectrometer's bare port.
+FIELD_MIN_SUN_SEP_DEG = 40.0
+# What the keyframe shows under the spectrometer's patch (web/field_surface.py), as
+# (view, categories it speaks for). 'top' is ground the overhead image also sees, 'side' the
+# flank of something it sees the top of. A fence or a free-standing wall is a 'face': it has no
+# category from above, so the reading is kept on the neighbouring entity and votes on nothing.
+FIELD_SURFACES = {
+    'grass': ('top', ('vegetation_other',)),
+    'pavement': ('top', ('pavement', 'road', 'parking_lot')),
+    'gravel': ('top', ('bare_ground',)),
+    'hedge': ('side', ('vegetation_other', 'tree')),
+    'tree': ('side', ('tree',)),
+    'house': ('side', ('house', 'building')),
+    'car': ('side', ('vehicle',)),
+    'fence': ('face', ()),
+    'wall': ('face', ()),
+    'sky': ('none', ()),
+}
+FIELD_LABEL_MIN_SHARE = 0.5   # of the patch, for the label to stand for it
+FIELD_MAX_SKY_SHARE = 0.05    # of the patch, before the sky's light is the spectrum
+# P(the patch is labelled as this group | category): in the group, not in it, and 'unknown'.
+FIELD_LABEL_P_IN = 0.7
+FIELD_LABEL_P_OUT = 0.1
+FIELD_LABEL_P_UNKNOWN = 0.3
+# With a reference panel read in the same light the spectrum becomes reflectance, and green
+# vegetation is then the usual NDVI test instead of the raw-count index.
+FIELD_GREEN_NDVI = 0.3
+FIELD_REFERENCE_MAX_MIN = 30.0
+
 # Adjacency co-occurrence (symmetric), log-potential added when both hold.
 CONTEXT_BETA = 0.5
 CONTEXT_DEGREE_CAP = 6      # nearest neighbours per entity per capture
@@ -238,6 +276,18 @@ def field_height_table(taxonomy, p_elevated):
     for i, cat in enumerate(taxonomy.categories):
         p = FIELD_P_ELEVATED.get(cat, FIELD_P_ELEVATED_OTHER)
         t[i] = math.log(p_elevated * p + (1 - p_elevated) * (1 - p))
+    return t
+
+
+def field_label_table(taxonomy, label):
+    """log P(the keyframe shows ``label`` under the patch | category), or None if it speaks for none."""
+    group = FIELD_SURFACES.get(label, (None, ()))[1]
+    if not group:
+        return None
+    t = np.empty(taxonomy.n)
+    for i, cat in enumerate(taxonomy.categories):
+        p = FIELD_LABEL_P_IN if cat in group else FIELD_LABEL_P_UNKNOWN if cat == 'unknown' else FIELD_LABEL_P_OUT
+        t[i] = math.log(p)
     return t
 
 

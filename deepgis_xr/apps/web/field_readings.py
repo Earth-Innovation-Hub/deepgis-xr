@@ -45,6 +45,13 @@ MOUNT_SIGMA_DEG = 2.0        # camera parallel to the controller by design, not 
 HEADING_SIGMA_DEG = 5.0      # compass or course over ground, as field_evidence assumed before
 GPS_SIGMA_M = 2.5            # when the reading carries no GPS accuracy
 CAMERA_HEIGHT_SIGMA_M = 0.1  # mount height above flat ground, and the ground not being flat
+HEADING_MOVING_MPS = 0.5     # above this the rover's course over ground is a heading
+HEADING_HELD_WITHIN_SEC = 300.0
+HEADING_HELD_RUN = 4         # identical headings in a row before they count as held
+# A course kept after stopping: on 2026-11-27 the one such run with an EKF yaw beside it was
+# 21 degrees off. Past an hour without a move the course says nothing about the rover's aim.
+HEADING_STOPPED_SIGMA_DEG = 20.0
+HEADING_STOPPED_MAX_SEC = 3600.0
 _field_yes = set()
 
 
@@ -165,13 +172,74 @@ def ekf_aim(fcu, mount_pitch_deg=None):
     }
 
 
+def _heading_held(reading):
+    """Whether a standing rover's heading is one of a run of identical values, and since when.
+
+    Without a compass the rover's heading is its course over ground, which it keeps sending
+    after it stops. A live compass at rest repeats a value now and then (it reports
+    hundredths of a degree) but not ``HEADING_HELD_RUN`` times in a row. The run is counted
+    on both sides, so a reading placed again later is also caught at the start of one.
+
+    Returns None for a live heading, else the seconds since the vehicle's last reading on
+    the move (``inf`` when there is none): the longer ago, the less the last course says
+    about where the rover points now."""
+    from .models import FieldReading
+
+    if not _heading_repeated(reading):
+        return None
+    moved = (FieldReading.objects.using("observations")
+             .filter(vehicle_id=reading.vehicle_id, speed_mps__gte=HEADING_MOVING_MPS,
+                     captured_usec__lt=reading.captured_usec)
+             .order_by("-captured_usec").values_list("captured_usec", flat=True).first())
+    return float("inf") if moved is None else (reading.captured_usec - moved) / 1e6
+
+
+def _heading_repeated(reading):
+    from .models import FieldReading
+
+    if reading.heading_deg is None or reading.captured_usec is None:
+        return False
+    if (reading.speed_mps or 0.0) >= HEADING_MOVING_MPS:
+        return False
+    span = int(HEADING_HELD_WITHIN_SEC * 1e6)
+    near = FieldReading.objects.using("observations").filter(vehicle_id=reading.vehicle_id)
+    need = HEADING_HELD_RUN - 1
+
+    def same(rows):
+        n = 0
+        for heading in rows.values_list("heading_deg", flat=True)[:need]:
+            if heading != reading.heading_deg:
+                break
+            n += 1
+        return n
+
+    before = same(near.filter(captured_usec__lt=reading.captured_usec,
+                              captured_usec__gte=reading.captured_usec - span).order_by("-captured_usec"))
+    if before >= need:
+        return True
+    after = same(near.filter(captured_usec__gt=reading.captured_usec,
+                             captured_usec__lte=reading.captured_usec + span).order_by("captured_usec"))
+    return before + after >= need
+
+
 def aim(reading):
-    """The camera axis for a reading: the EKF's when it is usable, else the stored heading."""
+    """The camera axis for a reading: the EKF's when it is usable, else the stored heading.
+
+    A heading the rover kept from its last course (``_heading_held``) is less sure: within
+    ``HEADING_STOPPED_MAX_SEC`` of the rover's last move it gets ``HEADING_STOPPED_SIGMA_DEG``
+    and ``since_moving_s``; after that, or with no move on record, it is marked ``held``: the
+    target is still drawn where it says, and the world model does not use it."""
     a = ekf_aim(reading.fcu_pose, reading.pitch_deg)
     if a is None and reading.heading_deg is not None:
         a = {"source": "heading", "azimuth_deg": reading.heading_deg,
              "elevation_deg": reading.pitch_deg if reading.pitch_deg is not None else 0.0,
              "sigma_deg": HEADING_SIGMA_DEG}
+        since = _heading_held(reading)
+        if since is not None and since <= HEADING_STOPPED_MAX_SEC:
+            a["since_moving_s"] = round(since)
+            a["sigma_deg"] = HEADING_STOPPED_SIGMA_DEG
+        elif since is not None:
+            a["held"] = True
     return a
 
 
@@ -562,8 +630,63 @@ def _keep(reading):
         schedule_adsb(saved.pk)
     if saved.image_relpath and saved.spectrum:
         schedule_analysis(saved.pk)
+        if saved.surface is None and "reference" not in saved.spectrum:  # a panel is not a surface of the map
+            schedule_surface(saved.pk)
     schedule_evidence(saved.pk)
     return saved
+
+
+_SURFACE_QUEUE = deque()
+_SURFACE_LOCK = threading.Lock()
+_SURFACE_THREAD = None
+_SURFACE_LIMIT = 4
+_SURFACE_MIN_GAP_S = 60.0    # between segmentations: one takes the GPU service about half that
+_SURFACE_LAST = float("-inf")
+
+
+def _surface_worker():
+    global _SURFACE_THREAD, _SURFACE_LAST
+    from . import field_surface
+
+    while True:
+        with _SURFACE_LOCK:
+            if not _SURFACE_QUEUE:
+                _SURFACE_THREAD = None
+                return
+            pk = _SURFACE_QUEUE.popleft()
+        try:
+            # a view already segmented is copied at once; a new one waits its turn on the GPU
+            rested = time.monotonic() - _SURFACE_LAST >= _SURFACE_MIN_GAP_S
+            surface = field_surface.write_surface(pk, segment_new=rested)
+            if surface is not None:
+                if "from" not in surface:
+                    _SURFACE_LAST = time.monotonic()
+                schedule_evidence(pk)  # the label changes what the reading may vote on
+        except Exception:
+            log.exception("field reading %s surface was not labelled", pk)
+        finally:
+            close_old_connections()
+
+
+def schedule_surface(pk):
+    """Label what the keyframe shows under the spectrometer's patch, after the post has returned.
+
+    One segmentation at a time and at most one a minute, so a rover on the move leaves the
+    GPU service free half the time. A reading dropped from a full queue, or one that arrived
+    inside that minute with a view not seen before, is labelled by
+    ``manage.py label_field_surfaces``."""
+    global _SURFACE_THREAD
+    if not enabled() or not pk or not (getattr(settings, "ULTRALYTICS_API_URL", None) or "").strip():
+        return
+    with _SURFACE_LOCK:
+        if pk in _SURFACE_QUEUE:
+            return
+        if len(_SURFACE_QUEUE) >= _SURFACE_LIMIT:
+            _SURFACE_QUEUE.popleft()
+        _SURFACE_QUEUE.append(pk)
+        if _SURFACE_THREAD is None or not _SURFACE_THREAD.is_alive():
+            _SURFACE_THREAD = threading.Thread(target=_surface_worker, name="field-reading-surface", daemon=True)
+            _SURFACE_THREAD.start()
 
 
 _EVIDENCE_QUEUE = deque()

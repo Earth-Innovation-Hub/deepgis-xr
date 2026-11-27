@@ -464,6 +464,15 @@ class FieldReading(gis_models.Model):
             "laser hit's height above the ground under the rover."
         ),
     )
+    surface = models.JSONField(
+        null=True, blank=True,
+        help_text=(
+            "What the keyframe shows under the spectrometer's patch: label (the surface filling "
+            "at least half of it, else mixed), share, shares per surface, the patch [u, v, width "
+            "as a share of the image], the model, and the reading it was copied from when the "
+            "view had already been segmented."
+        ),
+    )
 
     class Meta:
         db_table = "field_readings"

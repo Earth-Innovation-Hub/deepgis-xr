@@ -1,8 +1,161 @@
+import io
 import math
+import tempfile
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest import mock
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TransactionTestCase, override_settings
 
 from deepgis_xr.apps.web.field_readings import destination, enabled
+
+
+def _box(x0, y0, x1, y1):
+    return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+
+
+class FieldSurfaceTests(SimpleTestCase):
+    """The keyframe label under the spectrometer's patch."""
+
+    def test_patch_takes_the_most_confident_mask_over_it(self):
+        from deepgis_xr.apps.web.field_surface import label_patch
+
+        detections = [
+            {"class_name": "grass", "confidence": 0.6, "mask_polygons_norm": [_box(0, 0, 1, 1)]},
+            {"class_name": "fence", "confidence": 0.9, "mask_polygons_norm": [_box(0, 0.3, 1, 0.7)]},
+            {"class_name": "sky", "confidence": 0.2, "mask_polygons_norm": [_box(0, 0, 1, 1)]},      # too unsure
+            {"class_name": "dog", "confidence": 0.99, "mask_polygons_norm": [_box(0, 0, 1, 1)]},     # not asked for
+        ]
+        centre = label_patch(detections, (0.5, 0.5, 0.2))
+        self.assertEqual((centre["label"], centre["share"], centre["centre"]), ("fence", 1.0, "fence"))
+        low = label_patch(detections, (0.5, 0.9, 0.2))
+        self.assertEqual((low["label"], low["shares"], low["centre"]), ("grass", {"grass": 1.0}, "grass"))
+        # half fence, a quarter each of two others: nothing fills the patch
+        edge = label_patch(detections[:2], (0.5, 0.7, 0.2))
+        self.assertAlmostEqual(edge["shares"]["fence"], 0.5, delta=0.1)
+        thirds = [{"class_name": name, "confidence": 0.8, "mask_polygons_norm": [_box(x, 0, x + 0.07, 1)]}
+                  for name, x in (("tree", 0.4), ("hedge", 0.47), ("wall", 0.54))]
+        self.assertEqual(label_patch(thirds, (0.5, 0.5, 0.2))["label"], "mixed")
+        corner = [{"class_name": "car", "confidence": 0.9, "mask_polygons_norm": [_box(0, 0, 0.1, 0.1)]}]
+        self.assertEqual(label_patch(corner, (0.5, 0.5, 0.2)), {"label": "none", "share": 0.0, "shares": {}})
+        self.assertIsNone(label_patch([], (0.5, 0.5, 0.2)))
+
+    def test_patch_defaults_to_the_image_centre(self):
+        from deepgis_xr.apps.web.field_surface import DEFAULT_FRAC_W, patch_of
+
+        class Row:
+            spectrum = {"footprint": {"u": 0.4, "v": 0.6, "frac_w": 0.208}}
+
+        self.assertEqual(patch_of(Row()), (0.4, 0.6, 0.208))
+        Row.spectrum = {"footprint": {"u": 7}}
+        self.assertEqual(patch_of(Row()), (0.5, 0.5, DEFAULT_FRAC_W))
+
+    def test_reference_panel_mark_is_kept_on_the_spectrum(self):
+        from deepgis_xr.apps.web.views.vehicles import clean_spectrum
+
+        base = {"wl0": 300, "dwl": 1, "full_scale": 16383, "counts": [1] * 32}
+        self.assertEqual(clean_spectrum({**base, "reference": {"reflectance": 0.5, "x": 1}})["reference"],
+                         {"reflectance": 0.5})
+        self.assertNotIn("reference", clean_spectrum(base))
+        self.assertNotIn("reference", clean_spectrum({**base, "reference": {"reflectance": 0}}))
+        self.assertNotIn("reference", clean_spectrum({**base, "reference": 0.5}))
+
+    def test_admin_names_the_surface(self):
+        from django.contrib import admin
+
+        from deepgis_xr.apps.web.models import FieldReading
+
+        model_admin = admin.site._registry[FieldReading]
+        row = FieldReading(surface={"label": "grass", "share": 0.8, "shares": {"grass": 0.8, "pavement": 0.1},
+                                    "model": "sam3", "from": 41})
+        line = model_admin.surface_line(row)
+        self.assertIn("grass 80%", line)
+        self.assertIn("copied from reading 41", line)
+        self.assertEqual(model_admin.surface_line(FieldReading()), "—")
+
+
+class FieldReadingStoreTests(TransactionTestCase):
+    """What needs the readings table: held headings and the copy of an earlier look's label."""
+
+    databases = {"default", "observations"}
+    T0 = datetime(2026, 11, 17, 19, 0, tzinfo=timezone.utc)
+
+    def _row(self, i, heading, *, speed=0.0, range_m=6.0, **kw):
+        from deepgis_xr.apps.web.models import FieldReading
+
+        when = self.T0 + timedelta(seconds=5 * i)
+        return FieldReading.objects.using("observations").create(
+            vehicle_id="rover", captured_usec=int(when.timestamp() * 1e6), captured=when,
+            heading_deg=heading, speed_mps=speed, range_m=range_m, range_valid=True, **kw)
+
+    def test_heading_repeated_by_a_standing_rover_is_held(self):
+        from deepgis_xr.apps.web.field_readings import _heading_held, aim
+
+        from deepgis_xr.apps.web.field_readings import HEADING_SIGMA_DEG, HEADING_STOPPED_SIGMA_DEG
+
+        # no move on record: the course could be from any time
+        run = [self._row(i, 45.39) for i in range(5)]
+        self.assertEqual([_heading_held(r) for r in run], [float("inf")] * 5)   # the start of the run too
+        self.assertTrue(aim(run[3])["held"])
+        # a compass at rest repeats a value now and then, not four times running
+        live = [self._row(10 + i, h) for i, h in enumerate((162.4, 162.4, 162.4, 163.1, 163.1, 162.9))]
+        self.assertEqual([_heading_held(r) for r in live], [None] * 6)
+        self.assertEqual((aim(live[1]).get("held"), aim(live[1])["sigma_deg"]), (None, HEADING_SIGMA_DEG))
+        # a course over ground while driving straight is a heading
+        driving = [self._row(30 + i, 270.0, speed=1.2) for i in range(5)]
+        self.assertEqual([_heading_held(r) for r in driving], [None] * 5)
+        # stopped on that course: still a heading, a loose one, for an hour
+        stopped = [self._row(35 + i, 268.5) for i in range(5)]
+        a = aim(stopped[4])
+        self.assertEqual((a.get("held"), a["sigma_deg"], a["since_moving_s"]), (None, HEADING_STOPPED_SIGMA_DEG, 25))
+        late = [self._row(800 + i, 268.5) for i in range(4)]
+        self.assertTrue(aim(late[0])["held"])
+
+    def test_same_view_takes_the_earlier_label(self):
+        from deepgis_xr.apps.web import field_surface
+        from deepgis_xr.apps.web.models import FieldReading
+
+        def jpeg(across):
+            from PIL import Image
+
+            image = Image.new("L", (64, 48))
+            image.putdata([(x * 4 if across else y * 5) for y in range(48) for x in range(64)])
+            out = io.BytesIO()
+            image.convert("RGB").save(out, "JPEG")
+            return out.getvalue()
+
+        detections = [{"class_name": "grass", "confidence": 0.8, "mask_polygons_norm": [_box(0, 0, 1, 1)]}]
+        field_surface._THUMBS.clear()
+        self.addCleanup(field_surface._THUMBS.clear)
+        with tempfile.TemporaryDirectory() as root, override_settings(OBSERVATIONS_ROOT=root), \
+                mock.patch.object(field_surface, "segment", return_value=(detections, 2400.0)) as segment:
+            Path(root, "a.jpg").write_bytes(jpeg(True))
+            Path(root, "b.jpg").write_bytes(jpeg(False))
+            kw = {"spectrum": {"counts": [1] * 32}, "width": 640, "height": 480}
+            first = self._row(0, None, image_relpath="a.jpg", **kw)
+            again = self._row(1, None, image_relpath="a.jpg", **kw)
+            later = self._row(2, None, image_relpath="a.jpg", **kw)
+            turned = self._row(3, None, image_relpath="b.jpg", **kw)
+            moved = self._row(4, None, range_m=9.0, image_relpath="a.jpg", **kw)
+            fresh = self._row(5, None, range_m=12.0, image_relpath="b.jpg", **kw)
+            bare = self._row(6, None, spectrum=kw["spectrum"])
+            got = field_surface.write_surface(first.pk)
+            self.assertEqual((got["label"], got["share"], got["centre"], got["n_masks"], got["ms"]),
+                             ("grass", 1.0, "grass", 1, 2400))
+            self.assertIsNone(field_surface.write_surface(first.pk))          # already labelled
+            copy = field_surface.write_surface(again.pk)
+            self.assertEqual((copy["label"], copy["centre"], copy["from"]), ("grass", "grass", first.pk))
+            self.assertEqual(field_surface.write_surface(later.pk)["from"], first.pk)   # from the segmented one
+            self.assertEqual(segment.call_count, 1)
+            self.assertNotIn("from", field_surface.write_surface(turned.pk))  # same pose, another picture
+            self.assertNotIn("from", field_surface.write_surface(moved.pk))   # same picture, another range
+            self.assertEqual(segment.call_count, 3)
+            self.assertIsNone(field_surface.write_surface(fresh.pk, segment_new=False))   # a new view, copies only
+            self.assertEqual(segment.call_count, 3)
+            self.assertIsNone(field_surface.write_surface(bare.pk))           # no keyframe
+            segment.return_value = None                                       # the service is down
+            self.assertIsNone(field_surface.write_surface(first.pk, force=True))
+            self.assertEqual(FieldReading.objects.using("observations").get(pk=first.pk).surface["label"], "grass")
 
 
 class FieldReadingTests(SimpleTestCase):
@@ -99,7 +252,8 @@ class FieldReadingTests(SimpleTestCase):
         self.assertAlmostEqual(r.aim["gps_sigma_m"], 4.0, places=3)
         self.assertGreater(r.aim["sigma_m"], 4.0)
         r.fcu_pose = None
-        _place(r)
+        with mock.patch("deepgis_xr.apps.web.field_readings._heading_held", return_value=None):
+            _place(r)
         self.assertEqual(r.aim["source"], "heading")
         self.assertNotIn("hit_height_m", r.aim)
         self.assertGreater(r.target.x, -112.0)

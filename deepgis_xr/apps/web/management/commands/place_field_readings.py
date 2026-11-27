@@ -39,6 +39,8 @@ class Command(BaseCommand):
             counts['with a target'] += reading.target is not None
             counts['newly placed'] += reading.target is not None and not had
             counts['with a hit height'] += 'hit_height_m' in (reading.aim or {})
+            counts['course kept with no recent move (not used)'] += bool((reading.aim or {}).get('held'))
+            counts['course kept since stopping (loose aim)'] += 'since_moving_s' in (reading.aim or {})
             if opts['apply']:
                 with transaction.atomic(using='observations'):
                     reading.save(using='observations', update_fields=['aim', 'target', 'target_up_m'])

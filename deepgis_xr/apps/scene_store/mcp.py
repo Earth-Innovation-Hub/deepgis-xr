@@ -15,6 +15,7 @@ import logging
 import math
 from datetime import timedelta, timezone as dt_timezone
 
+import numpy as np
 from django.conf import settings
 from django.contrib.gis.db.models.functions import PointOnSurface
 from django.contrib.gis.geos import Polygon
@@ -27,7 +28,7 @@ from django.views.decorators.csrf import csrf_exempt
 from deepgis_xr.apps.web.models import FieldReading
 
 from . import assess, fusion, imagery_watch, layers, priors, sampler, traits, views
-from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, FieldLink
+from .models import BeliefSnapshot, Capture, Detection, Entity, Factor, Feedback, FieldLink, LayerSample
 
 log = logging.getLogger(__name__)
 
@@ -368,6 +369,104 @@ def _reading_window(args):
     return since, until
 
 
+def _median(values, n=3):
+    values = [float(v) for v in values if isinstance(v, (int, float)) and math.isfinite(v)]
+    return _round(float(np.median(values)), n) if values else None
+
+
+def _rank_correlation(pairs):
+    """Spearman's rank correlation of (a, b) pairs, ties sharing a rank; None under five pairs."""
+    if len(pairs) < 5:
+        return None
+
+    def ranks(values):
+        values = np.asarray(values, dtype=float)
+        order = np.argsort(values, kind='stable')
+        out = np.empty(len(values))
+        out[order] = np.arange(len(values), dtype=float)
+        for v in np.unique(values):
+            same = values == v
+            out[same] = out[same].mean()
+        return out
+
+    a, b = ranks([p[0] for p in pairs]), ranks([p[1] for p in pairs])
+    if a.std() == 0 or b.std() == 0:
+        return None
+    return _round(float(np.corrcoef(a, b)[0, 1]))
+
+
+def _field_views(links):
+    """How the registered readings relate to the map: by view, by the surface the keyframe
+    shows, that surface against the map's category, and the rover's greenness against the
+    overhead sensors' over the same objects."""
+    rows = list(links.values_list('entity_id', 'entity__category', 'usable', 'signal'))
+    views, patches, surfaces, table, per_entity = {}, {}, {}, {}, {}
+    for entity_id, category, usable, signal in rows:
+        signal = signal if isinstance(signal, dict) else {}
+        view = signal.get('view', 'not set')
+        views[view] = views.get(view, 0) + 1
+        patch = signal.get('patch', 'keyframe not segmented')
+        patches[patch] = patches.get(patch, 0) + 1
+        surface = signal.get('surface')
+        if surface:
+            s = surfaces.setdefault(surface, {'n': 0, 'n_usable_light': 0, 'nir_red': [], 'ndvi': [], 'bands': {},
+                                              'reflectance': {}})
+            s['n'] += 1
+            if (signal.get('sun_deg', 0) >= priors.FIELD_MIN_SUN_DEG
+                    and signal.get('sun_sep_deg', 180) >= priors.FIELD_MIN_SUN_SEP_DEG
+                    and signal.get('patch', 'one surface') == 'one surface'):
+                # a spectrum describes the surface only in daylight, with the sun out of the frame
+                # and no sky in the patch, whatever view the rover had of the map's object
+                s['n_usable_light'] += 1
+                s['nir_red'].append(signal.get('nir_red'))
+                s['ndvi'].append(signal.get('ndvi'))
+                for kind in ('bands', 'reflectance'):
+                    for name, v in (signal.get(kind) or {}).items():
+                        s[kind].setdefault(name, []).append(v)
+            if view in ('top', 'side'):
+                table.setdefault(surface, {})
+                table[surface][category] = table[surface].get(category, 0) + 1
+        if usable:
+            e = per_entity.setdefault(entity_id, {'nir_red': [], 'ndvi': []})
+            e['nir_red'].append(signal.get('nir_red'))
+            e['ndvi'].append(signal.get('ndvi'))
+    by_surface = {}
+    for name, s in sorted(surfaces.items(), key=lambda kv: -kv[1]['n']):
+        row = {'n': s['n'], 'n_usable_light': s['n_usable_light'], 'nir_red_median': _median(s['nir_red']),
+               'band_over_red_median': {b: _median(v) for b, v in sorted(s['bands'].items())}}
+        if any(v is not None for v in s['ndvi']):
+            row['ndvi_median'] = _median(s['ndvi'])
+            row['reflectance_median'] = {b: _median(v) for b, v in sorted(s['reflectance'].items())}
+        by_surface[name] = row
+    overhead = {}
+    samples = (LayerSample.objects.filter(entity_id__in=list(per_entity), scene__layer='ndvi')
+               .order_by('scene__observed_at').values_list('entity_id', 'scene__source', 'value'))
+    for entity_id, source, value in samples:  # the latest of each source is the one kept
+        overhead.setdefault(source, {})[entity_id] = value
+    agreement = {'n_entities': len(per_entity),
+                 'rover': 'median per object of the readings usable as evidence: nir_red, a ratio of raw '
+                          'counts; ndvi where a reference panel was read'}
+    for source, values in sorted(overhead.items()):
+        for measure in ('nir_red', 'ndvi'):
+            pairs = [(m, values[i]) for i, e in per_entity.items() if i in values
+                     for m in [_median(e[measure], 6)] if m is not None]
+            if pairs:
+                agreement[f'{measure}_vs_{source}'] = {'n_entities': len(pairs), 'rank_correlation': _rank_correlation(pairs)}
+    return {
+        'registered_by_view': dict(sorted(views.items(), key=lambda kv: -kv[1])),
+        'views': 'top: beam ended on open ground, the surface the map shows. side: on the flank of something '
+                 'the lidar shows standing there. under: on ground beneath a canopy or cover. face: on a '
+                 'fence, wall or other thing the map does not show from above. conflict: keyframe and hit '
+                 'height disagree. unknown: no hit height and no keyframe label. Only top, side and unknown vote.',
+        'registered_by_patch': dict(sorted(patches.items(), key=lambda kv: -kv[1])),
+        'patches': "what the keyframe shows inside the spectrometer's patch: one surface, several (mixed), or "
+                   'one with sky in it. Only the spectrum of one surface votes.',
+        'by_surface': by_surface,
+        'surface_by_map_category': {s: dict(sorted(c.items(), key=lambda kv: -kv[1])) for s, c in sorted(table.items())},
+        'rover_vs_overhead': agreement,
+    }
+
+
 def field_readings(args):
     """The ground survey as counts. Camera and target coordinates are never selected."""
     since, until = _reading_window(args)
@@ -413,6 +512,7 @@ def field_readings(args):
     totals = {k: sum(d[k] for d in by_day) for k in ('n', 'n_with_position', 'n_with_target', 'n_with_range',
                                                      'n_with_index')}
     return {
+        **_field_views(links),
         'n_readings': totals.get('n', 0), 'n_with_position': totals.get('n_with_position', 0),
         'n_with_target': totals.get('n_with_target', 0), 'n_with_range': totals.get('n_with_range', 0),
         'n_with_index': totals.get('n_with_index', 0), 'n_image_notes': n_notes,
@@ -682,7 +782,15 @@ TOOLS = [
      'spectrum, a laser range or a laser target, the median NIR/red index, the share that reads as green '
      'vegetation, the median integration time and the share with clipping, where the exposure settings '
      'came from, and how often fixed words appear in the image notes. registered_by_category counts the '
-     'readings the store has linked to a world object. No coordinate, heading or image is returned.',
+     'readings the store has linked to a world object and registered_by_view how the rover saw it (the '
+     'same surface from above, its flank, under a cover, a fence or wall), registered_by_patch whether the '
+     "spectrometer's patch held one surface. by_surface groups those readings "
+     'by what the keyframe shows under the spectrometer (grass, pavement, hedge, ...): the median NIR/red '
+     'index, each band over red (blue, green, three red-edge bands and near infrared, the bands of NAIP '
+     'and Sentinel-2), and reflectance and NDVI where a reference panel was read. surface_by_map_category '
+     "sets the keyframe's surface against the map's category for the same object, and rover_vs_overhead "
+     "is the rank correlation of the rover's greenness with NAIP's and Sentinel-2's NDVI over the objects "
+     'both measured. No coordinate, heading or image is returned.',
      {'since': _str('Readings from this time on (ISO 8601 or YYYY-MM-DD)'),
       'until': _str('Readings up to the end of this date')},
      [], field_readings),

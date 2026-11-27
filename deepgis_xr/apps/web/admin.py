@@ -2139,6 +2139,7 @@ class FieldReadingAdmin(admin.ModelAdmin):
         'fcu_pose_line',
         'fcu_pose_pretty',
         'aim_line',
+        'surface_line',
     )
     fieldsets = (
         ('Capture', {
@@ -2165,6 +2166,7 @@ class FieldReadingAdmin(admin.ModelAdmin):
                 'target_where',
                 'target_up_m',
                 'aim_line',
+                'surface_line',
             ),
         }),
         ('Sky', {
@@ -2366,7 +2368,29 @@ class FieldReadingAdmin(admin.ModelAdmin):
             parts.append('target ± %.1f m' % a['sigma_m'])
         if isinstance(a.get('hit_height_m'), (int, float)):
             parts.append('hit %.2f ± %.2f m above the ground' % (a['hit_height_m'], a.get('sigma_up_m') or 0))
+        if a.get('held'):
+            parts.append('a course kept with no recent move: not used by the world model')
+        elif isinstance(a.get('since_moving_s'), (int, float)):
+            parts.append('the course it stopped on %d s earlier' % a['since_moving_s'])
         return format_html('{}', ', '.join(parts))
+
+    @admin.display(description='surface under the patch')
+    def surface_line(self, obj):
+        s = obj.surface if isinstance(obj.surface, dict) else None
+        if not s or not s.get('label'):
+            return '—'
+        shares = s.get('shares') if isinstance(s.get('shares'), dict) else {}
+        parts = [str(s['label'])]
+        if shares:
+            parts.append(', '.join('%s %.0f%%' % (name, 100 * share) for name, share in list(shares.items())[:4]
+                                   if isinstance(share, (int, float))))
+        if s.get('centre'):
+            parts.append('laser on %s' % s['centre'])
+        parts.append('copied from reading %s' % s['from'] if s.get('from') else str(s.get('model') or ''))
+        ref = (obj.spectrum or {}).get('reference') if isinstance(obj.spectrum, dict) else None
+        if isinstance(ref, dict) and ref.get('reflectance'):
+            parts.append('reference panel reading (reflectance %.2f)' % ref['reflectance'])
+        return format_html('{}', ' · '.join(p for p in parts if p))
 
     @admin.display(description='FCU pose')
     def fcu_pose_pretty(self, obj):

@@ -380,6 +380,7 @@ FOOTPRINT_LIMITS = {"u": (0.0, 1.0), "v": (0.0, 1.0), "fov_deg": (0.01, 180.0), 
                     "diameter_m": (0.0, 5000.0)}
 ACQUISITION_LIMITS = {"scans": (1.0, 4096.0), "target": (0.0, 1.0), "window_ms": (0.0, 600000.0),
                       "band_peak": (0.0, 1.0)}
+REFERENCE_LIMITS = {"reflectance": (0.01, 1.5)}
 
 
 def _numbers(src, limits):
@@ -406,7 +407,9 @@ def clean_spectrum(d):
     in the vehicle's camera frame, u and v from the left and top, and how wide it sees),
     t_rel (when it was integrated, seconds relative to the frame), acquisition (how the
     exposure was set: auto, scans co-added, the target, band and window it aimed for and
-    where that policy came from) and the instrument's own notes on what the numbers mean."""
+    where that policy came from), reference (the reflectance of the panel this reading was
+    aimed at, when the operator marked it as one) and the instrument's own notes on what the
+    numbers mean."""
     if not isinstance(d, dict):
         return None
     counts = d.get("counts")
@@ -437,6 +440,9 @@ def clean_spectrum(d):
         for key, limit in (("source", 40), ("reason", 200)):
             if isinstance(acq.get(key), str) and acq[key].strip():
                 out["acquisition"][key] = " ".join(acq[key].split())[:limit]
+    reference = _numbers(d.get("reference"), REFERENCE_LIMITS)
+    if "reflectance" in reference:
+        out["reference"] = reference  # this reading looked at a reference panel of that reflectance
     notes = d.get("notes")
     out["notes"] = [" ".join(n.split())[:300] for n in (notes if isinstance(notes, list) else [])
                     if isinstance(n, str) and n.strip()][:SPECTRUM_MAX_NOTES]

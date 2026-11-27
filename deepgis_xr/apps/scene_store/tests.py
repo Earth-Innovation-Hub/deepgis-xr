@@ -623,6 +623,8 @@ class McpTests(TransactionTestCase):
         self.assertEqual(survey['by_day'][0]['green_share'], 1.0)
         self.assertEqual((survey['image_notes']['hedge or shrub'], survey['image_notes']['roof or house']), (1, 1))
         self.assertEqual(survey['acquisition'].get('default'), 1)
+        self.assertEqual((survey['registered_by_view'], survey['registered_by_patch'], survey['by_surface'],
+                          survey['rover_vs_overhead']['n_entities']), ({}, {}, {}, 0))
 
         def names(obj):
             found = set()
@@ -908,6 +910,11 @@ class UpgradeTests(TransactionTestCase):
         self.box = (LON - 0.01, LAT - 0.01, LON + 0.01, LAT + 0.01)
         detection_model.forget()
         self.addCleanup(detection_model.forget)
+        # no lidar tiles unless a test lays some down
+        patcher = mock.patch('deepgis_xr.apps.scene_store.heights.sample',
+                             side_effect=lambda lons, lats: np.full(np.shape(lons), np.nan))
+        self.lidar = patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _ingest(self, name, at, **kw):
         return fusion.ingest_scene_graph(_scene(at, **kw), session_id=name, taxonomy_name='urban_v1')
@@ -1248,6 +1255,237 @@ class UpgradeTests(TransactionTestCase):
         self.assertFalse(Factor.objects.filter(kind='field', superseded_at__isnull=True,
                                                metadata__signal='height').exists())
         self.assertEqual(Factor.objects.filter(kind='field', superseded_at__isnull=True).count(), 1)
+
+    def _aimed(self, x_m, y_m, hit_m, *, usec=1, surface=None, sigma_up=0.1, **kw):
+        reading = self._reading(x_m, y_m, usec=usec, **kw)
+        reading.aim = {'source': 'ekf', 'sigma_m': 1.0, 'hit_height_m': hit_m, 'sigma_up_m': sigma_up}
+        if surface:
+            reading.surface = {'label': surface, 'share': 0.9}
+        reading.save(using='observations')
+        return reading
+
+    def _signals(self):
+        live = Factor.objects.filter(kind='field', superseded_at__isnull=True)
+        return sorted(f.metadata.get('signal', 'green') for f in live)
+
+    def test_view_decides_what_a_reading_may_vote_on(self):
+        self._ingest('s1', self.t1)
+        bld, road = self._entity('building'), self._entity('road')
+
+        # A hit 2 m up where the lidar has something 4 m tall: the flank of what the map shows.
+        self.lidar.side_effect = lambda lons, lats: np.full(np.shape(lons), 4.0)
+        wall = self._aimed(-40, 0, 2.0)
+        field_evidence.register_reading(wall)
+        link = FieldLink.objects.get(reading_id=wall.pk)
+        self.assertEqual((link.signal['view'], link.signal['view_by'], link.signal['lidar_share']), ('side', 'lidar', 1.0))
+        self.assertEqual(self._signals(), ['green', 'height'])
+
+        # The same hit where the lidar has nothing standing: a fence, which the map does not show.
+        self.lidar.side_effect = lambda lons, lats: np.full(np.shape(lons), 0.2)
+        field_evidence.register_reading(wall)
+        link.refresh_from_db()
+        self.assertEqual((link.entity_id, link.signal['view'], link.usable, link.signal['height_ok']),
+                         (bld.id, 'face', False, False))
+        self.assertEqual(self._signals(), [])
+
+        # A hit on the ground of the road, in the open: both see the same surface.
+        ground = self._aimed(10, -3, 0.0, usec=2, index=-0.2)
+        field_evidence.register_reading(ground)
+        link = FieldLink.objects.get(reading_id=ground.pk)
+        self.assertEqual((link.entity_id, link.signal['view'], link.usable), (road.id, 'top', True))
+        # Under a 5 m canopy the map shows the canopy instead.
+        self.lidar.side_effect = lambda lons, lats: np.full(np.shape(lons), 5.0)
+        field_evidence.register_reading(ground)
+        link.refresh_from_db()
+        self.assertEqual((link.signal['view'], link.usable), ('under', False))
+        self.assertEqual(self._signals(), [])
+
+    def test_lidar_narrows_the_target_to_where_such_a_hit_is_possible(self):
+        self._ingest('s1', self.t1)
+        bld = self._entity('building')
+        # One metre outside the building's east wall: by position alone too little of it is on the building.
+        reading = self._aimed(-24, 0, 2.0)
+        field_evidence.register_reading(reading)
+        self.assertFalse(FieldLink.objects.exists())
+        # Only the building stands 2 m tall there, so that is what the beam hit.
+        edge = LON - 25 * M / np.cos(np.radians(LAT))
+        self.lidar.side_effect = lambda lons, lats: np.where(np.asarray(lons) < edge, 4.0, 0.1)
+        field_evidence.register_reading(reading)
+        link = FieldLink.objects.get()
+        self.assertEqual((link.entity_id, link.signal['view']), (bld.id, 'side'))
+        self.assertGreater(link.weight, 0.99)
+        self.assertLess(link.signal['lidar_share'], 0.3)
+
+    def test_keyframe_surface_is_a_vote_and_a_fence_is_not(self):
+        self._ingest('s1', self.t1)
+        road = self._entity('road')
+        self.lidar.side_effect = lambda lons, lats: np.full(np.shape(lons), 0.1)
+        before = (road.score, road.posterior[URBAN_V1.index_of('vegetation_other')])
+        grass = self._aimed(10, -3, 0.0, surface='grass', index=None)
+        self.assertEqual(field_evidence.register_reading(grass), {road.id})
+        link = FieldLink.objects.get()
+        self.assertEqual((link.signal['view'], link.signal['view_by'], link.signal['surface'], link.signal['label_ok']),
+                         ('top', 'image', 'grass', True))
+        self.assertEqual(self._signals(), ['height', 'label'])  # no index in this spectrum, so no green vote
+        factor = Factor.objects.get(kind='field', superseded_at__isnull=True, metadata__signal='label')
+        self.assertEqual(factor.metadata['labels'], {'grass': 1})
+        table = np.asarray(factor.log_table)
+        self.assertGreater(table[URBAN_V1.index_of('vegetation_other')], table[URBAN_V1.index_of('road')])
+        road.refresh_from_db()
+        # grass where the map says road moves belief toward vegetation (the ground hit, a
+        # separate vote, still favours a road over anything that stands)
+        veg = URBAN_V1.index_of('vegetation_other')
+        self.assertGreater(road.posterior[veg] / road.score, 3 * before[1] / before[0])
+        self.assertEqual(field_evidence.register_all()[1], set())
+
+        # Five more looks at the same grass that day are the same vote.
+        for i in range(5):
+            field_evidence.register_reading(self._aimed(10, -3, 0.0, surface='grass', index=None, usec=10 + i))
+        again = Factor.objects.get(kind='field', superseded_at__isnull=True, metadata__signal='label')
+        self.assertEqual(again.metadata['n_readings'], 6)
+        np.testing.assert_allclose(again.log_table, factor.log_table, atol=1e-6)
+
+        # The survey summary sets the keyframe's surface against the map's category.
+        from deepgis_xr.apps.scene_store import mcp
+        road.refresh_from_db()
+        summary = mcp._field_views(FieldLink.objects.all())
+        self.assertEqual(summary['registered_by_view'], {'top': 6})
+        self.assertEqual(summary['surface_by_map_category'], {'grass': {road.category: 6}})
+        self.assertEqual((summary['by_surface']['grass']['n'], summary['by_surface']['grass']['n_usable_light']), (6, 6))
+        self.assertEqual(mcp._rank_correlation([(1, 2), (2, 4), (3, 5), (4, 9), (5, 11)]), 1.0)
+        self.assertEqual(mcp._rank_correlation([(1, 9), (2, 7), (3, 5), (4, 3), (5, 1)]), -1.0)
+        self.assertIsNone(mcp._rank_correlation([(1, 2), (2, 3)]))
+
+    def test_fence_and_disagreeing_views_say_nothing(self):
+        self._ingest('s1', self.t1)
+        road = self._entity('road')
+        self.lidar.side_effect = lambda lons, lats: np.full(np.shape(lons), 0.1)
+        # A hedge in the keyframe while the laser says ground: the two disagree, no vote.
+        hedge = self._aimed(10, -3, 0.0, surface='hedge', usec=50)
+        field_evidence.register_reading(hedge)
+        self.assertEqual((FieldLink.objects.get().signal['view'], self._signals()), ('conflict', []))
+        # A fence is linked to the object behind it and says nothing about it, in any light.
+        hedge.surface = {'label': 'fence', 'share': 0.8}
+        hedge.aim = {'source': 'ekf', 'sigma_m': 1.0, 'hit_height_m': 1.2, 'sigma_up_m': 0.1}
+        hedge.save(using='observations')
+        field_evidence.register_reading(hedge)
+        link = FieldLink.objects.get()
+        self.assertEqual((link.entity_id, link.signal['view'], link.signal['view_by'], link.usable,
+                          link.signal['label_ok'], link.signal['height_ok']),
+                         (road.id, 'face', 'image', False, False, False))
+        self.assertEqual(self._signals(), [])
+
+    def test_spectrum_of_several_surfaces_or_of_sky_is_not_a_vote(self):
+        self._ingest('s1', self.t1)
+        bld = self._entity('building')
+        self.lidar.side_effect = lambda lons, lats: np.full(np.shape(lons), 0.1)
+        # A patch of wall, hedge and sky with the laser's spot on the wall.
+        reading = self._aimed(-40, 0, 1.2)
+        reading.surface = {'label': 'mixed', 'share': 0.39, 'centre': 'wall',
+                           'shares': {'wall': 0.39, 'hedge': 0.33, 'sky': 0.09}}
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link = FieldLink.objects.get()
+        self.assertEqual((link.entity_id, link.signal['view'], link.signal['patch'], link.signal['spot'], link.usable),
+                         (bld.id, 'face', 'mixed', 'wall', False))
+        self.assertEqual(self._signals(), [])
+        # The same patch with the spot on the hedge: something stands there, and that is all it says.
+        reading.surface['centre'] = 'hedge'
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link.refresh_from_db()
+        self.assertEqual((link.signal['view'], link.usable, link.signal['height_ok']), ('side', False, True))
+        self.assertNotIn('surface', link.signal)
+        self.assertEqual(self._signals(), ['height'])
+        # A hedge with a tenth of the patch on the sky: the label counts, the spectrum does not.
+        reading.surface = {'label': 'hedge', 'share': 0.8, 'centre': 'hedge', 'shares': {'hedge': 0.8, 'sky': 0.1}}
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link.refresh_from_db()
+        self.assertEqual((link.signal['patch'], link.signal['sky_share'], link.usable, link.signal['label_ok']),
+                         ('sky in it', 0.1, False, True))
+        self.assertEqual(self._signals(), ['height', 'label'])
+        # All of it hedge: the spectrum counts too.
+        reading.surface['shares'] = {'hedge': 0.97, 'sky': 0.01}
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link.refresh_from_db()
+        self.assertEqual((link.signal['patch'], link.usable), ('one surface', True))
+        self.assertEqual(self._signals(), ['green', 'height', 'label'])
+
+    def test_sun_in_the_frame_held_headings_and_panel_readings_are_not_evidence(self):
+        from deepgis_xr.apps.web.field_readings import sun_position
+
+        self._ingest('s1', self.t1)
+        bld = self._entity('building')
+        reading = self._reading(-40, 0)
+        sun_az, sun_el = sun_position(reading.target.y, reading.target.x, reading.captured)
+        self.assertGreater(sun_el, 10)
+        reading.aim = {'source': 'heading', 'azimuth_deg': sun_az, 'elevation_deg': 0.0, 'sigma_deg': 10.0}
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link = FieldLink.objects.get()
+        self.assertEqual((link.entity_id, link.usable), (bld.id, sun_el >= priors.FIELD_MIN_SUN_SEP_DEG))
+        self.assertAlmostEqual(link.signal['sun_sep_deg'], sun_el, delta=0.2)
+        reading.aim['elevation_deg'] = sun_el
+        reading.save(using='observations')
+        field_evidence.register_reading(reading)
+        link.refresh_from_db()
+        self.assertEqual((link.usable, link.signal['sun_sep_deg'], self._signals()), (False, 0.0, []))
+        reading.aim.update(azimuth_deg=(sun_az + 120) % 360, elevation_deg=0.0)
+        reading.save(using='observations')
+        self.assertEqual(field_evidence.register_reading(reading), {bld.id})
+        self.assertTrue(FieldLink.objects.get().usable)
+
+        # A heading the standing rover only repeated places nothing.
+        reading.aim['held'] = True
+        reading.save(using='observations')
+        self.assertEqual(field_evidence.register_reading(reading), {bld.id})
+        self.assertFalse(FieldLink.objects.exists())
+        self.assertEqual(self._signals(), [])
+        # Nor does a reading of the reference panel.
+        reading.aim.pop('held')
+        reading.spectrum = {**reading.spectrum, 'reference': {'reflectance': 0.5}}
+        reading.save(using='observations')
+        self.assertEqual(field_evidence.register_reading(reading), set())
+        self.assertFalse(FieldLink.objects.exists())
+
+    def test_panel_reading_turns_counts_into_reflectance(self):
+        from deepgis_xr.apps.scene_store import field_spectra
+
+        def spectrum(red, nir, **extra):
+            wl = 300 + np.arange(574)
+            counts = np.where(wl >= 700, nir, red).astype(float)
+            return {'counts': counts.tolist(), 'wl0': 300, 'dwl': 1, 'integration_ms': 100,
+                    'footprint': {'diameter_m': 2.0}, 'indices': {'nir_red': -0.2}, **extra}
+
+        self._ingest('s1', self.t1)
+        road = self._entity('road')
+        leaf = self._reading(10, -3)
+        leaf.spectrum = spectrum(200, 1600)
+        leaf.save(using='observations')
+        self.assertEqual(field_spectra.band_ratios(leaf.spectrum)['nir'], 8.0)
+        self.assertIsNone(field_spectra.reflectance_of(leaf))
+        field_evidence.register_reading(leaf)
+        self.assertEqual(FieldLink.objects.get().signal['green'], False)  # by the raw index
+
+        # A 50% panel read four minutes later, at twice the exposure, in the same light.
+        panel = self._reading(70, 70, when=leaf.captured + timedelta(minutes=4), usec=5)
+        panel.spectrum = spectrum(2000, 2000, reference={'reflectance': 0.5})
+        panel.spectrum['integration_ms'] = 200
+        panel.save(using='observations')
+        got = field_spectra.reflectance_of(leaf)
+        self.assertEqual((got['bands']['red'], got['bands']['nir'], got['reference_dt_s']), (0.1, 0.8, 240.0))
+        self.assertAlmostEqual(got['ndvi'], 0.7778, places=3)
+        self.assertEqual(field_evidence.register_reading(leaf), {road.id})
+        signal = FieldLink.objects.get().signal
+        self.assertEqual((signal['green'], signal['green_by'], signal['reflectance']['nir']), (True, 'ndvi', 0.8))
+        # A clipped band has no reflectance, and a panel read an hour away is not the same light.
+        leaf.spectrum['clipped'] = [[790, 800]]
+        self.assertNotIn('nir', field_spectra.reflectance(leaf.spectrum, panel.spectrum)['bands'])
+        panel.captured = leaf.captured + timedelta(minutes=61)
+        panel.save(using='observations')
+        self.assertIsNone(field_spectra.reflectance_of(leaf))
 
     # -- looks: the captures of one image count once -----------------------------------
 
