@@ -22,6 +22,7 @@ same way.
 
 from __future__ import annotations
 
+import ctypes
 import gc
 import logging
 import os
@@ -78,11 +79,30 @@ class WeightsMissing(Exception):
     pass
 
 
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except OSError:
+    _libc = None
+
+
+def _resident_mb() -> int | None:
+    try:
+        with open("/proc/self/statm") as f:
+            return int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE") // (1 << 20)
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 def _unload() -> None:
     _loaded.update(id=None, model=None, classes=None)
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    # A model's weights pass through host memory on their way to the GPU, and the allocator
+    # keeps what Python frees. Without this (and MALLOC_ARENA_MAX=1, so request threads share
+    # one arena) the process held several GB more after each load.
+    if _libc is not None:
+        _libc.malloc_trim(0)
 
 
 def _load(model_id: str):
@@ -222,6 +242,7 @@ def health():
         loaded=_loaded["id"],
         default_model=DEFAULT_MODEL,
         sam3_weights=(WEIGHTS_DIR / MODELS["sam3"][1]).exists(),
+        resident_mb=_resident_mb(),
     )
 
 

@@ -29,6 +29,10 @@ services:
       - UNLOAD_AFTER_PREDICT=true
       - DEFAULT_IMGSZ=1024
       - MAX_IMGSZ=1280
+      # Each request runs in its own thread and loads a model through host
+      # memory; with glibc's per-thread arenas the freed weights stayed
+      # resident, several GB per arena. One arena, trimmed after each unload.
+      - MALLOC_ARENA_MAX=1
     networks:
       - deepgis
     restart: unless-stopped

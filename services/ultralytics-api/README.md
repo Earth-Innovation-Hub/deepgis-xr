@@ -40,7 +40,8 @@ host port. Set the GPU in `device_ids`.
 
 ## API
 
-- `GET /health`: device, loaded model, whether `sam3.pt` is present
+- `GET /health`: device, loaded model, whether `sam3.pt` is present, `resident_mb` (host memory
+  the process holds)
 - `GET /api/models`: the model table above
 - `POST /api/predict` (multipart): `file`, `model`, `classes` (comma-separated),
   `confidence` (default 0.25), `imgsz` (default 1024; YOLO models only),
