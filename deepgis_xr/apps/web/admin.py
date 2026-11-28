@@ -2086,6 +2086,43 @@ def _frame_url(obj):
     return reverse('field_reading_frame', args=[obj.pk])
 
 
+class FieldSurfaceFilter(admin.SimpleListFilter):
+    title = 'surface under the patch'
+    parameter_name = 'surface'
+
+    def lookups(self, request, model_admin):
+        from deepgis_xr.apps.scene_store import priors
+        names = [n for n in priors.FIELD_SURFACES] + ['mixed', 'none']
+        return [('_none', 'not labelled')] + [(n, n) for n in names]
+
+    def queryset(self, request, queryset):
+        if self.value() == '_none':
+            return queryset.filter(surface__isnull=True)
+        if self.value():
+            return queryset.filter(surface__label=self.value())
+        return queryset
+
+
+class FieldViewFilter(admin.SimpleListFilter):
+    title = 'view of the map object'
+    parameter_name = 'view'
+
+    def lookups(self, request, model_admin):
+        return [('_counted', 'counted as evidence'), ('_none', 'not on a map object')] + \
+            [(v, v) for v in ('top', 'side', 'unknown', 'face', 'under', 'conflict', 'none')]
+
+    def queryset(self, request, queryset):
+        from deepgis_xr.apps.scene_store.models import FieldLink
+        links = FieldLink.objects.all()
+        if self.value() == '_none':
+            return queryset.exclude(pk__in=links.values('reading_id'))
+        if self.value() == '_counted':
+            return queryset.filter(pk__in=links.filter(usable=True).values('reading_id'))
+        if self.value():
+            return queryset.filter(pk__in=links.filter(signal__view=self.value()).values('reading_id'))
+        return queryset
+
+
 @admin.register(FieldReading)
 class FieldReadingAdmin(admin.ModelAdmin):
     '''Field-robot keyframes stored in the observations database.
@@ -2103,9 +2140,10 @@ class FieldReadingAdmin(admin.ModelAdmin):
         'camera_where',
         'target_where',
         'has_spectrum',
+        'surface_short',
         'frame_thumb',
     )
-    list_filter = ('vehicle_id', 'range_valid')
+    list_filter = ('vehicle_id', 'range_valid', FieldSurfaceFilter, FieldViewFilter)
     search_fields = ('vehicle_id',)
     date_hierarchy = 'captured'
     ordering = ('-captured',)
@@ -2373,6 +2411,15 @@ class FieldReadingAdmin(admin.ModelAdmin):
         elif isinstance(a.get('since_moving_s'), (int, float)):
             parts.append('the course it stopped on %d s earlier' % a['since_moving_s'])
         return format_html('{}', ', '.join(parts))
+
+    @admin.display(description='surface')
+    def surface_short(self, obj):
+        s = obj.surface if isinstance(obj.surface, dict) else None
+        if not s or not s.get('label'):
+            return '—'
+        if s.get('centre') and s['centre'] != s['label']:
+            return format_html('{} (laser on {})', s['label'], s['centre'])
+        return s['label']
 
     @admin.display(description='surface under the patch')
     def surface_line(self, obj):

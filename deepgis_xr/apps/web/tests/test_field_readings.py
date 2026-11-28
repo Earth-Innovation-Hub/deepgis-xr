@@ -161,6 +161,36 @@ class FieldReadingStoreTests(TransactionTestCase):
         late = [self._row(800 + i, 268.5) for i in range(4)]
         self.assertTrue(aim(late[0])["held"])
 
+    def test_map_layer_says_what_was_seen_and_whether_it_counted(self):
+        from types import SimpleNamespace
+
+        from django.contrib.gis.geos import Point
+
+        from deepgis_xr.apps.web.field_readings import _features
+
+        target = Point(-122.0, 36.97, srid=4326)
+        surface = {"label": "hedge", "share": 0.62, "shares": {"hedge": 0.62, "wall": 0.3}, "centre": "hedge",
+                   "patch": [0.5, 0.5, 0.208], "model": "sam3"}
+        seen = self._row(0, 90.0, target=target, surface=surface, spectrum={"counts": [1]})
+        held = self._row(1, 90.0, target=target, spectrum={"counts": [1]}, aim={"held": True})
+        entity = SimpleNamespace(pk=7, category="vegetation_other", score=0.414)
+        link = SimpleNamespace(reading_id=seen.pk, entity=entity, weight=0.8, usable=False,
+                               signal={"view": "face", "view_by": "image", "patch": "mixed",
+                                       "sun_deg": 30.0, "sun_sep_deg": 12.0})
+        with mock.patch("deepgis_xr.apps.scene_store.models.FieldLink.objects") as objects:
+            objects.select_related.return_value.filter.return_value = [link]
+            props = {f["properties"]["id"]: f["properties"] for f in _features([seen, held])["features"]}
+        a, b = props[seen.pk], props[held.pk]
+        self.assertEqual((a["surface"]["label"], a["surface"]["centre"], a["surface"]["patch"]),
+                         ("hedge", "hedge", [0.5, 0.5, 0.208]))
+        self.assertEqual((a["link"]["view"], a["link"]["usable"], a["link"]["entity"], a["link"]["entity_score"]),
+                         ("face", False, 7, 0.41))
+        self.assertEqual(a["link"]["why_not"],
+                         ["face view: no vote", "patch: mixed", "sun 12° from the camera axis"])
+        self.assertIsNone(a["unlinked"])
+        self.assertEqual((b["surface"], b["link"]), (None, None))
+        self.assertIn("kept", b["unlinked"])
+
     def test_same_view_takes_the_earlier_label(self):
         from deepgis_xr.apps.web import field_surface
         from deepgis_xr.apps.web.models import FieldReading

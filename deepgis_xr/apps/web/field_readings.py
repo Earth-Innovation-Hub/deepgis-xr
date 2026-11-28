@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 
 EARTH_R_M = 6371000.0
 QUERY_LIMIT = 500
+LINKED_QUERY_LIMIT = 1500
 EKF_MAX_DT_S = 0.25          # an EKF sample further from the frame than this is not its pose
 EKF_ATTITUDE_OK = 1          # ESTIMATOR_STATUS flag: attitude estimate good
 EKF_MAX_YAW_SIGMA_DEG = 10.0
@@ -370,12 +371,84 @@ def _remember_spectrum(vid, captured, data):
     _keep(reading)
 
 
+def _surface_props(row):
+    """What the keyframe shows under the spectrometer's patch, for the map's popup."""
+    s = row.surface if isinstance(row.surface, dict) else None
+    if not s or not s.get("label"):
+        return None
+    shares = s.get("shares") if isinstance(s.get("shares"), dict) else {}
+    patch = s.get("patch") if isinstance(s.get("patch"), list) and len(s.get("patch")) == 3 else None
+    return {
+        "label": s["label"],
+        "share": s.get("share"),
+        "shares": dict(list(shares.items())[:4]),
+        "centre": s.get("centre"),
+        "from": s.get("from"),
+        "patch": patch,
+    }
+
+
+def _link_props(link):
+    """Which view the rover had of the map object, and whether the reading counts as evidence."""
+    from deepgis_xr.apps.scene_store import priors
+    from deepgis_xr.apps.scene_store.field_evidence import VOTING_VIEWS
+
+    sig = link.signal if isinstance(link.signal, dict) else {}
+    view = sig.get("view") or "unknown"
+    why = []
+    if view not in VOTING_VIEWS:
+        why.append(f"{view} view: no vote")
+    if sig.get("patch") and sig["patch"] != "one surface":
+        why.append(f"patch: {sig['patch']}")
+    sun, sep = sig.get("sun_deg"), sig.get("sun_sep_deg")
+    if isinstance(sun, (int, float)) and sun < priors.FIELD_MIN_SUN_DEG:
+        why.append(f"sun {sun:.0f}° up")
+    elif isinstance(sun, (int, float)) and sun > 0 and isinstance(sep, (int, float)) \
+            and sep < priors.FIELD_MIN_SUN_SEP_DEG:
+        why.append(f"sun {sep:.0f}° from the camera axis")
+    if not link.usable and not why:
+        why.append("no index to vote with")
+    entity = link.entity
+    return {
+        "view": view,
+        "view_by": sig.get("view_by"),
+        "usable": bool(link.usable),
+        "why_not": why if not link.usable else [],
+        "entity": entity.pk,
+        "entity_category": entity.category,
+        "entity_score": round(entity.score, 2) if isinstance(entity.score, (int, float)) else None,
+        "share_on_entity": round(link.weight, 2) if isinstance(link.weight, (int, float)) else None,
+    }
+
+
+def _unlinked_reason(row):
+    if row.target is None:
+        return None
+    if isinstance(row.spectrum, dict) and "reference" in row.spectrum:
+        return "reference panel reading"
+    if isinstance(row.aim, dict) and row.aim.get("held"):
+        return "a course kept with no recent move: not used"
+    if not row.spectrum:
+        return "no spectrum"
+    from deepgis_xr.apps.scene_store import priors
+
+    if row.range_m is None or not 0 <= row.range_m <= priors.FIELD_MAX_RANGE_M:
+        return "laser range missing or too long"
+    return "not registered: no map object under the target, or not processed yet"
+
+
 def _features(rows):
+    from deepgis_xr.apps.scene_store.models import FieldLink
+
+    rows = list(rows)
+    links = {k.reading_id: k for k in FieldLink.objects.select_related("entity")
+             .filter(reading_id__in=[r.pk for r in rows])}
     features = []
     for row in rows:
         point = row.target or row.camera
         if point is None:
             continue
+        link = links.get(row.pk)
         features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": [point.x, point.y]},
@@ -389,6 +462,9 @@ def _features(rows):
                 "heading_deg": row.heading_deg,
                 "frame": f"/label/api/field-readings/{row.id}/frame.jpg" if row.image_relpath else None,
                 "spectrum": bool(row.spectrum),
+                "surface": _surface_props(row),
+                "link": _link_props(link) if link is not None else None,
+                "unlinked": _unlinked_reason(row) if link is None else None,
             },
         })
     return {"type": "FeatureCollection", "features": features}
@@ -422,9 +498,16 @@ def geojson(request):
         return JsonResponse({"error": "south, west, north, east are required"}, status=400)
     from .models import FieldReading
 
-    rows = (FieldReading.objects.using("observations")
-            .filter(Q(target__intersects=box) | Q(target__isnull=True, camera__intersects=box))
-            .order_by("-captured")[:QUERY_LIMIT])
+    from deepgis_xr.apps.scene_store.models import FieldLink
+
+    in_box = (FieldReading.objects.using("observations")
+              .filter(Q(target__intersects=box) | Q(target__isnull=True, camera__intersects=box)))
+    rows = list(in_box.order_by("-captured")[:QUERY_LIMIT])
+    # a standing rover fills the newest few hundred in hours; the readings on map objects
+    # come along whenever they were taken
+    seen = {r.pk for r in rows}
+    linked = in_box.filter(pk__in=FieldLink.objects.values("reading_id")).order_by("-captured")
+    rows += [r for r in linked[:LINKED_QUERY_LIMIT] if r.pk not in seen]
     resp = JsonResponse(_features(rows))
     resp["Cache-Control"] = "private, no-store"
     return resp
